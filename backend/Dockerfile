@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:alpine AS builder
 
 WORKDIR /app
 
@@ -17,9 +17,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o server ./cmd/server/main.go
 FROM alpine:latest
 WORKDIR /app
 
-# Copy binary and configuration
+# Copy binary
 COPY --from=builder /app/server .
-COPY --from=builder /app/.env .
 
 EXPOSE 8081
 
