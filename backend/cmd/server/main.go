@@ -27,6 +27,7 @@ import (
 	userHandler "github.com/onetrack/backend/internal/user/handler"
 	userRepo "github.com/onetrack/backend/internal/user/repository"
 	userService "github.com/onetrack/backend/internal/user/service"
+	"github.com/onetrack/backend/migrations"
 )
 
 func main() {
@@ -45,6 +46,12 @@ func main() {
 	}
 	defer dbPool.Close()
 	log.Println("Connected to PostgreSQL")
+
+	// Run automatic database migrations
+	if err := migrations.RunAutoMigrations(ctx, dbPool); err != nil {
+		log.Fatalf("Failed to run database migrations: %v", err)
+	}
+	log.Println("Database migrations executed successfully")
 
 	// Initialize Redis
 	rdb, err := redisClient.NewRedisClient(ctx, cfg.Redis)
