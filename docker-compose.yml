@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # Database container
+  postgres:
+    image: postgres:15-alpine
+    container_name: onetrack-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: onetrack
+    ports:
+      - "5433:5432" # Keeps host port 5433 mapped to allow manual DB tools access
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - onetrack-network
+
+  # Redis Cache container
+  redis:
+    image: redis:7-alpine
+    container_name: onetrack-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - onetrack-network
+
+  # Go Backend microservice
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: onetrack-backend
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      - SERVER_PORT=8081
+      - GIN_MODE=release
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=onetrack
+      - DB_SSLMODE=disable
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - onetrack-network
+
+  # React Frontend container with built-in Nginx proxy
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: onetrack-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80" # Exposed on standard HTTP port 80 for easy local Wi-Fi access
+    depends_on:
+      - backend
+    networks:
+      - onetrack-network
+
+  # Database Management GUI (Adminer Web Tool)
+  adminer:
+    image: adminer:latest
+    container_name: onetrack-adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080" # Accessible via browser at http://<SERVER_IP>:8080
+    depends_on:
+      - postgres
+    networks:
+      - onetrack-network
+
+volumes:
+  postgres_data:
+
+networks:
+  onetrack-network:
+    driver: bridge
