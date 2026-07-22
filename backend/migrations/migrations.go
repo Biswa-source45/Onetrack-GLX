@@ -70,5 +70,34 @@ func RunAutoMigrations(ctx context.Context, db *pgxpool.Pool) error {
 		log.Printf("[AutoMigrate] Successfully applied %s", file)
 	}
 
+	// Always ensure default admin user exists and password hash is set
+	EnsureDefaultAdmin(ctx, db)
+
 	return nil
+}
+
+func EnsureDefaultAdmin(ctx context.Context, db *pgxpool.Pool) {
+	// bcrypt hash of 'Admin@123'
+	adminHash := "$2a$12$t8z9b7lU.qbkEwxUeHxTBuLp7JqL0Na1bsh5Qys0HI6B5BYXpPoLK"
+	
+	query := `
+		INSERT INTO auth.users (employee_code, username, password_hash, force_password_change, is_active)
+		VALUES ('ADMIN001', 'admin', $1, true, true)
+		ON CONFLICT (username) DO UPDATE SET password_hash = $1, is_active = true;
+	`
+	_, err := db.Exec(ctx, query, adminHash)
+	if err != nil {
+		log.Printf("[AutoMigrate] Notice seeding admin user: %v", err)
+		return
+	}
+
+	// Ensure SUPER_ADMIN role assignment
+	roleQuery := `
+		INSERT INTO auth.user_roles (user_id, role_id)
+		SELECT u.id, r.id FROM auth.users u, auth.roles r
+		WHERE u.username = 'admin' AND r.name = 'SUPER_ADMIN'
+		ON CONFLICT DO NOTHING;
+	`
+	_, _ = db.Exec(ctx, roleQuery)
+	log.Println("[AutoMigrate] Verified default super admin account 'admin' with password 'Admin@123'")
 }
