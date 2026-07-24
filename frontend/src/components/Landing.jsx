@@ -682,59 +682,73 @@ function OperationsSandbox() {
 }
 
 /* ==========================================
-   7. SECURITY & GOVERNANCE
+   7. SECURITY & GOVERNANCE (White Theme)
    ========================================== */
 function SecurityGovernance() {
   return (
-    <section id="security" className="py-20 bg-neutral-900 text-white">
+    <section id="security" className="py-20 bg-slate-50 border-y border-neutral-200/80 text-neutral-900">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
           <div className="lg:col-span-6 space-y-6 text-left">
-            <Badge className="bg-blue-500/10 text-blue-300 border border-blue-500/20 text-[11px] font-bold uppercase tracking-wider">
+            <Badge className="bg-blue-100 text-blue-800 border border-blue-200 text-[11px] font-extrabold uppercase tracking-wider">
               Enterprise Governance
             </Badge>
-            <h2 className="font-heading text-3xl sm:text-4xl font-bold tracking-tight text-white">
+            <h2 className="font-heading text-3xl sm:text-4xl font-extrabold tracking-tight text-neutral-900">
               Bank-Grade Security for Critical Procurement Data
             </h2>
-            <p className="text-neutral-300 text-sm leading-relaxed">
+            <p className="text-neutral-600 text-sm leading-relaxed">
               OneTrack isolates workspace data, enforces encrypted JWT tokens, logs all administrative modifications, and protects sensitive commercial pricing prior to official submission.
             </p>
             <div className="space-y-3 pt-2">
-              <div className="flex items-center gap-3 text-xs font-semibold text-neutral-200">
-                <Check className="size-4 text-emerald-400 shrink-0" />
+              <div className="flex items-center gap-3 text-xs font-semibold text-neutral-700">
+                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                  <Check className="size-3.5" />
+                </div>
                 Granular Role-Based Access Control (RBAC) with user-level overrides
               </div>
-              <div className="flex items-center gap-3 text-xs font-semibold text-neutral-200">
-                <Check className="size-4 text-emerald-400 shrink-0" />
+              <div className="flex items-center gap-3 text-xs font-semibold text-neutral-700">
+                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                  <Check className="size-3.5" />
+                </div>
                 Full migration idempotency & PostgreSQL transactional data locks
               </div>
-              <div className="flex items-center gap-3 text-xs font-semibold text-neutral-200">
-                <Check className="size-4 text-emerald-400 shrink-0" />
+              <div className="flex items-center gap-3 text-xs font-semibold text-neutral-700">
+                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                  <Check className="size-3.5" />
+                </div>
                 On-premise & private cloud deployment capability for government systems
               </div>
             </div>
           </div>
 
-          <div className="lg:col-span-6 grid grid-cols-2 gap-4">
-            <div className="p-6 rounded-2xl bg-neutral-800/80 border border-neutral-700 text-left space-y-2">
-              <Lock className="size-6 text-blue-400" />
-              <h3 className="font-bold text-sm text-white">Encrypted Sessions</h3>
-              <p className="text-xs text-neutral-400">JWT claims authorization with secure token rotation.</p>
+          <div className="lg:col-span-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="p-6 rounded-2xl bg-white border border-neutral-200/90 shadow-sm text-left space-y-2 hover:border-blue-300 transition-all">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                <Lock className="size-5" />
+              </div>
+              <h3 className="font-bold text-sm text-neutral-900">Encrypted Sessions</h3>
+              <p className="text-xs text-neutral-500 leading-relaxed">JWT claims authorization with secure token rotation.</p>
             </div>
-            <div className="p-6 rounded-2xl bg-neutral-800/80 border border-neutral-700 text-left space-y-2">
-              <Building2 className="size-6 text-blue-400" />
-              <h3 className="font-bold text-sm text-white">On-Premise Ready</h3>
-              <p className="text-xs text-neutral-400">Deploy within host network environments securely.</p>
+            <div className="p-6 rounded-2xl bg-white border border-neutral-200/90 shadow-sm text-left space-y-2 hover:border-blue-300 transition-all">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+                <Building2 className="size-5" />
+              </div>
+              <h3 className="font-bold text-sm text-neutral-900">On-Premise Ready</h3>
+              <p className="text-xs text-neutral-500 leading-relaxed">Deploy within host network environments securely.</p>
             </div>
-            <div className="p-6 rounded-2xl bg-neutral-800/80 border border-neutral-700 text-left space-y-2">
-              <FileCode className="size-6 text-blue-400" />
-              <h3 className="font-bold text-sm text-white">Audit Trails</h3>
-              <p className="text-xs text-neutral-400">Immutable logs for stage changes & user role edits.</p>
+            <div className="p-6 rounded-2xl bg-white border border-neutral-200/90 shadow-sm text-left space-y-2 hover:border-blue-300 transition-all">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+                <FileCode className="size-5" />
+              </div>
+              <h3 className="font-bold text-sm text-neutral-900">Audit Trails</h3>
+              <p className="text-xs text-neutral-500 leading-relaxed">Immutable logs for stage changes & user role edits.</p>
             </div>
-            <div className="p-6 rounded-2xl bg-neutral-800/80 border border-neutral-700 text-left space-y-2">
-              <ShieldCheck className="size-6 text-blue-400" />
-              <h3 className="font-bold text-sm text-white">Compliance Guard</h3>
-              <p className="text-xs text-neutral-400">Stage checklist validation prior to bid lock.</p>
+            <div className="p-6 rounded-2xl bg-white border border-neutral-200/90 shadow-sm text-left space-y-2 hover:border-blue-300 transition-all">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                <ShieldCheck className="size-5" />
+              </div>
+              <h3 className="font-bold text-sm text-neutral-900">Compliance Guard</h3>
+              <p className="text-xs text-neutral-500 leading-relaxed">Stage checklist validation prior to bid lock.</p>
             </div>
           </div>
         </div>
@@ -744,110 +758,110 @@ function SecurityGovernance() {
 }
 
 /* ==========================================
-   8. ENTERPRISE FOOTER
+   8. ENTERPRISE FOOTER (Pure White Theme)
    ========================================== */
 function Footer() {
   const currentYear = new Date().getFullYear()
 
   return (
-    <footer className="border-t border-neutral-200/80 bg-slate-900 text-neutral-300">
-      {/* Upper CTA Section */}
-      <div className="border-b border-slate-800 bg-slate-950/60 py-10 px-4 sm:px-6 lg:px-8">
+    <footer className="bg-white border-t border-neutral-200/80 text-neutral-700">
+      {/* Upper CTA Section (Light Blue / White Gradient Banner) */}
+      <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white py-12 px-4 sm:px-6 lg:px-8 shadow-sm">
         <div className="mx-auto max-w-7xl flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="space-y-1 text-center md:text-left">
-            <h3 className="font-heading text-lg sm:text-xl font-bold text-white tracking-tight flex items-center justify-center md:justify-start gap-2">
+          <div className="space-y-1.5 text-center md:text-left">
+            <h3 className="font-heading text-xl sm:text-2xl font-bold tracking-tight text-white flex items-center justify-center md:justify-start gap-2.5">
               <span>Ready to streamline your enterprise tender lifecycle?</span>
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-400 border border-emerald-500/20">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-400/20 px-2.5 py-0.5 text-xs font-bold text-emerald-200 border border-emerald-300/30">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 animate-pulse" />
                 Live Operational
               </span>
             </h3>
-            <p className="text-xs text-slate-400 max-w-xl">
+            <p className="text-xs text-blue-100 max-w-xl leading-relaxed">
               Unify your tender discovery, technical qualification, EMD tracking, and commercial approval workflows into one secure dashboard.
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 shrink-0">
             <a
               href="#sandbox"
-              className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold h-10 px-5 rounded-lg border border-slate-700 transition-colors flex items-center gap-2"
+              className="bg-white/10 hover:bg-white/20 text-white text-xs font-semibold h-11 px-5 rounded-xl border border-white/20 transition-colors flex items-center gap-2 backdrop-blur-xs"
             >
               Try Interactive Sandbox
             </a>
             <a
               href="/login"
-              className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold h-10 px-6 rounded-lg shadow-md shadow-blue-600/20 transition-all flex items-center gap-2"
+              className="bg-white hover:bg-blue-50 text-blue-700 text-xs font-bold h-11 px-6 rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer"
             >
               Sign In to OneTrack
-              <ArrowRight className="size-3.5" />
+              <ArrowRight className="size-4" />
             </a>
           </div>
         </div>
       </div>
 
-      {/* Main Footer Links & Info Grid */}
-      <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-8 pb-10 border-b border-slate-800">
+      {/* Main Footer Links & Info Grid (White Theme) */}
+      <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8 bg-white">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-8 pb-10 border-b border-neutral-200">
           {/* Brand Column */}
           <div className="lg:col-span-2 space-y-4">
             <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-md shadow-blue-600/30">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-md shadow-blue-600/20">
                 <Layers className="size-5" />
               </div>
               <div className="flex flex-col text-left">
-                <span className="font-heading text-lg font-bold tracking-tight text-white">
+                <span className="font-heading text-lg font-bold tracking-tight text-neutral-900">
                   OneTrack
                 </span>
-                <span className="text-[9.5px] font-extrabold text-blue-400 uppercase tracking-widest leading-none">
+                <span className="text-[9.5px] font-extrabold text-blue-600 uppercase tracking-widest leading-none">
                   GlobX Enterprise Platform
                 </span>
               </div>
             </div>
 
-            <p className="text-xs text-slate-400 leading-relaxed max-w-sm">
+            <p className="text-xs text-neutral-600 leading-relaxed max-w-sm">
               The premier operations system for government tender discovery, end-to-end role execution, commercial cost management, and compliance auditing for enterprise consortiums.
             </p>
 
-            <div className="pt-2 flex items-center gap-3 text-[11px] text-slate-400">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-800 border border-slate-700 text-slate-300 font-medium">
-                <ShieldCheck className="size-3.5 text-blue-400" />
+            <div className="pt-1 flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-neutral-100 border border-neutral-200 text-neutral-700 font-semibold">
+                <ShieldCheck className="size-3.5 text-blue-600" />
                 ISO 27001 Certified
               </span>
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-800 border border-slate-700 text-slate-300 font-medium">
-                <CheckCircle2 className="size-3.5 text-emerald-400" />
-                GeM / CPPP Compliant
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-neutral-100 border border-neutral-200 text-neutral-700 font-semibold">
+                <CheckCircle2 className="size-3.5 text-emerald-600" />
+                GeM & CPPP Compliant
               </span>
             </div>
           </div>
 
           {/* Column 1: Core Modules */}
           <div className="space-y-3">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+            <h4 className="text-xs font-extrabold uppercase tracking-wider text-neutral-900">
               Platform Modules
             </h4>
-            <ul className="space-y-2 text-xs text-slate-400">
+            <ul className="space-y-2 text-xs text-neutral-600 font-medium">
               <li>
-                <a href="#features" className="hover:text-white transition-colors flex items-center gap-1.5">
+                <a href="#features" className="hover:text-blue-600 transition-colors">
                   Tender Discovery Engine
                 </a>
               </li>
               <li>
-                <a href="#features" className="hover:text-white transition-colors">
+                <a href="#features" className="hover:text-blue-600 transition-colors">
                   Qualification Verification
                 </a>
               </li>
               <li>
-                <a href="#features" className="hover:text-white transition-colors">
+                <a href="#features" className="hover:text-blue-600 transition-colors">
                   Commercial Pricing Sheet
                 </a>
               </li>
               <li>
-                <a href="#features" className="hover:text-white transition-colors">
+                <a href="#features" className="hover:text-blue-600 transition-colors">
                   EMD & Bank Guarantee Log
                 </a>
               </li>
               <li>
-                <a href="#security" className="hover:text-white transition-colors">
+                <a href="#security" className="hover:text-blue-600 transition-colors">
                   RBAC Audit Logging
                 </a>
               </li>
@@ -856,92 +870,95 @@ function Footer() {
 
           {/* Column 2: System Roles */}
           <div className="space-y-3">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+            <h4 className="text-xs font-extrabold uppercase tracking-wider text-neutral-900">
               Workflow Roles
             </h4>
-            <ul className="space-y-2 text-xs text-slate-400">
+            <ul className="space-y-2 text-xs text-neutral-600 font-medium">
               <li>
-                <a href="#workflow" className="hover:text-white transition-colors">
+                <a href="#workflow" className="hover:text-blue-600 transition-colors">
                   Bid Manager (Lifecycle Lead)
                 </a>
               </li>
               <li>
-                <a href="#workflow" className="hover:text-white transition-colors">
+                <a href="#workflow" className="hover:text-blue-600 transition-colors">
                   Bid Owner (Tender Lead)
                 </a>
               </li>
               <li>
-                <a href="#workflow" className="hover:text-white transition-colors">
+                <a href="#workflow" className="hover:text-blue-600 transition-colors">
                   Technical Reviewer
                 </a>
               </li>
               <li>
-                <a href="#workflow" className="hover:text-white transition-colors">
+                <a href="#workflow" className="hover:text-blue-600 transition-colors">
                   Finance Manager (Costing)
                 </a>
               </li>
               <li>
-                <a href="#workflow" className="hover:text-white transition-colors">
+                <a href="#workflow" className="hover:text-blue-600 transition-colors">
                   Operator (Portal Upload)
                 </a>
               </li>
             </ul>
           </div>
 
-          {/* Column 3: Quick Navigation & Legal */}
+          {/* Column 3: Quick Navigation */}
           <div className="space-y-3">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+            <h4 className="text-xs font-extrabold uppercase tracking-wider text-neutral-900">
               Quick Links
             </h4>
-            <ul className="space-y-2 text-xs text-slate-400">
+            <ul className="space-y-2 text-xs text-neutral-600 font-medium">
               <li>
-                <a href="/login" className="hover:text-white transition-colors font-semibold text-blue-400">
+                <a href="/login" className="hover:text-blue-700 transition-colors font-bold text-blue-600">
                   User Login Portal →
                 </a>
               </li>
               <li>
-                <a href="#sandbox" className="hover:text-white transition-colors">
+                <a href="#sandbox" className="hover:text-blue-600 transition-colors">
                   Interactive Role Sandbox
                 </a>
               </li>
               <li>
-                <a href="#security" className="hover:text-white transition-colors">
+                <a href="#security" className="hover:text-blue-600 transition-colors">
                   Security Governance
                 </a>
               </li>
               <li>
-                <a href="#analytics" className="hover:text-white transition-colors">
+                <a href="#analytics" className="hover:text-blue-600 transition-colors">
                   Analytics & Reports
                 </a>
               </li>
               <li>
-                <span className="text-slate-500 text-[11px]">System Status: Operational</span>
+                <span className="text-emerald-700 font-semibold text-[11px] flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                  System Operational
+                </span>
               </li>
             </ul>
           </div>
         </div>
 
         {/* Bottom Copyright & Version Bar */}
-        <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
+        <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-neutral-500">
           <div className="flex items-center gap-3 text-center sm:text-left">
             <p>© {currentYear} GlobX Technologies. All rights reserved.</p>
-            <span className="hidden sm:inline text-slate-700">•</span>
-            <span className="font-mono text-[11px] text-slate-400 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700/60">
+            <span className="hidden sm:inline text-neutral-300">•</span>
+            <span className="font-mono text-[11px] text-neutral-700 bg-neutral-100 px-2.5 py-0.5 rounded-md border border-neutral-200 font-semibold">
               v2.4.0 (Enterprise White)
             </span>
           </div>
 
-          <div className="flex flex-wrap gap-6 font-medium text-slate-400">
-            <a href="#security" className="hover:text-white transition-colors">
+          <div className="flex flex-wrap gap-6 font-semibold text-neutral-600">
+            <a href="#security" className="hover:text-blue-600 transition-colors">
               Security Policy
             </a>
-            <a href="#" className="hover:text-white transition-colors">
+            <a href="#" className="hover:text-blue-600 transition-colors">
               Terms of Service
             </a>
-            <a href="#" className="hover:text-white transition-colors">
+            <a href="#" className="hover:text-blue-600 transition-colors">
               Privacy Protocol
             </a>
-            <a href="#" className="hover:text-white transition-colors">
+            <a href="#" className="hover:text-blue-600 transition-colors">
               Audit Compliance
             </a>
           </div>
