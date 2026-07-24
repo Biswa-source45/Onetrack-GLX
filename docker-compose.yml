@@ -83,12 +83,18 @@ services:
 
   # Automated Auto-Update Service (Watchtower)
   watchtower:
-    image: containrrr/watchtower
+    image: containrrr/watchtower:latest
     container_name: onetrack-watchtower
     restart: unless-stopped
     volumes:
-      - //var/run/docker.sock:/var/run/docker.sock
-    command: --interval 60 --cleanup # Checks GHCR every 60s and automatically updates backend & frontend
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_POLL_INTERVAL=60
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_INCLUDE_RESTARTING=true
+      - WATCHTOWER_INCLUDE_STOPPED=true
+      - WATCHTOWER_REVIVE_STOPPED=true
+      - WATCHTOWER_LABEL_ENABLE=false
     networks:
       - onetrack-network
 
