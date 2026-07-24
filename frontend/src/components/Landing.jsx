@@ -348,36 +348,7 @@ function Hero({ onNavigate }) {
   )
 }
 
-/* ==========================================
-   3. SYSTEM ANALYTICS HIGHLIGHTS BAR
-   ========================================== */
-function AnalyticsHighlights() {
-  const stats = [
-    { label: "Total Tenders Tracked", value: "56", trend: "+12% this month", color: "text-blue-600", bg: "bg-blue-50", border: "border-blue-100" },
-    { label: "Active Bid Workspaces", value: "48", trend: "Live Stage Gates", color: "text-emerald-600", bg: "bg-emerald-50", border: "border-emerald-100" },
-    { label: "Awarded Tender Wins", value: "2", trend: "High-Value RFPs", color: "text-indigo-600", bg: "bg-indigo-50", border: "border-indigo-100" },
-    { label: "Role & Permission Guard", value: "100%", trend: "Enforced RBAC Locks", color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-100" },
-  ]
 
-  return (
-    <section id="analytics" className="py-10 bg-white border-b border-neutral-200/80">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {stats.map((s, idx) => (
-            <div key={idx} className={`p-5 rounded-2xl border ${s.border} ${s.bg} text-left space-y-1.5 shadow-2xs`}>
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-neutral-500 uppercase tracking-wider">{s.label}</span>
-                <ArrowUpRight className={`size-4 ${s.color}`} />
-              </div>
-              <p className={`text-3xl font-extrabold font-heading ${s.color}`}>{s.value}</p>
-              <p className="text-[11px] font-semibold text-neutral-600">{s.trend}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  )
-}
 
 /* ==========================================
    4. ENTERPRISE CAPABILITIES (FEATURES)
@@ -984,7 +955,6 @@ export default function Landing() {
     <div className="min-h-screen bg-white font-sans text-neutral-900 selection:bg-blue-100 selection:text-blue-900">
       <Navbar onNavigate={handleNavigate} />
       <Hero onNavigate={handleNavigate} />
-      <AnalyticsHighlights />
       <Features />
       <Workflow />
       <OperationsSandbox />
