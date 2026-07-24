@@ -87,8 +87,8 @@ services:
     container_name: onetrack-watchtower
     restart: unless-stopped
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    command: --interval 120 --cleanup # Checks GHCR every 120s and automatically updates backend & frontend
+      - //var/run/docker.sock:/var/run/docker.sock
+    command: --interval 60 --cleanup # Checks GHCR every 60s and automatically updates backend & frontend
     networks:
       - onetrack-network
 
