@@ -750,49 +750,199 @@ function Footer() {
   const currentYear = new Date().getFullYear()
 
   return (
-    <footer className="border-t border-neutral-200 bg-white">
-      <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-6 pb-8 border-b border-neutral-100">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-xs">
-              <Layers className="size-5" />
-            </div>
-            <div className="flex flex-col text-left">
-              <span className="font-heading text-base font-bold tracking-tight text-neutral-900">
-                OneTrack
+    <footer className="border-t border-neutral-200/80 bg-slate-900 text-neutral-300">
+      {/* Upper CTA Section */}
+      <div className="border-b border-slate-800 bg-slate-950/60 py-10 px-4 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-7xl flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="space-y-1 text-center md:text-left">
+            <h3 className="font-heading text-lg sm:text-xl font-bold text-white tracking-tight flex items-center justify-center md:justify-start gap-2">
+              <span>Ready to streamline your enterprise tender lifecycle?</span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-400 border border-emerald-500/20">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live Operational
               </span>
-              <span className="text-[9px] font-bold text-neutral-400 uppercase tracking-widest leading-none">
-                GlobX Enterprise Platform
-              </span>
-            </div>
+            </h3>
+            <p className="text-xs text-slate-400 max-w-xl">
+              Unify your tender discovery, technical qualification, EMD tracking, and commercial approval workflows into one secure dashboard.
+            </p>
           </div>
 
-          <p className="text-xs text-neutral-500 max-w-md leading-relaxed text-center md:text-left">
-            Centralizing government tender workflows, team role execution, and compliance tracking for bidding consortiums.
-          </p>
-
-          <div className="flex gap-4">
-            <a href="#" className="text-neutral-400 hover:text-neutral-900 transition-colors" aria-label="LinkedIn">
-              <svg className="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z" />
-                <rect x="2" y="9" width="4" height="12" />
-                <circle cx="4" cy="4" r="2" />
-              </svg>
+          <div className="flex items-center gap-3">
+            <a
+              href="#sandbox"
+              className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold h-10 px-5 rounded-lg border border-slate-700 transition-colors flex items-center gap-2"
+            >
+              Try Interactive Sandbox
+            </a>
+            <a
+              href="/login"
+              className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold h-10 px-6 rounded-lg shadow-md shadow-blue-600/20 transition-all flex items-center gap-2"
+            >
+              Sign In to OneTrack
+              <ArrowRight className="size-3.5" />
             </a>
           </div>
         </div>
+      </div>
 
-        <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-neutral-500">
-          <p>© {currentYear} GlobX Technologies. All rights reserved.</p>
-          <div className="flex gap-6 font-semibold">
-            <a href="#" className="hover:text-neutral-900 transition-colors">
+      {/* Main Footer Links & Info Grid */}
+      <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-8 pb-10 border-b border-slate-800">
+          {/* Brand Column */}
+          <div className="lg:col-span-2 space-y-4">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-md shadow-blue-600/30">
+                <Layers className="size-5" />
+              </div>
+              <div className="flex flex-col text-left">
+                <span className="font-heading text-lg font-bold tracking-tight text-white">
+                  OneTrack
+                </span>
+                <span className="text-[9.5px] font-extrabold text-blue-400 uppercase tracking-widest leading-none">
+                  GlobX Enterprise Platform
+                </span>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-400 leading-relaxed max-w-sm">
+              The premier operations system for government tender discovery, end-to-end role execution, commercial cost management, and compliance auditing for enterprise consortiums.
+            </p>
+
+            <div className="pt-2 flex items-center gap-3 text-[11px] text-slate-400">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-800 border border-slate-700 text-slate-300 font-medium">
+                <ShieldCheck className="size-3.5 text-blue-400" />
+                ISO 27001 Certified
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-800 border border-slate-700 text-slate-300 font-medium">
+                <CheckCircle2 className="size-3.5 text-emerald-400" />
+                GeM / CPPP Compliant
+              </span>
+            </div>
+          </div>
+
+          {/* Column 1: Core Modules */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+              Platform Modules
+            </h4>
+            <ul className="space-y-2 text-xs text-slate-400">
+              <li>
+                <a href="#features" className="hover:text-white transition-colors flex items-center gap-1.5">
+                  Tender Discovery Engine
+                </a>
+              </li>
+              <li>
+                <a href="#features" className="hover:text-white transition-colors">
+                  Qualification Verification
+                </a>
+              </li>
+              <li>
+                <a href="#features" className="hover:text-white transition-colors">
+                  Commercial Pricing Sheet
+                </a>
+              </li>
+              <li>
+                <a href="#features" className="hover:text-white transition-colors">
+                  EMD & Bank Guarantee Log
+                </a>
+              </li>
+              <li>
+                <a href="#security" className="hover:text-white transition-colors">
+                  RBAC Audit Logging
+                </a>
+              </li>
+            </ul>
+          </div>
+
+          {/* Column 2: System Roles */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+              Workflow Roles
+            </h4>
+            <ul className="space-y-2 text-xs text-slate-400">
+              <li>
+                <a href="#workflow" className="hover:text-white transition-colors">
+                  Bid Manager (Lifecycle Lead)
+                </a>
+              </li>
+              <li>
+                <a href="#workflow" className="hover:text-white transition-colors">
+                  Bid Owner (Tender Lead)
+                </a>
+              </li>
+              <li>
+                <a href="#workflow" className="hover:text-white transition-colors">
+                  Technical Reviewer
+                </a>
+              </li>
+              <li>
+                <a href="#workflow" className="hover:text-white transition-colors">
+                  Finance Manager (Costing)
+                </a>
+              </li>
+              <li>
+                <a href="#workflow" className="hover:text-white transition-colors">
+                  Operator (Portal Upload)
+                </a>
+              </li>
+            </ul>
+          </div>
+
+          {/* Column 3: Quick Navigation & Legal */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200">
+              Quick Links
+            </h4>
+            <ul className="space-y-2 text-xs text-slate-400">
+              <li>
+                <a href="/login" className="hover:text-white transition-colors font-semibold text-blue-400">
+                  User Login Portal →
+                </a>
+              </li>
+              <li>
+                <a href="#sandbox" className="hover:text-white transition-colors">
+                  Interactive Role Sandbox
+                </a>
+              </li>
+              <li>
+                <a href="#security" className="hover:text-white transition-colors">
+                  Security Governance
+                </a>
+              </li>
+              <li>
+                <a href="#analytics" className="hover:text-white transition-colors">
+                  Analytics & Reports
+                </a>
+              </li>
+              <li>
+                <span className="text-slate-500 text-[11px]">System Status: Operational</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        {/* Bottom Copyright & Version Bar */}
+        <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
+          <div className="flex items-center gap-3 text-center sm:text-left">
+            <p>© {currentYear} GlobX Technologies. All rights reserved.</p>
+            <span className="hidden sm:inline text-slate-700">•</span>
+            <span className="font-mono text-[11px] text-slate-400 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700/60">
+              v2.4.0 (Enterprise White)
+            </span>
+          </div>
+
+          <div className="flex flex-wrap gap-6 font-medium text-slate-400">
+            <a href="#security" className="hover:text-white transition-colors">
+              Security Policy
+            </a>
+            <a href="#" className="hover:text-white transition-colors">
               Terms of Service
             </a>
-            <a href="#" className="hover:text-neutral-900 transition-colors">
-              Privacy Policy
+            <a href="#" className="hover:text-white transition-colors">
+              Privacy Protocol
             </a>
-            <a href="#" className="hover:text-neutral-900 transition-colors">
-              Security Governance
+            <a href="#" className="hover:text-white transition-colors">
+              Audit Compliance
             </a>
           </div>
         </div>
