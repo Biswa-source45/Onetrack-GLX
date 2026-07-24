@@ -10,6 +10,7 @@ AND (
     (p.resource = 'bid') OR
     (p.resource = 'task') OR
     (p.resource = 'document') OR
+    (p.resource = 'user' AND p.action = 'view') OR
     (p.resource = 'qualification' AND p.action IN ('view', 'override')) OR
     (p.resource = 'quotation' AND p.action IN ('create', 'view', 'edit')) OR
     (p.resource = 'workflow' AND p.action = 'transition') OR

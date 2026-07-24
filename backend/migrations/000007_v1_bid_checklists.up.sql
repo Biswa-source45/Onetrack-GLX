@@ -5,7 +5,7 @@ ALTER TABLE bid.bid_workspaces
     ADD COLUMN IF NOT EXISTS technical_manager_id UUID REFERENCES auth.users(id);
 
 -- 2. Bid-scoped checklists (simpler than task checklists — owned directly by the bid)
-CREATE TABLE bid.bid_checklists (
+CREATE TABLE IF NOT EXISTS bid.bid_checklists (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     bid_id      UUID NOT NULL REFERENCES bid.bid_workspaces(id) ON DELETE CASCADE,
     title       TEXT NOT NULL,
@@ -16,4 +16,5 @@ CREATE TABLE bid.bid_checklists (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_bid_checklists_bid ON bid.bid_checklists(bid_id);
+CREATE INDEX IF NOT EXISTS idx_bid_checklists_bid ON bid.bid_checklists(bid_id);
+

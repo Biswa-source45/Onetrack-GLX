@@ -352,7 +352,7 @@ export default function Dashboard() {
               <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
                 <Layers className="size-3.5" />
               </div>
-              <span className="font-heading text-sm font-semibold text-foreground">OneTrack GeM AI</span>
+              <span className="font-heading text-sm font-semibold text-foreground">OneTrack</span>
             </div>
           </div>
 

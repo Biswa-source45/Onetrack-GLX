@@ -186,7 +186,7 @@ export default function Login() {
               <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600 text-white shadow-xs">
                 <Layers className="size-3.5" />
               </div>
-              <span className="font-heading text-sm font-bold tracking-tight text-neutral-900">Onetrack GeM AI</span>
+              <span className="font-heading text-sm font-bold tracking-tight text-neutral-900">OneTrack</span>
             </div>
             
             <div className="w-10 opacity-0 pointer-events-none" />
