@@ -14,3 +14,7 @@ if "%ERRORLEVEL%"=="1" (
 docker compose pull
 docker compose up -d
 
+:: Start continuous auto-pull sync daemon minimized in background
+start /min "" "%~dp0auto_pull.bat"
+
+
