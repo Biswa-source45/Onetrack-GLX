@@ -915,8 +915,9 @@ function Footer() {
             <p>© {currentYear} GlobX Technologies. All rights reserved.</p>
             <span className="hidden sm:inline text-neutral-300">•</span>
             <span className="font-mono text-[11px] text-neutral-700 bg-neutral-100 px-2.5 py-0.5 rounded-md border border-neutral-200 font-semibold">
-              v2.4.1 (Auto-Deploy Verified)
+              v2.4.2 (Zero-Touch Auto-Deploy Confirmed)
             </span>
+
           </div>
 
           <div className="flex flex-wrap gap-6 font-semibold text-neutral-600">
