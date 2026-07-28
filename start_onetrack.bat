@@ -11,4 +11,6 @@ if "%ERRORLEVEL%"=="1" (
 )
 
 :: Run Docker Compose silently in background
+docker compose pull
 docker compose up -d
+
