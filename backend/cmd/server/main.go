@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	alertHandler "github.com/onetrack/backend/internal/alert/handler"
+	alertRepo "github.com/onetrack/backend/internal/alert/repository"
+	alertService "github.com/onetrack/backend/internal/alert/service"
 	authHandler "github.com/onetrack/backend/internal/auth/handler"
 	authRepo "github.com/onetrack/backend/internal/auth/repository"
 	authService "github.com/onetrack/backend/internal/auth/service"
@@ -20,6 +23,7 @@ import (
 	"github.com/onetrack/backend/internal/middleware"
 	"github.com/onetrack/backend/internal/platform/config"
 	"github.com/onetrack/backend/internal/platform/database"
+	emailService "github.com/onetrack/backend/internal/platform/email"
 	redisClient "github.com/onetrack/backend/internal/platform/redis"
 	taskHandler "github.com/onetrack/backend/internal/task/handler"
 	taskRepo "github.com/onetrack/backend/internal/task/repository"
@@ -61,10 +65,13 @@ func main() {
 	defer rdb.Close()
 	log.Println("Connected to Redis")
 
+	// Initialize email & alert module
+	emailSvc := emailService.NewEmailService(cfg.Email)
+
 	// Initialize services
 	jwtSvc := authService.NewJWTService(cfg.JWT, rdb)
 	authRepository := authRepo.NewPostgresAuthRepository(dbPool)
-	authSvc := authService.NewAuthService(authRepository, jwtSvc)
+	authSvc := authService.NewAuthService(authRepository, jwtSvc, emailSvc)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(jwtSvc)
@@ -95,9 +102,15 @@ func main() {
 	userHdlr := userHandler.NewUserHandler(userSvc)
 	userHandler.RegisterUserRoutes(v1, userHdlr, authMiddleware)
 
+	// Initialize alert module
+	alertRepository := alertRepo.NewPostgresAlertRepository(dbPool)
+	alertSvc := alertService.NewAlertService(alertRepository, userRepository, emailSvc)
+	alertHdlr := alertHandler.NewAlertHandler(alertSvc)
+	alertHandler.RegisterAlertRoutes(v1, alertHdlr, authMiddleware)
+
 	// Initialize bid module
 	bidRepository := bidRepo.NewPostgresBidRepository(dbPool)
-	bidSvc := bidService.NewBidService(bidRepository)
+	bidSvc := bidService.NewBidService(bidRepository, alertSvc)
 	bidHdlr := bidHandler.NewBidHandler(bidSvc)
 	bidHandler.RegisterBidRoutes(v1, bidHdlr, authMiddleware)
 

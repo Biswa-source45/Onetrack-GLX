@@ -141,6 +141,66 @@ func (h *AuthHandler) ForceReset(c *gin.Context) {
 	response.Success(c, http.StatusOK, "Password reset successfully", nil)
 }
 
+func (h *AuthHandler) ForgotPassword(c *gin.Context) {
+	var req domain.ForgotPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid email address", err.Error())
+		return
+	}
+
+	err := h.authService.ForgotPassword(c.Request.Context(), req.Email)
+	if err != nil {
+		if errors.Is(err, service.ErrUserNotFound) {
+			response.NotFound(c, "No account registered with this email address")
+			return
+		}
+		response.InternalError(c, "Failed to process forgot password request")
+		return
+	}
+
+	response.Success(c, http.StatusOK, "OTP sent to your email address", nil)
+}
+
+func (h *AuthHandler) VerifyOTP(c *gin.Context) {
+	var req domain.VerifyOTPRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request payload", err.Error())
+		return
+	}
+
+	err := h.authService.VerifyOTP(c.Request.Context(), req.Email, req.OTP)
+	if err != nil {
+		if errors.Is(err, service.ErrOTPInvalid) {
+			response.BadRequest(c, "Invalid or expired OTP code", nil)
+			return
+		}
+		response.InternalError(c, "Failed to verify OTP")
+		return
+	}
+
+	response.Success(c, http.StatusOK, "OTP code verified successfully", nil)
+}
+
+func (h *AuthHandler) ResetPasswordOTP(c *gin.Context) {
+	var req domain.ResetPasswordOTPRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request payload", err.Error())
+		return
+	}
+
+	err := h.authService.ResetPasswordWithOTP(c.Request.Context(), req.Email, req.OTP, req.NewPassword)
+	if err != nil {
+		if errors.Is(err, service.ErrOTPInvalid) {
+			response.BadRequest(c, "Invalid or expired OTP code", nil)
+			return
+		}
+		response.InternalError(c, "Failed to reset password")
+		return
+	}
+
+	response.Success(c, http.StatusOK, "Password reset successfully. You can now login.", nil)
+}
+
 func extractTokenFromHeader(c *gin.Context) string {
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {

@@ -25,8 +25,11 @@ type BidRepository interface {
 
 	// Bid-scoped checklists
 	BulkInsertChecklists(ctx context.Context, bidID string, titles []string) error
+	BulkInsertChecklistsWithGroup(ctx context.Context, bidID string, titles []string, group string) error
 	GetChecklists(ctx context.Context, bidID string) ([]BidChecklist, error)
+	GetChecklistsByGroup(ctx context.Context, bidID string, group string) ([]BidChecklist, error)
 	AddChecklist(ctx context.Context, bidID string, title string, sortOrder int) (*BidChecklist, error)
+	AddChecklistWithGroup(ctx context.Context, bidID string, title string, sortOrder int, group string) (*BidChecklist, error)
 	UpdateChecklist(ctx context.Context, checklistID string, title *string, sortOrder *int) error
 	DeleteChecklist(ctx context.Context, checklistID string) error
 	ReorderChecklists(ctx context.Context, items []ReorderChecklistItem) error

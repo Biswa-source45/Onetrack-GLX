@@ -12,6 +12,7 @@ type UserRepository interface {
 	List(ctx context.Context, params ListUsersParams) ([]authDomain.User, int, error)
 	Update(ctx context.Context, id string, req UpdateUserRequest) error
 	UpdateStatus(ctx context.Context, id string, isActive bool) error
+	Delete(ctx context.Context, id string) error
 	AssignRoles(ctx context.Context, userID string, roleNames []string, assignedBy string) error
 	SetPermissionOverrides(ctx context.Context, userID string, allow []string, deny []string) error
 	GetRolesByUserID(ctx context.Context, userID string) ([]string, error)
@@ -27,6 +28,7 @@ type UserService interface {
 	ListUsers(ctx context.Context, params ListUsersParams) (*UserListResponse, error)
 	UpdateUser(ctx context.Context, id string, req UpdateUserRequest) (*UserResponse, error)
 	UpdateStatus(ctx context.Context, id string, req UpdateStatusRequest) error
+	DeleteUser(ctx context.Context, id string, requestingUserID string) error
 	UpdateRoles(ctx context.Context, userID string, req UpdateRolesRequest, assignedBy string) error
 	UpdatePermissions(ctx context.Context, userID string, req UpdatePermissionsRequest) error
 }

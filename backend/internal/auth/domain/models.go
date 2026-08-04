@@ -64,10 +64,14 @@ type LoginResponse struct {
 }
 
 type UserInfo struct {
-	ID          string   `json:"id"`
-	Username    string   `json:"username"`
-	Roles       []string `json:"roles"`
-	Permissions []string `json:"permissions"`
+	ID           string   `json:"id"`
+	Username     string   `json:"username"`
+	FullName     string   `json:"full_name"`
+	Email        string   `json:"email"`
+	EmployeeCode string   `json:"employee_code"`
+	Department   string   `json:"department"`
+	Roles        []string `json:"roles"`
+	Permissions  []string `json:"permissions"`
 }
 
 type RefreshRequest struct {
@@ -89,4 +93,19 @@ type TokenClaims struct {
 	Username    string   `json:"username"`
 	Roles       []string `json:"roles"`
 	Permissions []string `json:"permissions"`
+}
+
+type ForgotPasswordRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+type VerifyOTPRequest struct {
+	Email string `json:"email" binding:"required,email"`
+	OTP   string `json:"otp" binding:"required"`
+}
+
+type ResetPasswordOTPRequest struct {
+	Email       string `json:"email" binding:"required,email"`
+	OTP         string `json:"otp" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=8"`
 }

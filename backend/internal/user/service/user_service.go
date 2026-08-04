@@ -147,6 +147,24 @@ func (s *userService) UpdateStatus(ctx context.Context, id string, req domain.Up
 	return s.repo.UpdateStatus(ctx, id, req.IsActive)
 }
 
+func (s *userService) DeleteUser(ctx context.Context, id string, requestingUserID string) error {
+	if id == requestingUserID {
+		return fmt.Errorf("cannot delete your own account")
+	}
+
+	user, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return ErrUserNotFound
+	}
+
+	// Prevent deletion of system super admin seeded accounts
+	if user.Username == "Sadmin" {
+		return fmt.Errorf("cannot delete the system super admin account")
+	}
+
+	return s.repo.Delete(ctx, id)
+}
+
 func (s *userService) UpdateRoles(ctx context.Context, userID string, req domain.UpdateRolesRequest, assignedBy string) error {
 	_, err := s.repo.GetByID(ctx, userID)
 	if err != nil {

@@ -254,6 +254,8 @@ function ManualForm({ onClose, onCreated, onBack }) {
         ...form,
         estimated_value: form.estimated_value ? Number(form.estimated_value) : undefined,
         emd_amount:      form.emd_amount ? Number(form.emd_amount) : undefined,
+        start_date:      form.opening_date ? new Date(form.opening_date).toISOString() : undefined,
+        end_date:        form.closing_date ? new Date(form.closing_date).toISOString() : undefined,
         opening_date:    form.opening_date ? new Date(form.opening_date).toISOString() : undefined,
         closing_date:    form.closing_date ? new Date(form.closing_date).toISOString() : undefined,
       }
@@ -461,11 +463,11 @@ function ManualForm({ onClose, onCreated, onBack }) {
             <h3 className="text-sm font-semibold text-foreground">Timeline</h3>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Opening Date">
+            <Field label="Start Date">
               <Input type="date" value={form.opening_date}
                 onChange={(e) => set('opening_date', e.target.value)} className={inputCls()} />
             </Field>
-            <Field label="Closing Date">
+            <Field label="End Date">
               <Input type="date" value={form.closing_date}
                 onChange={(e) => set('closing_date', e.target.value)} className={inputCls()} />
             </Field>

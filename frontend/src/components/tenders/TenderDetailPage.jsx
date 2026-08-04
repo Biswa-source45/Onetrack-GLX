@@ -7,7 +7,7 @@ import {
   XCircle, Edit2, Save, X, MoreHorizontal, Calendar,
   FileText, Activity, History, UserPlus, Target, ChevronDown,
   Trash2, Trophy, Search, ShieldCheck, Share2, Coins, Eye,
-  Send, Upload, Hourglass, Ban, ArrowRight
+  Send, Upload, Hourglass, Ban, ArrowRight, Layers, Lock, Check, Sparkles, AlertTriangle
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -34,16 +34,55 @@ import { TaskDashboard } from '../tasks/TaskDashboard'
 import { ChecklistTab } from './ChecklistTab'
 import { listUsers } from '../../services/users'
 import { EditTenderDialog } from './EditTenderDialog'
+import { DynamicStageWorkspace, checkStageState } from './StageWorkspaces'
 
-function fmt(dt) {
-  if (!dt) return '—'
+function isValidDate(dt) {
+  if (!dt) return false
+  const d = new Date(dt)
+  if (isNaN(d.getTime())) return false
+  if (d.getFullYear() <= 1970) return false
+  return true
+}
+
+function fmt(dt, fallback = '—') {
+  if (!isValidDate(dt)) return fallback
   return new Date(dt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 }
+
+function formatFullDateTime(dt) {
+  if (!isValidDate(dt)) return '—'
+  const d = new Date(dt)
+  return d.toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  })
+}
+
+function getBidStartDate(bid) {
+  if (!bid) return 'Not Specified'
+  if (isValidDate(bid.start_date)) return fmt(bid.start_date)
+  if (isValidDate(bid.opening_date)) return fmt(bid.opening_date)
+  return 'Not Specified'
+}
+
+function getBidEndDate(bid) {
+  if (!bid) return 'Not Specified'
+  if (isValidDate(bid.end_date)) return fmt(bid.end_date)
+  if (isValidDate(bid.closing_date)) return fmt(bid.closing_date)
+  if (isValidDate(bid.submission_deadline)) return fmt(bid.submission_deadline)
+  if (isValidDate(bid.target_month_date)) return fmt(bid.target_month_date)
+  return 'Not Specified'
+}
+
 function fmtMoney(v) {
   if (!v && v !== 0) return '—'
   if (v >= 10000000) return `₹${(v/10000000).toFixed(1)}Cr`
   if (v >= 100000) return `₹${(v/100000).toFixed(1)}L`
-  return `₹${v.toLocaleString('en-IN')}`
+  return `₹${Number(v).toLocaleString('en-IN')}`
 }
 
 function StageBadge({ stage }) {
@@ -188,25 +227,32 @@ const STAGE_ICONS = {
   CHECKLIST_UPDATE:       CheckSquare,
 }
 
-function formatDuration(ms) {
-  if (ms === null || ms < 0) return '—'
-  const seconds = Math.floor(ms / 1000)
-  const minutes = Math.floor(seconds / 60)
-  const hours = Math.floor(minutes / 60)
-  const days = Math.floor(hours / 24)
-
-  if (days > 0) {
-    const remainingHours = hours % 24
-    return `${days}d ${remainingHours}h`
+function getUserDisplayName(actor) {
+  if (!actor) {
+    const active = tokenStorage.getUser()
+    return active?.full_name || active?.username || 'Super Admin'
   }
-  if (hours > 0) {
-    const remainingMinutes = minutes % 60
-    return `${hours}h ${remainingMinutes}m`
+  if (typeof actor === 'string') {
+    if (['user', 'User', 'Anonymous', 'Current User', ''].includes(actor.trim())) {
+      const active = tokenStorage.getUser()
+      return active?.full_name || active?.username || 'Super Admin'
+    }
+    return actor
   }
-  if (minutes > 0) {
-    return `${minutes}m`
+  if (typeof actor === 'object') {
+    const fn = actor.full_name || actor.name || actor.displayName
+    if (fn && !['Anonymous', 'User', 'Current User', 'user'].includes(fn.trim())) {
+      return fn
+    }
+    if (actor.username && !['user', 'Anonymous', 'unknown'].includes(actor.username.trim())) {
+      return actor.username
+    }
+    if (actor.email) {
+      return actor.email.split('@')[0]
+    }
   }
-  return `${seconds}s`
+  const active = tokenStorage.getUser()
+  return active?.full_name || active?.username || 'Super Admin'
 }
 
 function StageDetailCard({ entry, isLatest }) {
@@ -215,7 +261,7 @@ function StageDetailCard({ entry, isLatest }) {
   const IconComponent = STAGE_ICONS[entry.to_stage] || Clock
   const stageColorClass = STAGE_COLORS[entry.to_stage] ?? 'bg-gray-100 text-gray-700 border-gray-200'
 
-  const displayName = entry.transitioned_by?.full_name || entry.transitioned_by?.username || 'System'
+  const displayName = getUserDisplayName(entry.transitioned_by)
 
   return (
     <div className="rounded-xl border border-border bg-card shadow-sm p-4 space-y-4 transition-all duration-300">
@@ -253,39 +299,20 @@ function StageDetailCard({ entry, isLatest }) {
       {/* Time Audit */}
       <div className="grid grid-cols-2 gap-3 pt-1 text-xs">
         <div>
-          <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">Entered Stage</span>
-          <span className="font-medium text-foreground">{fmt(entry.created_at)}</span>
-          <span className="text-[9px] text-muted-foreground block font-mono mt-0.5">
-            {new Date(entry.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-          </span>
+          <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">Action Timestamp</span>
+          <span className="font-medium text-foreground text-[11px] font-mono">{formatFullDateTime(entry.created_at)}</span>
         </div>
         <div>
-          <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">
-            {isLatest ? 'Time Active' : 'Time in Stage'}
+          <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">Actioned By</span>
+          <span className="font-semibold text-primary text-xs">
+            {displayName}
           </span>
-          <span className="font-semibold text-primary">
-            {entry.durationMs !== null ? formatDuration(entry.durationMs) : '—'}
-          </span>
-        </div>
-      </div>
-
-      {/* Transition Actor */}
-      <div className="pt-3 border-t border-border/60 space-y-1">
-        <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">Actioned By</span>
-        <div className="flex items-center gap-2 bg-muted/20 p-2 rounded-md border border-border/40">
-          <div className="size-7 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary shrink-0">
-            {displayName.charAt(0).toUpperCase()}
-          </div>
-          <div className="min-w-0 text-xs">
-            <p className="font-semibold text-foreground truncate">{displayName}</p>
-            <p className="text-[9px] text-muted-foreground font-mono truncate">ID: {entry.transitioned_by?.id ?? 'system-auto'}</p>
-          </div>
         </div>
       </div>
 
       {/* Reason */}
       <div className="pt-3 border-t border-border/60 space-y-1">
-        <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">Transition Reason</span>
+        <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">Transition / Action Remarks</span>
         <div className="bg-muted/10 p-2.5 rounded-md border border-border/40 min-h-[50px] flex items-start gap-1.5">
           <FileText className="size-3.5 text-muted-foreground shrink-0 mt-0.5" />
           <p className="text-xs text-foreground italic leading-normal whitespace-pre-wrap">
@@ -304,53 +331,36 @@ function StageHistoryTab({ bidId }) {
   const [hoveredIndex, setHoveredIndex] = useState(null)
 
   useEffect(() => {
-    getBidStageHistory(bidId).then(r => {
-      let backendData = []
-      if (r.ok) {
-        backendData = r.data ?? []
-      }
+    function loadHistory() {
+      getBidStageHistory(bidId).then(r => {
+        let backendData = r.ok ? (r.data ?? []) : []
+        const localHistoryKey = `onetrack_checklist_history_${bidId}`
+        const localEvents = JSON.parse(localStorage.getItem(localHistoryKey) || '[]')
 
-      // Read local checklist events
-      const localHistoryKey = `onetrack_checklist_history_${bidId}`
-      const localEvents = JSON.parse(localStorage.getItem(localHistoryKey) || '[]')
+        // Reverse chronological order: Latest / Newest events first
+        const combined = [...backendData, ...localEvents].sort(
+          (a, b) => new Date(b.created_at) - new Date(a.created_at)
+        )
 
-      // Merge and sort chronologically (oldest to newest)
-      const combined = [...backendData, ...localEvents].sort(
-        (a, b) => new Date(a.created_at) - new Date(b.created_at)
-      )
+        setHistory(combined)
+        if (combined.length > 0) {
+          setSelectedIndex(0)
+        }
+        setLoading(false)
+      })
+    }
 
-      setHistory(combined)
-      if (combined.length > 0) {
-        setSelectedIndex(combined.length - 1)
-      }
-      setLoading(false)
-    })
+    loadHistory()
+    window.addEventListener('onetrack_history_updated', loadHistory)
+    return () => window.removeEventListener('onetrack_history_updated', loadHistory)
   }, [bidId])
 
   if (loading) return <div className="flex justify-center py-8"><Loader2 className="size-5 animate-spin text-muted-foreground"/></div>
   if (history.length === 0) return <p className="text-sm text-muted-foreground py-4 text-center">No stage history yet.</p>
 
-  // Compute duration spent in each stage
-  const historyWithDuration = history.map((h, i) => {
-    const currentEntryTime = new Date(h.created_at).getTime()
-    let durationMs = null
-
-    if (i < history.length - 1) {
-      const nextEntryTime = new Date(history[i + 1].created_at).getTime()
-      durationMs = nextEntryTime - currentEntryTime
-    } else {
-      durationMs = Date.now() - currentEntryTime
-    }
-
-    return {
-      ...h,
-      durationMs,
-    }
-  })
-
-  const activeIndex = hoveredIndex !== null ? hoveredIndex : (selectedIndex !== null ? selectedIndex : history.length - 1)
-  const activeEntry = historyWithDuration[activeIndex]
-  const isLatestActive = activeIndex === history.length - 1
+  const activeIndex = hoveredIndex !== null ? hoveredIndex : (selectedIndex !== null ? selectedIndex : 0)
+  const activeEntry = history[activeIndex]
+  const isLatestActive = activeIndex === 0
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-5 gap-6 items-start">
@@ -360,11 +370,10 @@ function StageHistoryTab({ bidId }) {
         <div className="absolute left-[29px] top-4 bottom-4 w-0.5 bg-border/60" />
 
         <div className="space-y-4">
-          {historyWithDuration.map((h, i) => {
+          {history.map((h, i) => {
             const isSelected = i === activeIndex
-            const isLatest = i === history.length - 1
+            const isLatest = i === 0
             const IconComponent = STAGE_ICONS[h.to_stage] || Clock
-            const stageColorClass = STAGE_COLORS[h.to_stage] ?? 'bg-gray-100 text-gray-700'
 
             return (
               <motion.div
@@ -415,9 +424,6 @@ function StageHistoryTab({ bidId }) {
                       )}
                       <StageBadge stage={h.to_stage} />
                     </div>
-                    <span className="text-[10px] text-muted-foreground font-medium">
-                      {fmt(h.created_at)}
-                    </span>
                   </div>
 
                   {h.transition_reason && (
@@ -428,14 +434,12 @@ function StageHistoryTab({ bidId }) {
 
                   <div className="flex items-center justify-between mt-2 text-[10px] text-muted-foreground border-t border-border/30 pt-1.5">
                     <span>
-                      By {h.transitioned_by?.full_name && h.transitioned_by?.full_name !== 'Anonymous' ? h.transitioned_by.full_name : (h.transitioned_by?.username || 'System')}
+                      By {getUserDisplayName(h.transitioned_by)}
                     </span>
-                    {h.durationMs !== null && (
-                      <span className="flex items-center gap-1 font-medium text-primary bg-primary/5 px-1.5 py-0.5 rounded">
-                        <Clock className="size-2.5" />
-                        {formatDuration(h.durationMs)}
-                      </span>
-                    )}
+                    <span className="flex items-center gap-1 font-mono text-[9px] text-primary/80 font-medium bg-primary/5 px-2 py-0.5 rounded border border-primary/10">
+                      <Clock className="size-2.5" />
+                      {formatFullDateTime(h.created_at)}
+                    </span>
                   </div>
                 </div>
               </motion.div>
@@ -555,6 +559,543 @@ function MembersTab({ bid, onRefresh }) {
             )}
           </motion.div>
         ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Stage Sections Tab (Interactive 12-Stage Lifecycle Grid & Workspace) ─────
+function StageSectionsTab({ bid, onRefresh, onAdvance }) {
+  const currentIdx = WORKFLOW_STAGES_ORDERED.indexOf(bid.workflow_stage)
+  const isTerminal = ['WON', 'LOST', 'CANCELLED', 'ARCHIVED'].includes(bid.bid_status)
+  
+  // Selected stage state (defaults to current active stage of the tender)
+  const [selectedStage, setSelectedStage] = useState(bid.workflow_stage)
+  const selectedIdx = WORKFLOW_STAGES_ORDERED.indexOf(selectedStage)
+
+  const selectedGuide = STAGE_GUIDE[selectedStage] || {
+    title: STAGE_LABELS[selectedStage] || selectedStage,
+    description: 'Execute stage requirements.',
+    responsible: 'Bid Team',
+    actions: [],
+    note: '',
+  }
+
+  // Action states for selected stage
+  const [checkedActions, setCheckedActions] = useState({})
+  const [stageNotes, setStageNotes] = useState('')
+  const [updatingStage, setUpdatingStage] = useState(false)
+
+  const isSelectedCompleted = selectedIdx < currentIdx || (isTerminal && selectedIdx <= currentIdx)
+  const isSelectedCurrent = selectedIdx === currentIdx && !isTerminal
+
+  async function handleSetCurrentStage(targetStage) {
+    setUpdatingStage(true)
+    try {
+      const res = await transitionBidStage(bid.id, {
+        target_stage: targetStage,
+        remarks: `Navigated directly to stage: ${STAGE_LABELS[targetStage] || targetStage}`,
+      })
+      if (res.ok) {
+        toast.success(`Workflow stage updated to ${STAGE_LABELS[targetStage] || targetStage}`)
+        if (onRefresh) onRefresh()
+      } else {
+        toast.error(res.error?.message ?? 'Failed to update workflow stage')
+      }
+    } catch {
+      toast.error('Network error')
+    } finally {
+      setUpdatingStage(false)
+    }
+  }
+
+  const toggleAction = (idx) => {
+    setCheckedActions(prev => ({
+      ...prev,
+      [`${selectedStage}_${idx}`]: !prev[`${selectedStage}_${idx}`]
+    }))
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header Info */}
+      <div className="flex items-center justify-between gap-4 flex-wrap bg-card border border-border p-4 rounded-xl">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <Layers className="size-4 text-primary" /> Tender Lifecycle Stage Sections (1 to 12)
+          </h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Click on <strong>any stage section below</strong> to view requirements, manage stage tasks, or set the active workflow stage.
+          </p>
+        </div>
+        <div className="flex items-center gap-3 text-xs flex-wrap">
+          <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
+            <span className="size-2 rounded-full bg-emerald-500" /> Completed
+          </span>
+          <span className="flex items-center gap-1 text-orange-600 dark:text-orange-400 font-semibold">
+            <span className="size-2 rounded-full bg-orange-500 animate-pulse" /> Marked for Review
+          </span>
+          <span className="flex items-center gap-1 text-primary font-medium">
+            <span className="size-2 rounded-full bg-primary animate-pulse" /> Workflow Stage
+          </span>
+        </div>
+      </div>
+
+      {/* 12 Stage Selector Bar / Row */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Select Stage Section:</span>
+          <span className="text-xs text-primary font-medium">Stage {selectedIdx + 1} of 12 Selected</span>
+        </div>
+        
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
+          {WORKFLOW_STAGES_ORDERED.map((stageKey, idx) => {
+            const { isCompleted, isCurrent: isCurrentWorkflow, isLocked, isInReview } = checkStageState(bid, stageKey)
+            const isSelected = selectedStage === stageKey
+            const guide = STAGE_GUIDE[stageKey]
+
+            return (
+              <button
+                key={stageKey}
+                type="button"
+                onClick={() => {
+                  if (isLocked) {
+                    toast.error(`Stage ${idx + 1} is locked. Complete preceding stages first.`)
+                  }
+                  setSelectedStage(stageKey)
+                }}
+                className={`flex flex-col items-start p-2.5 rounded-xl border text-left transition-all relative overflow-hidden group ${
+                  isSelected
+                    ? isInReview
+                      ? 'border-orange-500 ring-2 ring-orange-500/60 bg-gradient-to-br from-amber-500/20 via-orange-500/25 to-rose-500/20 shadow-md'
+                      : isCompleted
+                      ? 'border-emerald-500 ring-2 ring-emerald-500/40 bg-emerald-50/60 dark:bg-emerald-950/30 shadow-sm'
+                      : isCurrentWorkflow
+                      ? 'border-primary ring-2 ring-primary/40 bg-primary/10 shadow-sm'
+                      : 'border-primary ring-2 ring-primary/20 bg-primary/10 shadow-sm'
+                    : isInReview
+                    ? 'border-orange-400/90 bg-gradient-to-br from-amber-500/10 via-orange-500/15 to-rose-500/10 dark:from-amber-950/40 dark:via-orange-950/40 dark:to-rose-950/40 dark:border-orange-700 shadow-xs hover:border-orange-500'
+                    : isCompleted
+                    ? 'border-emerald-200 bg-emerald-50/40 hover:bg-emerald-50 dark:bg-emerald-950/15 dark:border-emerald-900/40'
+                    : isCurrentWorkflow
+                    ? 'border-indigo-300 bg-indigo-50/40 hover:bg-indigo-50 dark:bg-indigo-950/20'
+                    : isLocked
+                    ? 'border-amber-200/70 bg-amber-50/20 opacity-80 hover:opacity-100 dark:bg-amber-950/10 dark:border-amber-900/40'
+                    : 'border-border/60 bg-card hover:bg-muted/40'
+                }`}
+              >
+                <div className="flex items-center justify-between w-full mb-1">
+                  <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${
+                    isInReview
+                      ? 'bg-gradient-to-r from-orange-500 to-rose-500 text-white shadow-xs'
+                      : isLocked
+                      ? 'bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-200'
+                      : isCompleted
+                      ? 'bg-emerald-500 text-white'
+                      : isCurrentWorkflow
+                      ? 'bg-primary text-white'
+                      : 'bg-muted text-muted-foreground'
+                  }`}>
+                    #{idx + 1}
+                  </span>
+
+                  {isInReview ? (
+                    <AlertTriangle className="size-3.5 text-orange-600 dark:text-orange-400 animate-pulse" />
+                  ) : isLocked ? (
+                    <Lock className="size-3.5 text-amber-500" />
+                  ) : isCompleted ? (
+                    <CheckCircle2 className="size-3.5 text-emerald-500" />
+                  ) : isCurrentWorkflow ? (
+                    <Sparkles className="size-3.5 text-primary animate-pulse" />
+                  ) : null}
+                </div>
+
+                <span className={`text-xs font-bold line-clamp-1 ${
+                  isInReview
+                    ? 'text-orange-950 dark:text-orange-200 font-extrabold'
+                    : isSelected
+                    ? 'text-primary'
+                    : isCompleted
+                    ? 'text-emerald-950 dark:text-emerald-200'
+                    : 'text-foreground'
+                }`}>
+                  {guide?.title?.split('.')[1]?.trim() || STAGE_LABELS[stageKey] || stageKey}
+                </span>
+
+                <span className={`text-[9px] mt-0.5 truncate w-full ${
+                  isInReview
+                    ? 'text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-0.5'
+                    : isCompleted
+                    ? 'text-emerald-600 dark:text-emerald-400 font-medium'
+                    : isCurrentWorkflow
+                    ? 'text-primary font-medium'
+                    : 'text-muted-foreground'
+                }`}>
+                  {isInReview ? '⚠️ Marked for Review' : isLocked ? '🔒 Locked' : isCompleted ? '✓ Completed' : isCurrentWorkflow ? '● Active Workflow' : 'Available Stage'}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Workspace Panel for Selected Stage */}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={selectedStage}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.15 }}
+          className="rounded-xl border border-border bg-card p-5 shadow-sm"
+        >
+          <DynamicStageWorkspace bid={bid} selectedStage={selectedStage} onRefresh={onRefresh} />
+        </motion.div>
+      </AnimatePresence>
+    </div>
+  )
+}
+
+// ── Stage Action Panel ────────────────────────────────────────────────────────
+// Displays per-stage instructions and required tasks per the OneTrack V2 spec.
+const STAGE_GUIDE = {
+  DISCOVERED: {
+    title: '1. Search & Identification',
+    GuideIcon: Search,
+    color: 'text-slate-600',
+    bg: 'bg-slate-50 border-slate-200 dark:bg-slate-900/30 dark:border-slate-700',
+    description: 'Identify the tender opportunity from GeM or other portals. Capture all basic information.',
+    responsible: 'Bid Executive / Pre-Sales',
+    actions: [
+      'Log the tender title and GeM Bid Number',
+      'Record the estimated value and closing date',
+      'Identify the procuring authority and department',
+      'Select appropriate bid type (BID / BID to RA)',
+    ],
+    note: 'Advance to Eligibility Assessment once all basic information is captured.',
+  },
+  ELIGIBILITY_ASSESSMENT: {
+    title: '2. Eligibility Assessment',
+    GuideIcon: ShieldCheck,
+    color: 'text-blue-600',
+    bg: 'bg-blue-50 border-blue-200 dark:bg-blue-950/20 dark:border-blue-800',
+    description: 'Review tender eligibility criteria: turnover, experience, certifications, and sector qualifications.',
+    responsible: 'Manager / Bid Executive',
+    actions: [
+      'Review minimum turnover requirements',
+      'Verify experience certificate eligibility',
+      'Check sector/industry qualification criteria',
+      'Confirm no conflict-of-interest or blacklisting',
+      'Record eligibility decision in remarks',
+    ],
+    note: 'Advance to OEM Authorization Request if GlobX is eligible to bid.',
+  },
+  OEM_AUTHORIZATION_REQUEST: {
+    title: '3. OEM Authorization',
+    GuideIcon: Building2,
+    color: 'text-indigo-600',
+    bg: 'bg-indigo-50 border-indigo-200 dark:bg-indigo-950/20 dark:border-indigo-800',
+    description: 'Request Manufacturer Authorization Form (MAF) and related certificates from OEM partners.',
+    responsible: 'Manager / OEM Coordinator',
+    actions: [
+      'Identify required OEM partners for this tender',
+      'Send MAF authorization request to OEM',
+      'Request MII (Make In India) certificate if applicable',
+      'Request "No Malicious Code" certificate from OEM',
+      'Upload received OEM documents to checklist',
+    ],
+    note: 'Advance to Pricing Request once OEM authorization letters are received.',
+  },
+  PRICING_REQUEST: {
+    title: '4. Pricing Request',
+    GuideIcon: DollarSign,
+    color: 'text-violet-600',
+    bg: 'bg-violet-50 border-violet-200 dark:bg-violet-950/20 dark:border-violet-800',
+    description: 'Obtain pricing from OEM/vendor and prepare commercial quotation for bid submission.',
+    responsible: 'Pre-Sales / Finance',
+    actions: [
+      'Send pricing inquiry to OEM / distributor',
+      'Receive commercial quotation from OEM',
+      'Prepare internal cost sheet with margins',
+      'Confirm final bid price with management',
+      'Record final bid value in tender details',
+    ],
+    note: 'Advance to Document Checklist Preparation once commercial pricing is finalized.',
+  },
+  DOCUMENT_CHECKLIST_PREPARATION: {
+    title: '5. Document Checklist Preparation',
+    GuideIcon: CheckSquare,
+    color: 'text-purple-600',
+    bg: 'bg-purple-50 border-purple-200 dark:bg-purple-950/20 dark:border-purple-800',
+    description: 'Compile all required bid documents as per tender specifications. Mark each checklist item.',
+    responsible: 'Bid Executive',
+    actions: [
+      'Review tender document for all required certificates',
+      'Prepare and collect experience certificates',
+      'Compile company registration and IT return documents',
+      'Collect technical compliance/datasheet documents',
+      'Mark all Bidder & OEM checklist items as complete',
+    ],
+    note: 'Advance to EMD Processing once all documents are compiled and checklist is complete.',
+  },
+  EMD_PROCESSING: {
+    title: '6. EMD Processing',
+    GuideIcon: Coins,
+    color: 'text-amber-600',
+    bg: 'bg-amber-50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800',
+    description: 'Process Earnest Money Deposit submission via online portal or Demand Draft.',
+    responsible: 'Finance',
+    actions: [
+      'Verify EMD amount from tender document',
+      'Confirm EMD mode (Online / DD / Exempted)',
+      'Submit EMD via GeM portal or prepare DD',
+      'Save EMD transaction reference/receipt',
+      'Update EMD details in the tender workspace',
+    ],
+    note: 'Advance to Bid Documentation once EMD is successfully submitted.',
+  },
+  BID_DOCUMENTATION: {
+    title: '7. Bid Documentation',
+    GuideIcon: FileText,
+    color: 'text-orange-600',
+    bg: 'bg-orange-50 border-orange-200 dark:bg-orange-950/20 dark:border-orange-800',
+    description: 'Assemble all bid documents and upload them to the GeM portal in the correct format.',
+    responsible: 'Bid Executive / Manager',
+    actions: [
+      'Prepare bid cover letter and declarations',
+      'Package all technical and commercial documents',
+      'Upload documents to GeM portal in required format',
+      'Verify all uploads are complete and accessible',
+      'Double-check document completeness against checklist',
+    ],
+    note: 'Advance to Internal Approval once all documents are uploaded and verified.',
+  },
+  INTERNAL_APPROVAL: {
+    title: '8. Internal Approval',
+    GuideIcon: Eye,
+    color: 'text-yellow-600',
+    bg: 'bg-yellow-50 border-yellow-200 dark:bg-yellow-950/20 dark:border-yellow-800',
+    description: 'Internal review and management sign-off before final bid submission on GeM.',
+    responsible: 'Manager / Director',
+    actions: [
+      'Present bid package to management for review',
+      'Verify bid pricing aligns with strategy',
+      'Confirm compliance with all tender conditions',
+      'Obtain management sign-off/approval',
+      'Note approval details in remarks',
+    ],
+    note: 'Advance to GeM Submission only after internal management approval is received.',
+  },
+  GEM_SUBMISSION: {
+    title: '9. GeM Portal Submission',
+    GuideIcon: Send,
+    color: 'text-lime-700',
+    bg: 'bg-lime-50 border-lime-200 dark:bg-lime-950/20 dark:border-lime-800',
+    description: 'Submit the final bid on the GeM portal before the closing date and time.',
+    responsible: 'Bid Executive / Manager',
+    actions: [
+      'Log in to GeM portal with authorised credentials',
+      'Submit bid with all required documents',
+      'Confirm bid submission acknowledgement received',
+      'Note the submission timestamp and reference',
+      'Record submission date in the tender details',
+    ],
+    note: 'After successful submission, advance to Technical Evaluation stage.',
+  },
+  TECHNICAL_EVALUATION: {
+    title: '10. Technical Evaluation',
+    GuideIcon: ShieldCheck,
+    color: 'text-teal-600',
+    bg: 'bg-teal-50 border-teal-200 dark:bg-teal-950/20 dark:border-teal-800',
+    description: 'Monitor the technical bid opening and evaluation by the procuring authority.',
+    responsible: 'Manager / Bid Executive',
+    actions: [
+      'Track the technical bid opening date on GeM',
+      'Submit clarifications if requested by authority',
+      'Respond to technical queries within deadline',
+      'Monitor GeM portal for technical qualification result',
+      'Update tech compliance status in remarks',
+    ],
+    note: 'Advance to Financial Evaluation after technical qualification is confirmed.',
+  },
+  FINANCIAL_EVALUATION: {
+    title: '11. Financial Evaluation',
+    GuideIcon: Activity,
+    color: 'text-cyan-600',
+    bg: 'bg-cyan-50 border-cyan-200 dark:bg-cyan-950/20 dark:border-cyan-800',
+    description: 'Monitor financial/commercial bid opening and L1 price comparison on GeM.',
+    responsible: 'Manager / Finance',
+    actions: [
+      'Track the financial bid opening date',
+      'Record competitor pricing if publicly available',
+      'Track L1 price and GlobX price comparison',
+      'Update L1 price and quoted price in tender details',
+      'Await final award decision from the authority',
+    ],
+    note: 'Advance to Award & Handover if GlobX wins. Record outcome (WON/LOST) accordingly.',
+  },
+  AWARD_HANDOVER: {
+    title: '12. Award & Delivery Handover',
+    GuideIcon: Trophy,
+    color: 'text-emerald-600',
+    bg: 'bg-emerald-50 border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800',
+    description: 'Manage purchase order receipt and hand over delivery to the operations team.',
+    responsible: 'Manager / Operations',
+    actions: [
+      'Receive Purchase Order (PO) from GeM',
+      'Verify PO value and delivery terms',
+      'Coordinate with operations/delivery team',
+      'Submit performance security/bank guarantee if required',
+      'Record outcome as WON to close the bid workspace',
+    ],
+    note: 'Record bid outcome as WON to complete the tender lifecycle.',
+  },
+}
+
+function StageActionPanel({ bid, onSelectStage }) {
+  const remarks = bid?.stage_remarks || {}
+  const reviews = bid?.stage_reviews || {}
+
+  // Categorize all 12 stages into 3 buckets
+  const completedStages = []
+  const reviewStages = []
+  const pendingStages = []
+
+  WORKFLOW_STAGES_ORDERED.forEach((stageKey, idx) => {
+    const { isCompleted, isCurrent, isLocked } = checkStageState(bid, stageKey)
+    const isInReview = reviews[stageKey] === true || (remarks[stageKey] && typeof remarks[stageKey] === 'string' && remarks[stageKey].startsWith('[Re-Verification]'))
+    const stageLabel = STAGE_LABELS[stageKey] || stageKey
+    const num = idx + 1
+
+    const item = { stageKey, stageLabel, num, isCurrent, isCompleted, isInReview, isLocked }
+
+    if (isInReview) {
+      reviewStages.push(item)
+    } else if (isCompleted) {
+      completedStages.push(item)
+    } else {
+      pendingStages.push(item)
+    }
+  })
+
+  return (
+    <div className="space-y-4">
+      {/* 3 Grouped Stage Capsule / Pill Blocks */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Block 1: Completed Stages */}
+        <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/30 dark:bg-emerald-950/10 dark:border-emerald-900/40 p-4 space-y-3 shadow-xs">
+          <div className="flex items-center justify-between pb-2 border-b border-emerald-200/60 dark:border-emerald-900/40">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400" />
+              <h5 className="text-xs font-bold text-emerald-900 dark:text-emerald-300 uppercase tracking-wider">
+                Completed Stages
+              </h5>
+            </div>
+            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-300/40">
+              {completedStages.length}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-1">
+            {completedStages.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic">No completed stages yet.</p>
+            ) : (
+              completedStages.map((stg) => (
+                <button
+                  key={stg.stageKey}
+                  type="button"
+                  onClick={() => onSelectStage && onSelectStage(stg.stageKey)}
+                  className="group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-100/80 text-emerald-800 border border-emerald-200/80 hover:bg-emerald-200/80 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800 dark:hover:bg-emerald-900/80 transition-all shadow-2xs cursor-pointer active:scale-95"
+                >
+                  <CheckCircle2 className="size-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <span>#{stg.num} {stg.stageLabel}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Block 2: Marked for Review (Red/Orange Mix Theme) */}
+        <div className="rounded-xl border border-orange-300/90 bg-gradient-to-br from-amber-500/10 via-orange-500/10 to-rose-500/10 dark:from-amber-950/30 dark:to-orange-950/40 dark:border-orange-800/80 p-4 space-y-3 shadow-xs">
+          <div className="flex items-center justify-between pb-2 border-b border-orange-300/60 dark:border-orange-900/40">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="size-4 text-orange-600 dark:text-orange-400" />
+              <h5 className="text-xs font-bold text-orange-950 dark:text-orange-300 uppercase tracking-wider">
+                Marked for Review
+              </h5>
+            </div>
+            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 text-white shadow-xs">
+              {reviewStages.length}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-1">
+            {reviewStages.length === 0 ? (
+              <p className="text-xs text-muted-foreground/70 italic">No stages currently marked for review.</p>
+            ) : (
+              reviewStages.map((stg) => (
+                <button
+                  key={stg.stageKey}
+                  type="button"
+                  onClick={() => onSelectStage && onSelectStage(stg.stageKey)}
+                  className="group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-100 via-orange-100 to-rose-100 dark:from-amber-950/90 dark:via-orange-950/90 dark:to-rose-950/90 text-orange-950 dark:text-orange-200 border border-orange-300/80 dark:border-orange-700 hover:scale-102 transition-all shadow-xs cursor-pointer active:scale-95"
+                >
+                  <AlertTriangle className="size-3 text-orange-600 dark:text-orange-400 shrink-0 animate-pulse" />
+                  <span>#{stg.num} {stg.stageLabel}</span>
+                  <span className="text-[9px] bg-rose-500/20 text-rose-800 dark:text-rose-300 px-1.5 py-0.2 rounded-full font-bold">Review Needed</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Block 3: Pending / Not Completed Stages */}
+        <div className="rounded-xl border border-border bg-card p-4 space-y-3 shadow-xs">
+          <div className="flex items-center justify-between pb-2 border-b border-border/60">
+            <div className="flex items-center gap-2">
+              <Clock className="size-4 text-muted-foreground" />
+              <h5 className="text-xs font-bold text-foreground uppercase tracking-wider">
+                Pending Stages
+              </h5>
+            </div>
+            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border">
+              {pendingStages.length}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-1">
+            {pendingStages.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic">All stages completed!</p>
+            ) : (
+              pendingStages.map((stg) => (
+                <button
+                  key={stg.stageKey}
+                  type="button"
+                  onClick={() => onSelectStage && onSelectStage(stg.stageKey)}
+                  className={`group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-all shadow-2xs cursor-pointer active:scale-95 ${
+                    stg.isCurrent
+                      ? 'bg-primary/15 text-primary border border-primary/40 font-bold hover:bg-primary/20'
+                      : stg.isLocked
+                      ? 'bg-muted/30 text-muted-foreground/60 border border-border/50 hover:bg-muted/50'
+                      : 'bg-muted/60 text-muted-foreground border border-border hover:bg-muted hover:text-foreground'
+                  }`}
+                >
+                  {stg.isCurrent ? (
+                    <span className="relative flex size-2 shrink-0">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75"></span>
+                      <span className="relative inline-flex rounded-full size-2 bg-primary"></span>
+                    </span>
+                  ) : stg.isLocked ? (
+                    <Lock className="size-3 text-muted-foreground/50 shrink-0" />
+                  ) : (
+                    <Clock className="size-3 text-muted-foreground shrink-0" />
+                  )}
+                  <span>#{stg.num} {stg.stageLabel}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -996,8 +1537,9 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
   const [showCancel, setShowCancel] = useState(false)
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false)
 
-  const loadBid = useCallback(async () => {
-    setLoading(true); setError(null)
+  const loadBid = useCallback(async (showLoader = false) => {
+    setLoading(prev => (prev || showLoader ? true : false))
+    setError(null)
     try {
       const res = await getBid(bidId)
       if (res.ok) setBid(res.data)
@@ -1006,7 +1548,9 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
     finally { setLoading(false) }
   }, [bidId])
 
-  useEffect(() => { loadBid() }, [loadBid])
+  useEffect(() => {
+    if (bidId) loadBid(true)
+  }, [bidId, loadBid])
 
   if (loading) return (
     <div className="flex items-center justify-center h-64 gap-3 text-muted-foreground">
@@ -1023,6 +1567,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
 
   const TABS = [
     { id:'overview', label:'Overview', icon:FileText },
+    { id:'stages',   label:'Stage Lifecycle (12)', icon:Layers },
     { id:'checklist',label:'Checklist',icon:CheckSquare },
     { id:'history',  label:'Stage History', icon:History },
     { id:'members',  label:'Members',  icon:Users },
@@ -1088,11 +1633,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                 <Edit2 className="size-3.5 text-primary"/>Edit Tender
               </Button>
             )}
-            {canTransition && !['ARCHIVED', 'CANCELLED', 'WON', 'LOST'].includes(bid.bid_status) && (
-              <Button size="sm" className="gap-1.5" onClick={()=>setShowTransition(true)}>
-                <ChevronRight className="size-3.5"/>Advance Stage
-              </Button>
-            )}
+
             {hasPermission('bid.edit') && bid.bid_status === 'ACTIVE' && (
               <Button size="sm" variant="outline" className="gap-1.5 border-red-200 hover:border-red-500 text-red-600 hover:bg-red-50/50 dark:border-red-900/50 dark:hover:bg-red-950/20" onClick={()=>setShowCancel(true)}>
                 <XCircle className="size-3.5"/>Cancel Tender
@@ -1111,17 +1652,18 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
           </div>
         </div>
 
-        {/* Stepper (Hidden for now)
-        <WorkflowStepper currentStage={bid.workflow_stage}/>
-        */}
+        {/* Visual 12-Stage Stepper */}
+        <div className="pt-2 border-t border-border/40">
+          <WorkflowStepper currentStage={bid.workflow_stage}/>
+        </div>
 
         {/* Quick meta */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
           {[
             { label:'Estimated Value', value: fmtMoney(bid.estimated_value), icon:DollarSign },
             { label:'EMD Amount',      value: bid.emd_exempted ? 'Exempted' : fmtMoney(bid.emd_amount), icon:Target },
-            { label:'Closing Date',    value: fmt(bid.closing_date), icon:Calendar },
-            { label:'Owner',           value: bid.bid_owner?.full_name ?? '—', icon:Users },
+            { label:'Ending Date',      value: getBidEndDate(bid), icon:Calendar },
+            { label:'Owner',           value: bid.bid_owner?.full_name ?? 'Unassigned', icon:Users },
           ].map(m=>(
             <div key={m.label} className="rounded-lg bg-muted/40 p-3">
               <div className="flex items-center gap-1.5 mb-1">
@@ -1152,29 +1694,39 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
       <AnimatePresence mode="wait">
         <motion.div key={activeTab} initial={{opacity:0,y:6}} animate={{opacity:1,y:0}} exit={{opacity:0}} transition={{duration:0.15}}>
           {activeTab === 'overview' && (
-            <div className="space-y-4">
+            <div className="space-y-5">
+              <StageActionPanel bid={bid} onSelectStage={(stageKey) => setActiveTab('stages')} />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="rounded-lg border border-border p-4 space-y-3">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Organization</p>
-                  <div className="space-y-1.5 text-sm">
-                    {[['Organization',bid.organization_name],['Department',bid.department_name],['Category',bid.category],['Bid Type',bid.bid_type]].map(([l,v])=>(
-                      <div key={l} className="flex justify-between gap-4">
+                <div className="rounded-lg border border-border p-4 space-y-3 bg-card shadow-sm">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    <Building2 className="size-3.5 text-primary" /> Organization & Portal Metadata
+                  </p>
+                  <div className="space-y-2 text-sm">
+                    {[
+                      ['Organization Name', bid.organization_name || 'Not Specified'],
+                      ['Department', bid.department_name || 'Not Specified'],
+                      ['Category / Scope', bid.category || 'Not Specified'],
+                      ['Portal Source', bid.portal_source || 'GeM'],
+                      ['Bid Scope Type', bid.bid_type || 'CUSTOM_BID'],
+                    ].map(([l,v])=>(
+                      <div key={l} className="flex justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0 last:pb-0">
                         <span className="text-muted-foreground shrink-0">{l}</span>
-                        <span className="font-medium text-foreground text-right">{v||'—'}</span>
+                        <span className="font-medium text-foreground text-right">{v}</span>
                       </div>
                     ))}
                   </div>
                 </div>
-                <div className="rounded-lg border border-border p-4 space-y-3">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Compliance</p>
-                  <div className="space-y-1.5 text-sm">
+                <div className="rounded-lg border border-border p-4 space-y-3 bg-card shadow-sm">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    <ShieldCheck className="size-3.5 text-emerald-600" /> Compliance & Critical Dates
+                  </p>
+                  <div className="space-y-2 text-sm">
                     {[
-                      ['OEM Required', bid.oem_required ? '✅ Yes' : '❌ No'],
-                      ['Tech Evaluation', bid.has_tech_eval ? '✅ Yes' : '❌ No'],
-                      ['EMD Type', bid.emd_type || '—'],
-                      ['Opening Date', fmt(bid.opening_date)],
+                      ['EMD Processing Type', bid.emd_type || 'ONLINE'],
+                      ['Start Date', getBidStartDate(bid)],
+                      ['End Date', getBidEndDate(bid)],
                     ].map(([l,v])=>(
-                      <div key={l} className="flex justify-between gap-4">
+                      <div key={l} className="flex justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0 last:pb-0">
                         <span className="text-muted-foreground shrink-0">{l}</span>
                         <span className="font-medium text-foreground text-right">{v}</span>
                       </div>
@@ -1183,14 +1735,15 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                 </div>
               </div>
               {bid.remarks && (
-                <div className="rounded-lg border border-border p-4">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Remarks</p>
-                  <p className="text-sm text-foreground">{bid.remarks}</p>
+                <div className="rounded-lg border border-border p-4 bg-card shadow-sm">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Remarks & Detailed Notes</p>
+                  <p className="text-sm text-foreground leading-relaxed">{bid.remarks}</p>
                 </div>
               )}
               <OutcomePanel bid={bid} />
             </div>
           )}
+          {activeTab === 'stages' && <StageSectionsTab bid={bid} onRefresh={loadBid} onAdvance={() => setShowTransition(true)} />}
           {activeTab === 'checklist' && <ChecklistTab bid={bid} onRefresh={loadBid}/>}
           {activeTab === 'history' && <StageHistoryTab bidId={bid.id}/>}
           {activeTab === 'members' && <MembersTab bid={bid} onRefresh={loadBid}/>}

@@ -13,13 +13,13 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false)
   const [success, setSuccess] = useState(false)
 
-  // Reset Password Modal states
+  // Reset Password (OTP Flow) states
   const [showResetModal, setShowResetModal] = useState(false)
-  const [resetUsername, setResetUsername] = useState("")
-  const [resetCurrentPassword, setResetCurrentPassword] = useState("")
+  const [forgotStep, setForgotStep] = useState(1) // 1: Email, 2: OTP, 3: New Password
+  const [resetEmail, setResetEmail] = useState("")
+  const [resetOtp, setResetOtp] = useState("")
   const [resetNewPassword, setResetNewPassword] = useState("")
   const [resetConfirmPassword, setResetConfirmPassword] = useState("")
-  const [showResetCurrentPass, setShowResetCurrentPass] = useState(false)
   const [showResetNewPass, setShowResetNewPass] = useState(false)
   const [isResetting, setIsResetting] = useState(false)
 
@@ -27,7 +27,7 @@ export default function Login() {
     e.preventDefault()
     
     if (!username.trim() || !password) {
-      toast.error("Please enter both username and password")
+      toast.error("Please enter both username/email and password")
       return
     }
 
@@ -54,61 +54,81 @@ export default function Login() {
     }
   }
 
-  const handleResetPasswordSubmit = async (e) => {
+  const handleSendOTP = async (e) => {
     e.preventDefault()
-
-    if (!resetUsername.trim() || !resetCurrentPassword || !resetNewPassword || !resetConfirmPassword) {
-      toast.error("Please fill in all fields")
+    if (!resetEmail.trim()) {
+      toast.error("Please enter your registered email address")
       return
     }
+    setIsResetting(true)
+    try {
+      const res = await authService.forgotPassword(resetEmail.trim())
+      if (res.ok && res.success) {
+        toast.success(res.message || "OTP code sent to email!")
+        setForgotStep(2)
+      } else {
+        toast.error(res.message || res.error?.message || "Failed to send OTP")
+      }
+    } catch (err) {
+      toast.error("Network error sending OTP code")
+    } finally {
+      setIsResetting(false)
+    }
+  }
 
+  const handleVerifyOTP = async (e) => {
+    e.preventDefault()
+    if (!resetOtp.trim()) {
+      toast.error("Please enter the 6-digit OTP code")
+      return
+    }
+    setIsResetting(true)
+    try {
+      const res = await authService.verifyOTP(resetEmail.trim(), resetOtp.trim())
+      if (res.ok && res.success) {
+        toast.success("OTP verified successfully!")
+        setForgotStep(3)
+      } else {
+        toast.error(res.message || res.error?.message || "Invalid or expired OTP")
+      }
+    } catch (err) {
+      toast.error("Network error verifying OTP code")
+    } finally {
+      setIsResetting(false)
+    }
+  }
+
+  const handleResetPasswordSubmit = async (e) => {
+    e.preventDefault()
+    if (!resetNewPassword || !resetConfirmPassword) {
+      toast.error("Please fill in all password fields")
+      return
+    }
     if (resetNewPassword.length < 8) {
       toast.error("New password must be at least 8 characters long")
       return
     }
-
     if (resetNewPassword !== resetConfirmPassword) {
       toast.error("New passwords do not match")
       return
     }
 
     setIsResetting(true)
-
     try {
-      // 1. Silent login to verify user and obtain access token
-      const loginResult = await authService.login(resetUsername, resetCurrentPassword)
-      
-      if (!loginResult.ok || !loginResult.success) {
-        const errorMsg = loginResult.error?.message || "Invalid username or current password"
-        toast.error(`Authentication failed: ${errorMsg}`)
-        setIsResetting(false)
-        return
-      }
-
-      // 2. Call changePassword using the obtained session
-      const changeResult = await authService.changePassword(resetCurrentPassword, resetNewPassword)
-      
-      if (changeResult.ok && changeResult.success) {
-        toast.success("Password changed successfully!")
-        
-        // 3. Clear the session
-        tokenStorage.clear()
-        
-        // Reset state
+      const res = await authService.resetPasswordOTP(resetEmail.trim(), resetOtp.trim(), resetNewPassword)
+      if (res.ok && res.success) {
+        toast.success("Password reset successfully! You can now sign in.")
         setShowResetModal(false)
-        setResetUsername("")
-        setResetCurrentPassword("")
+        setForgotStep(1)
+        setResetEmail("")
+        setResetOtp("")
         setResetNewPassword("")
         setResetConfirmPassword("")
       } else {
-        const errorMsg = changeResult.error?.message || "Failed to change password"
-        toast.error(`${errorMsg} (Status: ${changeResult.status})`)
-        // Clear session just in case
-        tokenStorage.clear()
+        toast.error(res.message || res.error?.message || "Failed to reset password")
       }
     } catch (err) {
-      toast.error("Network error during password reset process")
-      tokenStorage.clear()
+      toast.error("Network error during password reset")
     } finally {
       setIsResetting(false)
     }
@@ -210,8 +230,8 @@ export default function Login() {
               
               {/* Username Input */}
               <div className="space-y-1">
-                <label htmlFor="username" className="block text-xs font-semibold text-neutral-505">
-                  Username
+                <label htmlFor="username" className="block text-xs font-semibold text-neutral-500">
+                  Username or Email Address
                 </label>
                 <input
                   id="username"
@@ -219,7 +239,7 @@ export default function Login() {
                   required
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Enter username"
+                  placeholder="Enter username or email address"
                   className="w-full bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none rounded-xl px-3.5 py-2.5 text-xs placeholder:text-neutral-400 font-medium transition-all text-neutral-900"
                 />
               </div>
@@ -307,7 +327,10 @@ export default function Login() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setShowResetModal(false)}
+              onClick={() => {
+                setShowResetModal(false)
+                setForgotStep(1)
+              }}
               className="absolute inset-0 bg-neutral-900/60 backdrop-blur-xs"
             />
 
@@ -321,112 +344,162 @@ export default function Login() {
               <div className="space-y-1">
                 <h3 className="font-display text-xl font-normal text-neutral-900 flex items-center gap-2">
                   <Key className="size-5 text-blue-600" />
-                  Reset Password
+                  Forgot Password OTP Reset
                 </h3>
                 <p className="text-xs text-neutral-500 leading-normal">
-                  Provide your user account credentials to verify security access and apply a new password.
+                  {forgotStep === 1 && "Step 1/3: Enter your registered email address to receive a 6-digit OTP code."}
+                  {forgotStep === 2 && `Step 2/3: Enter the 6-digit OTP code sent to ${resetEmail}.`}
+                  {forgotStep === 3 && "Step 3/3: Set a new secure password for your OneTrack account."}
                 </p>
               </div>
 
-              <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
-                
-                {/* Username */}
-                <div className="space-y-1">
-                  <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">Username</label>
-                  <input
-                    type="text"
-                    required
-                    value={resetUsername}
-                    onChange={(e) => setResetUsername(e.target.value)}
-                    placeholder="Enter username"
-                    className="w-full bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none rounded-xl px-3.5 py-2.5 text-xs placeholder:text-neutral-400 font-medium transition-all text-neutral-900"
-                  />
-                </div>
-
-                {/* Current Password */}
-                <div className="space-y-1">
-                  <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">Current Password</label>
-                  <div className="relative">
+              {/* Step 1: Send OTP */}
+              {forgotStep === 1 && (
+                <form onSubmit={handleSendOTP} className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">Registered Email</label>
                     <input
-                      type={showResetCurrentPass ? "text" : "password"}
+                      type="email"
                       required
-                      value={resetCurrentPassword}
-                      onChange={(e) => setResetCurrentPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none rounded-xl pl-3.5 pr-9 py-2.5 text-xs placeholder:text-neutral-400 font-medium transition-all text-neutral-900"
+                      value={resetEmail}
+                      onChange={(e) => setResetEmail(e.target.value)}
+                      placeholder="e.g. biswabhusans@globx.co.in"
+                      className="w-full bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none rounded-xl px-3.5 py-2.5 text-xs placeholder:text-neutral-400 font-medium transition-all text-neutral-900"
                     />
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
                     <button
                       type="button"
-                      onClick={() => setShowResetCurrentPass(!showResetCurrentPass)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-900 transition-colors cursor-pointer"
+                      onClick={() => setShowResetModal(false)}
+                      className="flex-1 bg-neutral-100 border border-neutral-200 hover:bg-neutral-200 text-neutral-700 py-2.5 rounded-xl font-bold text-xs transition-colors cursor-pointer"
                     >
-                      {showResetCurrentPass ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                      Cancel
+                    </button>
+                    
+                    <button
+                      type="submit"
+                      disabled={isResetting}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 text-white py-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-blue-500/10"
+                    >
+                      {isResetting ? (
+                        <>
+                          <Loader2 className="size-3.5 animate-spin" />
+                          Sending OTP...
+                        </>
+                      ) : (
+                        "Send OTP Code"
+                      )}
                     </button>
                   </div>
-                </div>
+                </form>
+              )}
 
-                {/* New Password */}
-                <div className="space-y-1">
-                  <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">New Password</label>
-                  <div className="relative">
+              {/* Step 2: Verify OTP */}
+              {forgotStep === 2 && (
+                <form onSubmit={handleVerifyOTP} className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">6-Digit Verification Code</label>
                     <input
-                      type={showResetNewPass ? "text" : "password"}
+                      type="text"
+                      maxLength={6}
                       required
-                      value={resetNewPassword}
-                      onChange={(e) => setResetNewPassword(e.target.value)}
-                      placeholder="Minimum 8 characters"
-                      className="w-full bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none rounded-xl pl-3.5 pr-9 py-2.5 text-xs placeholder:text-neutral-400 font-medium transition-all text-neutral-900"
+                      value={resetOtp}
+                      onChange={(e) => setResetOtp(e.target.value)}
+                      placeholder="Enter 6-digit OTP code"
+                      className="w-full bg-neutral-50 text-center tracking-widest text-lg font-mono hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none rounded-xl px-3.5 py-2 text-neutral-900 font-bold"
                     />
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
                     <button
                       type="button"
-                      onClick={() => setShowResetNewPass(!showResetNewPass)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-900 transition-colors cursor-pointer"
+                      onClick={() => setForgotStep(1)}
+                      className="flex-1 bg-neutral-100 border border-neutral-200 hover:bg-neutral-200 text-neutral-700 py-2.5 rounded-xl font-bold text-xs transition-colors cursor-pointer"
                     >
-                      {showResetNewPass ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                      Back
+                    </button>
+                    
+                    <button
+                      type="submit"
+                      disabled={isResetting}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 text-white py-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-blue-500/10"
+                    >
+                      {isResetting ? (
+                        <>
+                          <Loader2 className="size-3.5 animate-spin" />
+                          Verifying...
+                        </>
+                      ) : (
+                        "Verify OTP"
+                      )}
                     </button>
                   </div>
-                </div>
+                </form>
+              )}
 
-                {/* Confirm Password */}
-                <div className="space-y-1">
-                  <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">Confirm New Password</label>
-                  <input
-                    type="password"
-                    required
-                    value={resetConfirmPassword}
-                    onChange={(e) => setResetConfirmPassword(e.target.value)}
-                    placeholder="Confirm new password"
-                    className="w-full bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none rounded-xl px-3.5 py-2.5 text-xs placeholder:text-neutral-400 font-medium transition-all text-neutral-900"
-                  />
-                </div>
+              {/* Step 3: New Password */}
+              {forgotStep === 3 && (
+                <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">New Password</label>
+                    <div className="relative">
+                      <input
+                        type={showResetNewPass ? "text" : "password"}
+                        required
+                        value={resetNewPassword}
+                        onChange={(e) => setResetNewPassword(e.target.value)}
+                        placeholder="Minimum 8 characters"
+                        className="w-full bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none rounded-xl pl-3.5 pr-9 py-2.5 text-xs placeholder:text-neutral-400 font-medium transition-all text-neutral-900"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowResetNewPass(!showResetNewPass)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-900 transition-colors cursor-pointer"
+                      >
+                        {showResetNewPass ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                      </button>
+                    </div>
+                  </div>
 
-                {/* Buttons */}
-                <div className="flex gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowResetModal(false)}
-                    className="flex-1 bg-neutral-100 border border-neutral-200 hover:bg-neutral-200 text-neutral-700 py-2.5 rounded-xl font-bold text-xs transition-colors cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  
-                  <button
-                    type="submit"
-                    disabled={isResetting}
-                    className="flex-1 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 text-white py-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-blue-500/10"
-                  >
-                    {isResetting ? (
-                      <>
-                        <Loader2 className="size-3.5 animate-spin" />
-                        Resetting...
-                      </>
-                    ) : (
-                      "Reset Password"
-                    )}
-                  </button>
-                </div>
+                  <div className="space-y-1">
+                    <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">Confirm New Password</label>
+                    <input
+                      type="password"
+                      required
+                      value={resetConfirmPassword}
+                      onChange={(e) => setResetConfirmPassword(e.target.value)}
+                      placeholder="Confirm new password"
+                      className="w-full bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none rounded-xl px-3.5 py-2.5 text-xs placeholder:text-neutral-400 font-medium transition-all text-neutral-900"
+                    />
+                  </div>
 
-              </form>
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setForgotStep(2)}
+                      className="flex-1 bg-neutral-100 border border-neutral-200 hover:bg-neutral-200 text-neutral-700 py-2.5 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+                    >
+                      Back
+                    </button>
+                    
+                    <button
+                      type="submit"
+                      disabled={isResetting}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 text-white py-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-blue-500/10"
+                    >
+                      {isResetting ? (
+                        <>
+                          <Loader2 className="size-3.5 animate-spin" />
+                          Updating...
+                        </>
+                      ) : (
+                        "Update Password"
+                      )}
+                    </button>
+                  </div>
+                </form>
+              )}
 
             </motion.div>
           </div>

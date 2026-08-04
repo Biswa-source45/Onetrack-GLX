@@ -20,46 +20,49 @@ func NewPostgresBidRepository(pool *pgxpool.Pool) domain.BidRepository {
 	return &postgresBidRepo{pool: pool}
 }
 
-func (r *postgresBidRepo) Create(ctx context.Context, bid *domain.CreateBidParams) (string, error) {
+func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidParams) (string, error) {
+	startDate := params.StartDate
+	endDate := params.EndDate
+
 	query := `
 		INSERT INTO bid.bid_workspaces (
 			bid_no, gem_bid_no, title, organization_name, department_name,
 			portal_source, creation_mode, workflow_stage, bid_status,
 			bid_owner_id, technical_manager_id, created_by,
 			estimated_value, emd_amount, emd_type, emd_exempted,
-			oem_required, has_tech_eval,
-			opening_date, closing_date,
+			bg_required, bg_rate, high_level_scope,
+			start_date, end_date, opening_date, closing_date, duration_months, authority,
 			category, bid_type, gem_bid_type,
 			remarks, metadata,
-			team, scope_type, bg_rate, activity_type, target_month_date,
+			team, scope_type, activity_type,
 			excel_bid_status, submission_status, financial_evaluation_status, po_received_status,
-			bid_result
+			bid_result, ai_source_document_id, ai_extraction_confidence, stage_completions
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9,
 			$10, $11, $12,
 			$13, $14, $15, $16,
-			$17, $18,
-			$19, $20,
-			$21, $22, $23,
-			$24, $25,
-			$26, $27, $28, $29, $30,
-			$31, $32, $33, $34, $35
+			$17, $18, $19,
+			$20, $21, $22, $23, $24, $25,
+			$26, $27, $28,
+			$29, $30,
+			$31, $32, $33,
+			$34, $35, $36, $37, $38, $39, $40, '{"DISCOVERED": true}'::jsonb
 		) RETURNING id
 	`
 	var id string
 	err := r.pool.QueryRow(ctx, query,
-		bid.BidNo, bid.GemBidNo, bid.Title, bid.OrganizationName, bid.DepartmentName,
-		bid.PortalSource, bid.CreationMode, domain.StageDiscovered, domain.BidStatusActive,
-		bid.BidOwnerID, bid.TechnicalManagerID, bid.CreatedBy,
-		bid.EstimatedValue, bid.EMDAmount, bid.EMDType, bid.EMDExempted,
-		bid.OEMRequired, bid.HasTechEval,
-		bid.OpeningDate, bid.ClosingDate,
-		bid.Category, bid.BidType, bid.GemBidType,
-		bid.Remarks, bid.Metadata,
-		bid.Team, bid.ScopeType, bid.BGRate, bid.ActivityType, bid.TargetMonthDate,
-		bid.ExcelBidStatus, bid.SubmissionStatus, bid.FinancialEvaluationStatus, bid.POReceivedStatus,
-		bid.BidResult,
+		params.BidNo, params.GemBidNo, params.Title, params.OrganizationName, params.DepartmentName,
+		params.PortalSource, params.CreationMode, domain.StageDiscovered, domain.BidStatusActive,
+		params.BidOwnerID, params.TechnicalManagerID, params.CreatedBy,
+		params.EstimatedValue, params.EMDAmount, params.EMDType, params.EMDExempted,
+		params.BGRequired, params.BGRate, params.HighLevelScope,
+		startDate, endDate, startDate, endDate, params.DurationMonths, params.Authority,
+		params.Category, params.BidType, params.GemBidType,
+		params.Remarks, params.Metadata,
+		params.Team, params.ScopeType, params.ActivityType,
+		params.ExcelBidStatus, params.SubmissionStatus, params.FinancialEvaluationStatus, params.POReceivedStatus,
+		params.BidResult, params.AISourceDocumentID, params.AIExtractionConfidence,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("failed to create bid: %w", err)
@@ -74,15 +77,22 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 		       bid_owner_id, technical_manager_id, created_by,
 		       estimated_value, emd_amount, emd_type, emd_exempted,
 		       final_bid_value, l1_price, quoted_price,
-		       opening_date, closing_date, submission_date, result_date, ra_date,
-		       category, bid_type, gem_bid_type, oem_required, has_tech_eval,
+		       start_date, end_date, opening_date, closing_date, duration_months, authority,
+		       high_level_scope, bg_required, bg_rate,
+		       category, bid_type, gem_bid_type,
 		       qualification_status, bid_outcome, outcome_reason, tech_compliance_status,
 		       remarks, competitor_info, metadata,
 		       ai_source_document_id, ai_extraction_confidence,
 		       created_at, updated_at, archived_at,
-		       team, scope_type, bg_rate, activity_type, target_month_date,
+		       team, scope_type, activity_type,
 		       excel_bid_status, submission_status, financial_evaluation_status, po_received_status,
-		       bid_result
+		       bid_result,
+		       finance_alerted, emd_ready, emd_returned, bg_discharged, submission_done,
+		       gem_submission_price, final_price,
+		       technical_result, disqualification_reason, financial_result,
+		       l1_company_name, price_difference, price_difference_pct,
+		       eligibility_remarks, emd_remarks,
+		       COALESCE(stage_completions, '{}'::jsonb), COALESCE(stage_remarks, '{}'::jsonb), COALESCE(stage_reviews, '{}'::jsonb)
 		FROM bid.bid_workspaces
 		WHERE id = $1 AND archived_at IS NULL
 	`
@@ -97,12 +107,12 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 
 	if params.Search != "" {
 		conditions = append(conditions, fmt.Sprintf(
-			"(b.title ILIKE $%d OR b.bid_no ILIKE $%d OR b.gem_bid_no ILIKE $%d)",
-			idx, idx+1, idx+2,
+			"(b.title ILIKE $%d OR b.bid_no ILIKE $%d OR b.gem_bid_no ILIKE $%d OR b.organization_name ILIKE $%d OR b.department_name ILIKE $%d OR b.category ILIKE $%d OR u.full_name ILIKE $%d)",
+			idx, idx+1, idx+2, idx+3, idx+4, idx+5, idx+6,
 		))
 		search := "%" + params.Search + "%"
-		args = append(args, search, search, search)
-		idx += 3
+		args = append(args, search, search, search, search, search, search, search)
+		idx += 7
 	}
 	if params.WorkflowStage != "" {
 		conditions = append(conditions, fmt.Sprintf("b.workflow_stage = $%d", idx))
@@ -155,6 +165,7 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 	statusQuery := fmt.Sprintf(`
 		SELECT COALESCE(b.bid_status, 'ACTIVE'), COUNT(*)
 		FROM bid.bid_workspaces b
+		LEFT JOIN auth.users u ON b.bid_owner_id = u.id
 		%s
 		GROUP BY b.bid_status
 	`, where)
@@ -187,16 +198,24 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		       b.bid_owner_id, b.technical_manager_id, b.created_by,
 		       b.estimated_value, b.emd_amount, b.emd_type, b.emd_exempted,
 		       b.final_bid_value, b.l1_price, b.quoted_price,
-		       b.opening_date, b.closing_date, b.submission_date, b.result_date, b.ra_date,
-		       b.category, b.bid_type, b.gem_bid_type, b.oem_required, b.has_tech_eval,
+		       b.start_date, b.end_date, b.opening_date, b.closing_date, b.duration_months, b.authority,
+		       b.high_level_scope, b.bg_required, b.bg_rate,
+		       b.category, b.bid_type, b.gem_bid_type,
 		       b.qualification_status, b.bid_outcome, b.outcome_reason, b.tech_compliance_status,
 		       b.remarks, b.competitor_info, b.metadata,
 		       b.ai_source_document_id, b.ai_extraction_confidence,
 		       b.created_at, b.updated_at, b.archived_at,
-		       b.team, b.scope_type, b.bg_rate, b.activity_type, b.target_month_date,
+		       b.team, b.scope_type, b.activity_type,
 		       b.excel_bid_status, b.submission_status, b.financial_evaluation_status, b.po_received_status,
-		       b.bid_result
+		       b.bid_result,
+		       b.finance_alerted, b.emd_ready, b.emd_returned, b.bg_discharged, b.submission_done,
+		       b.gem_submission_price, b.final_price,
+		       b.technical_result, b.disqualification_reason, b.financial_result,
+		       b.l1_company_name, b.price_difference, b.price_difference_pct,
+		       b.eligibility_remarks, b.emd_remarks,
+		       COALESCE(b.stage_completions, '{}'::jsonb), COALESCE(b.stage_remarks, '{}'::jsonb), COALESCE(b.stage_reviews, '{}'::jsonb)
 		FROM bid.bid_workspaces b
+		LEFT JOIN auth.users u ON b.bid_owner_id = u.id
 		%s
 		ORDER BY b.created_at DESC
 		LIMIT $%d OFFSET $%d
@@ -272,41 +291,76 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	if req.EMDExempted != nil {
 		addSet("emd_exempted", *req.EMDExempted)
 	}
-	if req.OEMRequired != nil {
-		addSet("oem_required", *req.OEMRequired)
+	if req.BGRequired != nil {
+		addSet("bg_required", *req.BGRequired)
 	}
-	if req.HasTechEval != nil {
-		addSet("has_tech_eval", *req.HasTechEval)
+	if req.BGRate != nil {
+		addSet("bg_rate", *req.BGRate)
 	}
-	if req.OpeningDate != nil {
-		t, err := time.Parse(time.RFC3339, *req.OpeningDate)
-		if err == nil {
-			addSet("opening_date", t)
-		}
+	if req.HighLevelScope != nil {
+		addSet("high_level_scope", *req.HighLevelScope)
 	}
-	if req.ClosingDate != nil {
-		t, err := time.Parse(time.RFC3339, *req.ClosingDate)
-		if err == nil {
-			addSet("closing_date", t)
-		}
+	if req.Authority != nil {
+		addSet("authority", *req.Authority)
 	}
-	if req.SubmissionDate != nil {
-		t, err := time.Parse(time.RFC3339, *req.SubmissionDate)
-		if err == nil {
-			addSet("submission_date", t)
-		}
+	if req.StartDate != nil {
+		t, err := time.Parse(time.RFC3339, *req.StartDate)
+		if err == nil { addSet("start_date", t) }
 	}
-	if req.ResultDate != nil {
-		t, err := time.Parse(time.RFC3339, *req.ResultDate)
-		if err == nil {
-			addSet("result_date", t)
-		}
+	if req.EndDate != nil {
+		t, err := time.Parse(time.RFC3339, *req.EndDate)
+		if err == nil { addSet("end_date", t) }
 	}
-	if req.RADate != nil {
-		t, err := time.Parse(time.RFC3339, *req.RADate)
-		if err == nil {
-			addSet("ra_date", t)
-		}
+	if req.DurationMonths != nil {
+		addSet("duration_months", *req.DurationMonths)
+	}
+	if req.FinanceAlerted != nil {
+		addSet("finance_alerted", *req.FinanceAlerted)
+	}
+	if req.EMDReady != nil {
+		addSet("emd_ready", *req.EMDReady)
+	}
+	if req.EMDReturned != nil {
+		addSet("emd_returned", *req.EMDReturned)
+	}
+	if req.BGDischarged != nil {
+		addSet("bg_discharged", *req.BGDischarged)
+	}
+	if req.SubmissionDone != nil {
+		addSet("submission_done", *req.SubmissionDone)
+	}
+	if req.GemSubmissionPrice != nil {
+		addSet("gem_submission_price", *req.GemSubmissionPrice)
+	}
+	if req.FinalPrice != nil {
+		addSet("final_price", *req.FinalPrice)
+	}
+	if req.TechnicalResult != nil {
+		addSet("technical_result", *req.TechnicalResult)
+	}
+	if req.DisqualificationReason != nil {
+		addSet("disqualification_reason", *req.DisqualificationReason)
+	}
+	if req.FinancialResult != nil {
+		addSet("financial_result", *req.FinancialResult)
+	}
+	if req.L1CompanyName != nil {
+		addSet("l1_company_name", *req.L1CompanyName)
+	}
+	if req.L1Price != nil {
+		addSet("l1_price", *req.L1Price)
+	}
+	if req.PriceDifference != nil {
+		addSet("price_difference", *req.PriceDifference)
+	}
+	if req.PriceDifferencePct != nil {
+		addSet("price_difference_pct", *req.PriceDifferencePct)
+	}
+	if req.EligibilityRemarks != nil {
+		addSet("eligibility_remarks", *req.EligibilityRemarks)
+	}
+	if req.EMDRemarks != nil {
+		addSet("emd_remarks", *req.EMDRemarks)
 	}
 	if req.Remarks != nil {
 		addSet("remarks", *req.Remarks)
@@ -344,6 +398,24 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	if req.BidOutcome != nil {
 		addSet("bid_outcome", *req.BidOutcome)
 	}
+	if req.StageCompletions != nil {
+		b, err := json.Marshal(req.StageCompletions)
+		if err == nil {
+			addSet("stage_completions", b)
+		}
+	}
+	if req.StageRemarks != nil {
+		b, err := json.Marshal(req.StageRemarks)
+		if err == nil {
+			addSet("stage_remarks", b)
+		}
+	}
+	if req.StageReviews != nil {
+		b, err := json.Marshal(req.StageReviews)
+		if err == nil {
+			addSet("stage_reviews", b)
+		}
+	}
 	if req.TechnicalManagerID != nil {
 		addSet("technical_manager_id", *req.TechnicalManagerID)
 	}
@@ -352,12 +424,6 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	}
 	if req.QualificationStatus != nil {
 		addSet("qualification_status", *req.QualificationStatus)
-	}
-	if req.TargetMonthDate != nil {
-		t, err := time.Parse(time.RFC3339, *req.TargetMonthDate)
-		if err == nil {
-			addSet("target_month_date", t)
-		}
 	}
 
 	args = append(args, id)
@@ -512,7 +578,7 @@ func (r *postgresBidRepo) BulkInsertChecklists(ctx context.Context, bidID string
 	}
 	for i, title := range titles {
 		_, err := r.pool.Exec(ctx,
-			`INSERT INTO bid.bid_checklists (bid_id, title, sort_order) VALUES ($1, $2, $3)`,
+			`INSERT INTO bid.bid_checklists (bid_id, title, sort_order, checklist_group) VALUES ($1, $2, $3, 'BIDDER')`,
 			bidID, title, i,
 		)
 		if err != nil {
@@ -524,7 +590,7 @@ func (r *postgresBidRepo) BulkInsertChecklists(ctx context.Context, bidID string
 
 func (r *postgresBidRepo) GetChecklists(ctx context.Context, bidID string) ([]domain.BidChecklist, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, bid_id, title, is_done, done_by, done_at, sort_order, created_at
+		`SELECT id, bid_id, title, is_done, done_by, done_at, sort_order, checklist_group, created_at
 		 FROM bid.bid_checklists WHERE bid_id = $1 ORDER BY sort_order ASC, created_at ASC`,
 		bidID,
 	)
@@ -536,7 +602,7 @@ func (r *postgresBidRepo) GetChecklists(ctx context.Context, bidID string) ([]do
 	var items []domain.BidChecklist
 	for rows.Next() {
 		var c domain.BidChecklist
-		if err := rows.Scan(&c.ID, &c.BidID, &c.Title, &c.IsDone, &c.DoneBy, &c.DoneAt, &c.SortOrder, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.BidID, &c.Title, &c.IsDone, &c.DoneBy, &c.DoneAt, &c.SortOrder, &c.ChecklistGroup, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, c)
@@ -550,11 +616,11 @@ func (r *postgresBidRepo) GetChecklists(ctx context.Context, bidID string) ([]do
 func (r *postgresBidRepo) AddChecklist(ctx context.Context, bidID string, title string, sortOrder int) (*domain.BidChecklist, error) {
 	var c domain.BidChecklist
 	err := r.pool.QueryRow(ctx,
-		`INSERT INTO bid.bid_checklists (bid_id, title, sort_order)
-		 VALUES ($1, $2, $3)
-		 RETURNING id, bid_id, title, is_done, done_by, done_at, sort_order, created_at`,
+		`INSERT INTO bid.bid_checklists (bid_id, title, sort_order, checklist_group)
+		 VALUES ($1, $2, $3, 'CUSTOM')
+		 RETURNING id, bid_id, title, is_done, done_by, done_at, sort_order, checklist_group, created_at`,
 		bidID, title, sortOrder,
-	).Scan(&c.ID, &c.BidID, &c.Title, &c.IsDone, &c.DoneBy, &c.DoneAt, &c.SortOrder, &c.CreatedAt)
+	).Scan(&c.ID, &c.BidID, &c.Title, &c.IsDone, &c.DoneBy, &c.DoneAt, &c.SortOrder, &c.ChecklistGroup, &c.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -662,20 +728,78 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 		&b.BidOwnerID, &b.TechnicalManagerID, &b.CreatedBy,
 		&b.EstimatedValue, &b.EMDAmount, &b.EMDType, &b.EMDExempted,
 		&b.FinalBidValue, &b.L1Price, &b.QuotedPrice,
-		&b.OpeningDate, &b.ClosingDate, &b.SubmissionDate, &b.ResultDate, &b.RADate,
-		&b.Category, &b.BidType, &b.GemBidType, &b.OEMRequired, &b.HasTechEval,
+		&b.StartDate, &b.EndDate, &b.OpeningDate, &b.ClosingDate, &b.DurationMonths, &b.Authority,
+		&b.HighLevelScope, &b.BGRequired, &b.BGRate,
+		&b.Category, &b.BidType, &b.GemBidType,
 		&b.QualificationStatus, &b.BidOutcome, &b.OutcomeReason, &b.TechComplianceStatus,
 		&b.Remarks, &b.CompetitorInfo, &b.Metadata,
 		&b.AISourceDocumentID, &b.AIExtractionConfidence,
 		&b.CreatedAt, &b.UpdatedAt, &b.ArchivedAt,
-		&b.Team, &b.ScopeType, &b.BGRate, &b.ActivityType, &b.TargetMonthDate,
+		&b.Team, &b.ScopeType, &b.ActivityType,
 		&b.ExcelBidStatus, &b.SubmissionStatus, &b.FinancialEvaluationStatus, &b.POReceivedStatus,
 		&b.BidResult,
+		&b.FinanceAlerted, &b.EMDReady, &b.EMDReturned, &b.BGDischarged, &b.SubmissionDone,
+		&b.GemSubmissionPrice, &b.FinalPrice,
+		&b.TechnicalResult, &b.DisqualificationReason, &b.FinancialResult,
+		&b.L1CompanyName, &b.PriceDifference, &b.PriceDifferencePct,
+		&b.EligibilityRemarks, &b.EMDRemarks,
+		&b.StageCompletions, &b.StageRemarks, &b.StageReviews,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan bid: %w", err)
 	}
 	return &b, nil
+}
+
+func (r *postgresBidRepo) BulkInsertChecklistsWithGroup(ctx context.Context, bidID string, titles []string, group string) error {
+	for i, title := range titles {
+		_, err := r.pool.Exec(ctx,
+			`INSERT INTO bid.bid_checklists (bid_id, title, sort_order, checklist_group) VALUES ($1, $2, $3, $4)`,
+			bidID, title, i, group,
+		)
+		if err != nil {
+			return fmt.Errorf("insert checklist %q: %w", title, err)
+		}
+	}
+	return nil
+}
+
+func (r *postgresBidRepo) GetChecklistsByGroup(ctx context.Context, bidID string, group string) ([]domain.BidChecklist, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, bid_id, title, is_done, done_by, done_at, sort_order, checklist_group, created_at
+		 FROM bid.bid_checklists WHERE bid_id = $1 AND checklist_group = $2 ORDER BY sort_order ASC, created_at ASC`,
+		bidID, group,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []domain.BidChecklist
+	for rows.Next() {
+		var c domain.BidChecklist
+		if err := rows.Scan(&c.ID, &c.BidID, &c.Title, &c.IsDone, &c.DoneBy, &c.DoneAt, &c.SortOrder, &c.ChecklistGroup, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, c)
+	}
+	if items == nil {
+		items = []domain.BidChecklist{}
+	}
+	return items, nil
+}
+
+func (r *postgresBidRepo) AddChecklistWithGroup(ctx context.Context, bidID string, title string, sortOrder int, group string) (*domain.BidChecklist, error) {
+	var c domain.BidChecklist
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO bid.bid_checklists (bid_id, title, sort_order, checklist_group)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id, bid_id, title, is_done, done_by, done_at, sort_order, checklist_group, created_at`,
+		bidID, title, sortOrder, group,
+	).Scan(&c.ID, &c.BidID, &c.Title, &c.IsDone, &c.DoneBy, &c.DoneAt, &c.SortOrder, &c.ChecklistGroup, &c.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
 }
 
 func calcPages(total, limit int) int {

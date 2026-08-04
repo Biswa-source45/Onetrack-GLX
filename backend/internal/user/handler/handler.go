@@ -218,3 +218,25 @@ func (h *UserHandler) UpdatePermissions(c *gin.Context) {
 
 	response.Success(c, http.StatusOK, "Permission overrides updated successfully", nil)
 }
+
+func (h *UserHandler) DeleteUser(c *gin.Context) {
+	id := c.Param("id")
+	requestingUserID, _ := c.Get("user_id")
+
+	err := h.userService.DeleteUser(c.Request.Context(), id, requestingUserID.(string))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrUserNotFound):
+			response.NotFound(c, "User not found")
+		case strings.Contains(err.Error(), "cannot delete your own account"):
+			response.BadRequest(c, "Cannot delete your own account", nil)
+		case strings.Contains(err.Error(), "cannot delete the system super admin"):
+			response.BadRequest(c, "Cannot delete the system super admin account", nil)
+		default:
+			response.InternalError(c, "Failed to delete user")
+		}
+		return
+	}
+
+	response.Success(c, http.StatusOK, "User deleted successfully", nil)
+}

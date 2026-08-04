@@ -7,15 +7,35 @@ import (
 	"math"
 	"time"
 
+	alertDomain "github.com/onetrack/backend/internal/alert/domain"
 	"github.com/onetrack/backend/internal/bid/domain"
 )
 
 type bidService struct {
-	repo domain.BidRepository
+	repo     domain.BidRepository
+	alertSvc alertDomain.AlertService
 }
 
-func NewBidService(repo domain.BidRepository) domain.BidService {
-	return &bidService{repo: repo}
+func NewBidService(repo domain.BidRepository, alertSvc alertDomain.AlertService) domain.BidService {
+	return &bidService{
+		repo:     repo,
+		alertSvc: alertSvc,
+	}
+}
+
+func getRoleForStage(stage string) string {
+	switch stage {
+	case domain.StageDiscovered, domain.StageEligibilityAssessment, domain.StageOEMAuthorizationRequest, domain.StagePricingRequest:
+		return "PRE_SALES"
+	case domain.StageDocumentChecklistPrep, domain.StageTechnicalEvaluation:
+		return "TECHNICAL"
+	case domain.StageEMDProcessing, domain.StageFinancialEvaluation:
+		return "FINANCE"
+	case domain.StageInternalApproval, domain.StageAwardHandover:
+		return "MANAGEMENT"
+	default:
+		return "ALL"
+	}
 }
 
 func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest, createdBy string) (*domain.BidResponse, error) {
@@ -37,7 +57,7 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 		BidType:            req.BidType,
 		GemBidType:         req.GemBidType,
 		Remarks:            req.Remarks,
-		Metadata:           []byte("{}"),
+		Metadata:           []byte(`{"stage_completions":{"DISCOVERED":true}}`),
 	}
 
 	if req.PortalSource != nil {
@@ -46,47 +66,48 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 	if req.EMDExempted != nil {
 		params.EMDExempted = *req.EMDExempted
 	}
-	if req.OEMRequired != nil {
-		params.OEMRequired = *req.OEMRequired
+	if req.BGRequired != nil {
+		params.BGRequired = *req.BGRequired
 	}
-	if req.HasTechEval != nil {
-		params.HasTechEval = *req.HasTechEval
-	}
-	if req.OpeningDate != nil {
-		t, err := time.Parse(time.RFC3339, *req.OpeningDate)
-		if err != nil {
-			return nil, fmt.Errorf("invalid opening_date format: %w", err)
+	if req.StartDate != nil {
+		t, err := time.Parse(time.RFC3339, *req.StartDate)
+		if err == nil {
+			params.StartDate = &t
 		}
-		params.OpeningDate = &t
 	}
-	if req.ClosingDate != nil {
-		t, err := time.Parse(time.RFC3339, *req.ClosingDate)
-		if err != nil {
-			return nil, fmt.Errorf("invalid closing_date format: %w", err)
+	if req.EndDate != nil {
+		t, err := time.Parse(time.RFC3339, *req.EndDate)
+		if err == nil {
+			params.EndDate = &t
+			// Auto-calculate duration months from end date
+			if params.StartDate != nil {
+				months := int(params.EndDate.Sub(*params.StartDate).Hours()/24/30) + 1
+				params.DurationMonths = &months
+			}
 		}
-		params.ClosingDate = &t
+	}
+	if req.DurationMonths != nil {
+		params.DurationMonths = req.DurationMonths
+	}
+	if req.HighLevelScope != nil {
+		params.HighLevelScope = req.HighLevelScope
+	}
+	if req.Authority != nil {
+		params.Authority = req.Authority
 	}
 	if req.Metadata != nil {
 		params.Metadata = []byte(*req.Metadata)
 	}
 
+	params.BGRate = req.BGRate
 	params.Team = req.Team
 	params.ScopeType = req.ScopeType
-	params.BGRate = req.BGRate
 	params.ActivityType = req.ActivityType
 	params.ExcelBidStatus = req.ExcelBidStatus
 	params.SubmissionStatus = req.SubmissionStatus
 	params.FinancialEvaluationStatus = req.FinancialEvaluationStatus
 	params.POReceivedStatus = req.POReceivedStatus
 	params.BidResult = req.BidResult
-
-	if req.TargetMonthDate != nil {
-		t, err := time.Parse(time.RFC3339, *req.TargetMonthDate)
-		if err != nil {
-			return nil, fmt.Errorf("invalid target_month_date format: %w", err)
-		}
-		params.TargetMonthDate = &t
-	}
 
 	id, err := s.repo.Create(ctx, params)
 	if err != nil {
@@ -108,7 +129,27 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 		_ = s.repo.AddMember(ctx, id, *req.TechnicalManagerID, "MANAGER", createdBy)
 	}
 
-	// Seed checklists if provided
+	// Dispatch alert & email notification for new tender creation
+	if s.alertSvc != nil {
+		bidIdCopy := id
+		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+			TargetRole: "PRE_SALES",
+			BidID:      &bidIdCopy,
+			Type:       "TENDER_CREATED",
+			Title:      fmt.Sprintf("New Tender Identified: %s", req.Title),
+			Message:    fmt.Sprintf("Tender '%s' (GeM Bid No: %s) has been created and assigned for Stage 2 (Eligibility Assessment).", req.Title, req.GemBidNo),
+		})
+	}
+
+	// Seed Bidder doc checklists (group=BIDDER)
+	if len(req.BidderChecklists) > 0 {
+		_ = s.repo.BulkInsertChecklistsWithGroup(ctx, id, req.BidderChecklists, "BIDDER")
+	}
+	// Seed OEM doc checklists (group=OEM)
+	if len(req.OEMChecklists) > 0 {
+		_ = s.repo.BulkInsertChecklistsWithGroup(ctx, id, req.OEMChecklists, "OEM")
+	}
+	// Legacy checklists support
 	if len(req.Checklists) > 0 {
 		_ = s.repo.BulkInsertChecklists(ctx, id, req.Checklists)
 	}
@@ -351,8 +392,31 @@ func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain
 
 	prevStage := bid.WorkflowStage
 
+	// workflow_stage index tracking (used for history/validation only)
+	prevIdx := -1
+	targetIdx := -1
+	for i, st := range domain.OrderedWorkflowStages {
+		if st == prevStage {
+			prevIdx = i
+		}
+		if st == req.TargetStage {
+			targetIdx = i
+		}
+	}
+	_, _ = prevIdx, targetIdx // retained for auditing
+
 	if err := s.repo.UpdateStage(ctx, id, req.TargetStage, newStatus); err != nil {
 		return nil, fmt.Errorf("update stage: %w", err)
+	}
+
+	// NOTE: stage_completions is intentionally NOT modified here.
+	// Each stage's completion status is managed atomically via PATCH /bids/:id
+	// from the frontend CompleteStageModal. Mixing workflow_stage transitions
+	// with stage_completions updates caused cascade completion bugs.
+
+	reasonText := ""
+	if req.Reason != nil {
+		reasonText = *req.Reason
 	}
 
 	_ = s.repo.AddStageHistory(ctx, &domain.BidStageHistory{
@@ -362,6 +426,19 @@ func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain
 		TransitionReason: req.Reason,
 		TransitionedBy:   actorID,
 	})
+
+	// Dispatch automated alert & email to relevant team role
+	if s.alertSvc != nil {
+		targetRole := getRoleForStage(req.TargetStage)
+		bidIdCopy := id
+		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+			TargetRole: targetRole,
+			BidID:      &bidIdCopy,
+			Type:       fmt.Sprintf("STAGE_TRANSITION_%s", req.TargetStage),
+			Title:      fmt.Sprintf("Tender Advanced: %s", req.TargetStage),
+			Message:    fmt.Sprintf("Tender '%s' stage transitioned to %s. Remarks: %s", bid.Title, req.TargetStage, reasonText),
+		})
+	}
 
 	return &domain.TransitionResult{
 		BidID:          id,
@@ -438,6 +515,19 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, techM
 		_ = json.Unmarshal(bid.Metadata, &metadata)
 	}
 
+	var completions map[string]bool = make(map[string]bool)
+	var remarks map[string]string = make(map[string]string)
+	var reviews map[string]bool = make(map[string]bool)
+	if len(bid.StageCompletions) > 0 {
+		_ = json.Unmarshal(bid.StageCompletions, &completions)
+	}
+	if len(bid.StageRemarks) > 0 {
+		_ = json.Unmarshal(bid.StageRemarks, &remarks)
+	}
+	if len(bid.StageReviews) > 0 {
+		_ = json.Unmarshal(bid.StageReviews, &reviews)
+	}
+
 	return &domain.BidResponse{
 		ID:               bid.ID,
 		BidNo:            bid.BidNo,
@@ -456,16 +546,18 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, techM
 		FinalBidValue:    bid.FinalBidValue,
 		L1Price:          bid.L1Price,
 		QuotedPrice:      bid.QuotedPrice,
+		StartDate:        bid.StartDate,
+		EndDate:          bid.EndDate,
 		OpeningDate:      bid.OpeningDate,
 		ClosingDate:      bid.ClosingDate,
-		SubmissionDate:   bid.SubmissionDate,
-		ResultDate:       bid.ResultDate,
-		RADate:           bid.RADate,
+		DurationMonths:   bid.DurationMonths,
+		Authority:        bid.Authority,
+		HighLevelScope:   bid.HighLevelScope,
+		BGRequired:       bid.BGRequired,
+		BGRate:           bid.BGRate,
 		Category:         bid.Category,
 		BidType:          bid.BidType,
 		GemBidType:       bid.GemBidType,
-		OEMRequired:      bid.OEMRequired,
-		HasTechEval:      bid.HasTechEval,
 		QualificationStatus:    bid.QualificationStatus,
 		BidOutcome:       bid.BidOutcome,
 		OutcomeReason:    bid.OutcomeReason,
@@ -480,16 +572,30 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, techM
 		CreatedBy:        bid.CreatedBy,
 		AISourceDocumentID:     bid.AISourceDocumentID,
 		AIExtractionConfidence: bid.AIExtractionConfidence,
-		Team:                      bid.Team,
-		ScopeType:                 bid.ScopeType,
-		BGRate:                    bid.BGRate,
-		ActivityType:              bid.ActivityType,
-		TargetMonthDate:           bid.TargetMonthDate,
-		ExcelBidStatus:            bid.ExcelBidStatus,
-		SubmissionStatus:          bid.SubmissionStatus,
-		FinancialEvaluationStatus: bid.FinancialEvaluationStatus,
-		POReceivedStatus:          bid.POReceivedStatus,
-		BidResult:                 bid.BidResult,
+		Team:             bid.Team,
+		ScopeType:        bid.ScopeType,
+		ActivityType:     bid.ActivityType,
+		ExcelBidStatus:   bid.ExcelBidStatus,
+		SubmissionStatus: bid.SubmissionStatus,
+		BidResult:        bid.BidResult,
+		FinanceAlerted:         bid.FinanceAlerted,
+		EMDReady:               bid.EMDReady,
+		EMDReturned:            bid.EMDReturned,
+		BGDischarged:           bid.BGDischarged,
+		SubmissionDone:         bid.SubmissionDone,
+		GemSubmissionPrice:     bid.GemSubmissionPrice,
+		FinalPrice:             bid.FinalPrice,
+		TechnicalResult:        bid.TechnicalResult,
+		DisqualificationReason: bid.DisqualificationReason,
+		FinancialResult:        bid.FinancialResult,
+		L1CompanyName:          bid.L1CompanyName,
+		PriceDifference:        bid.PriceDifference,
+		PriceDifferencePct:     bid.PriceDifferencePct,
+		EligibilityRemarks:     bid.EligibilityRemarks,
+		EMDRemarks:             bid.EMDRemarks,
+		StageCompletions:       completions,
+		StageRemarks:           remarks,
+		StageReviews:           reviews,
 		CreatedAt:        bid.CreatedAt,
 		UpdatedAt:        bid.UpdatedAt,
 		ArchivedAt:       bid.ArchivedAt,
@@ -529,6 +635,12 @@ func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary) domai
 		FinancialEvaluationStatus: bid.FinancialEvaluationStatus,
 		POReceivedStatus:          bid.POReceivedStatus,
 		EMDExempted:               bid.EMDExempted,
+		SubmissionDone:            bid.SubmissionDone,
+		EMDReady:                  bid.EMDReady,
+		EMDReturned:               bid.EMDReturned,
+		FinalBidValue:             bid.FinalBidValue,
+		TechnicalResult:           bid.TechnicalResult,
+		FinancialResult:           bid.FinancialResult,
 		HasTechEval:               bid.HasTechEval,
 		BidResult:                 bid.BidResult,
 		CreatedAt:                 bid.CreatedAt,

@@ -41,6 +41,18 @@ const PORTAL_SOURCES = ['GeM', 'CPPP', 'eProcure']
 const BID_TYPES      = ['CUSTOM_BID', 'REGULAR', 'RA_BID']
 const EMD_TYPES      = ['ONLINE', 'DD', 'BG', 'EXEMPTED']
 
+function safeDateStr(dt) {
+  if (!dt) return ''
+  try {
+    const d = new Date(dt)
+    if (isNaN(d.getTime())) return ''
+    if (d.getFullYear() <= 1970) return ''
+    return d.toISOString().split('T')[0]
+  } catch {
+    return ''
+  }
+}
+
 function inputCls(err) {
   return `h-8 text-sm ${err ? 'border-destructive focus-visible:ring-destructive/30' : ''}`
 }
@@ -79,15 +91,6 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
     closing_date:      '',
     bid_owner_id:      '',
     remarks:           '',
-    team:                        '',
-    scope_type:                  '',
-    bg_rate:                     '',
-    activity_type:               '',
-    target_month_date:           '',
-    excel_bid_status:            '',
-    submission_status:           '',
-    financial_evaluation_status:  '',
-    po_received_status:           '',
     technical_manager_id:        '',
     bid_result:                  '',
   })
@@ -142,21 +145,12 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
             emd_exempted:      !!b.emd_exempted,
             oem_required:      !!b.oem_required,
             has_tech_eval:     !!b.has_tech_eval,
-            opening_date:      b.opening_date ? new Date(b.opening_date).toISOString().split('T')[0] : '',
-            closing_date:      b.closing_date ? new Date(b.closing_date).toISOString().split('T')[0] : '',
+            opening_date:      safeDateStr(b.opening_date || b.start_date),
+            closing_date:      safeDateStr(b.closing_date || b.end_date || b.submission_deadline || b.target_month_date),
             bid_owner_id:      b.bid_owner?.id || b.bid_owner_id || '',
             remarks:           b.remarks || '',
-            team:                        b.team || '',
-            scope_type:                  b.scope_type || '',
-            bg_rate:                     b.bg_rate !== undefined && b.bg_rate !== null ? String(b.bg_rate) : '',
-            activity_type:               b.activity_type || '',
-            target_month_date:           b.target_month_date ? new Date(b.target_month_date).toISOString().split('T')[0] : '',
-            excel_bid_status:            b.excel_bid_status || '',
-            submission_status:           b.submission_status || '',
-            financial_evaluation_status:  b.financial_evaluation_status || '',
-            po_received_status:           b.po_received_status || '',
-            technical_manager_id:        b.technical_manager?.id || b.technical_manager_id || '',
-            bid_result:                  b.bid_result || '',
+            technical_manager_id: b.technical_manager?.id || b.technical_manager_id || '',
+            bid_result:        b.bid_result || '',
           })
         }
       } catch (err) {
@@ -184,21 +178,12 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
         emd_exempted:      !!bid.emd_exempted,
         oem_required:      !!bid.oem_required,
         has_tech_eval:     !!bid.has_tech_eval,
-        opening_date:      bid.opening_date ? new Date(bid.opening_date).toISOString().split('T')[0] : '',
-        closing_date:      bid.closing_date ? new Date(bid.closing_date).toISOString().split('T')[0] : '',
+        opening_date:      safeDateStr(bid.opening_date || bid.start_date),
+        closing_date:      safeDateStr(bid.closing_date || bid.end_date || bid.submission_deadline || bid.target_month_date),
         bid_owner_id:      bid.bid_owner?.id || bid.bid_owner_id || '',
         remarks:           bid.remarks || '',
-        team:                        bid.team || '',
-        scope_type:                  bid.scope_type || '',
-        bg_rate:                     bid.bg_rate !== undefined && bid.bg_rate !== null ? String(bid.bg_rate) : '',
-        activity_type:               bid.activity_type || '',
-        target_month_date:           bid.target_month_date ? new Date(bid.target_month_date).toISOString().split('T')[0] : '',
-        excel_bid_status:            bid.excel_bid_status || '',
-        submission_status:           bid.submission_status || '',
-        financial_evaluation_status:  bid.financial_evaluation_status || '',
-        po_received_status:           bid.po_received_status || '',
-        technical_manager_id:        bid.technical_manager?.id || bid.technical_manager_id || '',
-        bid_result:                  bid.bid_result || '',
+        technical_manager_id: bid.technical_manager?.id || bid.technical_manager_id || '',
+        bid_result:        bid.bid_result || '',
       })
       setErrors({})
       loadFullBid()
@@ -255,6 +240,8 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
         estimated_value: form.estimated_value ? Number(form.estimated_value) : null,
         emd_amount:      form.emd_amount ? Number(form.emd_amount) : null,
         bg_rate:         form.bg_rate ? Number(form.bg_rate) : null,
+        start_date:      form.opening_date ? new Date(form.opening_date).toISOString() : null,
+        end_date:        form.closing_date ? new Date(form.closing_date).toISOString() : null,
         opening_date:    form.opening_date ? new Date(form.opening_date).toISOString() : null,
         closing_date:    form.closing_date ? new Date(form.closing_date).toISOString() : null,
         target_month_date: form.target_month_date ? new Date(form.target_month_date).toISOString() : null,
@@ -482,64 +469,17 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
                     <h3 className="text-sm font-semibold text-foreground">Timeline</h3>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <Field label="Opening Date">
+                    <Field label="Start Date">
                       <Input type="date" value={form.opening_date}
                         onChange={(e) => set('opening_date', e.target.value)} className={inputCls()} />
                     </Field>
-                    <Field label="Closing Date">
+                    <Field label="End Date">
                       <Input type="date" value={form.closing_date}
                         onChange={(e) => set('closing_date', e.target.value)} className={inputCls()} />
                     </Field>
                   </div>
                 </section>
 
-                {/* Excel Tracking Details */}
-                <section>
-                  <div className="flex items-center gap-2 mb-4">
-                    <div className="size-6 rounded-md bg-purple-100 flex items-center justify-center">
-                      <FileText className="size-3.5 text-purple-600" />
-                    </div>
-                    <h3 className="text-sm font-semibold text-foreground">Excel Tracking Details</h3>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field label="Team">
-                      <Input value={form.team} onChange={(e) => set('team', e.target.value)}
-                        placeholder="e.g. Govt Team A" className={inputCls()} />
-                    </Field>
-                    <Field label="Scope Type">
-                      <Input value={form.scope_type} onChange={(e) => set('scope_type', e.target.value)}
-                        placeholder="e.g. Service / Supply" className={inputCls()} />
-                    </Field>
-                    <Field label="BG Rate (%)">
-                      <Input type="number" step="any" value={form.bg_rate} onChange={(e) => set('bg_rate', e.target.value)}
-                        placeholder="e.g. 2.5" className={inputCls()} />
-                    </Field>
-                    <Field label="Activity Type">
-                      <Input value={form.activity_type} onChange={(e) => set('activity_type', e.target.value)}
-                        placeholder="e.g. System Integration" className={inputCls()} />
-                    </Field>
-                    <Field label="Target Month Date">
-                      <Input type="date" value={form.target_month_date}
-                        onChange={(e) => set('target_month_date', e.target.value)} className={inputCls()} />
-                    </Field>
-                    <Field label="Excel Bid Status">
-                      <Input value={form.excel_bid_status} onChange={(e) => set('excel_bid_status', e.target.value)}
-                        placeholder="e.g. Submitted" className={inputCls()} />
-                    </Field>
-                    <Field label="Submission Status">
-                      <Input value={form.submission_status} onChange={(e) => set('submission_status', e.target.value)}
-                        placeholder="e.g. Online Upload" className={inputCls()} />
-                    </Field>
-                    <Field label="Financial Evaluation Status">
-                      <Input value={form.financial_evaluation_status} onChange={(e) => set('financial_evaluation_status', e.target.value)}
-                        placeholder="e.g. Qualified" className={inputCls()} />
-                    </Field>
-                    <Field label="PO Received Status">
-                      <Input value={form.po_received_status} onChange={(e) => set('po_received_status', e.target.value)}
-                        placeholder="e.g. Awaiting PO" className={inputCls()} />
-                    </Field>
-                  </div>
-                </section>
 
                 {/* Assignment & Remarks */}
                 <section>

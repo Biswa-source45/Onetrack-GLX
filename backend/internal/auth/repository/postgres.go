@@ -21,7 +21,7 @@ func (r *postgresAuthRepo) GetUserByUsername(ctx context.Context, username strin
 		SELECT id, employee_code, username, full_name, email, phone, department,
 		       password_hash, force_password_change, is_active, last_login_at, created_at, updated_at
 		FROM auth.users
-		WHERE username = $1
+		WHERE LOWER(username) = LOWER($1) OR (email IS NOT NULL AND LOWER(email) = LOWER($1))
 	`
 
 	var user domain.User
@@ -216,4 +216,67 @@ func (r *postgresAuthRepo) GetPermissionOverrides(ctx context.Context, userID st
 	}
 
 	return overrides, nil
+}
+
+func (r *postgresAuthRepo) GetUserByEmail(ctx context.Context, email string) (*domain.User, error) {
+	query := `
+		SELECT id, employee_code, username, full_name, email, phone, department,
+		       password_hash, force_password_change, is_active, last_login_at, created_at, updated_at
+		FROM auth.users
+		WHERE LOWER(email) = LOWER($1)
+	`
+
+	var user domain.User
+	err := r.pool.QueryRow(ctx, query, email).Scan(
+		&user.ID,
+		&user.EmployeeCode,
+		&user.Username,
+		&user.FullName,
+		&user.Email,
+		&user.Phone,
+		&user.Department,
+		&user.PasswordHash,
+		&user.ForcePasswordChange,
+		&user.IsActive,
+		&user.LastLoginAt,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("user not found by email: %w", err)
+	}
+
+	return &user, nil
+}
+
+func (r *postgresAuthRepo) CreateOTP(ctx context.Context, email, otp string) error {
+	// Clean previous OTPs for this email
+	_, _ = r.pool.Exec(ctx, `DELETE FROM auth.password_otps WHERE LOWER(email) = LOWER($1)`, email)
+
+	query := `
+		INSERT INTO auth.password_otps (email, otp_code, expires_at)
+		VALUES ($1, $2, NOW() + INTERVAL '10 minutes')
+	`
+	_, err := r.pool.Exec(ctx, query, email, otp)
+	return err
+}
+
+func (r *postgresAuthRepo) VerifyOTP(ctx context.Context, email, otp string) (bool, error) {
+	query := `
+		SELECT COUNT(1)
+		FROM auth.password_otps
+		WHERE LOWER(email) = LOWER($1) AND otp_code = $2 AND expires_at > NOW()
+	`
+	var count int
+	err := r.pool.QueryRow(ctx, query, email, otp).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (r *postgresAuthRepo) DeleteOTP(ctx context.Context, email string) error {
+	query := `DELETE FROM auth.password_otps WHERE LOWER(email) = LOWER($1)`
+	_, err := r.pool.Exec(ctx, query, email)
+	return err
 }

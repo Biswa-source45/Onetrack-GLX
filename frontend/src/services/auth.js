@@ -242,5 +242,35 @@ export const authService = {
 
     const data = await response.json();
     return { ok: response.ok, status: response.status, ...data };
+  },
+
+  forgotPassword: async (email) => {
+    const response = await fetch(`${BASE_URL}/api/v1/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    const data = await response.json();
+    return { ok: response.ok, status: response.status, ...data };
+  },
+
+  verifyOTP: async (email, otp) => {
+    const response = await fetch(`${BASE_URL}/api/v1/auth/verify-otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, otp })
+    });
+    const data = await response.json();
+    return { ok: response.ok, status: response.status, ...data };
+  },
+
+  resetPasswordOTP: async (email, otp, newPassword) => {
+    const response = await fetch(`${BASE_URL}/api/v1/auth/reset-password-otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, otp, new_password: newPassword })
+    });
+    const data = await response.json();
+    return { ok: response.ok, status: response.status, ...data };
   }
 };

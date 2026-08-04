@@ -4,7 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Layers, LogOut, Key, CheckCircle, Eye, EyeOff, Loader2,
   Users, LayoutDashboard, Menu, X, ChevronRight,
-  FileText, TrendingUp, Activity, BarChart2, ShieldCheck, CheckSquare,
+  FileText, TrendingUp, Activity, BarChart2, ShieldCheck, Bell,
+  Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -16,6 +17,7 @@ import { Badge }     from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 
 import { authService, tokenStorage } from '../services/auth'
+import { getMyProfile } from '../services/users'
 import { usePermissions } from '../hooks/usePermissions'
 import { UserManagement } from './admin/UserManagement'
 import { UserAvatar }     from './admin/UserAvatar'
@@ -27,9 +29,17 @@ import { listBids }       from '../services/bids'
 const NAV_ITEMS = [
   { id: 'overview',  label: 'Overview',        icon: LayoutDashboard, permission: null },
   { id: 'tenders',   label: 'Tenders',          icon: FileText,        permission: 'bid.view' },
-  { id: 'my-tasks',  label: 'My Tasks',         icon: CheckSquare,     permission: 'task.view' },
+  { id: 'alerts',    label: 'Alerts',           icon: Bell,            permission: 'bid.view' },
   { id: 'users',     label: 'User Management',  icon: Users,           permission: 'user.view' },
 ]
+
+// Currency Helper
+function formatCurrency(val) {
+  if (val === null || val === undefined || isNaN(val)) return '₹0'
+  if (val >= 10000000) return `₹${(val / 10000000).toFixed(2)} Cr`
+  if (val >= 100000) return `₹${(val / 100000).toFixed(2)} L`
+  return `₹${val.toLocaleString('en-IN')}`
+}
 
 // ── Force Password Change Guard ───────────────────────────────────────────────
 function ForcePasswordChangeGuard({ onDone }) {
@@ -52,9 +62,11 @@ function ForcePasswordChangeGuard({ onDone }) {
     try {
       const result = await authService.changePassword(currentPassword, newPassword)
       if (result.ok && result.success) {
-        toast.success('Password updated. Please sign in again.')
-        authService.logout()
-        onDone()
+        toast.success('Password updated successfully! Redirecting to login...')
+        tokenStorage.clear()
+        setTimeout(() => {
+          window.location.href = '/login'
+        }, 1000)
       } else {
         const msg = result.error?.message || 'Failed to change password'
         if (msg.toLowerCase().includes('current')) {
@@ -135,7 +147,7 @@ function ForcePasswordChangeGuard({ onDone }) {
           </div>
 
           <Button type="submit" className="w-full" disabled={loading}>
-            {loading && <Loader2 className="size-4 animate-spin" />}
+            {loading && <Loader2 className="size-4 animate-spin mr-2" />}
             Update Password & Sign In
           </Button>
         </form>
@@ -146,108 +158,689 @@ function ForcePasswordChangeGuard({ onDone }) {
 
 // ── Overview Panel ────────────────────────────────────────────────────────────
 export function OverviewPanel() {
-  const { user } = useOutletContext()
+  const { user, onOpenProfile } = useOutletContext()
   const navigate = useNavigate()
-  const [bidStats, setBidStats] = useState({ total:0, active:0, won:0, lost:0 })
+  const [bids, setBids] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  // Custom Analytics Filters
+  const [startDateFilter, setStartDateFilter] = useState('')
+  const [endDateFilter, setEndDateFilter] = useState('')
+  const [executiveFilter, setExecutiveFilter] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+
+  const fetchBids = async () => {
+    setLoading(true)
+    try {
+      const r = await listBids({ limit: 200 })
+      if (r.ok && r.data) {
+        const rawList = Array.isArray(r.data) ? r.data : (r.data?.bids || [])
+        setBids(rawList)
+      }
+    } catch {
+      toast.error('Failed to load tenders analytics')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
-    listBids({ limit: 1 }).then(r => {
-      if (r.ok) {
-        setBidStats({
-          total:  r.meta?.total ?? 0,
-          active: r.meta?.active_count ?? 0,
-          won:    r.meta?.won_count ?? 0,
-          lost:   r.meta?.lost_count ?? 0,
-        })
-      }
-    }).catch(()=>{})
+    fetchBids()
   }, [])
 
-  const stats = [
-    { label:'Active Tenders', value: bidStats.active, icon: FileText,   color:'text-blue-600',   bg:'bg-blue-50',    border:'border-blue-100' },
-    { label:'Total Tenders',  value: bidStats.total,  icon: TrendingUp, color:'text-violet-600', bg:'bg-violet-50',  border:'border-violet-100' },
-    { label:'Won Bids',       value: bidStats.won,    icon: CheckCircle,color:'text-emerald-600',bg:'bg-emerald-50', border:'border-emerald-100' },
-    { label:'Lost Bids',      value: bidStats.lost,   icon: Activity,   color:'text-red-600',   bg:'bg-red-50',     border:'border-red-100' },
-    { label:'Permissions',    value:(user?.permissions??[]).length, icon:ShieldCheck, color:'text-amber-600',bg:'bg-amber-50',border:'border-amber-100' },
-    { label:'Roles',          value:(user?.roles??[]).length,       icon:BarChart2,   color:'text-slate-600', bg:'bg-slate-50',border:'border-slate-200' },
+  // Management Role Gating: Only Super Admin, Admin, and Manager get full BI Analytics
+  const isManagement = user?.roles?.some(r => ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(r))
+
+  // Filter logic
+  const filteredBids = bids.filter(b => {
+    if (startDateFilter && b.created_at && new Date(b.created_at) < new Date(startDateFilter)) return false
+    if (endDateFilter && b.created_at && new Date(b.created_at) > new Date(endDateFilter + 'T23:59:59')) return false
+
+    if (executiveFilter) {
+      const ownerName = b.bid_owner?.full_name || b.bid_owner?.username || ''
+      if (!ownerName.toLowerCase().includes(executiveFilter.toLowerCase())) return false
+    }
+
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase()
+      const title = (b.title || '').toLowerCase()
+      const bidNo = (b.bid_no || b.gem_bid_no || '').toLowerCase()
+      const org = (b.organization_name || '').toLowerCase()
+      if (!title.includes(q) && !bidNo.includes(q) && !org.includes(q)) return false
+    }
+
+    return true
+  })
+
+  // BI Metrics Calculation
+  const totalBids = filteredBids.length
+  
+  const submittedBids = filteredBids.filter(b => 
+    b.submission_done || 
+    ['GE_M_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER'].includes(b.workflow_stage) ||
+    b.submission_status === 'SUBMITTED' ||
+    b.bid_status === 'SUBMITTED'
+  ).length
+
+  const notSubmittedBids = Math.max(0, totalBids - submittedBids)
+
+  const techEvalBids = filteredBids.filter(b => 
+    b.workflow_stage === 'TECHNICAL_EVALUATION' || b.has_tech_eval
+  ).length
+
+  const finEvalBids = filteredBids.filter(b => 
+    b.workflow_stage === 'FINANCIAL_EVALUATION'
+  ).length
+
+  const wonBids = filteredBids.filter(b => 
+    b.bid_status === 'WON' || b.bid_outcome === 'WON' || b.financial_result === 'WIN' || b.workflow_stage === 'AWARD_HANDOVER'
+  ).length
+
+  const lostBids = filteredBids.filter(b => 
+    b.bid_status === 'LOST' || b.bid_outcome === 'LOST' || b.technical_result === 'DISQUALIFIED' || b.financial_result === 'LOST'
+  ).length
+
+  // Financial BI metrics
+  const totalWonValue = filteredBids
+    .filter(b => b.bid_status === 'WON' || b.bid_outcome === 'WON' || b.financial_result === 'WIN' || b.workflow_stage === 'AWARD_HANDOVER')
+    .reduce((sum, b) => sum + (b.final_bid_value || b.estimated_value || 0), 0)
+
+  const totalEMDDeposited = filteredBids
+    .reduce((sum, b) => sum + (b.emd_amount || 0), 0)
+
+  const totalEMDReturned = filteredBids
+    .filter(b => b.emd_returned)
+    .reduce((sum, b) => sum + (b.emd_amount || 0), 0)
+
+  const pendingEMDReturn = Math.max(0, totalEMDDeposited - totalEMDReturned)
+
+  // Stage Funnel Analytics Data
+  const stageGroups = [
+    { label: 'Stages 1-4: Discovery & Pre-Qual', stages: ['TENDER_DISCOVERY', 'PRE_QUALIFICATION', 'OEM_AUTHORIZATION', 'PRE_BID_MEETING'], color: 'bg-violet-500', barGradient: 'from-violet-500 to-indigo-500' },
+    { label: 'Stages 5-8: Costing & Docs', stages: ['FINANCIAL_PRICING', 'RISK_APPROVAL', 'EMD_DEPOSIT', 'FINAL_DOCUMENT_SIGNOFF'], color: 'bg-blue-500', barGradient: 'from-blue-500 to-sky-500' },
+    { label: 'Stage 9: Portal Submission', stages: ['GE_M_SUBMISSION'], color: 'bg-emerald-500', barGradient: 'from-emerald-500 to-teal-500' },
+    { label: 'Stage 10: Technical Eval', stages: ['TECHNICAL_EVALUATION'], color: 'bg-amber-500', barGradient: 'from-amber-500 to-yellow-500' },
+    { label: 'Stage 11: Financial Eval', stages: ['FINANCIAL_EVALUATION'], color: 'bg-indigo-500', barGradient: 'from-indigo-500 to-purple-500' },
+    { label: 'Stage 12: Award & Handover', stages: ['AWARD_HANDOVER'], color: 'bg-teal-500', barGradient: 'from-teal-500 to-emerald-600' },
   ]
 
+  const stageFunnelData = stageGroups.map(grp => {
+    const groupBids = filteredBids.filter(b => grp.stages.includes(b.workflow_stage))
+    const count = groupBids.length
+    const val = groupBids.reduce((s, b) => s + (b.estimated_value || 0), 0)
+    const pct = totalBids > 0 ? ((count / totalBids) * 100).toFixed(1) : 0
+    return { ...grp, count, val, pct }
+  })
+
+  // Executive Performance Grouping
+  const execStatsMap = {}
+  filteredBids.forEach(b => {
+    const ownerName = b.bid_owner?.full_name || b.bid_owner?.username || 'Unassigned'
+    if (!execStatsMap[ownerName]) {
+      execStatsMap[ownerName] = { name: ownerName, total: 0, submitted: 0, tech: 0, fin: 0, won: 0, lost: 0 }
+    }
+    const stat = execStatsMap[ownerName]
+    stat.total += 1
+    if (b.submission_done || ['GE_M_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER'].includes(b.workflow_stage)) stat.submitted += 1
+    if (b.workflow_stage === 'TECHNICAL_EVALUATION') stat.tech += 1
+    if (b.workflow_stage === 'FINANCIAL_EVALUATION') stat.fin += 1
+    if (b.bid_status === 'WON' || b.bid_outcome === 'WON' || b.financial_result === 'WIN' || b.workflow_stage === 'AWARD_HANDOVER') stat.won += 1
+    if (b.bid_status === 'LOST' || b.bid_outcome === 'LOST' || b.technical_result === 'DISQUALIFIED' || b.financial_result === 'LOST') stat.lost += 1
+  })
+  const execStatsList = Object.values(execStatsMap)
+
+  // Executive dropdown options
+  const uniqueExecs = Array.from(new Set(bids.map(b => b.bid_owner?.full_name || b.bid_owner?.username).filter(Boolean)))
+
+  const headerStats = [
+    { label:'Total Tenders',     value: totalBids,         icon: Layers,       color:'text-violet-600', bg:'bg-violet-50',  border:'border-violet-200' },
+    { label:'Submitted',         value: submittedBids,     icon: CheckCircle,  color:'text-emerald-600',bg:'bg-emerald-50', border:'border-emerald-200' },
+    { label:'Not Submitted',     value: notSubmittedBids,  icon: Clock,        color:'text-amber-600',  bg:'bg-amber-50',   border:'border-amber-200' },
+    { label:'Technical Eval',    value: techEvalBids,      icon: FileText,     color:'text-blue-600',   bg:'bg-blue-50',    border:'border-blue-200' },
+    { label:'Financial Eval',    value: finEvalBids,       icon: IndianRupee,  color:'text-indigo-600', bg:'bg-indigo-50',  border:'border-indigo-200' },
+    { label:'Won Bids',          value: wonBids,           icon: Award,        color:'text-teal-600',   bg:'bg-teal-50',    border:'border-teal-200' },
+    { label:'Lost Bids',         value: lostBids,          icon: XCircle,      color:'text-rose-600',   bg:'bg-rose-50',    border:'border-rose-200' },
+  ]
+
+  const overallWinRate = totalBids > 0 ? ((wonBids / totalBids) * 100).toFixed(1) : '0.0'
+
   return (
-    <div className="space-y-8">
-      <div className="flex items-start justify-between flex-wrap gap-4">
+    <div className="space-y-6">
+      {/* Top Banner */}
+      <div className="flex items-start justify-between flex-wrap gap-4 bg-gradient-to-r from-card via-card to-muted/30 p-5 rounded-2xl border border-border/80 shadow-xs">
         <div className="space-y-1">
-          <h1 className="font-heading text-2xl font-semibold text-foreground">
-            Welcome back{user?.full_name ? `, ${user.full_name.split(' ')[0]}` : ''}
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="font-heading text-2xl font-bold text-foreground tracking-tight">
+              Welcome back{user?.full_name ? `, ${user.full_name.split(' ')[0]}` : ''}
+            </h1>
+            <Badge variant="outline" className="text-xs bg-primary/5 text-primary border-primary/20 font-mono">
+              {isManagement ? 'Management BI Analytics' : 'Executive Operational Overview'}
+            </Badge>
+          </div>
           <p className="text-sm text-muted-foreground">
-            Manage users, monitor platform activity, and oversee tender operations.
+            {isManagement 
+              ? 'Real-time enterprise tender analytics, stage distribution & performance matrix.'
+              : 'Operational tender workspace overview & quick activity panel.'}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="sm" onClick={fetchBids} disabled={loading} className="gap-1.5 text-xs">
+            <RefreshCw className={`size-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh Data
+          </Button>
           <RoleBadge role={user?.roles?.[0] ?? 'USER'} />
-          <div className="flex items-center gap-1.5">
-            <span className="size-2 rounded-full bg-emerald-500 ring-2 ring-emerald-500/20"/>
-            <span className="text-xs font-medium text-emerald-700">System Healthy</span>
-          </div>
         </div>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        {stats.map((s, i) => (
-          <motion.div key={s.label}
-            initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} transition={{delay:i*0.05}}
-            className={`rounded-xl border ${s.border} p-4 bg-card hover:shadow-sm transition-shadow`}>
-            <div className={`size-9 rounded-lg ${s.bg} flex items-center justify-center mb-3`}>
-              <s.icon className={`size-4 ${s.color}`}/>
-            </div>
-            <p className={`text-2xl font-bold font-heading ${s.color}`}>{s.value}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
-          </motion.div>
-        ))}
-      </div>
+      {/* ── MANAGEMENT ONLY BI ANALYTICS SUITE ──────────────────────────────── */}
+      {isManagement ? (
+        <>
+          {/* 7-Card Enterprise Analytics Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+            {headerStats.map((s, i) => (
+              <motion.div key={s.label}
+                initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
+                className={`rounded-xl border ${s.border} p-3.5 bg-card hover:shadow-md transition-all`}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className={`size-8 rounded-lg ${s.bg} flex items-center justify-center`}>
+                    <s.icon className={`size-4 ${s.color}`}/>
+                  </div>
+                </div>
+                <p className={`text-2xl font-extrabold font-heading tracking-tight ${s.color}`}>{s.value}</p>
+                <p className="text-[11px] font-medium text-muted-foreground mt-0.5 truncate">{s.label}</p>
+              </motion.div>
+            ))}
+          </div>
 
-      {/* Profile + Quick Actions */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Profile</p>
-          <div className="flex items-center gap-3">
-            <UserAvatar fullName={user?.full_name} username={user?.username} size="lg" />
-            <div className="min-w-0">
-              <p className="font-semibold text-sm text-foreground">{user?.full_name || user?.username}</p>
-              <p className="text-xs text-muted-foreground">@{user?.username}</p>
-              <p className="text-xs text-muted-foreground font-mono mt-0.5">{user?.employee_code ?? ''}</p>
+          {/* Analytics & Filtration Toolbar */}
+          <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-xs">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Filter className="size-4 text-primary" />
+                <span className="text-xs font-semibold uppercase tracking-wider text-foreground">BI Analytics Filtration</span>
+              </div>
+              {(startDateFilter || endDateFilter || executiveFilter || searchQuery) && (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => { setStartDateFilter(''); setEndDateFilter(''); setExecutiveFilter(''); setSearchQuery(''); }}
+                  className="text-xs text-muted-foreground hover:text-foreground h-7"
+                >
+                  Clear Filters
+                </Button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div>
+                <Label className="text-[11px] text-muted-foreground mb-1 block">Start Date</Label>
+                <Input
+                  type="date"
+                  value={startDateFilter}
+                  onChange={e => setStartDateFilter(e.target.value)}
+                  className="h-8 text-xs pr-2"
+                />
+              </div>
+
+              <div>
+                <Label className="text-[11px] text-muted-foreground mb-1 block">End Date</Label>
+                <Input
+                  type="date"
+                  value={endDateFilter}
+                  onChange={e => setEndDateFilter(e.target.value)}
+                  className="h-8 text-xs pr-2"
+                />
+              </div>
+
+              <div>
+                <Label className="text-[11px] text-muted-foreground mb-1 block">Bid Executive (Owner)</Label>
+                <select
+                  value={executiveFilter}
+                  onChange={e => setExecutiveFilter(e.target.value)}
+                  className="w-full h-8 text-xs rounded-md border border-input bg-background px-2.5 py-1 text-foreground shadow-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="">All Executives</option>
+                  {uniqueExecs.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <Label className="text-[11px] text-muted-foreground mb-1 block">Search Tender / Bid No</Label>
+                <div className="relative">
+                  <Search className="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    type="text"
+                    placeholder="Search title, organisation..."
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    className="h-8 text-xs pl-8"
+                  />
+                </div>
+              </div>
             </div>
           </div>
-          <Separator/>
-          <div className="flex flex-wrap gap-1.5">
-            {(user?.roles??[]).map(r=><RoleBadge key={r} role={r}/>)}
+
+          {/* VISUAL ANALYTICS GRAPHS GRID */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            {/* Stage Pipeline Funnel Bar Chart */}
+            <div className="lg:col-span-2 bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-heading font-semibold text-base text-foreground flex items-center gap-2">
+                    <BarChart2 className="size-4 text-primary" /> Tender Stage Funnel Distribution
+                  </h3>
+                  <p className="text-xs text-muted-foreground">Volume and estimated value of tenders progressing across workflow stages</p>
+                </div>
+                <Badge variant="outline" className="text-xs font-mono">{totalBids} Total Tenders</Badge>
+              </div>
+
+              <div className="space-y-3 pt-1">
+                {stageFunnelData.map((stg) => (
+                  <div key={stg.label} className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs font-medium">
+                      <span className="text-foreground truncate max-w-[280px]">{stg.label}</span>
+                      <div className="flex items-center gap-3">
+                        <span className="font-semibold text-foreground font-mono">{stg.count} bids ({stg.pct}%)</span>
+                        <span className="text-muted-foreground text-[11px] font-mono">{formatCurrency(stg.val)}</span>
+                      </div>
+                    </div>
+                    <div className="h-3 w-full bg-muted/40 rounded-full overflow-hidden p-0.5 border border-border/40">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${stg.pct}%` }}
+                        transition={{ duration: 0.6, ease: 'easeOut' }}
+                        className={`h-full rounded-full bg-gradient-to-r ${stg.barGradient}`}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Win/Loss Conversion Ring Chart */}
+            <div className="bg-card border border-border rounded-xl p-5 flex flex-col justify-between space-y-4 shadow-xs">
+              <div>
+                <h3 className="font-heading font-semibold text-base text-foreground flex items-center gap-2">
+                  <TrendingUp className="size-4 text-emerald-500" /> Win / Loss Conversion
+                </h3>
+                <p className="text-xs text-muted-foreground">Overall conversion rate across active portfolio</p>
+              </div>
+
+              {/* Visual Ring Gauge */}
+              <div className="flex flex-col items-center justify-center my-2 space-y-2">
+                <div className="relative size-36 flex items-center justify-center">
+                  <svg className="size-full -rotate-90" viewBox="0 0 36 36">
+                    <path
+                      className="text-muted/30"
+                      strokeWidth="3.8"
+                      stroke="currentColor"
+                      fill="none"
+                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                    />
+                    <motion.path
+                      initial={{ strokeDasharray: '0, 100' }}
+                      animate={{ strokeDasharray: `${overallWinRate}, 100` }}
+                      transition={{ duration: 1, ease: 'easeOut' }}
+                      className="text-teal-500"
+                      strokeWidth="3.8"
+                      strokeDasharray="0, 100"
+                      strokeLinecap="round"
+                      stroke="currentColor"
+                      fill="none"
+                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+                    <span className="text-2xl font-extrabold font-heading text-teal-600">{overallWinRate}%</span>
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Win Rate</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Breakdown Legend */}
+              <div className="space-y-2 text-xs border-t border-border pt-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="size-2.5 rounded-full bg-teal-500" />
+                    <span className="text-muted-foreground">Won Bids</span>
+                  </div>
+                  <span className="font-bold text-teal-600 font-mono">{wonBids} ({totalBids > 0 ? ((wonBids/totalBids)*100).toFixed(0) : 0}%)</span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="size-2.5 rounded-full bg-rose-500" />
+                    <span className="text-muted-foreground">Lost Bids</span>
+                  </div>
+                  <span className="font-bold text-rose-600 font-mono">{lostBids} ({totalBids > 0 ? ((lostBids/totalBids)*100).toFixed(0) : 0}%)</span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="size-2.5 rounded-full bg-violet-500" />
+                    <span className="text-muted-foreground">Active / Pending</span>
+                  </div>
+                  <span className="font-bold text-violet-600 font-mono">{Math.max(0, totalBids - wonBids - lostBids)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Financial BI Metrics Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total Won Order Value</span>
+                <div className="size-8 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center">
+                  <IndianRupee className="size-4 text-emerald-600" />
+                </div>
+              </div>
+              <div>
+                <p className="text-2xl font-bold font-heading text-emerald-600">{formatCurrency(totalWonValue)}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Sum of won bid contract values</p>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">EMD Deposited</span>
+                <div className="size-8 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center">
+                  <IndianRupee className="size-4 text-blue-600" />
+                </div>
+              </div>
+              <div>
+                <p className="text-2xl font-bold font-heading text-blue-600">{formatCurrency(totalEMDDeposited)}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Total EMD amount submitted across tenders</p>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">EMD Returned</span>
+                <div className="size-8 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center">
+                  <CheckCircle className="size-4 text-teal-600" />
+                </div>
+              </div>
+              <div>
+                <p className="text-2xl font-bold font-heading text-teal-600">{formatCurrency(totalEMDReturned)}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">EMD successfully refunded back</p>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">EMD Pending Refund</span>
+                <div className="size-8 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-center">
+                  <Clock className="size-4 text-amber-600" />
+                </div>
+              </div>
+              <div>
+                <p className="text-2xl font-bold font-heading text-amber-600">{formatCurrency(pendingEMDReturn)}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Outstanding EMD awaiting refund</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Executive Performance Matrix (Management BI) */}
+          {execStatsList.length > 0 && (
+            <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-heading font-semibold text-base text-foreground">Bid Executive Performance Matrix</h3>
+                  <p className="text-xs text-muted-foreground">Tender submission and conversion metrics per team member</p>
+                </div>
+                <Badge variant="secondary" className="text-xs font-mono">{execStatsList.length} Executives</Badge>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30 text-muted-foreground uppercase font-semibold text-[10px] tracking-wider">
+                      <th className="py-2.5 px-3">Bid Executive</th>
+                      <th className="py-2.5 px-3 text-center">Total Tenders</th>
+                      <th className="py-2.5 px-3 text-center">Submitted</th>
+                      <th className="py-2.5 px-3 text-center">Tech Eval</th>
+                      <th className="py-2.5 px-3 text-center">Fin Eval</th>
+                      <th className="py-2.5 px-3 text-center">Won</th>
+                      <th className="py-2.5 px-3 text-center">Lost</th>
+                      <th className="py-2.5 px-3 text-right">Win Rate %</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    {execStatsList.map((st) => {
+                      const winRate = st.total > 0 ? ((st.won / st.total) * 100).toFixed(1) : '0.0'
+                      return (
+                        <tr key={st.name} className="hover:bg-muted/20 transition-colors">
+                          <td className="py-3 px-3 font-semibold text-foreground flex items-center gap-2">
+                            <UserAvatar fullName={st.name} username={st.name} size="xs" />
+                            {st.name}
+                          </td>
+                          <td className="py-3 px-3 text-center font-bold">{st.total}</td>
+                          <td className="py-3 px-3 text-center text-emerald-600 font-medium">{st.submitted}</td>
+                          <td className="py-3 px-3 text-center text-blue-600 font-medium">{st.tech}</td>
+                          <td className="py-3 px-3 text-center text-indigo-600 font-medium">{st.fin}</td>
+                          <td className="py-3 px-3 text-center text-teal-600 font-bold">{st.won}</td>
+                          <td className="py-3 px-3 text-center text-rose-600 font-medium">{st.lost}</td>
+                          <td className="py-3 px-3 text-right">
+                            <Badge variant="outline" className={`font-mono text-[11px] ${Number(winRate) >= 50 ? 'border-emerald-300 text-emerald-700 bg-emerald-50' : 'border-slate-300 text-slate-700 bg-slate-50'}`}>
+                              {winRate}%
+                            </Badge>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        /* ── NON-MANAGEMENT OPERATIONAL OVERVIEW (Finance, Bid Exec, Pre-Sales, etc) ──── */
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="rounded-xl border border-border bg-card p-4 space-y-1">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Active Tenders</span>
+            <p className="text-2xl font-bold font-heading text-primary">{totalBids}</p>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-4 space-y-1">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Submissions Done</span>
+            <p className="text-2xl font-bold font-heading text-emerald-600">{submittedBids}</p>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-4 space-y-1">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Under Evaluation</span>
+            <p className="text-2xl font-bold font-heading text-blue-600">{techEvalBids + finEvalBids}</p>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-4 space-y-1">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Won Tenders</span>
+            <p className="text-2xl font-bold font-heading text-teal-600">{wonBids}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Actions & Recent Tenders Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Recent Tenders View */}
+        <div className="lg:col-span-2 rounded-xl border border-border bg-card p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-heading font-semibold text-sm text-foreground">Recent Active Tenders</h3>
+            <Button variant="ghost" size="xs" onClick={() => navigate('/dashboard/tenders')} className="text-xs text-primary h-7">
+              View All Tenders <ChevronRight className="size-3.5 ml-1" />
+            </Button>
+          </div>
+
+          <div className="space-y-2">
+            {loading ? (
+              <div className="flex items-center justify-center py-8 text-muted-foreground text-xs gap-2">
+                <Loader2 className="size-4 animate-spin text-primary" /> Loading tenders...
+              </div>
+            ) : filteredBids.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-6 text-center">No tenders matching selected criteria</p>
+            ) : (
+              filteredBids.slice(0, 5).map(b => (
+                <div key={b.id} onClick={() => navigate('/dashboard/tenders')} className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors cursor-pointer group">
+                  <div className="space-y-0.5 min-w-0 pr-3">
+                    <p className="text-xs font-semibold text-foreground group-hover:text-primary transition-colors truncate">
+                      {b.title}
+                    </p>
+                    <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                      <span className="font-mono text-primary/80">{b.bid_no || b.gem_bid_no || 'No ID'}</span>
+                      <span>•</span>
+                      <span>{b.organization_name || 'N/A'}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <Badge variant="outline" className="text-[10px] font-mono capitalize">
+                      {(b.workflow_stage || 'DISCOVERED').replace(/_/g, ' ')}
+                    </Badge>
+                    <span className="text-xs font-bold font-heading text-foreground">
+                      {formatCurrency(b.estimated_value)}
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
+        {/* Quick Actions Panel */}
         <div className="rounded-xl border border-border bg-card p-4 space-y-3">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Quick Actions</p>
           <div className="space-y-2">
-              {[
-                { label:'View All Tenders', icon:FileText, section:'tenders', perm:'bid.view' },
-                { label:'Manage Users',     icon:Users,    section:'users',   perm:'user.view' },
-              ].map(a => (
-                <button key={a.label}
-                  onClick={()=>navigate(`/dashboard/${a.section}`)}
-                  className="w-full flex items-center justify-between p-2.5 rounded-lg border border-border hover:bg-muted/55 hover:border-primary/30 transition-all text-left group">
-                <div className="flex items-center gap-2.5">
-                  <div className="size-7 rounded-md bg-primary/10 flex items-center justify-center">
-                    <a.icon className="size-3.5 text-primary"/>
+            {[
+              { label:'View All Tenders', icon:FileText, action: () => navigate('/dashboard/tenders'), perm:'bid.view' },
+              { label:'Manage Users',     icon:Users,    action: () => navigate('/dashboard/users'),   perm:'user.view' },
+              { label:'My Profile & Security', icon:Key, action: () => onOpenProfile?.(), perm: null },
+            ].filter(a => a.perm === null || user?.permissions?.includes(a.perm)).map(a => (
+              <button key={a.label}
+                onClick={a.action}
+                className="w-full flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/55 hover:border-primary/30 transition-all text-left group">
+                <div className="flex items-center gap-3">
+                  <div className="size-8 rounded-md bg-primary/10 flex items-center justify-center">
+                    <a.icon className="size-4 text-primary"/>
                   </div>
-                  <span className="text-sm font-medium text-foreground">{a.label}</span>
+                  <span className="text-xs font-semibold text-foreground">{a.label}</span>
                 </div>
                 <ChevronRight className="size-4 text-muted-foreground group-hover:text-primary transition-colors"/>
               </button>
             ))}
           </div>
+
+          <Separator className="my-2" />
+
+          {/* System Profile Summary */}
+          <div className="p-3 rounded-lg border border-border bg-muted/20 space-y-2">
+            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">User Account</span>
+            <div className="flex items-center gap-2.5">
+              <UserAvatar fullName={user?.full_name} username={user?.username} size="sm" />
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-foreground truncate">{user?.full_name || user?.username}</p>
+                <p className="text-[11px] text-muted-foreground truncate">{user?.email || `@${user?.username}`}</p>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
+  )
+}
+// ── User Profile Modal ────────────────────────────────────────────────────────
+function UserProfileModal({ user, open, onClose, onOpenPasswordChange }) {
+  if (!open || !user) return null
+
+  return (
+    <AnimatePresence>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          className="absolute inset-0 bg-foreground/20 backdrop-blur-xs"
+          onClick={onClose}
+        />
+        <motion.div
+          initial={{ opacity: 0, scale: 0.96 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.96 }}
+          className="relative z-10 w-full max-w-lg bg-card border border-border rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        >
+          {/* Header */}
+          <div className="p-5 border-b border-border bg-muted/20 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <UserAvatar fullName={user.full_name} username={user.username} size="lg" />
+              <div>
+                <h3 className="font-heading font-semibold text-base text-foreground leading-snug">
+                  {user.full_name || user.username}
+                </h3>
+                <p className="text-xs text-muted-foreground font-medium">@{user.username}</p>
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+
+          <ScrollArea className="p-6 space-y-6 flex-1">
+            {/* Account Details */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Account Overview</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-1">
+                  <span className="text-muted-foreground">Employee Code</span>
+                  <p className="font-mono font-medium text-foreground">{user.employee_code || 'N/A'}</p>
+                </div>
+                <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-1">
+                  <span className="text-muted-foreground">Department</span>
+                  <p className="font-medium text-foreground">{user.department || 'General'}</p>
+                </div>
+                <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-1 sm:col-span-2">
+                  <span className="text-muted-foreground">Email Address</span>
+                  <p className="font-medium text-foreground truncate">{user.email || 'No email associated'}</p>
+                </div>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Roles & Permissions */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Assigned Roles</h4>
+              <div className="flex flex-wrap gap-2">
+                {(user.roles || ['USER']).map((r) => (
+                  <RoleBadge key={r} role={r} />
+                ))}
+              </div>
+            </div>
+
+
+
+            <Separator />
+
+            {/* Security */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Security & Credentials</h4>
+              <div className="flex items-center justify-between p-3.5 rounded-lg border border-border bg-card">
+                <div>
+                  <p className="text-xs font-medium text-foreground">Account Password</p>
+                  <p className="text-[11px] text-muted-foreground">Update your login password securely</p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => { onClose(); onOpenPasswordChange(); }}
+                  className="gap-1.5 text-xs font-medium"
+                >
+                  <Key className="size-3.5 text-primary" />
+                  Change Password
+                </Button>
+              </div>
+            </div>
+          </ScrollArea>
+        </motion.div>
+      </div>
+    </AnimatePresence>
   )
 }
 
@@ -258,7 +851,8 @@ export default function Dashboard() {
   const [user, setUser] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
-  // Change password modal
+  // Profile modal & Change password modal state
+  const [showProfileModal, setShowProfileModal] = useState(false)
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword,     setNewPassword]     = useState('')
@@ -279,6 +873,17 @@ export default function Dashboard() {
       return
     }
     setUser(currentUser)
+
+    getMyProfile().then((res) => {
+      if (res.ok && res.data) {
+        const fullProfile = {
+          ...currentUser,
+          ...res.data,
+        }
+        setUser(fullProfile)
+        localStorage.setItem('onetrack_user', JSON.stringify(fullProfile))
+      }
+    }).catch(() => {})
   }, [])
 
   async function handleLogout() {
@@ -321,8 +926,8 @@ export default function Dashboard() {
 
   const activeSection = location.pathname.includes('/tenders')
     ? 'tenders'
-    : location.pathname.includes('/my-tasks') || location.pathname.includes('/tasks/')
-    ? 'my-tasks'
+    : location.pathname.includes('/alerts')
+    ? 'alerts'
     : location.pathname.includes('/users')
     ? 'users'
     : 'overview'
@@ -358,15 +963,19 @@ export default function Dashboard() {
 
           {/* Right side: user info + actions */}
           <div className="flex items-center gap-2">
-            <div className="hidden sm:flex items-center gap-2 mr-1">
+            <button
+              onClick={() => setShowProfileModal(true)}
+              className="hidden sm:flex items-center gap-2 mr-1 p-1 rounded-lg hover:bg-muted/60 transition-colors text-left group"
+              title="Click to view My Profile & Settings"
+            >
               <UserAvatar fullName={user.full_name} username={user.username} size="sm" />
               <div className="hidden md:block">
-                <p className="text-xs font-medium text-foreground leading-none">{user.username}</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
+                <p className="text-xs font-semibold text-foreground leading-none group-hover:text-primary transition-colors">{user.full_name || user.username}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5 font-medium">
                   {user.roles?.[0] ?? 'USER'}
                 </p>
               </div>
-            </div>
+            </button>
 
             <Button
               variant="default"
@@ -457,10 +1066,18 @@ export default function Dashboard() {
         {/* ── Main Content ─────────────────────────────────────────────────── */}
         <div className="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden bg-background">
           <main className="w-full min-w-0 p-6 md:p-6">
-            <Outlet context={{ user }} />
+            <Outlet context={{ user, onOpenProfile: () => setShowProfileModal(true) }} />
           </main>
         </div>
       </div>
+
+      {/* ── User Profile Modal ───────────────────────────────────────────── */}
+      <UserProfileModal
+        user={user}
+        open={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+        onOpenPasswordChange={() => setShowPasswordModal(true)}
+      />
 
       {/* ── Change Password Modal ─────────────────────────────────────────── */}
       <AnimatePresence>

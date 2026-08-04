@@ -11,6 +11,9 @@ func RegisterAuthRoutes(router *gin.RouterGroup, handler *AuthHandler, authMiddl
 		// Public routes (no authentication required)
 		auth.POST("/login", handler.Login)
 		auth.POST("/refresh", handler.Refresh)
+		auth.POST("/forgot-password", handler.ForgotPassword)
+		auth.POST("/verify-otp", handler.VerifyOTP)
+		auth.POST("/reset-password-otp", handler.ResetPasswordOTP)
 
 		// Protected routes (authentication required)
 		protected := auth.Group("")

@@ -12,8 +12,7 @@ import { TendersPage } from "./components/tenders/TendersPage"
 import { AddTenderPage } from "./components/tenders/AddTenderPage"
 import { TenderDetailPage } from "./components/tenders/TenderDetailPage"
 import { UserManagement } from "./components/admin/UserManagement"
-import { MyTasksPage } from "./components/tasks/MyTasksPage"
-import { TaskDetailPage } from "./components/tasks/TaskDetailPage"
+import { AlertsPage } from "./components/alerts/AlertsPage"
 
 // Auth Guard to protect routes
 function AuthGuard() {
@@ -73,8 +72,7 @@ export default function App() {
               <Route element={<PermissionGuard permission="bid.view" />}>
                 <Route path="tenders" element={<TendersPage />} />
                 <Route path="tenders/:bidId" element={<TenderDetailPage />} />
-                <Route path="my-tasks" element={<MyTasksPage />} />
-                <Route path="tasks/:taskId" element={<TaskDetailPage />} />
+                <Route path="alerts" element={<AlertsPage />} />
               </Route>
 
               {/* Admin sub-routes */}

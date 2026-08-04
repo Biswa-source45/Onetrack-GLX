@@ -12,6 +12,7 @@ type Config struct {
 	Database DatabaseConfig
 	Redis    RedisConfig
 	JWT      JWTConfig
+	Email    EmailConfig
 }
 
 type ServerConfig struct {
@@ -42,6 +43,13 @@ type JWTConfig struct {
 	RefreshSecret       string
 	AccessExpiryMinutes int
 	RefreshExpiryHours  int
+}
+
+type EmailConfig struct {
+	SMTPServer string
+	SMTPPort   string
+	Username   string
+	Password   string
 }
 
 func Load() (*Config, error) {
@@ -79,6 +87,12 @@ func Load() (*Config, error) {
 			RefreshSecret:       getEnv("JWT_REFRESH_SECRET", ""),
 			AccessExpiryMinutes: accessExpiry,
 			RefreshExpiryHours:  refreshExpiry,
+		},
+		Email: EmailConfig{
+			SMTPServer: getEnv("EMAIL_SMTP_SERVER", "smtp.gmail.com"),
+			SMTPPort:   getEnv("EMAIL_SMTP_PORT", "587"),
+			Username:   getEnv("EMAIL_USERNAME", "support@globx.co.in"),
+			Password:   getEnv("EMAIL_PASSWORD", ""),
 		},
 	}
 

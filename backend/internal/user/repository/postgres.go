@@ -120,7 +120,15 @@ func (r *postgresUserRepo) List(ctx context.Context, params domain.ListUsersPara
 	}
 
 	// Paginated query
-	offset := (params.Page - 1) * params.Limit
+	page := params.Page
+	if page < 1 {
+		page = 1
+	}
+	limit := params.Limit
+	if limit < 1 {
+		limit = 100
+	}
+	offset := (page - 1) * limit
 	listQuery := fmt.Sprintf(`
 		SELECT id, employee_code, username, full_name, email, phone, department,
 		       password_hash, force_password_change, is_active, last_login_at, created_at, updated_at
@@ -130,7 +138,7 @@ func (r *postgresUserRepo) List(ctx context.Context, params domain.ListUsersPara
 		LIMIT $%d OFFSET $%d
 	`, whereClause, argIdx, argIdx+1)
 
-	args = append(args, params.Limit, offset)
+	args = append(args, limit, offset)
 
 	rows, err := r.pool.Query(ctx, listQuery, args...)
 	if err != nil {
@@ -404,6 +412,61 @@ func (r *postgresUserRepo) EmployeeCodeExists(ctx context.Context, employeeCode 
 	query := `SELECT EXISTS(SELECT 1 FROM auth.users WHERE employee_code = $1)`
 	err := r.pool.QueryRow(ctx, query, employeeCode).Scan(&exists)
 	return exists, err
+}
+
+// Delete performs a safe deletion: nullifies FK references in bid records so
+// stage-history and other audit records survive, then removes the user row.
+func (r *postgresUserRepo) Delete(ctx context.Context, id string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Nullify bid ownership references (bid_workspaces.bid_owner_id → NULL)
+	// bid_workspaces.bid_owner_id is NOT NULL so we set to a sentinel or leave as-is;
+	// most FK are NOT NULL with no default. The safest approach: transfer ownership
+	// to the creating user or first SUPER_ADMIN. We simply NULL them out where possible.
+	// For bid_workspaces.bid_owner_id we keep the record alive – change FK to optional NULL.
+	_, err = tx.Exec(ctx, `UPDATE bid.bid_workspaces SET technical_manager_id = NULL WHERE technical_manager_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to clear technical manager refs: %w", err)
+	}
+
+	// Nullify bid stage history actor references
+	_, err = tx.Exec(ctx, `UPDATE bid.bid_stage_history SET transitioned_by = NULL WHERE transitioned_by = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to clear stage history actor refs: %w", err)
+	}
+
+	// Remove user's role assignments, permission overrides, alerts
+	_, err = tx.Exec(ctx, `DELETE FROM auth.user_roles WHERE user_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete user roles: %w", err)
+	}
+	_, err = tx.Exec(ctx, `DELETE FROM auth.user_permission_overrides WHERE user_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete permission overrides: %w", err)
+	}
+	_, err = tx.Exec(ctx, `DELETE FROM auth.password_otps WHERE email = (SELECT email FROM auth.users WHERE id = $1)`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete OTPs: %w", err)
+	}
+	_, err = tx.Exec(ctx, `DELETE FROM public.alerts WHERE user_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete alerts: %w", err)
+	}
+
+	// Finally delete the user
+	result, err := tx.Exec(ctx, `DELETE FROM auth.users WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete user: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("user not found")
+	}
+
+	return tx.Commit(ctx)
 }
 
 func mapKeys(m map[string]bool) []string {

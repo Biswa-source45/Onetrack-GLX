@@ -8,69 +8,149 @@ import "github.com/onetrack/backend/internal/bid/domain"
 // Both modes share all stages from QUALIFICATION_REVIEW onward.
 var allowedTransitions = map[string]map[string][]string{
 	domain.CreationModeManual: {
-		domain.StageDiscovered:            {domain.StageQualificationReview, domain.StageCancelled},
-		domain.StageQualificationReview:   {domain.StageDocumentCompilation, domain.StageCancelled},
-		domain.StageDocumentCompilation:   {domain.StageOEMCoordination, domain.StageCommercialPreparation, domain.StageCancelled},
-		domain.StageOEMCoordination:       {domain.StageCommercialPreparation, domain.StageCancelled},
-		domain.StageCommercialPreparation: {domain.StageInternalReview},
-		domain.StageInternalReview:        {domain.StageFinalApproval, domain.StageCommercialPreparation},
-		domain.StageFinalApproval:         {domain.StageReadyForSubmission, domain.StageInternalReview},
-		domain.StageReadyForSubmission:    {domain.StageSubmitted},
-		domain.StageSubmitted:             {domain.StageRAActive, domain.StageAwaitingResult},
-		domain.StageRAActive:              {domain.StageAwaitingResult},
-		domain.StageAwaitingResult:        {domain.StageWon, domain.StageLost, domain.StageCancelled},
+		domain.StageDiscovered:            {domain.StageEligibilityAssessment, domain.StageOEMAuthorizationRequest, domain.StageCancelled},
+		domain.StageEligibilityAssessment:   {domain.StageOEMAuthorizationRequest, domain.StagePricingRequest, domain.StageCancelled},
+		domain.StageOEMAuthorizationRequest: {domain.StagePricingRequest, domain.StageDocumentChecklistPrep, domain.StageCancelled},
+		domain.StagePricingRequest:          {domain.StageDocumentChecklistPrep, domain.StageEMDProcessing, domain.StageCancelled},
+		domain.StageDocumentChecklistPrep:   {domain.StageEMDProcessing, domain.StageBidDocumentation, domain.StageCancelled},
+		domain.StageEMDProcessing:           {domain.StageBidDocumentation, domain.StageInternalApproval, domain.StageCancelled},
+		domain.StageBidDocumentation:        {domain.StageInternalApproval, domain.StageGeMSubmission, domain.StageCancelled},
+		domain.StageInternalApproval:        {domain.StageGeMSubmission, domain.StageCancelled},
+		domain.StageGeMSubmission:           {domain.StageTechnicalEvaluation, domain.StageCancelled},
+		domain.StageTechnicalEvaluation:     {domain.StageFinancialEvaluation, domain.StageLost, domain.StageCancelled},
+		domain.StageFinancialEvaluation:     {domain.StageAwardHandover, domain.StageLost, domain.StageCancelled},
+		domain.StageAwardHandover:           {},
 	},
 	domain.CreationModeIntelligence: {
-		// AI-mode entry: document upload triggers UNDER_ANALYSIS (set by orchestrator)
-		domain.StageDiscovered:            {domain.StageUnderAnalysis, domain.StageCancelled},
-		domain.StageUnderAnalysis:         {domain.StageQualificationPending, domain.StageCancelled},
-		domain.StageQualificationPending:  {domain.StageQualificationReview, domain.StageCancelled},
-		// Shared stages from here onward (identical to MANUAL)
-		domain.StageQualificationReview:   {domain.StageDocumentCompilation, domain.StageCancelled},
-		domain.StageDocumentCompilation:   {domain.StageOEMCoordination, domain.StageCommercialPreparation, domain.StageCancelled},
-		domain.StageOEMCoordination:       {domain.StageCommercialPreparation, domain.StageCancelled},
-		domain.StageCommercialPreparation: {domain.StageInternalReview},
-		domain.StageInternalReview:        {domain.StageFinalApproval, domain.StageCommercialPreparation},
-		domain.StageFinalApproval:         {domain.StageReadyForSubmission, domain.StageInternalReview},
-		domain.StageReadyForSubmission:    {domain.StageSubmitted},
-		domain.StageSubmitted:             {domain.StageRAActive, domain.StageAwaitingResult},
-		domain.StageRAActive:              {domain.StageAwaitingResult},
-		domain.StageAwaitingResult:        {domain.StageWon, domain.StageLost, domain.StageCancelled},
+		domain.StageDiscovered:            {domain.StageEligibilityAssessment, domain.StageCancelled},
+		domain.StageEligibilityAssessment:   {domain.StageOEMAuthorizationRequest, domain.StagePricingRequest, domain.StageCancelled},
+		domain.StageOEMAuthorizationRequest: {domain.StagePricingRequest, domain.StageDocumentChecklistPrep, domain.StageCancelled},
+		domain.StagePricingRequest:          {domain.StageDocumentChecklistPrep, domain.StageEMDProcessing, domain.StageCancelled},
+		domain.StageDocumentChecklistPrep:   {domain.StageEMDProcessing, domain.StageBidDocumentation, domain.StageCancelled},
+		domain.StageEMDProcessing:           {domain.StageBidDocumentation, domain.StageInternalApproval, domain.StageCancelled},
+		domain.StageBidDocumentation:        {domain.StageInternalApproval, domain.StageGeMSubmission, domain.StageCancelled},
+		domain.StageInternalApproval:        {domain.StageGeMSubmission, domain.StageCancelled},
+		domain.StageGeMSubmission:           {domain.StageTechnicalEvaluation, domain.StageCancelled},
+		domain.StageTechnicalEvaluation:     {domain.StageFinancialEvaluation, domain.StageLost, domain.StageCancelled},
+		domain.StageFinancialEvaluation:     {domain.StageAwardHandover, domain.StageLost, domain.StageCancelled},
+		domain.StageAwardHandover:           {},
 	},
 }
 
 // IsTransitionAllowed checks if moving from currentStage to targetStage is valid
-// for the given creation mode. This is the single source of truth for transition
-// validation, shared by both manual operator actions and AI orchestrator triggers.
+// for the given creation mode. It allows forward progression, backward transitions (Undo/Revert),
+// and terminal states (WON, LOST, CANCELLED).
 func IsTransitionAllowed(creationMode, currentStage, targetStage string) bool {
+	if currentStage == targetStage {
+		return true
+	}
+	if IsTerminalStage(currentStage) {
+		return false
+	}
+	if IsTerminalStage(targetStage) {
+		return true
+	}
+
 	modeMap, ok := allowedTransitions[creationMode]
 	if !ok {
-		return false
+		// Fallback to manual mode transitions if mode not found
+		modeMap = allowedTransitions[domain.CreationModeManual]
 	}
-	allowed, ok := modeMap[currentStage]
-	if !ok {
-		return false
-	}
-	for _, s := range allowed {
-		if s == targetStage {
-			return true
+
+	// Check forward allowed transitions map
+	if allowed, ok := modeMap[currentStage]; ok {
+		for _, s := range allowed {
+			if s == targetStage {
+				return true
+			}
 		}
 	}
+
+	// Allow backward transitions (Undo/Revert to any previous stage)
+	stagesOrder := []string{
+		domain.StageDiscovered,
+		domain.StageEligibilityAssessment,
+		domain.StageOEMAuthorizationRequest,
+		domain.StagePricingRequest,
+		domain.StageDocumentChecklistPrep,
+		domain.StageEMDProcessing,
+		domain.StageBidDocumentation,
+		domain.StageInternalApproval,
+		domain.StageGeMSubmission,
+		domain.StageTechnicalEvaluation,
+		domain.StageFinancialEvaluation,
+		domain.StageAwardHandover,
+	}
+
+	currIdx := -1
+	targetIdx := -1
+	for i, s := range stagesOrder {
+		if s == currentStage {
+			currIdx = i
+		}
+		if s == targetStage {
+			targetIdx = i
+		}
+	}
+
+	if currIdx != -1 && targetIdx != -1 && targetIdx < currIdx {
+		// Backward movement is always allowed as an Undo/Revert operation
+		return true
+	}
+
 	return false
 }
 
 // GetAllowedTransitions returns the list of stages a bid can transition to from
-// its current state. Used by the frontend to render available actions.
+// its current state, including preceding stages for Undo/Revert operations.
 func GetAllowedTransitions(creationMode, currentStage string) []string {
+	if IsTerminalStage(currentStage) {
+		return []string{}
+	}
 	modeMap, ok := allowedTransitions[creationMode]
 	if !ok {
-		return []string{}
+		modeMap = allowedTransitions[domain.CreationModeManual]
 	}
-	allowed, ok := modeMap[currentStage]
-	if !ok {
-		return []string{}
+	res := []string{}
+	if allowed, ok := modeMap[currentStage]; ok {
+		res = append(res, allowed...)
 	}
-	return allowed
+
+	// Also append preceding stage if available (for Undo/Revert)
+	stagesOrder := []string{
+		domain.StageDiscovered,
+		domain.StageEligibilityAssessment,
+		domain.StageOEMAuthorizationRequest,
+		domain.StagePricingRequest,
+		domain.StageDocumentChecklistPrep,
+		domain.StageEMDProcessing,
+		domain.StageBidDocumentation,
+		domain.StageInternalApproval,
+		domain.StageGeMSubmission,
+		domain.StageTechnicalEvaluation,
+		domain.StageFinancialEvaluation,
+		domain.StageAwardHandover,
+	}
+
+	for i, s := range stagesOrder {
+		if s == currentStage && i > 0 {
+			prevStage := stagesOrder[i-1]
+			// Check if already in res
+			alreadyIn := false
+			for _, r := range res {
+				if r == prevStage {
+					alreadyIn = true
+					break
+				}
+			}
+			if !alreadyIn {
+				res = append(res, prevStage)
+			}
+			break
+		}
+	}
+
+	return res
 }
 
 // terminalStages cannot be transitioned out of

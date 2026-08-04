@@ -11,6 +11,10 @@ type AuthRepository interface {
 	GetUserRoles(ctx context.Context, userID string) ([]Role, error)
 	GetUserPermissions(ctx context.Context, userID string) ([]string, error)
 	GetPermissionOverrides(ctx context.Context, userID string) ([]UserPermissionOverride, error)
+	GetUserByEmail(ctx context.Context, email string) (*User, error)
+	CreateOTP(ctx context.Context, email, otp string) error
+	VerifyOTP(ctx context.Context, email, otp string) (bool, error)
+	DeleteOTP(ctx context.Context, email string) error
 }
 
 type AuthService interface {
@@ -19,6 +23,9 @@ type AuthService interface {
 	RefreshToken(ctx context.Context, refreshToken string) (*LoginResponse, error)
 	ChangePassword(ctx context.Context, userID string, req ChangePasswordRequest) error
 	ForceResetPassword(ctx context.Context, req ForceResetRequest) error
+	ForgotPassword(ctx context.Context, email string) error
+	VerifyOTP(ctx context.Context, email, otp string) error
+	ResetPasswordWithOTP(ctx context.Context, email, otp, newPassword string) error
 }
 
 type JWTService interface {

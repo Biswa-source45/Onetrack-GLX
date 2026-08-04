@@ -84,9 +84,33 @@ function formatCurrency(val) {
 }
 
 // ── Format date ───────────────────────────────────────────────────────────────
-function formatDate(dt) {
-  if (!dt) return '—'
+function isValidDate(dt) {
+  if (!dt) return false
+  const d = new Date(dt)
+  if (isNaN(d.getTime())) return false
+  if (d.getFullYear() <= 1970) return false
+  return true
+}
+
+function formatDate(dt, fallback = '—') {
+  if (!isValidDate(dt)) return fallback
   return new Date(dt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function getBidStartDate(bid) {
+  if (!bid) return 'Not Specified'
+  if (isValidDate(bid.start_date)) return formatDate(bid.start_date)
+  if (isValidDate(bid.opening_date)) return formatDate(bid.opening_date)
+  return 'Not Specified'
+}
+
+function getBidEndDate(bid) {
+  if (!bid) return 'Not Specified'
+  if (isValidDate(bid.end_date)) return formatDate(bid.end_date)
+  if (isValidDate(bid.closing_date)) return formatDate(bid.closing_date)
+  if (isValidDate(bid.submission_deadline)) return formatDate(bid.submission_deadline)
+  if (isValidDate(bid.target_month_date)) return formatDate(bid.target_month_date)
+  return 'Not Specified'
 }
 
 // Helper to safely format dates for <input type="date"> without crashing on invalid/empty values
@@ -649,7 +673,7 @@ export function TendersPage() {
             <div className="relative flex-1 max-w-sm min-w-[200px]">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
               <Input
-                placeholder="Search by title, reference, GeM ID..."
+                placeholder="Search by title, GeM ID, authority, department..."
                 value={searchInput}
                 onChange={handleSearchChange}
                 className="pl-8 h-8.5 text-xs bg-background"
@@ -914,7 +938,7 @@ export function TendersPage() {
                       <div className="mt-4 pt-3 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
                         <div className="flex items-center gap-1">
                           <Calendar className="size-3 text-amber-600" />
-                          <span>Closes: {formatDate(bid.closing_date)}</span>
+                          <span>End Date: {getBidEndDate(bid)}</span>
                         </div>
                         {bid.bid_owner && (
                           <div className="flex items-center gap-1.5" title={`Owner: ${bid.bid_owner.full_name}`}>

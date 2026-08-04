@@ -104,3 +104,14 @@ export async function forcePasswordReset(userId, newPassword) {
   const data = await res.json()
   return { ok: res.ok, status: res.status, ...data }
 }
+
+// ── Delete User (Permanent) ───────────────────────────────────────────────────
+// DELETE /api/v1/users/{id}
+// Requires user.deactivate permission. Nullifies FK audit records (stage history preserved).
+export async function deleteUser(id) {
+  const res = await apiFetch(`/api/v1/users/${id}`, {
+    method: 'DELETE',
+  })
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, ...data }
+}

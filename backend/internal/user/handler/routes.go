@@ -20,5 +20,6 @@ func RegisterUserRoutes(router *gin.RouterGroup, handler *UserHandler, authMiddl
 		users.PATCH("/:id/status", authMiddleware.RequirePermission("user.deactivate"), handler.UpdateStatus)
 		users.PATCH("/:id/roles", authMiddleware.RequirePermission("user.assign_role"), handler.UpdateRoles)
 		users.PATCH("/:id/permissions", authMiddleware.RequirePermission("user.assign_role"), handler.UpdatePermissions)
+		users.DELETE("/:id", authMiddleware.RequirePermission("user.deactivate"), handler.DeleteUser)
 	}
 }
