@@ -32,10 +32,11 @@ if %ERRORLEVEL% NEQ 0 (
     echo Docker Engine is ONLINE!
 )
 
-:: 2. Allow Windows Firewall Port 80 and 8081 silently
-echo [2/4] Ensuring Firewall inbound rules for Port 80 and 8081...
-powershell -Command "if (-not (Get-NetFirewallRule -DisplayName 'Onetrack Web Port 80' -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName 'Onetrack Web Port 80' -Direction Inbound -LocalPort 80 -Protocol TCP -Action Allow | Out-Null }" >nul 2>&1
-powershell -Command "if (-not (Get-NetFirewallRule -DisplayName 'Onetrack API Port 8081' -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName 'Onetrack API Port 8081' -Direction Inbound -LocalPort 8081 -Protocol TCP -Action Allow | Out-Null }" >nul 2>&1
+:: 2. Allow Windows Firewall Port 80 and 8081 silently & set network profile to Private
+echo [2/4] Ensuring Firewall inbound rules and Private network profile...
+powershell -Command "Set-NetConnectionProfile -NetworkCategory Private -ErrorAction SilentlyContinue" >nul 2>&1
+powershell -Command "if (-not (Get-NetFirewallRule -DisplayName 'Onetrack Web Port 80' -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName 'Onetrack Web Port 80' -Direction Inbound -LocalPort 80 -Protocol TCP -Action Allow -Profile Any | Out-Null }" >nul 2>&1
+powershell -Command "if (-not (Get-NetFirewallRule -DisplayName 'Onetrack API Port 8081' -ErrorAction SilentlyContinue)) { New-NetFirewallRule -DisplayName 'Onetrack API Port 8081' -Direction Inbound -LocalPort 8081 -Protocol TCP -Action Allow -Profile Any | Out-Null }" >nul 2>&1
 
 :: 3. Pull latest containers and launch compose stack
 echo [3/4] Pulling latest containers and starting services...
@@ -47,7 +48,7 @@ echo.
 echo =======================================================
 echo  SUCCESS! ONETRACK ENTERPRISE IS LIVE ON LOCAL NETWORK
 echo =======================================================
-echo   Local LAN Access URL : http://192.168.1.8
+echo   Local LAN Access URL : http://192.168.1.21
 echo   Frontend Web Server  : Port 80  (ACTIVE)
 echo   Backend API Server   : Port 8081 (ACTIVE)
 echo   Watchtower Auto-Sync : RUNNING (Checking GHCR updates)
