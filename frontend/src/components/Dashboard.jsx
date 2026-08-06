@@ -5,7 +5,7 @@ import {
   Layers, LogOut, Key, CheckCircle, Eye, EyeOff, Loader2,
   Users, LayoutDashboard, Menu, X, ChevronRight,
   FileText, TrendingUp, Activity, BarChart2, ShieldCheck, Bell,
-  Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw
+  Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Trash2
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -161,6 +161,7 @@ export function OverviewPanel() {
   const { user, onOpenProfile } = useOutletContext()
   const navigate = useNavigate()
   const [bids, setBids] = useState([])
+  const [binCount, setBinCount] = useState(0)
   const [loading, setLoading] = useState(true)
 
   // Custom Analytics Filters
@@ -172,10 +173,17 @@ export function OverviewPanel() {
   const fetchBids = async () => {
     setLoading(true)
     try {
-      const r = await listBids({ limit: 200 })
+      const [r, binRes] = await Promise.all([
+        listBids({ limit: 200 }),
+        listBids({ in_bin: true, limit: 200 })
+      ])
       if (r.ok && r.data) {
         const rawList = Array.isArray(r.data) ? r.data : (r.data?.bids || [])
         setBids(rawList)
+      }
+      if (binRes.ok && binRes.data) {
+        const binList = Array.isArray(binRes.data) ? binRes.data : (binRes.data?.bids || [])
+        setBinCount(binList.length)
       }
     } catch {
       toast.error('Failed to load tenders analytics')
@@ -217,7 +225,7 @@ export function OverviewPanel() {
   
   const submittedBids = filteredBids.filter(b => 
     b.submission_done || 
-    ['GE_M_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER'].includes(b.workflow_stage) ||
+    ['GEM_SUBMISSION', 'GE_M_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER'].includes(b.workflow_stage) ||
     b.submission_status === 'SUBMITTED' ||
     b.bid_status === 'SUBMITTED'
   ).length
@@ -225,7 +233,7 @@ export function OverviewPanel() {
   const notSubmittedBids = Math.max(0, totalBids - submittedBids)
 
   const techEvalBids = filteredBids.filter(b => 
-    b.workflow_stage === 'TECHNICAL_EVALUATION' || b.has_tech_eval
+    b.workflow_stage === 'TECHNICAL_EVALUATION' || b.bid_status === 'TECHNICAL_EVALUATION' || b.has_tech_eval
   ).length
 
   const finEvalBids = filteredBids.filter(b => 
@@ -233,32 +241,47 @@ export function OverviewPanel() {
   ).length
 
   const wonBids = filteredBids.filter(b => 
-    b.bid_status === 'WON' || b.bid_outcome === 'WON' || b.financial_result === 'WIN' || b.workflow_stage === 'AWARD_HANDOVER'
+    b.bid_status === 'WON' || b.bid_outcome === 'WON' || b.workflow_stage === 'WON'
   ).length
 
   const lostBids = filteredBids.filter(b => 
-    b.bid_status === 'LOST' || b.bid_outcome === 'LOST' || b.technical_result === 'DISQUALIFIED' || b.financial_result === 'LOST'
+    b.bid_status === 'LOST' || b.bid_outcome === 'LOST' || b.workflow_stage === 'LOST' || b.technical_result === 'DISQUALIFIED'
+  ).length
+
+  const cancelledBids = filteredBids.filter(b =>
+    b.bid_status === 'CANCELLED' || b.bid_outcome === 'CANCELLED' || b.workflow_stage === 'CANCELLED'
   ).length
 
   // Financial BI metrics
   const totalWonValue = filteredBids
-    .filter(b => b.bid_status === 'WON' || b.bid_outcome === 'WON' || b.financial_result === 'WIN' || b.workflow_stage === 'AWARD_HANDOVER')
+    .filter(b => b.bid_status === 'WON' || b.bid_outcome === 'WON' || b.workflow_stage === 'WON')
     .reduce((sum, b) => sum + (b.final_bid_value || b.estimated_value || 0), 0)
 
-  const totalEMDDeposited = filteredBids
-    .reduce((sum, b) => sum + (b.emd_amount || 0), 0)
+  // EMD is counted as deposited ONLY if not exempted, amount > 0, and bid reached/passed EMD_PROCESSING stage (or emd_ready/emd_returned is true)
+  const emdDepositedBids = filteredBids.filter(b => {
+    if (b.emd_exempted || !b.emd_amount || Number(b.emd_amount) <= 0) return false
+    if (b.emd_ready || b.emd_returned) return true
+    const postEmdStages = [
+      'EMD_PROCESSING', 'BID_DOCUMENTATION', 'INTERNAL_APPROVAL',
+      'GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION',
+      'AWARD_HANDOVER', 'WON', 'LOST'
+    ]
+    return postEmdStages.includes(b.workflow_stage)
+  })
 
-  const totalEMDReturned = filteredBids
+  const totalEMDDeposited = emdDepositedBids.reduce((sum, b) => sum + Number(b.emd_amount || 0), 0)
+
+  const totalEMDReturned = emdDepositedBids
     .filter(b => b.emd_returned)
-    .reduce((sum, b) => sum + (b.emd_amount || 0), 0)
+    .reduce((sum, b) => sum + Number(b.emd_amount || 0), 0)
 
   const pendingEMDReturn = Math.max(0, totalEMDDeposited - totalEMDReturned)
 
   // Stage Funnel Analytics Data
   const stageGroups = [
-    { label: 'Stages 1-4: Discovery & Pre-Qual', stages: ['TENDER_DISCOVERY', 'PRE_QUALIFICATION', 'OEM_AUTHORIZATION', 'PRE_BID_MEETING'], color: 'bg-violet-500', barGradient: 'from-violet-500 to-indigo-500' },
-    { label: 'Stages 5-8: Costing & Docs', stages: ['FINANCIAL_PRICING', 'RISK_APPROVAL', 'EMD_DEPOSIT', 'FINAL_DOCUMENT_SIGNOFF'], color: 'bg-blue-500', barGradient: 'from-blue-500 to-sky-500' },
-    { label: 'Stage 9: Portal Submission', stages: ['GE_M_SUBMISSION'], color: 'bg-emerald-500', barGradient: 'from-emerald-500 to-teal-500' },
+    { label: 'Stages 1-4: Discovery & Pre-Qual', stages: ['DISCOVERED', 'ELIGIBILITY_ASSESSMENT', 'OEM_AUTHORIZATION_REQUEST', 'PRICING_REQUEST'], color: 'bg-violet-500', barGradient: 'from-violet-500 to-indigo-500' },
+    { label: 'Stages 5-8: Costing & Docs', stages: ['DOCUMENT_CHECKLIST_PREPARATION', 'EMD_PROCESSING', 'BID_DOCUMENTATION', 'INTERNAL_APPROVAL'], color: 'bg-blue-500', barGradient: 'from-blue-500 to-sky-500' },
+    { label: 'Stage 9: Portal Submission', stages: ['GEM_SUBMISSION'], color: 'bg-emerald-500', barGradient: 'from-emerald-500 to-teal-500' },
     { label: 'Stage 10: Technical Eval', stages: ['TECHNICAL_EVALUATION'], color: 'bg-amber-500', barGradient: 'from-amber-500 to-yellow-500' },
     { label: 'Stage 11: Financial Eval', stages: ['FINANCIAL_EVALUATION'], color: 'bg-indigo-500', barGradient: 'from-indigo-500 to-purple-500' },
     { label: 'Stage 12: Award & Handover', stages: ['AWARD_HANDOVER'], color: 'bg-teal-500', barGradient: 'from-teal-500 to-emerald-600' },
@@ -281,11 +304,11 @@ export function OverviewPanel() {
     }
     const stat = execStatsMap[ownerName]
     stat.total += 1
-    if (b.submission_done || ['GE_M_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER'].includes(b.workflow_stage)) stat.submitted += 1
-    if (b.workflow_stage === 'TECHNICAL_EVALUATION') stat.tech += 1
+    if (b.submission_done || ['GEM_SUBMISSION', 'GE_M_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER'].includes(b.workflow_stage)) stat.submitted += 1
+    if (b.workflow_stage === 'TECHNICAL_EVALUATION' || b.bid_status === 'TECHNICAL_EVALUATION') stat.tech += 1
     if (b.workflow_stage === 'FINANCIAL_EVALUATION') stat.fin += 1
-    if (b.bid_status === 'WON' || b.bid_outcome === 'WON' || b.financial_result === 'WIN' || b.workflow_stage === 'AWARD_HANDOVER') stat.won += 1
-    if (b.bid_status === 'LOST' || b.bid_outcome === 'LOST' || b.technical_result === 'DISQUALIFIED' || b.financial_result === 'LOST') stat.lost += 1
+    if (b.bid_status === 'WON' || b.bid_outcome === 'WON' || b.workflow_stage === 'WON') stat.won += 1
+    if (b.bid_status === 'LOST' || b.bid_outcome === 'LOST' || b.workflow_stage === 'LOST' || b.technical_result === 'DISQUALIFIED') stat.lost += 1
   })
   const execStatsList = Object.values(execStatsMap)
 
@@ -293,13 +316,14 @@ export function OverviewPanel() {
   const uniqueExecs = Array.from(new Set(bids.map(b => b.bid_owner?.full_name || b.bid_owner?.username).filter(Boolean)))
 
   const headerStats = [
-    { label:'Total Tenders',     value: totalBids,         icon: Layers,       color:'text-violet-600', bg:'bg-violet-50',  border:'border-violet-200' },
-    { label:'Submitted',         value: submittedBids,     icon: CheckCircle,  color:'text-emerald-600',bg:'bg-emerald-50', border:'border-emerald-200' },
-    { label:'Not Submitted',     value: notSubmittedBids,  icon: Clock,        color:'text-amber-600',  bg:'bg-amber-50',   border:'border-amber-200' },
-    { label:'Technical Eval',    value: techEvalBids,      icon: FileText,     color:'text-blue-600',   bg:'bg-blue-50',    border:'border-blue-200' },
-    { label:'Financial Eval',    value: finEvalBids,       icon: IndianRupee,  color:'text-indigo-600', bg:'bg-indigo-50',  border:'border-indigo-200' },
-    { label:'Won Bids',          value: wonBids,           icon: Award,        color:'text-teal-600',   bg:'bg-teal-50',    border:'border-teal-200' },
-    { label:'Lost Bids',         value: lostBids,          icon: XCircle,      color:'text-rose-600',   bg:'bg-rose-50',    border:'border-rose-200' },
+    { label:'Total Tenders',     value: totalBids,         icon: Layers,       color:'text-violet-600', bg:'bg-violet-50',  border:'border-violet-200', onClick: () => navigate('/dashboard/tenders') },
+    { label:'Submitted',         value: submittedBids,     icon: CheckCircle,  color:'text-emerald-600',bg:'bg-emerald-50', border:'border-emerald-200', onClick: () => navigate('/dashboard/tenders?status=SUBMITTED') },
+    { label:'Tech Eval',         value: techEvalBids,      icon: FileText,     color:'text-blue-600',   bg:'bg-blue-50',    border:'border-blue-200', onClick: () => navigate('/dashboard/tenders?status=TECHNICAL_EVALUATION') },
+    { label:'Financial Eval',    value: finEvalBids,       icon: IndianRupee,  color:'text-indigo-600', bg:'bg-indigo-50',  border:'border-indigo-200', onClick: () => navigate('/dashboard/tenders?stage=FINANCIAL_EVALUATION') },
+    { label:'Won Bids',          value: wonBids,           icon: Award,        color:'text-teal-600',   bg:'bg-teal-50',    border:'border-teal-200', onClick: () => navigate('/dashboard/tenders?status=WON') },
+    { label:'Lost Bids',         value: lostBids,          icon: XCircle,      color:'text-rose-600',   bg:'bg-rose-50',    border:'border-rose-200', onClick: () => navigate('/dashboard/tenders?status=LOST') },
+    { label:'Cancelled',         value: cancelledBids,     icon: XCircle,      color:'text-slate-600',  bg:'bg-slate-100',  border:'border-slate-300', onClick: () => navigate('/dashboard/tenders?status=CANCELLED') },
+    { label:'Tender Bin',        value: binCount,          icon: Trash2,       color:'text-rose-700',   bg:'bg-rose-100/60', border:'border-rose-300', onClick: () => navigate('/dashboard/tenders?bin=true') },
   ]
 
   const overallWinRate = totalBids > 0 ? ((wonBids / totalBids) * 100).toFixed(1) : '0.0'
@@ -335,19 +359,20 @@ export function OverviewPanel() {
       {/* ── MANAGEMENT ONLY BI ANALYTICS SUITE ──────────────────────────────── */}
       {isManagement ? (
         <>
-          {/* 7-Card Enterprise Analytics Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+          {/* 8-Card Enterprise Analytics Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
             {headerStats.map((s, i) => (
               <motion.div key={s.label}
+                onClick={s.onClick}
                 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
-                className={`rounded-xl border ${s.border} p-3.5 bg-card hover:shadow-md transition-all`}>
+                className={`rounded-xl border ${s.border} p-3.5 bg-card hover:shadow-md transition-all cursor-pointer group`}>
                 <div className="flex items-center justify-between mb-2">
-                  <div className={`size-8 rounded-lg ${s.bg} flex items-center justify-center`}>
+                  <div className={`size-8 rounded-lg ${s.bg} flex items-center justify-center group-hover:scale-105 transition-transform`}>
                     <s.icon className={`size-4 ${s.color}`}/>
                   </div>
                 </div>
                 <p className={`text-2xl font-extrabold font-heading tracking-tight ${s.color}`}>{s.value}</p>
-                <p className="text-[11px] font-medium text-muted-foreground mt-0.5 truncate">{s.label}</p>
+                <p className="text-[11px] font-medium text-muted-foreground mt-0.5 truncate group-hover:text-foreground">{s.label}</p>
               </motion.div>
             ))}
           </div>

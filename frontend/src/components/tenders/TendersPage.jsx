@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Plus, Search, Filter, Download, RefreshCw, ChevronLeft, ChevronRight, ChevronDown,
   Building2, Calendar, DollarSign, Tag, ArrowUpRight, Loader2, X,
   AlertCircle, TrendingUp, FileText, Zap, MoreHorizontal, Eye,
   CheckCircle2, XCircle, Clock, Archive, LayoutGrid, TableProperties, ShieldCheck,
-  User, Check, Square
+  User, Check, Square, Trash2, RotateCcw, Ban
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -26,7 +26,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 import {
-  listBids, getBid, updateBid, transitionBidStage, STAGE_LABELS, STAGE_COLORS, STATUS_COLORS, STAGE_TRANSITIONS,
+  listBids, getBid, updateBid, transitionBidStage, restoreBid, permanentDeleteBid, STAGE_LABELS, STAGE_COLORS, STATUS_COLORS, STAGE_TRANSITIONS,
 } from '../../services/bids'
 import { usePermissions } from '../../hooks/usePermissions'
 import { useBidStore } from '../../store/useBidStore'
@@ -58,19 +58,31 @@ function StageBadge({ stage }) {
 }
 
 // ── Status Badge ──────────────────────────────────────────────────────────────
+const STATUS_DISPLAY_LABELS = {
+  WON:                  'Won',
+  LOST:                 'Lost',
+  CANCELLED:            'Cancelled',
+  SUBMITTED:            'Submitted',
+  TECHNICAL_EVALUATION: 'Under Tech Eval',
+  ACTIVE:               'Active',
+  ARCHIVED:             'Archived',
+}
+
 function StatusBadge({ status }) {
   const color = STATUS_COLORS[status] ?? 'bg-gray-100 text-gray-600 border-gray-200'
   const icons = {
-    ACTIVE:   <span className="size-1.5 rounded-full bg-emerald-500 mr-1.5" />,
-    CANCELLED: <XCircle className="size-3 mr-1" />,
-    ARCHIVED: <Archive className="size-3 mr-1" />,
-    WON:      <CheckCircle2 className="size-3 mr-1" />,
-    LOST:     <XCircle className="size-3 mr-1" />,
+    WON:                  <CheckCircle2 className="size-3 mr-1 text-emerald-600" />,
+    LOST:                 <XCircle className="size-3 mr-1 text-red-600" />,
+    CANCELLED:            <XCircle className="size-3 mr-1 text-slate-500" />,
+    SUBMITTED:            <CheckCircle2 className="size-3 mr-1 text-lime-600" />,
+    TECHNICAL_EVALUATION: <Clock className="size-3 mr-1 text-teal-600" />,
+    ACTIVE:               <span className="size-1.5 rounded-full bg-blue-500 mr-1.5" />,
+    ARCHIVED:             <Archive className="size-3 mr-1" />,
   }
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border ${color}`}>
       {icons[status]}
-      {status}
+      {STATUS_DISPLAY_LABELS[status] ?? status}
     </span>
   )
 }
@@ -126,42 +138,52 @@ function safeDateInputFormat(dt) {
 }
 
 export function getDerivedBidStatusAndOutcome(bid) {
+  if (!bid) return { status: 'ACTIVE', outcome: null };
+
+  const stage = bid.workflow_stage;
+  const rawStatus = bid.bid_status;
+  const rawOutcome = bid.bid_outcome;
+
+  // 1. Explicit Terminal & Intermediate Stage Mappings (5-State Model)
+  if (stage === 'WON' || rawStatus === 'WON' || rawOutcome === 'WON') {
+    return { status: 'WON', outcome: 'WON' };
+  }
+  if (stage === 'LOST' || rawStatus === 'LOST' || rawOutcome === 'LOST') {
+    return { status: 'LOST', outcome: 'LOST' };
+  }
+  if (stage === 'CANCELLED' || rawStatus === 'CANCELLED' || rawOutcome === 'CANCELLED') {
+    return { status: 'CANCELLED', outcome: 'CANCELLED' };
+  }
+  if (
+    stage === 'GEM_SUBMISSION' ||
+    stage === 'TECHNICAL_EVALUATION' ||
+    stage === 'FINANCIAL_EVALUATION' ||
+    rawStatus === 'TECHNICAL_EVALUATION' ||
+    rawStatus === 'SUBMITTED' ||
+    bid.submission_status === 'SUBMITTED' ||
+    bid.submission_done === true
+  ) {
+    return { status: 'TECHNICAL_EVALUATION', outcome: null };
+  }
+
+  // 2. Legacy / Result-based fallbacks if result string exists
   const result = (bid.bid_result || '').trim();
   const resultLower = result.toLowerCase();
-  
-  let status = bid.bid_status || 'ACTIVE';
-  let outcome = bid.bid_outcome || null;
-
   if (result) {
     if (resultLower.includes('l1') || resultLower.includes('won')) {
-      status = 'WON';
-      outcome = 'WON';
-    } else if (
+      return { status: 'WON', outcome: 'WON' };
+    }
+    if (
       resultLower !== 'result pending' &&
       resultLower !== 'na' &&
       resultLower !== 'bid in progress' &&
       resultLower !== 'pending'
     ) {
-      status = 'LOST';
-      outcome = 'LOST';
-    } else {
-      status = 'ACTIVE';
-      outcome = null;
+      return { status: 'LOST', outcome: 'LOST' };
     }
   }
 
-  if (bid.workflow_stage === 'WON') {
-    status = 'WON';
-    outcome = 'WON';
-  } else if (bid.workflow_stage === 'LOST') {
-    status = 'LOST';
-    outcome = 'LOST';
-  } else if (bid.workflow_stage === 'CANCELLED') {
-    status = 'CANCELLED';
-    outcome = 'CANCELLED';
-  }
-
-  return { status, outcome };
+  return { status: rawStatus || 'ACTIVE', outcome: rawOutcome || null };
 }
 
 
@@ -293,27 +315,31 @@ async function exportToExcel() {
 // ── Filter Bar Options ────────────────────────────────────────────────────────
 const STAGE_OPTIONS = [
   { value: '', label: 'All Stages' },
-  { value: 'DISCOVERED', label: 'Discovered' },
-  { value: 'QUALIFICATION_REVIEW', label: 'Qualification Review' },
-  { value: 'DOCUMENT_COMPILATION', label: 'Document Compilation' },
-  { value: 'OEM_COORDINATION', label: 'OEM Coordination' },
-  { value: 'COMMERCIAL_PREPARATION', label: 'Commercial Prep' },
-  { value: 'INTERNAL_REVIEW', label: 'Internal Review' },
-  { value: 'FINAL_APPROVAL', label: 'Final Approval' },
-  { value: 'READY_FOR_SUBMISSION', label: 'Ready to Submit' },
-  { value: 'SUBMITTED', label: 'Submitted' },
-  { value: 'AWAITING_RESULT', label: 'Awaiting Result' },
+  { value: 'DISCOVERED', label: '1. Search & ID' },
+  { value: 'ELIGIBILITY_ASSESSMENT', label: '2. Eligibility' },
+  { value: 'OEM_AUTHORIZATION_REQUEST', label: '3. OEM Auth' },
+  { value: 'PRICING_REQUEST', label: '4. Pricing Request' },
+  { value: 'DOCUMENT_CHECKLIST_PREPARATION', label: '5. Checklist Prep' },
+  { value: 'EMD_PROCESSING', label: '6. EMD Processing' },
+  { value: 'BID_DOCUMENTATION', label: '7. Documentation' },
+  { value: 'INTERNAL_APPROVAL', label: '8. Internal Approval' },
+  { value: 'GEM_SUBMISSION', label: '9. GeM Submission' },
+  { value: 'TECHNICAL_EVALUATION', label: '10. Tech Eval' },
+  { value: 'FINANCIAL_EVALUATION', label: '11. Financial Eval' },
+  { value: 'AWARD_HANDOVER', label: '12. Award & Delivery' },
   { value: 'WON', label: 'Won' },
   { value: 'LOST', label: 'Lost' },
+  { value: 'CANCELLED', label: 'Cancelled' },
 ]
 
 const STATUS_OPTIONS = [
   { value: '', label: 'All Statuses' },
-  { value: 'ACTIVE', label: 'Active' },
-  { value: 'CANCELLED', label: 'Cancelled' },
-  { value: 'ARCHIVED', label: 'Archived' },
   { value: 'WON', label: 'Won' },
   { value: 'LOST', label: 'Lost' },
+  { value: 'CANCELLED', label: 'Cancelled' },
+  { value: 'SUBMITTED', label: 'Submitted' },
+  { value: 'TECHNICAL_EVALUATION', label: 'Under Tech Eval' },
+  { value: 'ACTIVE', label: 'Active' },
 ]
 
 const PORTAL_SOURCES = ['GeM', 'CPPP', 'eProcure']
@@ -332,6 +358,7 @@ function useDebounce(value, delay = 350) {
 export function TendersPage() {
   const { hasPermission } = usePermissions()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [sheetEditable, setSheetEditable] = useState(false)
 
   const toggleSheetEditable = () => {
@@ -353,17 +380,79 @@ export function TendersPage() {
     stageFilter,
     statusFilter,
     searchInput,
+    inBin,
     viewMode,
     setPage,
     setStageFilter,
     setStatusFilter,
     setSearchInput,
     setDebouncedSearch,
+    setInBin,
     setViewMode,
     loadBids,
     users,
     loadUsers,
   } = useBidStore()
+
+  useEffect(() => {
+    const statusParam = searchParams.get('status')
+    const stageParam = searchParams.get('stage')
+    const binParam = searchParams.get('bin')
+
+    let hasParamUpdate = false
+    if (binParam === 'true' && !inBin) {
+      setInBin(true)
+      hasParamUpdate = true
+    } else if (binParam === 'false' && inBin) {
+      setInBin(false)
+      hasParamUpdate = true
+    }
+
+    if (statusParam !== null && statusParam !== statusFilter) {
+      setStatusFilter(statusParam)
+      hasParamUpdate = true
+    }
+    if (stageParam !== null && stageParam !== stageFilter) {
+      setStageFilter(stageParam)
+      hasParamUpdate = true
+    }
+
+    if (!hasParamUpdate) {
+      loadBids()
+    }
+    loadUsers()
+  }, [searchParams])
+
+  const handleRestoreBid = async (bidId, bidTitle) => {
+    try {
+      const res = await restoreBid(bidId)
+      if (res.ok) {
+        toast.success(`Tender "${bidTitle || bidId}" restored successfully!`)
+        loadBids()
+      } else {
+        toast.error(res.error?.message ?? 'Failed to restore tender')
+      }
+    } catch (err) {
+      toast.error('Error restoring tender')
+    }
+  }
+
+  const handlePermanentDeleteBid = async (bidId, bidTitle) => {
+    if (!window.confirm(`Are you sure you want to PERMANENTLY delete tender "${bidTitle || bidId}"? This action CANNOT be undone.`)) {
+      return
+    }
+    try {
+      const res = await permanentDeleteBid(bidId)
+      if (res.ok) {
+        toast.success('Tender permanently deleted')
+        loadBids()
+      } else {
+        toast.error(res.error?.message ?? 'Failed to permanently delete tender')
+      }
+    } catch (err) {
+      toast.error('Error permanently deleting tender')
+    }
+  }
 
   const effectiveBids = bids.map(bid => {
     const { status, outcome } = getDerivedBidStatusAndOutcome(bid)
@@ -379,11 +468,6 @@ export function TendersPage() {
   useEffect(() => {
     setDebouncedSearch(debouncedSearchVal)
   }, [debouncedSearchVal, setDebouncedSearch])
-
-  useEffect(() => {
-    loadBids()
-    loadUsers()
-  }, []) // Load once on mount, store setters call loadBids automatically!
 
   // Local state update for smooth/instant character rendering
   const handleFieldChangeLocal = (bidId, field, value) => {
@@ -593,24 +677,51 @@ export function TendersPage() {
       {/* ── Page Header ─────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="font-heading text-2xl font-bold text-foreground">Tenders</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Manage and track all organizational bid workspaces and GeM tenders.
+          <div className="flex items-center gap-3">
+            <h1 className="font-heading text-2xl font-bold text-foreground">
+              {inBin ? 'Tender Bin' : 'Tenders'}
+            </h1>
+
+            {/* Workspace View Switcher (Active Tenders vs Tender Bin) */}
+            <div className="flex items-center bg-muted/60 border border-border p-1 rounded-lg text-xs">
+              <button
+                type="button"
+                onClick={() => { setInBin(false); setSearchParams({}) }}
+                className={`px-3 py-1 rounded-md font-semibold transition-all ${!inBin ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                Active Workspace
+              </button>
+              <button
+                type="button"
+                onClick={() => { setInBin(true); setSearchParams({ bin: 'true' }) }}
+                className={`px-3 py-1 rounded-md font-semibold transition-all flex items-center gap-1.5 ${inBin ? 'bg-rose-600 text-white shadow-xs' : 'text-muted-foreground hover:text-rose-600'}`}
+              >
+                <Trash2 className="size-3.5" />
+                Tender Bin (Trash)
+              </button>
+            </div>
+          </div>
+          <p className="text-sm text-muted-foreground mt-1">
+            {inBin 
+              ? 'Soft-deleted tender workspaces. Items are retained for 15 days before permanent auto-purge. Super Admins can restore or purge them.'
+              : 'Manage and track all organizational bid workspaces and GeM tenders.'}
           </p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
           {/* Export to Excel */}
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5 border-border hover:bg-muted"
-            onClick={exportToExcel}
-            disabled={bids.length === 0}
-          >
-            <Download className="size-3.5 text-muted-foreground" />
-            Export Excel
-          </Button>
+          {!inBin && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 border-border hover:bg-muted"
+              onClick={exportToExcel}
+              disabled={bids.length === 0}
+            >
+              <Download className="size-3.5 text-muted-foreground" />
+              Export Excel
+            </Button>
+          )}
 
           {/* Refresh */}
           <Button
@@ -624,7 +735,7 @@ export function TendersPage() {
           </Button>
 
           {/* Add Tender */}
-          {hasPermission('bid.create') && (
+          {!inBin && hasPermission('bid.create') && (
             <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
               <Button
                 id="add-tender-btn"
@@ -640,29 +751,73 @@ export function TendersPage() {
         </div>
       </div>
 
-      {/* ── Stats Row ────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { label: 'Total Tenders', value: meta.total ?? 0, icon: FileText, color: 'text-blue-600', bg: 'bg-blue-50/50' },
-          { label: 'Active', value: meta.active_count ?? 0, icon: TrendingUp, color: 'text-emerald-600', bg: 'bg-emerald-50/50' },
-          { label: 'Won', value: meta.won_count ?? 0, icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50/50' },
-          { label: 'Lost', value: meta.lost_count ?? 0, icon: XCircle, color: 'text-red-600', bg: 'bg-red-50/50' },
-        ].map((stat) => (
-          <motion.div
-            key={stat.label}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="rounded-xl border border-border bg-card p-4 flex items-center gap-3 shadow-sm"
-          >
-            <div className={`size-9 rounded-lg ${stat.bg} flex items-center justify-center shrink-0`}>
-              <stat.icon className={`size-4.5 ${stat.color}`} />
+      {/* Tender Bin Banner */}
+      {inBin && (
+        <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-xl p-4 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="size-9 rounded-lg bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+              <Trash2 className="size-5" />
             </div>
             <div>
-              <p className="text-xl font-bold font-heading text-foreground leading-none">{stat.value}</p>
-              <p className="text-xs text-muted-foreground mt-1">{stat.label}</p>
+              <p className="text-xs font-bold text-rose-900 dark:text-rose-200">Tender Bin (15-Day Retention Period)</p>
+              <p className="text-xs text-rose-700 dark:text-rose-400 mt-0.5">
+                Items in this bin will be permanently purged automatically after 15 days of soft-deletion. Super Admins can restore tenders back to the active workspace at any time.
+              </p>
             </div>
-          </motion.div>
-        ))}
+          </div>
+          <Button variant="outline" size="sm" onClick={() => { setInBin(false); setSearchParams({}) }} className="text-xs shrink-0 bg-card border-rose-300 hover:bg-rose-100/50">
+            Return to Active Workspace
+          </Button>
+        </div>
+      )}
+
+      {/* ── Stats Row ────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {[
+          { label: 'Total Tenders', value: meta.total ?? 0, icon: FileText, color: 'text-blue-600', bg: 'bg-blue-50/50', filterKey: '' },
+          { label: 'Active', value: meta.active_count ?? 0, icon: TrendingUp, color: 'text-emerald-600', bg: 'bg-emerald-50/50', filterKey: 'ACTIVE' },
+          { label: 'Under Tech Eval', value: meta.tech_eval_count ?? 0, icon: Clock, color: 'text-teal-600', bg: 'bg-teal-50/50', filterKey: 'TECHNICAL_EVALUATION' },
+          { label: 'Won', value: meta.won_count ?? 0, icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50/50', filterKey: 'WON' },
+          { label: 'Lost', value: meta.lost_count ?? 0, icon: XCircle, color: 'text-red-600', bg: 'bg-red-50/50', filterKey: 'LOST' },
+          { label: 'Cancelled', value: meta.cancelled_count ?? 0, icon: Ban, color: 'text-amber-600', bg: 'bg-amber-50/50', filterKey: 'CANCELLED' },
+        ].map((stat) => {
+          const isActiveFilter = statusFilter === stat.filterKey || (!statusFilter && stat.filterKey === '')
+          return (
+            <motion.div
+              key={stat.label}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => {
+                if (stat.filterKey === '') {
+                  setStatusFilter('')
+                  setStageFilter('')
+                  setPage(1)
+                  setSearchParams(inBin ? { bin: 'true' } : {})
+                } else {
+                  setStatusFilter(stat.filterKey)
+                  setStageFilter('')
+                  setPage(1)
+                  setSearchParams(inBin ? { bin: 'true', status: stat.filterKey } : { status: stat.filterKey })
+                }
+              }}
+              className={`rounded-xl border p-3.5 flex items-center gap-3 shadow-xs cursor-pointer transition-all ${
+                isActiveFilter
+                  ? 'border-primary ring-2 ring-primary/30 bg-primary/5 shadow-sm'
+                  : 'border-border bg-card hover:bg-muted/40 hover:border-muted-foreground/30'
+              }`}
+            >
+              <div className={`size-9 rounded-lg ${stat.bg} flex items-center justify-center shrink-0`}>
+                <stat.icon className={`size-4.5 ${stat.color}`} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xl font-bold font-heading text-foreground leading-none">{stat.value}</p>
+                <p className="text-xs text-muted-foreground mt-1 truncate">{stat.label}</p>
+              </div>
+            </motion.div>
+          )
+        })}
       </div>
 
       {/* ── Filter & Search Bar + View Selector ──────────────────────────────── */}
@@ -871,6 +1026,12 @@ export function TendersPage() {
                               </span>
                             )}
                           </div>
+                          {inBin && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300 border border-rose-300">
+                              <Clock className="size-3 mr-1 animate-pulse" />
+                              {bid.days_remaining ?? 15}d to purge
+                            </span>
+                          )}
                         </div>
 
                         {/* Title */}
@@ -950,6 +1111,36 @@ export function TendersPage() {
                         )}
                       </div>
 
+                      {/* Bin Actions */}
+                      {inBin && (
+                        <div className="mt-3 pt-3 border-t border-border flex items-center justify-between gap-2 z-20">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1.5 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50 h-8 flex-1 font-semibold"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleRestoreBid(bid.id, bid.title)
+                            }}
+                          >
+                            <RotateCcw className="size-3.5" />
+                            Restore Tender
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            className="gap-1.5 text-xs h-8 flex-1 font-semibold bg-rose-600 hover:bg-rose-700 text-white"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handlePermanentDeleteBid(bid.id, bid.title)
+                            }}
+                          >
+                            <Trash2 className="size-3.5" />
+                            Purge
+                          </Button>
+                        </div>
+                      )}
+
                     </motion.div>
                   )
                 })}
@@ -985,7 +1176,8 @@ export function TendersPage() {
                       <th className="p-3 border-r border-border min-w-[140px]">PO Recv Status</th>
                       <th className="p-3 border-r border-border min-w-[140px]">Result</th>
                       <th className="p-3 border-r border-border min-w-[130px]">Owner</th>
-                      <th className="p-3 min-w-[200px]">Remarks</th>
+                      <th className="p-3 border-r border-border min-w-[200px]">Remarks</th>
+                      {inBin && <th className="p-3 min-w-[160px] text-center bg-rose-50/50 text-rose-900">Bin Actions</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -1454,7 +1646,7 @@ export function TendersPage() {
                           </td>
 
                           {/* 24. Remarks */}
-                          <td className="p-3 truncate max-w-xs text-muted-foreground" title={bid.remarks}>
+                          <td className={`p-3 truncate max-w-xs text-muted-foreground ${inBin ? 'border-r border-border' : ''}`} title={bid.remarks}>
                             {!isReadOnly ? (
                               <input 
                                 type="text" 
@@ -1469,6 +1661,32 @@ export function TendersPage() {
                               bid.remarks ?? '—'
                             )}
                           </td>
+
+                          {/* 25. Bin Actions */}
+                          {inBin && (
+                            <td className="p-3 bg-rose-50/20">
+                              <div className="flex items-center justify-center gap-1.5">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-[11px] px-2 text-emerald-700 border-emerald-300 hover:bg-emerald-50 gap-1 font-semibold"
+                                  onClick={() => handleRestoreBid(bid.id, bid.title)}
+                                >
+                                  <RotateCcw className="size-3" />
+                                  Restore
+                                </Button>
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  className="h-7 text-[11px] px-2 gap-1 font-semibold bg-rose-600 hover:bg-rose-700 text-white"
+                                  onClick={() => handlePermanentDeleteBid(bid.id, bid.title)}
+                                >
+                                  <Trash2 className="size-3" />
+                                  Purge
+                                </Button>
+                              </div>
+                            </td>
+                          )}
                         </tr>
                     )
                     })}

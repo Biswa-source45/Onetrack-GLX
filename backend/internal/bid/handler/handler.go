@@ -56,6 +56,7 @@ func (h *BidHandler) ListBids(c *gin.Context) {
 		BidOwnerID:    c.Query("bid_owner_id"),
 		Category:      c.Query("category"),
 		CreationMode:  c.Query("creation_mode"),
+		InBin:         c.Query("in_bin") == "true" || c.Query("show_deleted") == "true",
 	}
 
 	if v := c.Query("closing_before"); v != "" {
@@ -83,13 +84,16 @@ func (h *BidHandler) ListBids(c *gin.Context) {
 		"success": true,
 		"data":    result.Bids,
 		"meta": gin.H{
-			"page":         result.Page,
-			"limit":        result.Limit,
-			"total":        result.Total,
-			"total_pages":  result.TotalPages,
-			"active_count": result.ActiveCount,
-			"won_count":    result.WonCount,
-			"lost_count":   result.LostCount,
+			"page":             result.Page,
+			"limit":            result.Limit,
+			"total":            result.Total,
+			"total_pages":      result.TotalPages,
+			"active_count":     result.ActiveCount,
+			"won_count":        result.WonCount,
+			"lost_count":       result.LostCount,
+			"cancelled_count":  result.CancelledCount,
+			"tech_eval_count":  result.TechEvalCount,
+			"submitted_count":  result.SubmittedCount,
 		},
 	})
 }
@@ -182,7 +186,25 @@ func (h *BidHandler) ArchiveBid(c *gin.Context) {
 		response.NotFound(c, "Bid not found")
 		return
 	}
-	response.Success(c, http.StatusOK, "Bid archived successfully", nil)
+	response.Success(c, http.StatusOK, "Bid moved to Tender Bin successfully", nil)
+}
+
+func (h *BidHandler) RestoreBid(c *gin.Context) {
+	id := c.Param("id")
+	if err := h.svc.RestoreBid(c.Request.Context(), id); err != nil {
+		response.NotFound(c, "Bid not found")
+		return
+	}
+	response.Success(c, http.StatusOK, "Bid restored successfully", nil)
+}
+
+func (h *BidHandler) PermanentDeleteBid(c *gin.Context) {
+	id := c.Param("id")
+	if err := h.svc.PermanentDeleteBid(c.Request.Context(), id); err != nil {
+		response.NotFound(c, "Bid not found")
+		return
+	}
+	response.Success(c, http.StatusOK, "Bid permanently deleted", nil)
 }
 
 func (h *BidHandler) AddChecklist(c *gin.Context) {

@@ -10,6 +10,9 @@ type BidRepository interface {
 	UpdateStage(ctx context.Context, id string, stage string, status string) error
 	UpdateOutcome(ctx context.Context, id string, req *RecordOutcomeRequest) error
 	SoftDelete(ctx context.Context, id string) error
+	Restore(ctx context.Context, id string) error
+	PermanentDelete(ctx context.Context, id string) error
+	CleanupExpired(ctx context.Context) error
 
 	// Members
 	AddMember(ctx context.Context, bidID string, userID string, role string, addedBy string) error
@@ -47,6 +50,8 @@ type BidService interface {
 	RemoveMember(ctx context.Context, bidID string, userID string) error
 	RecordOutcome(ctx context.Context, id string, req *RecordOutcomeRequest) error
 	ArchiveBid(ctx context.Context, id string) error
+	RestoreBid(ctx context.Context, id string) error
+	PermanentDeleteBid(ctx context.Context, id string) error
 
 	// Bid-scoped checklists
 	GetChecklists(ctx context.Context, bidID string) ([]BidChecklistItem, error)

@@ -6,7 +6,7 @@ import {
   DollarSign, Users, Plus, ChevronRight, CheckCircle2, CheckSquare,
   XCircle, Edit2, Save, X, MoreHorizontal, Calendar,
   FileText, Activity, History, UserPlus, Target, ChevronDown,
-  Trash2, Trophy, Search, ShieldCheck, Share2, Coins, Eye,
+  RotateCcw, Trash2, Trophy, Search, ShieldCheck, Share2, Coins, Eye,
   Send, Upload, Hourglass, Ban, ArrowRight, Layers, Lock, Check, Sparkles, AlertTriangle
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -26,6 +26,7 @@ import {
 import {
   getBid, getBidStageHistory, transitionBidStage,
   addBidMember, removeBidMember, recordBidOutcome, archiveBid, updateBid,
+  softDeleteBid, restoreBid, permanentDeleteBid,
   STAGE_LABELS, STAGE_COLORS, STATUS_COLORS, STAGE_TRANSITIONS,
   WORKFLOW_STAGES_ORDERED,
 } from '../../services/bids'
@@ -1174,19 +1175,19 @@ function OutcomePanel({ bid }) {
   )
 }
 
-// ── Archive Confirmation Dialog ──────────────────────────────────────────────
+// ── Move to Tender Bin Confirmation Dialog ──────────────────────────────────
 function ArchiveConfirmDialog({ bid, onClose, onDone }) {
   const [loading, setLoading] = useState(false)
 
   async function handleConfirm() {
     setLoading(true)
     try {
-      const res = await archiveBid(bid.id)
+      const res = await softDeleteBid(bid.id)
       if (res.ok) {
-        toast.success('Tender archived successfully')
+        toast.success('Tender moved to Tender Bin')
         onDone()
       } else {
-        toast.error(res.error?.message ?? 'Failed to archive tender')
+        toast.error(res.error?.message ?? 'Failed to move tender to Bin')
       }
     } catch {
       toast.error('Network error')
@@ -1205,19 +1206,19 @@ function ArchiveConfirmDialog({ bid, onClose, onDone }) {
         className="relative z-10 w-full max-w-md bg-card border border-border rounded-xl shadow-xl p-6 space-y-4"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-2.5 text-destructive">
-          <AlertCircle className="size-5 shrink-0" />
-          <h3 className="font-heading font-semibold text-foreground">Archive Tender</h3>
+        <div className="flex items-center gap-2.5 text-rose-600">
+          <Trash2 className="size-5 shrink-0" />
+          <h3 className="font-heading font-semibold text-foreground">Move to Tender Bin</h3>
         </div>
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Are you sure you want to archive <strong>{bid.title}</strong>?
+          Are you sure you want to delete <strong>{bid.title}</strong>?
           <br /><br />
-          This will set its status to <strong>ARCHIVED</strong>. Once archived, all operations (edits, stage transitions, tasks, and members) will be permanently read-only.
+          This tender will be moved to the <strong>Tender Bin</strong>. Items in the Bin are safely retained for <strong>15 days</strong> before automated permanent purging, and Super Admins can restore it at any time.
         </p>
         <div className="flex gap-2 justify-end pt-2">
           <Button variant="outline" size="sm" onClick={onClose} disabled={loading}>Cancel</Button>
-          <Button variant="destructive" size="sm" onClick={handleConfirm} disabled={loading}>
-            {loading && <Loader2 className="size-3.5 animate-spin mr-1" />}Archive Tender
+          <Button variant="destructive" size="sm" className="bg-rose-600 hover:bg-rose-700 text-white" onClick={handleConfirm} disabled={loading}>
+            {loading && <Loader2 className="size-3.5 animate-spin mr-1" />}Move to Tender Bin
           </Button>
         </div>
       </motion.div>
@@ -1264,22 +1265,10 @@ function OutcomeDialog({ bid, defaultOutcome = 'WON', lockedOutcome = null, onCl
       }
       const res = await recordBidOutcome(bid.id, payload)
       if (res.ok) {
-        // For cancellations, also persist the reason in the bid's remarks field
+        // For cancellations, also persist the reason in the bid's remarks field without touching bid_status or workflow_stage
         if (form.bid_outcome === 'CANCELLED' && form.outcome_reason?.trim()) {
           try {
             await updateBid(bid.id, {
-              title: bid.title, bid_no: bid.bid_no, gem_bid_no: bid.gem_bid_no,
-              organization_name: bid.organization_name, department_name: bid.department_name,
-              portal_source: bid.portal_source, bid_type: bid.bid_type,
-              category: bid.category,
-              estimated_value: bid.estimated_value !== null ? Number(bid.estimated_value) : null,
-              emd_amount: bid.emd_amount !== null ? Number(bid.emd_amount) : null,
-              emd_type: bid.emd_type, emd_exempted: !!bid.emd_exempted,
-              oem_required: !!bid.oem_required, has_tech_eval: !!bid.has_tech_eval,
-              opening_date: bid.opening_date ? new Date(bid.opening_date).toISOString() : null,
-              closing_date: bid.closing_date ? new Date(bid.closing_date).toISOString() : null,
-              bid_owner_id: bid.bid_owner?.id || bid.bid_owner_id,
-              bid_status: bid.bid_status, workflow_stage: bid.workflow_stage,
               remarks: `[CANCELLED] ${form.outcome_reason.trim()}`,
             })
           } catch { /* non-fatal: outcome recorded, remarks update best-effort */ }
@@ -1588,8 +1577,63 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
         </div>
       </div>
 
-      {/* Archive Warning Banner */}
-      {bid.bid_status === 'ARCHIVED' && (
+      {/* Archive / Bin Warning Banner */}
+      {bid.deleted_at ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50/50 p-4 flex items-center justify-between gap-4 text-rose-900 shadow-sm dark:bg-rose-950/20 dark:border-rose-900/50 dark:text-rose-300">
+          <div className="flex items-start gap-3">
+            <Trash2 className="size-5 shrink-0 text-rose-600 dark:text-rose-500 mt-0.5" />
+            <div className="space-y-0.5">
+              <p className="font-semibold text-sm">Tender in Bin (Soft-Deleted)</p>
+              <p className="text-xs text-rose-700 dark:text-rose-400">
+                Deleted on {new Date(bid.deleted_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}. 
+                Will be permanently purged after 15 days of retention.
+              </p>
+            </div>
+          </div>
+          {hasPermission('bid.delete') && (
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1 border-rose-300 text-rose-700 hover:bg-rose-100 dark:border-rose-800 dark:text-rose-300"
+                onClick={async () => {
+                  if (window.confirm(`Restore "${bid.title}" to active tenders?`)) {
+                    const res = await restoreBid(bid.id)
+                    if (res.ok) {
+                      toast.success('Tender restored successfully!')
+                      loadBid()
+                    } else {
+                      toast.error(res.error?.message ?? 'Failed to restore tender')
+                    }
+                  }
+                }}
+              >
+                <RotateCcw className="size-3.5" />
+                Restore
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                className="gap-1 bg-rose-600 hover:bg-rose-700 text-white"
+                onClick={async () => {
+                  if (window.confirm(`PERMANENTLY PURGE "${bid.title}"? This action CANNOT be undone.`)) {
+                    const res = await permanentDeleteBid(bid.id)
+                    if (res.ok) {
+                      toast.success('Tender permanently purged')
+                      onBack()
+                    } else {
+                      toast.error(res.error?.message ?? 'Failed to purge tender')
+                    }
+                  }
+                }}
+              >
+                <Trash2 className="size-3.5" />
+                Purge
+              </Button>
+            </div>
+          )}
+        </div>
+      ) : bid.bid_status === 'ARCHIVED' && (
         <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4 flex items-start gap-3 text-amber-900 shadow-sm dark:bg-amber-950/15 dark:border-amber-900/50 dark:text-amber-300">
           <AlertCircle className="size-5 shrink-0 text-amber-600 dark:text-amber-500 mt-0.5" />
           <div className="space-y-0.5">
@@ -1605,7 +1649,11 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
           <div className="space-y-1 flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="font-heading text-xl font-semibold text-foreground leading-snug">{bid.title}</h1>
-              {bid.bid_status === 'ACTIVE' ? (
+              {bid.deleted_at ? (
+                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">
+                  IN BIN
+                </span>
+              ) : bid.bid_status === 'ACTIVE' ? (
                 <span className="relative flex size-2.5 shrink-0" title="Active">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full size-2.5 bg-emerald-500"></span>
@@ -1628,24 +1676,41 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {hasPermission('bid.edit') && !['ARCHIVED', 'CANCELLED', 'WON', 'LOST'].includes(bid.bid_status) && (
+            {!bid.deleted_at && hasPermission('bid.edit') && !['ARCHIVED', 'CANCELLED', 'WON', 'LOST'].includes(bid.bid_status) && (
               <Button size="sm" variant="outline" className="gap-1.5 border-primary/20 hover:border-primary/50 text-foreground" onClick={()=>setShowEdit(true)}>
                 <Edit2 className="size-3.5 text-primary"/>Edit Tender
               </Button>
             )}
 
-            {hasPermission('bid.edit') && bid.bid_status === 'ACTIVE' && (
+            {!bid.deleted_at && hasPermission('bid.edit') && !['CANCELLED', 'WON', 'LOST'].includes(bid.bid_status) && !['CANCELLED', 'WON', 'LOST'].includes(bid.workflow_stage) && (
               <Button size="sm" variant="outline" className="gap-1.5 border-red-200 hover:border-red-500 text-red-600 hover:bg-red-50/50 dark:border-red-900/50 dark:hover:bg-red-950/20" onClick={()=>setShowCancel(true)}>
                 <XCircle className="size-3.5"/>Cancel Tender
               </Button>
             )}
-            {['SUBMITTED', 'RA_ACTIVE', 'AWAITING_RESULT'].includes(bid.workflow_stage) && bid.bid_status === 'ACTIVE' && hasPermission('bid.edit') && (
+            {!bid.deleted_at && hasPermission('bid.edit') && (bid.bid_status === 'CANCELLED' || bid.workflow_stage === 'CANCELLED' || bid.bid_outcome === 'CANCELLED') && (
+              <Button size="sm" variant="outline" className="gap-1.5 border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300" onClick={async ()=>{
+                try {
+                  const res = await transitionBidStage(bid.id, 'DISCOVERED', 'Revoked tender cancellation')
+                  if (res.ok) {
+                    toast.success('Tender cancellation revoked successfully')
+                    loadBid()
+                  } else {
+                    toast.error(res.error?.message || 'Failed to revoke cancellation')
+                  }
+                } catch {
+                  toast.error('Network error')
+                }
+              }}>
+                <RotateCcw className="size-3.5"/>Revoke Cancellation
+              </Button>
+            )}
+            {!bid.deleted_at && ['SUBMITTED', 'RA_ACTIVE', 'AWAITING_RESULT'].includes(bid.workflow_stage) && bid.bid_status === 'ACTIVE' && hasPermission('bid.edit') && (
               <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={()=>setShowOutcome(true)}>
                 <Target className="size-3.5"/>Outcome
               </Button>
             )}
-            {hasPermission('bid.delete') && !['ARCHIVED', 'CANCELLED', 'WON', 'LOST'].includes(bid.bid_status) && (
-              <Button size="sm" variant="outline" className="border-destructive/20 hover:border-destructive text-destructive hover:bg-destructive/5 p-2 h-8" title="Delete Tender" onClick={()=>setShowArchiveConfirm(true)}>
+            {!bid.deleted_at && hasPermission('bid.delete') && !['ARCHIVED', 'CANCELLED', 'WON', 'LOST'].includes(bid.bid_status) && (
+              <Button size="sm" variant="outline" className="border-destructive/20 hover:border-destructive text-destructive hover:bg-destructive/5 p-2 h-8" title="Move to Tender Bin" onClick={()=>setShowArchiveConfirm(true)}>
                 <Trash2 className="size-3.5"/>
               </Button>
             )}
@@ -1731,6 +1796,32 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                         <span className="font-medium text-foreground text-right">{v}</span>
                       </div>
                     ))}
+                    {!bid.emd_exempted && Number(bid.emd_amount) > 0 && (
+                      <div className="pt-2 border-t border-border/40 flex items-center justify-between">
+                        <span className="text-xs font-medium text-muted-foreground">EMD Return Status:</span>
+                        <label className="flex items-center gap-1.5 cursor-pointer text-xs font-semibold">
+                          <input
+                            type="checkbox"
+                            checked={!!bid.emd_returned}
+                            onChange={async (e) => {
+                              try {
+                                const res = await updateBid(bid.id, { emd_returned: e.target.checked })
+                                if (res.ok) {
+                                  toast.success(e.target.checked ? 'EMD marked as Returned / Refunded' : 'EMD marked as Pending Return')
+                                  loadBid()
+                                } else {
+                                  toast.error(res.error?.message || 'Failed to update EMD status')
+                                }
+                              } catch { toast.error('Network error') }
+                            }}
+                            className="rounded accent-emerald-600"
+                          />
+                          <span className={bid.emd_returned ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-amber-600 dark:text-amber-400 font-semibold'}>
+                            {bid.emd_returned ? 'Returned / Refunded' : 'Pending Return'}
+                          </span>
+                        </label>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

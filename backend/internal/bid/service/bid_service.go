@@ -69,14 +69,23 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 	if req.BGRequired != nil {
 		params.BGRequired = *req.BGRequired
 	}
-	if req.StartDate != nil {
-		t, err := time.Parse(time.RFC3339, *req.StartDate)
+	startDateStr := req.StartDate
+	if startDateStr == nil {
+		startDateStr = req.OpeningDate
+	}
+	if startDateStr != nil {
+		t, err := time.Parse(time.RFC3339, *startDateStr)
 		if err == nil {
 			params.StartDate = &t
 		}
 	}
-	if req.EndDate != nil {
-		t, err := time.Parse(time.RFC3339, *req.EndDate)
+
+	endDateStr := req.EndDate
+	if endDateStr == nil {
+		endDateStr = req.ClosingDate
+	}
+	if endDateStr != nil {
+		t, err := time.Parse(time.RFC3339, *endDateStr)
 		if err == nil {
 			params.EndDate = &t
 			// Auto-calculate duration months from end date
@@ -132,12 +141,19 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 	// Dispatch alert & email notification for new tender creation
 	if s.alertSvc != nil {
 		bidIdCopy := id
+		gemBidNoStr := "N/A"
+		if req.GemBidNo != nil && *req.GemBidNo != "" {
+			gemBidNoStr = *req.GemBidNo
+		} else if req.BidNo != nil && *req.BidNo != "" {
+			gemBidNoStr = *req.BidNo
+		}
+
 		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
 			TargetRole: "PRE_SALES",
 			BidID:      &bidIdCopy,
 			Type:       "TENDER_CREATED",
 			Title:      fmt.Sprintf("New Tender Identified: %s", req.Title),
-			Message:    fmt.Sprintf("Tender '%s' (GeM Bid No: %s) has been created and assigned for Stage 2 (Eligibility Assessment).", req.Title, req.GemBidNo),
+			Message:    fmt.Sprintf("Tender '%s' (GeM Bid No: %s) has been created and assigned for Stage 2 (Eligibility Assessment).", req.Title, gemBidNoStr),
 		})
 	}
 
@@ -345,22 +361,48 @@ func (s *bidService) ListBids(ctx context.Context, params domain.ListBidsParams)
 	}
 
 	return &domain.BidListResponse{
-		Bids:        items,
-		Total:       total,
-		Page:        params.Page,
-		Limit:       params.Limit,
-		TotalPages:  int(math.Ceil(float64(total) / float64(params.Limit))),
-		ActiveCount: statusCounts["ACTIVE"],
-		WonCount:    statusCounts["WON"],
-		LostCount:   statusCounts["LOST"],
+		Bids:           items,
+		Total:          total,
+		Page:           params.Page,
+		Limit:          params.Limit,
+		TotalPages:     int(math.Ceil(float64(total) / float64(params.Limit))),
+		ActiveCount:    statusCounts["ACTIVE"],
+		WonCount:       statusCounts["WON"],
+		LostCount:      statusCounts["LOST"],
+		CancelledCount: statusCounts["CANCELLED"],
+		TechEvalCount:  statusCounts["TECHNICAL_EVALUATION"],
+		SubmittedCount: statusCounts["SUBMITTED"],
 	}, nil
 }
 
 func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.UpdateBidRequest) error {
-	_, err := s.repo.GetByID(ctx, id)
+	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
+
+	// Automate transition to LOST when technical_result is DISQUALIFIED during Technical Evaluation stage
+	if req.TechnicalResult != nil && *req.TechnicalResult == "DISQUALIFIED" {
+		lost := "LOST"
+		req.BidStatus = &lost
+		req.BidOutcome = &lost
+		if bid.WorkflowStage != "LOST" {
+			prevStage := bid.WorkflowStage
+			reason := "Disqualified in Technical Evaluation"
+			if req.DisqualificationReason != nil && *req.DisqualificationReason != "" {
+				reason = fmt.Sprintf("Disqualified in Technical Eval: %s", *req.DisqualificationReason)
+			}
+			_ = s.repo.AddStageHistory(ctx, &domain.BidStageHistory{
+				BidID:            id,
+				FromStage:        &prevStage,
+				ToStage:          "LOST",
+				TransitionReason: &reason,
+				TransitionedBy:   "SYSTEM",
+			})
+			_ = s.repo.UpdateStage(ctx, id, "LOST", "LOST")
+		}
+	}
+
 	return s.repo.Update(ctx, id, req)
 }
 
@@ -371,7 +413,9 @@ func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain
 	}
 
 	if IsTerminalStage(bid.WorkflowStage) {
-		return nil, fmt.Errorf("bid is in a terminal stage: %s", bid.WorkflowStage)
+		if bid.WorkflowStage != domain.StageCancelled || IsTerminalStage(req.TargetStage) {
+			return nil, fmt.Errorf("bid is in a terminal stage: %s", bid.WorkflowStage)
+		}
 	}
 
 	if !IsTransitionAllowed(bid.CreationMode, bid.WorkflowStage, req.TargetStage) {
@@ -500,6 +544,22 @@ func (s *bidService) ArchiveBid(ctx context.Context, id string) error {
 	return s.repo.SoftDelete(ctx, id)
 }
 
+func (s *bidService) RestoreBid(ctx context.Context, id string) error {
+	_, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.repo.Restore(ctx, id)
+}
+
+func (s *bidService) PermanentDeleteBid(ctx context.Context, id string) error {
+	_, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.repo.PermanentDelete(ctx, id)
+}
+
 // ────────────────────────────────────────
 // Response builders
 // ────────────────────────────────────────
@@ -599,7 +659,20 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, techM
 		CreatedAt:        bid.CreatedAt,
 		UpdatedAt:        bid.UpdatedAt,
 		ArchivedAt:       bid.ArchivedAt,
+		DaysRemaining:    calcDaysRemaining(bid.ArchivedAt),
 	}
+}
+
+func calcDaysRemaining(archivedAt *time.Time) *int {
+	if archivedAt == nil {
+		return nil
+	}
+	daysPassed := int(time.Since(*archivedAt).Hours() / 24)
+	rem := 15 - daysPassed
+	if rem < 0 {
+		rem = 0
+	}
+	return &rem
 }
 
 func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary) domain.BidListItem {
@@ -644,5 +717,7 @@ func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary) domai
 		HasTechEval:               bid.HasTechEval,
 		BidResult:                 bid.BidResult,
 		CreatedAt:                 bid.CreatedAt,
+		ArchivedAt:                bid.ArchivedAt,
+		DaysRemaining:             calcDaysRemaining(bid.ArchivedAt),
 	}
 }

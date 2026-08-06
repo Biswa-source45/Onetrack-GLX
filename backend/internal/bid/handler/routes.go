@@ -14,6 +14,8 @@ func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, authMiddlew
 		bids.GET("/:id", authMiddleware.RequirePermission("bid.view"), handler.GetBid)
 		bids.PATCH("/:id", authMiddleware.RequirePermission("bid.edit"), handler.UpdateBid)
 		bids.DELETE("/:id", authMiddleware.RequirePermission("bid.delete"), handler.ArchiveBid)
+		bids.POST("/:id/restore", authMiddleware.RequirePermission("bid.edit"), handler.RestoreBid)
+		bids.DELETE("/:id/permanent", authMiddleware.RequirePermission("bid.delete"), handler.PermanentDeleteBid)
 
 		// Lifecycle
 		bids.POST("/:id/transition", authMiddleware.RequirePermission("bid.edit"), handler.TransitionStage)

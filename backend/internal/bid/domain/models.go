@@ -297,6 +297,7 @@ type UpdateBidRequest struct {
 	Remarks                   *string  `json:"remarks"`
 	TechComplianceStatus      *string  `json:"tech_compliance_status"`
 	QualificationStatus       *string  `json:"qualification_status"`
+	WorkflowStage             *string  `json:"workflow_stage,omitempty"`
 	BidStatus                 *string  `json:"bid_status,omitempty"`
 	BidOutcome                *string  `json:"bid_outcome,omitempty"`
 	Team                      *string  `json:"team,omitempty"`
@@ -453,6 +454,7 @@ type BidResponse struct {
 	CreatedAt              time.Time        `json:"created_at"`
 	UpdatedAt              time.Time        `json:"updated_at"`
 	ArchivedAt             *time.Time       `json:"archived_at"`
+	DaysRemaining          *int             `json:"days_remaining,omitempty"`
 }
 
 
@@ -500,17 +502,22 @@ type BidListItem struct {
 	HasTechEval               bool        `json:"has_tech_eval"`
 	BidResult                 *string     `json:"bid_result,omitempty"`
 	CreatedAt                 time.Time   `json:"created_at"`
+	ArchivedAt                *time.Time  `json:"archived_at,omitempty"`
+	DaysRemaining             *int        `json:"days_remaining,omitempty"`
 }
 
 type BidListResponse struct {
-	Bids        []BidListItem `json:"bids"`
-	Total       int           `json:"total"`
-	Page        int           `json:"page"`
-	Limit       int           `json:"limit"`
-	TotalPages  int           `json:"total_pages"`
-	ActiveCount int           `json:"active_count"`
-	WonCount    int           `json:"won_count"`
-	LostCount   int           `json:"lost_count"`
+	Bids           []BidListItem `json:"bids"`
+	Total          int           `json:"total"`
+	Page           int           `json:"page"`
+	Limit          int           `json:"limit"`
+	TotalPages     int           `json:"total_pages"`
+	ActiveCount    int           `json:"active_count"`
+	WonCount       int           `json:"won_count"`
+	LostCount      int           `json:"lost_count"`
+	CancelledCount int           `json:"cancelled_count"`
+	TechEvalCount  int           `json:"tech_eval_count"`
+	SubmittedCount int           `json:"submitted_count"`
 }
 
 // ────────────────────────────────────────
@@ -575,4 +582,5 @@ type ListBidsParams struct {
 	ClosingBefore *time.Time
 	ClosingAfter  *time.Time
 	OEMRequired   *bool
+	InBin         bool
 }

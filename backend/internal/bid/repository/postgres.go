@@ -94,14 +94,20 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 		       eligibility_remarks, emd_remarks,
 		       COALESCE(stage_completions, '{}'::jsonb), COALESCE(stage_remarks, '{}'::jsonb), COALESCE(stage_reviews, '{}'::jsonb)
 		FROM bid.bid_workspaces
-		WHERE id = $1 AND archived_at IS NULL
+		WHERE id = $1
 	`
 	row := r.pool.QueryRow(ctx, query, id)
 	return scanBid(row)
 }
 
 func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams) ([]domain.BidWorkspace, int, map[string]int, error) {
-	conditions := []string{"b.archived_at IS NULL"}
+	conditions := []string{}
+	if params.InBin {
+		_ = r.CleanupExpired(ctx)
+		conditions = append(conditions, "b.archived_at IS NOT NULL")
+	} else {
+		conditions = append(conditions, "b.archived_at IS NULL")
+	}
 	args := []interface{}{}
 	idx := 1
 
@@ -120,9 +126,24 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		idx++
 	}
 	if params.BidStatus != "" {
-		conditions = append(conditions, fmt.Sprintf("b.bid_status = $%d", idx))
-		args = append(args, params.BidStatus)
-		idx++
+		switch params.BidStatus {
+		case "WON":
+			conditions = append(conditions, "(b.bid_status = 'WON' OR b.workflow_stage = 'WON' OR b.bid_outcome = 'WON')")
+		case "LOST":
+			conditions = append(conditions, "(b.bid_status = 'LOST' OR b.workflow_stage = 'LOST' OR b.bid_outcome = 'LOST' OR b.technical_result = 'DISQUALIFIED')")
+		case "CANCELLED":
+			conditions = append(conditions, "(b.bid_status = 'CANCELLED' OR b.workflow_stage = 'CANCELLED' OR b.bid_outcome = 'CANCELLED')")
+		case "SUBMITTED":
+			conditions = append(conditions, "(b.bid_status = 'SUBMITTED' OR b.workflow_stage IN ('GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION') OR b.submission_status = 'SUBMITTED' OR b.submission_done = true)")
+		case "TECHNICAL_EVALUATION":
+			conditions = append(conditions, "(b.bid_status = 'TECHNICAL_EVALUATION' OR b.workflow_stage IN ('GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION') OR b.submission_status = 'SUBMITTED' OR b.submission_done = true)")
+		case "ACTIVE":
+			conditions = append(conditions, "(COALESCE(b.bid_status, 'ACTIVE') = 'ACTIVE' AND b.workflow_stage NOT IN ('WON', 'LOST', 'CANCELLED', 'GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION') AND COALESCE(b.bid_outcome, '') NOT IN ('WON', 'LOST', 'CANCELLED') AND COALESCE(b.technical_result, '') != 'DISQUALIFIED')")
+		default:
+			conditions = append(conditions, fmt.Sprintf("b.bid_status = $%d", idx))
+			args = append(args, params.BidStatus)
+			idx++
+		}
 	}
 	if params.BidOutcome != "" {
 		conditions = append(conditions, fmt.Sprintf("b.bid_outcome = $%d", idx))
@@ -162,15 +183,45 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 
 	where := "WHERE " + strings.Join(conditions, " AND ")
 
-	statusQuery := fmt.Sprintf(`
-		SELECT COALESCE(b.bid_status, 'ACTIVE'), COUNT(*)
+	// Count total matching items for pagination
+	var total int
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*)
 		FROM bid.bid_workspaces b
 		LEFT JOIN auth.users u ON b.bid_owner_id = u.id
 		%s
-		GROUP BY b.bid_status
 	`, where)
+	err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("count bids: %w", err)
+	}
 
-	rowsStatus, err := r.pool.Query(ctx, statusQuery, args...)
+	// Calculate global status counts (unfiltered by tab selection, so top summary cards remain persistent)
+	baseConditions := []string{}
+	if params.InBin {
+		baseConditions = append(baseConditions, "b.archived_at IS NOT NULL")
+	} else {
+		baseConditions = append(baseConditions, "b.archived_at IS NULL")
+	}
+	baseWhere := "WHERE " + strings.Join(baseConditions, " AND ")
+
+	statusQuery := fmt.Sprintf(`
+		SELECT 
+			CASE 
+				WHEN b.bid_status = 'WON' OR b.workflow_stage = 'WON' OR b.bid_outcome = 'WON' THEN 'WON'
+				WHEN b.bid_status = 'LOST' OR b.workflow_stage = 'LOST' OR b.bid_outcome = 'LOST' OR b.technical_result = 'DISQUALIFIED' THEN 'LOST'
+				WHEN b.bid_status = 'CANCELLED' OR b.workflow_stage = 'CANCELLED' OR b.bid_outcome = 'CANCELLED' THEN 'CANCELLED'
+				WHEN b.bid_status = 'TECHNICAL_EVALUATION' OR b.workflow_stage IN ('GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION') OR b.submission_status = 'SUBMITTED' OR b.submission_done = true THEN 'TECHNICAL_EVALUATION'
+				WHEN b.bid_status = 'SUBMITTED' THEN 'SUBMITTED'
+				ELSE 'ACTIVE'
+			END AS derived_status, 
+			COUNT(*)
+		FROM bid.bid_workspaces b
+		%s
+		GROUP BY 1
+	`, baseWhere)
+
+	rowsStatus, err := r.pool.Query(ctx, statusQuery)
 	if err != nil {
 		return nil, 0, nil, fmt.Errorf("status counts: %w", err)
 	}
@@ -183,11 +234,6 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		if err := rowsStatus.Scan(&status, &count); err == nil {
 			statusCounts[status] = count
 		}
-	}
-
-	var total int
-	for _, c := range statusCounts {
-		total += c
 	}
 
 	offset := (params.Page - 1) * params.Limit
@@ -303,13 +349,28 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	if req.Authority != nil {
 		addSet("authority", *req.Authority)
 	}
-	if req.StartDate != nil {
-		t, err := time.Parse(time.RFC3339, *req.StartDate)
-		if err == nil { addSet("start_date", t) }
+	startDateVal := req.StartDate
+	if startDateVal == nil {
+		startDateVal = req.OpeningDate
 	}
-	if req.EndDate != nil {
-		t, err := time.Parse(time.RFC3339, *req.EndDate)
-		if err == nil { addSet("end_date", t) }
+	if startDateVal != nil {
+		t, err := time.Parse(time.RFC3339, *startDateVal)
+		if err == nil {
+			addSet("start_date", t)
+			addSet("opening_date", t)
+		}
+	}
+
+	endDateVal := req.EndDate
+	if endDateVal == nil {
+		endDateVal = req.ClosingDate
+	}
+	if endDateVal != nil {
+		t, err := time.Parse(time.RFC3339, *endDateVal)
+		if err == nil {
+			addSet("end_date", t)
+			addSet("closing_date", t)
+		}
 	}
 	if req.DurationMonths != nil {
 		addSet("duration_months", *req.DurationMonths)
@@ -392,6 +453,9 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	if req.BidResult != nil {
 		addSet("bid_result", *req.BidResult)
 	}
+	if req.WorkflowStage != nil {
+		addSet("workflow_stage", *req.WorkflowStage)
+	}
 	if req.BidStatus != nil {
 		addSet("bid_status", *req.BidStatus)
 	}
@@ -434,10 +498,18 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 }
 
 func (r *postgresBidRepo) UpdateStage(ctx context.Context, id string, stage string, status string) error {
-	_, err := r.pool.Exec(ctx,
-		"UPDATE bid.bid_workspaces SET workflow_stage = $1, bid_status = $2, updated_at = NOW() WHERE id = $3",
-		stage, status, id,
-	)
+	var err error
+	if status == "ACTIVE" {
+		_, err = r.pool.Exec(ctx,
+			"UPDATE bid.bid_workspaces SET workflow_stage = $1, bid_status = $2, bid_outcome = NULL, updated_at = NOW() WHERE id = $3",
+			stage, status, id,
+		)
+	} else {
+		_, err = r.pool.Exec(ctx,
+			"UPDATE bid.bid_workspaces SET workflow_stage = $1, bid_status = $2, updated_at = NOW() WHERE id = $3",
+			stage, status, id,
+		)
+	}
 	return err
 }
 
@@ -447,11 +519,12 @@ func (r *postgresBidRepo) UpdateOutcome(ctx context.Context, id string, req *dom
 	sets := []string{
 		"bid_outcome = $1",
 		"bid_status = $2",
-		"competitor_info = $3",
+		"workflow_stage = $3",
+		"competitor_info = $4",
 		"updated_at = NOW()",
 	}
-	args := []interface{}{req.BidOutcome, req.BidOutcome, competitorJSON}
-	idx := 4
+	args := []interface{}{req.BidOutcome, req.BidOutcome, req.BidOutcome, competitorJSON}
+	idx := 5
 
 	addSet := func(col string, val interface{}) {
 		sets = append(sets, fmt.Sprintf("%s = $%d", col, idx))
@@ -489,6 +562,29 @@ func (r *postgresBidRepo) SoftDelete(ctx context.Context, id string) error {
 	_, err := r.pool.Exec(ctx,
 		"UPDATE bid.bid_workspaces SET archived_at = NOW(), bid_status = 'ARCHIVED', updated_at = NOW() WHERE id = $1",
 		id,
+	)
+	return err
+}
+
+func (r *postgresBidRepo) Restore(ctx context.Context, id string) error {
+	_, err := r.pool.Exec(ctx,
+		"UPDATE bid.bid_workspaces SET archived_at = NULL, bid_status = 'ACTIVE', updated_at = NOW() WHERE id = $1",
+		id,
+	)
+	return err
+}
+
+func (r *postgresBidRepo) PermanentDelete(ctx context.Context, id string) error {
+	_, err := r.pool.Exec(ctx,
+		"DELETE FROM bid.bid_workspaces WHERE id = $1",
+		id,
+	)
+	return err
+}
+
+func (r *postgresBidRepo) CleanupExpired(ctx context.Context) error {
+	_, err := r.pool.Exec(ctx,
+		"DELETE FROM bid.bid_workspaces WHERE archived_at IS NOT NULL AND archived_at < NOW() - INTERVAL '15 days'",
 	)
 	return err
 }

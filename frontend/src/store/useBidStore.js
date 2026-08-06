@@ -10,6 +10,7 @@ export const useBidStore = create((set, get) => ({
   page: 1,
   stageFilter: '',
   statusFilter: '',
+  inBin: false,
   searchInput: '',
   debouncedSearch: '',
   viewMode: 'cards',
@@ -33,6 +34,11 @@ export const useBidStore = create((set, get) => ({
     get().loadBids()
   },
 
+  setInBin: (inBin) => {
+    set({ inBin, page: 1 })
+    get().loadBids()
+  },
+
   setSearchInput: (searchInput) => set({ searchInput }),
 
   setDebouncedSearch: (debouncedSearch) => {
@@ -43,7 +49,7 @@ export const useBidStore = create((set, get) => ({
   setViewMode: (viewMode) => set({ viewMode }),
 
   loadBids: async () => {
-    const { page, debouncedSearch, stageFilter, statusFilter } = get()
+    const { page, debouncedSearch, stageFilter, statusFilter, inBin } = get()
     set({ loading: true, error: null })
     try {
       const res = await listBids({
@@ -52,6 +58,7 @@ export const useBidStore = create((set, get) => ({
         search: debouncedSearch,
         workflow_stage: stageFilter,
         bid_status: statusFilter,
+        in_bin: inBin,
       })
       if (res.ok) {
         const bids = Array.isArray(res.data) ? res.data : (res.data?.bids || [])

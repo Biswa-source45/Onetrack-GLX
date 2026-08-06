@@ -44,6 +44,10 @@ func IsTransitionAllowed(creationMode, currentStage, targetStage string) bool {
 	if currentStage == targetStage {
 		return true
 	}
+	// Allow revoking cancellation to any active stage
+	if currentStage == domain.StageCancelled && !IsTerminalStage(targetStage) {
+		return true
+	}
 	if IsTerminalStage(currentStage) {
 		return false
 	}

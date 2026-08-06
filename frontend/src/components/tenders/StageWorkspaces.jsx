@@ -57,11 +57,23 @@ function CompleteStageModal({ title, description, stageKey, bidId, bid, onComple
       currentReviews[stageKey] = false  // clear any review flag
 
       if (bidId) {
-        const res = await updateBid(bidId, {
+        let nextStage = bid?.workflow_stage
+        const completedIdx = WORKFLOW_STAGES_ORDERED.indexOf(stageKey)
+        const currentIdx = WORKFLOW_STAGES_ORDERED.indexOf(bid?.workflow_stage || 'DISCOVERED')
+        if (completedIdx >= currentIdx && completedIdx + 1 < WORKFLOW_STAGES_ORDERED.length) {
+          nextStage = WORKFLOW_STAGES_ORDERED[completedIdx + 1]
+        }
+
+        const patchData = {
           stage_completions: currentCompletions,
           stage_remarks: currentRemarks,
           stage_reviews: currentReviews,
-        })
+          workflow_stage: nextStage,
+        }
+        if (stageKey === 'EMD_PROCESSING') {
+          patchData.emd_ready = true
+        }
+        const res = await updateBid(bidId, patchData)
         if (!res.ok) {
           toast.error(res.error?.message || 'Failed to save stage completion')
           return
@@ -1279,8 +1291,7 @@ export function Stage8Workspace({ bid, onRefresh }) {
 export function Stage9Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
   const [finalPrice, setFinalPrice] = useState('')
-  const { stageIdx, currentIdx } = checkStageState(bid, 'GEM_SUBMISSION')
-  const isLocked = currentIdx < stageIdx
+  const { isLocked } = checkStageState(bid, 'GEM_SUBMISSION')
 
   const handleConfettiSubmit = async () => {
     try {
@@ -1492,8 +1503,39 @@ export function Stage11Workspace({ bid, onRefresh }) {
 // ── Stage 12: Award & Handover ──────────────────────────────────────────────
 export function Stage12Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
-  const [emdReturned, setEmdReturned] = useState(false)
-  const [bgProceeded, setBgProceeded] = useState(false)
+  const [emdReturned, setEmdReturned] = useState(!!bid?.emd_returned)
+  const [bgProceeded, setBgProceeded] = useState(!!bid?.bg_discharged)
+
+  useEffect(() => {
+    setEmdReturned(!!bid?.emd_returned)
+    setBgProceeded(!!bid?.bg_discharged)
+  }, [bid?.emd_returned, bid?.bg_discharged])
+
+  const handleEmdToggle = async (checked) => {
+    setEmdReturned(checked)
+    try {
+      const res = await updateBid(bid.id, { emd_returned: checked })
+      if (res.ok) {
+        toast.success(checked ? 'EMD marked as Returned' : 'EMD marked as Pending Return')
+        onRefresh()
+      }
+    } catch {
+      toast.error('Network error')
+    }
+  }
+
+  const handleBgToggle = async (checked) => {
+    setBgProceeded(checked)
+    try {
+      const res = await updateBid(bid.id, { bg_discharged: checked })
+      if (res.ok) {
+        toast.success(checked ? 'PBG recorded as Issued & Submitted' : 'PBG marked pending')
+        onRefresh()
+      }
+    } catch {
+      toast.error('Network error')
+    }
+  }
 
   const handleFinalAward = async (remarks) => {
     await recordBidOutcome(bid.id, {
@@ -1502,6 +1544,18 @@ export function Stage12Workspace({ bid, onRefresh }) {
     })
     confetti({ particleCount: 200, spread: 100 })
     onRefresh()
+  }
+
+  const handleCompleteClick = () => {
+    if (!emdReturned) {
+      toast.error('Mandatory Checklist Required: EMD Return must be checked before completing Stage 12.')
+      return
+    }
+    if (!bgProceeded) {
+      toast.error('Mandatory Checklist Required: PBG Submission must be checked before completing Stage 12.')
+      return
+    }
+    setShowModal(true)
   }
 
   return (
@@ -1514,7 +1568,7 @@ export function Stage12Workspace({ bid, onRefresh }) {
         <StageHeaderActions
           bid={bid}
           stageKey="AWARD_HANDOVER"
-          onCompleteClick={() => setShowModal(true)}
+          onCompleteClick={handleCompleteClick}
           onRefresh={onRefresh}
           completeLabel="Close Bid as WON 🏆"
           completeClass="bg-emerald-600 hover:bg-emerald-700 text-white"
@@ -1525,11 +1579,11 @@ export function Stage12Workspace({ bid, onRefresh }) {
         <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Post-Win Maintenance Checklist</h4>
         <div className="space-y-2 text-xs">
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={emdReturned} onChange={e => setEmdReturned(e.target.checked)} className="rounded" />
+            <input type="checkbox" checked={emdReturned} onChange={e => handleEmdToggle(e.target.checked)} className="rounded" />
             <span>EMD Returned by Procuring Authority</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={bgProceeded} onChange={e => setBgProceeded(e.target.checked)} className="rounded" />
+            <input type="checkbox" checked={bgProceeded} onChange={e => handleBgToggle(e.target.checked)} className="rounded" />
             <span>Performance Bank Guarantee (PBG) Issued & Submitted</span>
           </label>
         </div>

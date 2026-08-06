@@ -26,6 +26,7 @@ export async function listBids({
   closing_before = '',
   closing_after = '',
   oem_required = '',
+  in_bin = false,
 } = {}) {
   const params = new URLSearchParams()
   params.set('page', String(page))
@@ -40,6 +41,7 @@ export async function listBids({
   if (closing_before) params.set('closing_before', closing_before)
   if (closing_after)  params.set('closing_after', closing_after)
   if (oem_required !== '') params.set('oem_required', String(oem_required))
+  if (in_bin)         params.set('in_bin', 'true')
 
   const res = await apiFetch(`${BASE}/bids?${params.toString()}`)
   const data = await res.json()
@@ -109,9 +111,27 @@ export async function recordBidOutcome(id, payload) {
   return { ok: res.ok, status: res.status, ...data }
 }
 
-// ── Archive Bid ──────────────────────────────────────────────────────────────
+// ── Archive / Soft Delete Bid ───────────────────────────────────────────────
 export async function archiveBid(id) {
   const res = await apiFetch(`${BASE}/bids/${id}`, { method: 'DELETE' })
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, ...data }
+}
+
+export async function softDeleteBid(id) {
+  return archiveBid(id)
+}
+
+// ── Restore Bid ─────────────────────────────────────────────────────────────
+export async function restoreBid(id) {
+  const res = await apiFetch(`${BASE}/bids/${id}/restore`, { method: 'POST' })
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, ...data }
+}
+
+// ── Permanent Delete Bid ────────────────────────────────────────────────────
+export async function permanentDeleteBid(id) {
+  const res = await apiFetch(`${BASE}/bids/${id}/permanent`, { method: 'DELETE' })
   const data = await res.json()
   return { ok: res.ok, status: res.status, ...data }
 }
@@ -128,10 +148,10 @@ export const STAGE_TRANSITIONS = {
   EMD_PROCESSING:                 ['BID_DOCUMENTATION', 'INTERNAL_APPROVAL', 'CANCELLED'],
   BID_DOCUMENTATION:              ['INTERNAL_APPROVAL', 'GEM_SUBMISSION', 'CANCELLED'],
   INTERNAL_APPROVAL:              ['GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'CANCELLED'],
-  GEM_SUBMISSION:                 ['TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION'],
+  GEM_SUBMISSION:                 ['TECHNICAL_EVALUATION', 'CANCELLED'],
   TECHNICAL_EVALUATION:           ['FINANCIAL_EVALUATION', 'LOST', 'CANCELLED'],
   FINANCIAL_EVALUATION:          ['AWARD_HANDOVER', 'LOST', 'CANCELLED'],
-  AWARD_HANDOVER:                 [],
+  AWARD_HANDOVER:                 ['WON', 'LOST', 'CANCELLED'],
   WON:                            [],
   LOST:                           [],
   CANCELLED:                      [],
@@ -154,6 +174,7 @@ export const STAGE_LABELS = {
   WON:                            'Won',
   LOST:                           'Lost',
   CANCELLED:                      'Cancelled',
+  SUBMITTED:                      'Submitted',
 }
 
 /** Stage color map for badges */
@@ -172,15 +193,18 @@ export const STAGE_COLORS = {
   AWARD_HANDOVER:                 'bg-emerald-50 text-emerald-700 border-emerald-200',
   WON:                            'bg-emerald-50 text-emerald-700 border-emerald-200',
   LOST:                           'bg-red-50 text-red-700 border-red-200',
-  CANCELLED:                      'bg-gray-100 text-gray-500 border-gray-200',
+  CANCELLED:                      'bg-slate-100 text-slate-600 border-slate-200',
+  SUBMITTED:                      'bg-lime-50 text-lime-700 border-lime-200',
 }
 
 export const STATUS_COLORS = {
-  ACTIVE:   'bg-emerald-50 text-emerald-700 border-emerald-200',
-  CANCELLED:'bg-red-50 text-red-700 border-red-200',
-  ARCHIVED: 'bg-gray-100 text-gray-500 border-gray-200',
-  WON:      'bg-emerald-50 text-emerald-700 border-emerald-200',
-  LOST:     'bg-red-50 text-red-700 border-red-200',
+  WON:                  'bg-emerald-50 text-emerald-700 border-emerald-200',
+  LOST:                 'bg-red-50 text-red-700 border-red-200',
+  CANCELLED:            'bg-slate-100 text-slate-600 border-slate-200',
+  SUBMITTED:            'bg-lime-50 text-lime-700 border-lime-200',
+  TECHNICAL_EVALUATION: 'bg-teal-50 text-teal-700 border-teal-200',
+  ACTIVE:               'bg-blue-50 text-blue-700 border-blue-200',
+  ARCHIVED:             'bg-gray-100 text-gray-500 border-gray-200',
 }
 
 /** All workflow stages in order for the stepper */
