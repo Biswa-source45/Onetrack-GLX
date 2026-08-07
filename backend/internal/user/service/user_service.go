@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -30,6 +31,7 @@ func NewUserService(repo domain.UserRepository) domain.UserService {
 }
 
 func (s *userService) CreateUser(ctx context.Context, req domain.CreateUserRequest, createdBy string) (*domain.UserResponse, error) {
+	req.Username = strings.ToLower(strings.TrimSpace(req.Username))
 	// Check uniqueness
 	exists, err := s.repo.UsernameExists(ctx, req.Username)
 	if err != nil {
@@ -158,7 +160,7 @@ func (s *userService) DeleteUser(ctx context.Context, id string, requestingUserI
 	}
 
 	// Prevent deletion of system super admin seeded accounts
-	if user.Username == "Sadmin" {
+	if strings.EqualFold(user.Username, "sadmin") {
 		return fmt.Errorf("cannot delete the system super admin account")
 	}
 

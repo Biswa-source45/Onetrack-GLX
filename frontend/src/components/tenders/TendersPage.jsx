@@ -137,6 +137,96 @@ function safeDateInputFormat(dt) {
   }
 }
 
+// ── Helper display formatters for spreadsheet columns ──────────────────────────
+function getTargetMonthDisplay(bid) {
+  if (isValidDate(bid.target_month_date)) {
+    return new Date(bid.target_month_date).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
+  }
+  const dateToUse = bid.end_date || bid.submission_date || bid.start_date || bid.opening_date
+  if (isValidDate(dateToUse)) {
+    return new Date(dateToUse).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
+  }
+  return '—'
+}
+
+function getSubmissionStatusVal(bid) {
+  if (bid.submission_status && bid.submission_status.trim() !== '') {
+    return bid.submission_status
+  }
+  const stage = bid.workflow_stage || ''
+  const status = bid.bid_status || ''
+  if (['SUBMITTED', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_DELIVERY_HANDOVER'].includes(stage) || ['WON', 'LOST'].includes(status)) {
+    return 'Submitted'
+  }
+  if (['GEM_SUBMISSION', 'READY_FOR_SUBMISSION'].includes(stage)) {
+    return 'Ready'
+  }
+  return 'Pending'
+}
+
+function getFinEvalStatusVal(bid) {
+  if (bid.financial_evaluation_status && bid.financial_evaluation_status.trim() !== '') {
+    return bid.financial_evaluation_status
+  }
+  const stage = bid.workflow_stage || ''
+  const status = bid.bid_status || ''
+  if (stage === 'FINANCIAL_EVALUATION') return 'In Progress'
+  if (stage === 'AWARD_DELIVERY_HANDOVER' || status === 'WON') return 'Qualified (L1)'
+  if (status === 'LOST') return 'Non-L1'
+  if (stage === 'TECHNICAL_EVALUATION') return 'Awaiting Tech Clear'
+  return 'Pending'
+}
+
+function getPoRecvStatusVal(bid) {
+  if (bid.po_received_status && bid.po_received_status.trim() !== '') {
+    return bid.po_received_status
+  }
+  const status = bid.bid_status || ''
+  const stage = bid.workflow_stage || ''
+  if (status === 'WON' || stage === 'AWARD_DELIVERY_HANDOVER') return 'PO Received'
+  if (status === 'LOST' || status === 'CANCELLED') return 'N/A'
+  return 'Pending'
+}
+
+function getBidResultVal(bid) {
+  if (bid.bid_result && bid.bid_result.trim() !== '') {
+    return bid.bid_result
+  }
+  const status = bid.bid_status || ''
+  if (status === 'WON') return 'Won (L1)'
+  if (status === 'LOST') return 'Lost'
+  if (status === 'CANCELLED') return 'Cancelled'
+  return 'Under Eval'
+}
+
+function StatusTag({ text, variant = 'neutral' }) {
+  if (!text || text === '—') return <span className="text-muted-foreground">—</span>
+  const styles = {
+    green: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20',
+    blue: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
+    amber: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
+    red: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20',
+    neutral: 'bg-muted text-muted-foreground border-border',
+  }
+  let v = variant
+  const lower = text.toLowerCase()
+  if (lower.includes('submi') || lower.includes('won') || lower.includes('qualified') || lower.includes('recv') || lower.includes('received') || lower.includes('yes') || lower.includes('ready')) {
+    v = 'green'
+  } else if (lower.includes('eval') || lower.includes('progress') || lower.includes('under')) {
+    v = 'blue'
+  } else if (lower.includes('pend') || lower.includes('await')) {
+    v = 'amber'
+  } else if (lower.includes('lost') || lower.includes('non') || lower.includes('cancel')) {
+    v = 'red'
+  }
+
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border ${styles[v]}`}>
+      {text}
+    </span>
+  )
+}
+
 export function getDerivedBidStatusAndOutcome(bid) {
   if (!bid) return { status: 'ACTIVE', outcome: null };
 
@@ -1464,7 +1554,7 @@ export function TendersPage() {
                           </td>
 
                           {/* 14. Target Month Date */}
-                          <td className="p-3 border-r border-border text-muted-foreground">
+                          <td className="p-3 border-r border-border text-foreground font-medium">
                             {!isReadOnly ? (
                               <input 
                                 type="date" 
@@ -1473,7 +1563,7 @@ export function TendersPage() {
                                 className="bg-transparent border-none text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary p-0.5 rounded"
                               />
                             ) : (
-                              formatDate(bid.target_month_date)
+                              getTargetMonthDisplay(bid)
                             )}
                           </td>
 
@@ -1554,10 +1644,10 @@ export function TendersPage() {
                                 onBlur={(e) => handleFieldSave(bid.id, 'submission_status', e.target.value)}
                                 onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
                                 className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                placeholder="Submission Status"
+                                placeholder={getSubmissionStatusVal(bid)}
                               />
                             ) : (
-                              bid.submission_status ?? '—'
+                              <StatusTag text={getSubmissionStatusVal(bid)} />
                             )}
                           </td>
 
@@ -1571,10 +1661,10 @@ export function TendersPage() {
                                 onBlur={(e) => handleFieldSave(bid.id, 'financial_evaluation_status', e.target.value)}
                                 onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
                                 className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                placeholder="Financial Eval Status"
+                                placeholder={getFinEvalStatusVal(bid)}
                               />
                             ) : (
-                              bid.financial_evaluation_status ?? '—'
+                              <StatusTag text={getFinEvalStatusVal(bid)} />
                             )}
                           </td>
 
@@ -1588,10 +1678,10 @@ export function TendersPage() {
                                 onBlur={(e) => handleFieldSave(bid.id, 'po_received_status', e.target.value)}
                                 onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
                                 className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                placeholder="PO Received Status"
+                                placeholder={getPoRecvStatusVal(bid)}
                               />
                             ) : (
-                              bid.po_received_status ?? '—'
+                              <StatusTag text={getPoRecvStatusVal(bid)} />
                             )}
                           </td>
 
@@ -1605,10 +1695,10 @@ export function TendersPage() {
                                 onBlur={(e) => handleFieldSave(bid.id, 'bid_result', e.target.value)}
                                 onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
                                 className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                placeholder="Result"
+                                placeholder={getBidResultVal(bid)}
                               />
                             ) : (
-                              bid.bid_result ?? '—'
+                              <StatusTag text={getBidResultVal(bid)} />
                             )}
                           </td>
 

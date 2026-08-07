@@ -541,6 +541,12 @@ func (r *postgresBidRepo) UpdateOutcome(ctx context.Context, id string, req *dom
 	if req.QuotedPrice != nil {
 		addSet("quoted_price", *req.QuotedPrice)
 	}
+	if req.L1Price != nil && req.QuotedPrice != nil && *req.L1Price > 0 {
+		diff := *req.QuotedPrice - *req.L1Price
+		diffPct := (diff / *req.L1Price) * 100
+		addSet("price_difference", diff)
+		addSet("price_difference_pct", diffPct)
+	}
 	if req.OutcomeReason != nil {
 		addSet("outcome_reason", *req.OutcomeReason)
 	}
@@ -673,9 +679,13 @@ func (r *postgresBidRepo) BulkInsertChecklists(ctx context.Context, bidID string
 		return nil
 	}
 	for i, title := range titles {
+		group := "BIDDER"
+		if strings.HasPrefix(title, "[OEM]") {
+			group = "OEM"
+		}
 		_, err := r.pool.Exec(ctx,
-			`INSERT INTO bid.bid_checklists (bid_id, title, sort_order, checklist_group) VALUES ($1, $2, $3, 'BIDDER')`,
-			bidID, title, i,
+			`INSERT INTO bid.bid_checklists (bid_id, title, sort_order, checklist_group) VALUES ($1, $2, $3, $4)`,
+			bidID, title, i, group,
 		)
 		if err != nil {
 			return fmt.Errorf("insert checklist %q: %w", title, err)

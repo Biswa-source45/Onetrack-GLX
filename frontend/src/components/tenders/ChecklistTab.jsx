@@ -17,6 +17,7 @@ import {
   reorderChecklists,
   updateChecklist
 } from '../../services/bids'
+import { logStageMicroEvent } from '../../services/auditLogger'
 
 export function ChecklistTab({ bid, onRefresh }) {
   const bidId = bid.id
@@ -32,31 +33,15 @@ export function ChecklistTab({ bid, onRefresh }) {
   const [editingId, setEditingId] = useState(null)
   const [editTitle, setEditTitle] = useState('')
 
-  const historyKey = `onetrack_checklist_history_${bidId}`
-
   // 1. Log checklist events to local stage history with username fallback
   function logChecklistHistory(actionText) {
-    try {
-      const currentHist = JSON.parse(localStorage.getItem(historyKey) || '[]')
-      const newEvent = {
-        id: `checklist_event_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-        bid_id: bidId,
-        from_stage: null,
-        to_stage: 'CHECKLIST_UPDATE',
-        transition_reason: actionText,
-        transitioned_by: {
-          id: currentUser?.id,
-          username: currentUser?.username || 'unknown',
-          full_name: currentUser?.full_name || currentUser?.username || 'Anonymous'
-        },
-        created_at: new Date().toISOString()
-      }
-      localStorage.setItem(historyKey, JSON.stringify([newEvent, ...currentHist]))
-      // Refresh the outer bid detail page state so history tab updates automatically
-      if (onRefresh) onRefresh()
-    } catch (err) {
-      console.error('Failed to write checklist history', err)
-    }
+    logStageMicroEvent(bidId, {
+      fromStage: 'DOCUMENT_CHECKLIST_PREPARATION',
+      toStage: 'CHECKLIST_UPDATE',
+      eventType: 'CHECKLIST',
+      transitionReason: actionText
+    })
+    if (onRefresh) onRefresh()
   }
 
   // 2. Fetch backend checklist items
@@ -81,21 +66,26 @@ export function ChecklistTab({ bid, onRefresh }) {
     loadChecklist()
   }, [bidId])
 
-  // 3. Handle toggling (mark done)
+  // 3. Handle toggling (mark done / re-open)
   const handleToggle = async (item) => {
     if (isLocked) return
-    if (item.is_done) return // Cannot uncheck
 
+    const targetState = !item.is_done
     try {
-      const res = await toggleChecklist(bidId, item.id, true)
+      const res = await toggleChecklist(bidId, item.id, targetState)
       if (!res.ok) {
         toast.error(res.error?.message ?? 'Failed to update checklist item')
         return
       }
 
       const cleanTitle = item.title.replace(/^\[(Bidder|OEM)\]\s*/i, '')
-      toast.success(`Completed checklist item: "${cleanTitle}"`)
-      logChecklistHistory(`Completed checklist item: "${cleanTitle}"`)
+      if (targetState) {
+        toast.success(`Completed checklist item: "${cleanTitle}"`)
+        logChecklistHistory(`Verified & completed checklist item: "${cleanTitle}"`)
+      } else {
+        toast.info(`Re-opened checklist item: "${cleanTitle}"`)
+        logChecklistHistory(`Re-opened checklist item for review: "${cleanTitle}"`)
+      }
       loadChecklist()
     } catch {
       toast.error('Network error during checklist update')
@@ -250,8 +240,8 @@ export function ChecklistTab({ bid, onRefresh }) {
   const pct = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0
 
   // Filter items
-  const bidderItems = items.filter(item => !item.title.startsWith('[OEM]'))
-  const oemItems = items.filter(item => item.title.startsWith('[OEM]'))
+  const bidderItems = items.filter(item => !item.title.startsWith('[OEM]') && item.checklist_group !== 'OEM')
+  const oemItems = items.filter(item => item.title.startsWith('[OEM]') || item.checklist_group === 'OEM')
 
   const renderItem = (item) => {
     const isItemDragged = item.id === draggedId
@@ -283,14 +273,15 @@ export function ChecklistTab({ bid, onRefresh }) {
           <div className="pt-0.5 shrink-0">
             <button
               type="button"
-              disabled={item.is_done || isLocked}
+              disabled={isLocked}
               onClick={() => handleToggle(item)}
-              className={`size-4.5 rounded border flex items-center justify-center transition-all
+              className={`size-4.5 rounded border flex items-center justify-center transition-all cursor-pointer
                 ${item.is_done
-                  ? 'bg-emerald-500 border-emerald-500 text-white cursor-not-allowed scale-100'
+                  ? 'bg-emerald-500 border-emerald-500 text-white shadow-xs scale-100'
                   : isLocked
                     ? 'bg-muted border-border cursor-not-allowed'
-                    : 'border-muted-foreground/30 hover:border-primary/60 bg-background text-transparent hover:text-primary/40'}`}
+                    : 'border-muted-foreground/40 hover:border-primary bg-background text-transparent hover:text-primary/40'}`}
+              title={item.is_done ? "Click to re-open for review" : "Click to mark complete"}
             >
               {item.is_done && <Check className="size-3 stroke-[3]" />}
             </button>
@@ -360,10 +351,10 @@ export function ChecklistTab({ bid, onRefresh }) {
           </div>
         </div>
 
-        {/* Action buttons */}
+        {/* Action buttons - always visible */}
         {!isLocked && (
-          <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-            {!item.is_done && editingId !== item.id && (
+          <div className="shrink-0 flex items-center gap-1 text-muted-foreground">
+            {editingId !== item.id && (
               <button
                 type="button"
                 onClick={() => {
@@ -371,9 +362,9 @@ export function ChecklistTab({ bid, onRefresh }) {
                   setEditTitle(cleanTitle)
                 }}
                 className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                title="Edit requirement"
+                title="Edit requirement title"
               >
-                <Edit2 className="size-3" />
+                <Edit2 className="size-3.5" />
               </button>
             )}
             <button
@@ -382,7 +373,7 @@ export function ChecklistTab({ bid, onRefresh }) {
               className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
               title="Delete requirement"
             >
-              <Trash2 className="size-3" />
+              <Trash2 className="size-3.5" />
             </button>
           </div>
         )}
@@ -401,7 +392,7 @@ export function ChecklistTab({ bid, onRefresh }) {
               <ListTodo className="size-4 text-primary" /> Checklist Lifecycle Progress
             </h3>
             <p className="text-xs text-muted-foreground">
-              {doneCount} of {totalCount} items completed. Completed items cannot be undone.
+              {doneCount} of {totalCount} items completed. Items can be added, edited, re-opened, or deleted anytime.
             </p>
           </div>
           <div className="flex items-center gap-2">

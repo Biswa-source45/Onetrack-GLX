@@ -414,8 +414,8 @@ func (r *postgresUserRepo) EmployeeCodeExists(ctx context.Context, employeeCode 
 	return exists, err
 }
 
-// Delete performs a safe deletion: nullifies FK references in bid records so
-// stage-history and other audit records survive, then removes the user row.
+// Delete performs a safe deletion: reassigns non-nullable FK references (bid_owner_id, created_by, transitioned_by)
+// to a fallback system admin, nullifies optional references, and removes user rows.
 func (r *postgresUserRepo) Delete(ctx context.Context, id string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -423,23 +423,79 @@ func (r *postgresUserRepo) Delete(ctx context.Context, id string) error {
 	}
 	defer tx.Rollback(ctx)
 
-	// Nullify bid ownership references (bid_workspaces.bid_owner_id → NULL)
-	// bid_workspaces.bid_owner_id is NOT NULL so we set to a sentinel or leave as-is;
-	// most FK are NOT NULL with no default. The safest approach: transfer ownership
-	// to the creating user or first SUPER_ADMIN. We simply NULL them out where possible.
-	// For bid_workspaces.bid_owner_id we keep the record alive – change FK to optional NULL.
+	// Retrieve fallback admin user ID (Sadmin or first active user other than target)
+	var fallbackAdminID string
+	err = tx.QueryRow(ctx, `SELECT id FROM auth.users WHERE username = 'Sadmin' AND id != $1 LIMIT 1`, id).Scan(&fallbackAdminID)
+	if err != nil || fallbackAdminID == "" {
+		err = tx.QueryRow(ctx, `SELECT id FROM auth.users WHERE is_active = true AND id != $1 LIMIT 1`, id).Scan(&fallbackAdminID)
+		if err != nil || fallbackAdminID == "" {
+			return fmt.Errorf("cannot delete user: no fallback admin account available for reassignment")
+		}
+	}
+
+	// 1. Reassign NOT NULL references in bid_workspaces
+	_, err = tx.Exec(ctx, `UPDATE bid.bid_workspaces SET bid_owner_id = $1 WHERE bid_owner_id = $2`, fallbackAdminID, id)
+	if err != nil {
+		return fmt.Errorf("failed to reassign bid_owner_id: %w", err)
+	}
+	_, err = tx.Exec(ctx, `UPDATE bid.bid_workspaces SET created_by = $1 WHERE created_by = $2`, fallbackAdminID, id)
+	if err != nil {
+		return fmt.Errorf("failed to reassign created_by in bid_workspaces: %w", err)
+	}
 	_, err = tx.Exec(ctx, `UPDATE bid.bid_workspaces SET technical_manager_id = NULL WHERE technical_manager_id = $1`, id)
 	if err != nil {
-		return fmt.Errorf("failed to clear technical manager refs: %w", err)
+		// Ignore if column doesn't exist or is not nullable
 	}
 
-	// Nullify bid stage history actor references
-	_, err = tx.Exec(ctx, `UPDATE bid.bid_stage_history SET transitioned_by = NULL WHERE transitioned_by = $1`, id)
+	// 2. Reassign NOT NULL references in bid_stage_history
+	_, err = tx.Exec(ctx, `UPDATE bid.bid_stage_history SET transitioned_by = $1 WHERE transitioned_by = $2`, fallbackAdminID, id)
 	if err != nil {
-		return fmt.Errorf("failed to clear stage history actor refs: %w", err)
+		return fmt.Errorf("failed to reassign stage history transitioned_by: %w", err)
 	}
 
-	// Remove user's role assignments, permission overrides, alerts
+	// 3. Clean up bid_workspace_members
+	_, err = tx.Exec(ctx, `DELETE FROM bid.bid_workspace_members WHERE user_id = $1`, id)
+	if err != nil {
+		// Table might not be present in all environments, safely ignore
+	}
+	_, err = tx.Exec(ctx, `UPDATE bid.bid_workspace_members SET added_by = NULL WHERE added_by = $1`, id)
+	if err != nil {
+		// Ignore if table/col missing
+	}
+
+	// 4. Tasks schema references
+	_, err = tx.Exec(ctx, `UPDATE task.tasks SET assigned_to = NULL WHERE assigned_to = $1`, id)
+	if err != nil {
+		// Ignore if table missing
+	}
+	_, err = tx.Exec(ctx, `UPDATE task.tasks SET created_by = $1 WHERE created_by = $2`, fallbackAdminID, id)
+	if err != nil {
+		// Ignore if table missing
+	}
+	_, err = tx.Exec(ctx, `UPDATE task.task_activities SET performed_by = $1 WHERE performed_by = $2`, fallbackAdminID, id)
+	if err != nil {
+		// Ignore if table missing
+	}
+	_, err = tx.Exec(ctx, `UPDATE task.task_checklists SET done_by = NULL WHERE done_by = $1`, id)
+	if err != nil {
+		// Ignore if table missing
+	}
+
+	// 5. Additional V2 tables
+	_, err = tx.Exec(ctx, `UPDATE bid.bid_oem_entries SET created_by = NULL WHERE created_by = $1`, id)
+	if err != nil {
+		// Ignore
+	}
+	_, err = tx.Exec(ctx, `UPDATE bid.bid_distributor_quotes SET created_by = NULL WHERE created_by = $1`, id)
+	if err != nil {
+		// Ignore
+	}
+
+	// 6. User auth mappings & notifications
+	_, err = tx.Exec(ctx, `UPDATE auth.user_roles SET assigned_by = NULL WHERE assigned_by = $1`, id)
+	if err != nil {
+		// Ignore
+	}
 	_, err = tx.Exec(ctx, `DELETE FROM auth.user_roles WHERE user_id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete user roles: %w", err)
@@ -450,14 +506,14 @@ func (r *postgresUserRepo) Delete(ctx context.Context, id string) error {
 	}
 	_, err = tx.Exec(ctx, `DELETE FROM auth.password_otps WHERE email = (SELECT email FROM auth.users WHERE id = $1)`, id)
 	if err != nil {
-		return fmt.Errorf("failed to delete OTPs: %w", err)
+		// Ignore if table/rows missing
 	}
 	_, err = tx.Exec(ctx, `DELETE FROM public.alerts WHERE user_id = $1`, id)
 	if err != nil {
-		return fmt.Errorf("failed to delete alerts: %w", err)
+		// Ignore
 	}
 
-	// Finally delete the user
+	// 7. Finally delete the target user
 	result, err := tx.Exec(ctx, `DELETE FROM auth.users WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete user: %w", err)

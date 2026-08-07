@@ -12,9 +12,19 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { transitionBidStage, recordBidOutcome, updateBid } from '../../services/bids'
 import { usePermissions } from '../../hooks/usePermissions'
 import { tokenStorage } from '../../services/auth'
+import { ChecklistTab } from './ChecklistTab'
+import { logStageMicroEvent } from '../../services/auditLogger'
 
 function fmtMoney(v) {
   if (!v && v !== 0) return '—'
@@ -80,14 +90,27 @@ function CompleteStageModal({ title, description, stageKey, bidId, bid, onComple
         }
       }
 
-      if (stageKey) {
-        logStageInteraction(bidId, stageKey, `[Completed Stage Action]: ${remarks}`, null)
+      // Call workspace-specific side effect (alerts, confetti, quoted_price update, etc.) FIRST
+      let sideEffectResult = null
+      if (onComplete) {
+        sideEffectResult = await onComplete(remarks)
       }
 
-      // Call workspace-specific side effect (alerts, confetti, etc.)
-      // but NOT transitionBidStage — that would corrupt other stages!
-      if (onComplete) {
-        await onComplete(remarks)
+      if (stageKey) {
+        let actionReason = `[Completed Stage Action]: ${remarks}`
+        let detailsPayload = null
+
+        if (sideEffectResult && typeof sideEffectResult === 'object') {
+          if (sideEffectResult.customReason) {
+            actionReason = sideEffectResult.customReason
+          }
+          const { customReason, ...restDetails } = sideEffectResult
+          if (Object.keys(restDetails).length > 0) {
+            detailsPayload = restDetails
+          }
+        }
+
+        logStageInteraction(bidId, stageKey, actionReason, null, detailsPayload)
       }
 
       toast.success('Stage marked as completed!')
@@ -153,27 +176,12 @@ export const WORKFLOW_STAGES_ORDERED = [
 
 export function logStageInteraction(bidId, stageKey, actionReason, userOverride) {
   if (!bidId) return
-  const user = userOverride || tokenStorage.getUser()
-  const resolvedName = (user?.full_name && user.full_name !== 'Anonymous' && user.full_name !== 'Current User' && user.full_name !== 'User')
-    ? user.full_name
-    : (user?.username || 'Super Admin')
-
-  const key = `onetrack_checklist_history_${bidId}`
-  const existing = JSON.parse(localStorage.getItem(key) || '[]')
-  const newEvent = {
-    id: `interaction_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-    from_stage: stageKey,
-    to_stage: stageKey,
-    transition_reason: actionReason,
-    created_at: new Date().toISOString(),
-    transitioned_by: {
-      id: user?.id || 'user',
-      full_name: resolvedName,
-      username: user?.username || resolvedName
-    }
-  }
-  localStorage.setItem(key, JSON.stringify([newEvent, ...existing]))
-  window.dispatchEvent(new Event('onetrack_history_updated'))
+  logStageMicroEvent(bidId, {
+    fromStage: stageKey,
+    toStage: stageKey,
+    eventType: 'STAGE_CHANGE',
+    transitionReason: actionReason
+  })
 }
 
 export function checkStageState(bid, stageKey) {
@@ -505,7 +513,15 @@ export function Stage3Workspace({ bid, onRefresh }) {
       noMalicious: 'NOT RECEIVED', additionalDocs: '',
       followUp: '', remark: '', clarificationRequired: '', clarificationProvided: ''
     }
-    saveOemsToStorage([...oems, entry])
+    const nextList = [...oems, entry]
+    saveOemsToStorage(nextList)
+    logStageMicroEvent(bid.id, {
+      fromStage: 'OEM_AUTHORIZATION_REQUEST',
+      toStage: 'OEM_AUTHORIZATION_REQUEST',
+      eventType: 'OEM',
+      transitionReason: `Added OEM authorization entry for "${entry.name}"`,
+      details: { oem_name: entry.name }
+    })
     setNewOemName('')
     toast.success(`OEM "${entry.name}" added to matrix`)
   }
@@ -517,12 +533,27 @@ export function Stage3Workspace({ bid, onRefresh }) {
   const handleSaveMatrix = () => {
     localStorage.setItem(key, JSON.stringify(oems))
     setIsEditing(false)
+    logStageMicroEvent(bid.id, {
+      fromStage: 'OEM_AUTHORIZATION_REQUEST',
+      toStage: 'OEM_AUTHORIZATION_REQUEST',
+      eventType: 'OEM',
+      transitionReason: `Saved OEM Authorization Matrix updates (${oems.length} OEM entries tracked)`,
+      details: { oems }
+    })
     toast.success('OEM Authorization Matrix saved successfully')
   }
 
   const deleteOem = (id) => {
+    const target = oems.find(o => o.id === id)
     const updated = oems.filter(o => o.id !== id)
     saveOemsToStorage(updated)
+    logStageMicroEvent(bid.id, {
+      fromStage: 'OEM_AUTHORIZATION_REQUEST',
+      toStage: 'OEM_AUTHORIZATION_REQUEST',
+      eventType: 'OEM',
+      transitionReason: `Deleted OEM authorization entry for "${target?.name || 'OEM'}"`,
+      details: { oem_name: target?.name }
+    })
     toast.success('OEM removed')
   }
 
@@ -781,11 +812,17 @@ export function Stage4Workspace({ bid, onRefresh }) {
   })))
   const [showModal, setShowModal] = useState(false)
   const [showRequestDlg, setShowRequestDlg] = useState(false)
+  const [showAddDistDlg, setShowAddDistDlg] = useState(false)
   const [showQuoteDlg, setShowQuoteDlg] = useState(false)
+  const [showEditQuoteDlg, setShowEditQuoteDlg] = useState(false)
+  const [editingQuoteId, setEditingQuoteId] = useState(null)
   const [showApprovalDlg, setShowApprovalDlg] = useState(false)
+  const [quoteToDelete, setQuoteToDelete] = useState(null)
   const [newDistNameInput, setNewDistNameInput] = useState('')
   const [initDistNames, setInitDistNames] = useState('')
+  const [addMoreDistNames, setAddMoreDistNames] = useState('')
   const [quoteDistSel, setQuoteDistSel] = useState('')
+  const [quoteCustomName, setQuoteCustomName] = useState('')
   const [quoteItems, setQuoteItems] = useState([{ desc: '', qty: 1, basicPrice: '' }])
   const [marginPct, setMarginPct] = useState(2.45)
 
@@ -799,36 +836,212 @@ export function Stage4Workspace({ bid, onRefresh }) {
     const names = initDistNames.split(',').map(s => s.trim()).filter(Boolean)
     if (!names.length) { toast.error('Enter at least one distributor name'); return }
     save({ phase: 'AWAITING', distNames: names })
+    logStageMicroEvent(bid.id, {
+      fromStage: 'PRICING_REQUEST',
+      toStage: 'PRICING_REQUEST',
+      eventType: 'PRICING',
+      transitionReason: `Sent pricing request inquiry to ${names.length} distributor(s): ${names.join(', ')}`,
+      details: { distNames: names }
+    })
     setShowRequestDlg(false)
+    setInitDistNames('')
     toast.success('Pricing request sent! Awaiting distributor response.')
   }
 
+  const handleAddMoreDistributors = () => {
+    const newNames = addMoreDistNames.split(',').map(s => s.trim()).filter(Boolean)
+    if (!newNames.length) { toast.error('Enter at least one distributor name'); return }
+    const merged = [...new Set([...pricingData.distNames, ...newNames])]
+    save({ distNames: merged })
+    logStageMicroEvent(bid.id, {
+      fromStage: 'PRICING_REQUEST',
+      toStage: 'PRICING_REQUEST',
+      eventType: 'PRICING',
+      transitionReason: `Added ${newNames.length} new distributor(s) to pricing request list: ${newNames.join(', ')}`,
+      details: { newDistributors: newNames, totalDistributors: merged }
+    })
+    setShowAddDistDlg(false)
+    setAddMoreDistNames('')
+    toast.success(`Added ${newNames.length} distributor(s) to the request list`)
+  }
+
   const handleAddQuote = () => {
-    const name = quoteDistSel || 'Others'
+    const effectiveName = quoteDistSel === 'Others' ? (quoteCustomName.trim() || 'Others') : (quoteDistSel || 'Others')
     if (!quoteItems.some(i => i.desc && i.basicPrice)) { toast.error('Fill at least one item'); return }
     const items = quoteItems.filter(i => i.desc && i.basicPrice).map(i => ({
       desc: i.desc, qty: Number(i.qty) || 1, basicPrice: Number(i.basicPrice) || 0
     }))
-    const quotes = [...pricingData.quotes, { id: Date.now(), distName: name, items }]
-    save({ phase: 'QUOTING', quotes })
+    const quotes = [...pricingData.quotes, { id: Date.now(), distName: effectiveName, items }]
+    save({ phase: pricingData.phase === 'APPROVAL' ? 'APPROVAL' : 'QUOTING', quotes })
+    logStageMicroEvent(bid.id, {
+      fromStage: 'PRICING_REQUEST',
+      toStage: 'PRICING_REQUEST',
+      eventType: 'PRICING',
+      transitionReason: `Recorded commercial quotation from distributor "${effectiveName}" with ${items.length} line item(s)`,
+      details: { distName: effectiveName, itemsCount: items.length }
+    })
     setShowQuoteDlg(false)
+    setQuoteDistSel('')
+    setQuoteCustomName('')
     setQuoteItems([{ desc: '', qty: 1, basicPrice: '' }])
     toast.success('Distributor quote added')
   }
 
+  const handleOpenEditQuote = (q) => {
+    setEditingQuoteId(q.id)
+    if (pricingData.distNames.includes(q.distName)) {
+      setQuoteDistSel(q.distName)
+      setQuoteCustomName('')
+    } else {
+      setQuoteDistSel('Others')
+      setQuoteCustomName(q.distName)
+    }
+    setQuoteItems(q.items.map(i => ({ desc: i.desc, qty: i.qty, basicPrice: i.basicPrice })))
+    setShowEditQuoteDlg(true)
+  }
+
+  const handleUpdateQuote = () => {
+    const effectiveName = quoteDistSel === 'Others' ? (quoteCustomName.trim() || 'Others') : (quoteDistSel || 'Others')
+    if (!quoteItems.some(i => i.desc && i.basicPrice)) { toast.error('Fill at least one item'); return }
+    const items = quoteItems.filter(i => i.desc && i.basicPrice).map(i => ({
+      desc: i.desc, qty: Number(i.qty) || 1, basicPrice: Number(i.basicPrice) || 0
+    }))
+    const updatedQuotes = pricingData.quotes.map(q => q.id === editingQuoteId ? { ...q, distName: effectiveName, items } : q)
+    save({ quotes: updatedQuotes })
+    logStageMicroEvent(bid.id, {
+      fromStage: 'PRICING_REQUEST',
+      toStage: 'PRICING_REQUEST',
+      eventType: 'PRICING',
+      transitionReason: `Updated commercial quotation for distributor "${effectiveName}" with ${items.length} line item(s)`,
+      details: { distName: effectiveName, itemsCount: items.length }
+    })
+    setShowEditQuoteDlg(false)
+    setEditingQuoteId(null)
+    setQuoteDistSel('')
+    setQuoteCustomName('')
+    setQuoteItems([{ desc: '', qty: 1, basicPrice: '' }])
+    toast.success('Distributor quote updated successfully')
+  }
+
+  const handleDeleteQuote = (quoteId, distName) => {
+    setQuoteToDelete({ id: quoteId, distName })
+  }
+
+  const confirmDeleteQuote = () => {
+    if (!quoteToDelete) return
+    const { id: quoteId, distName } = quoteToDelete
+    const updatedQuotes = pricingData.quotes.filter(q => q.id !== quoteId)
+    save({ quotes: updatedQuotes })
+    logStageMicroEvent(bid.id, {
+      fromStage: 'PRICING_REQUEST',
+      toStage: 'PRICING_REQUEST',
+      eventType: 'PRICING',
+      transitionReason: `Deleted commercial quotation for distributor "${distName}"`,
+      details: { distName, quoteId, remainingQuotesCount: updatedQuotes.length }
+    })
+    setQuoteToDelete(null)
+    toast.success(`Deleted distributor quote from "${distName}"`)
+    if (typeof onRefresh === 'function') onRefresh()
+  }
+
+  const buildPricingTableHtml = (l1Q, margin) => {
+    if (!l1Q || !l1Q.items) return ''
+
+    let totalPurchaseWithGst = 0
+    let totalGlobxPrice = 0
+    let grandTotalProfit = 0
+
+    const rowsHtml = l1Q.items.map((it, i) => {
+      const basic = Number(it.basicPrice) || 0
+      const qty = Number(it.qty) || 1
+      const gst = basic * 0.18
+      const priceWithGst = basic + gst
+      const totalWithGst = priceWithGst * qty
+      const marginAmt = priceWithGst * (margin / 100)
+      const globxUnit = priceWithGst + marginAmt
+      const globxTotal = globxUnit * qty
+      const profitTotal = marginAmt * qty
+
+      totalPurchaseWithGst += totalWithGst
+      totalGlobxPrice += globxTotal
+      grandTotalProfit += profitTotal
+
+      return `
+        <tr style="border-bottom: 1px solid #e2e8f0;">
+          <td style="padding: 8px 10px; text-align: center; font-weight: bold; color: #64748b; font-family: monospace;">${i + 1}</td>
+          <td style="padding: 8px 10px; font-weight: 600; color: #1e293b;">${it.desc}</td>
+          <td style="padding: 8px 10px; text-align: center; color: #334155; font-weight: 500;">${qty}</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #475569;">${fmtMoney(basic)}</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #64748b;">${fmtMoney(gst)}</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #334155;">${fmtMoney(priceWithGst)}</td>
+          <td style="padding: 8px 10px; text-align: center; color: #4338ca; font-weight: 700;">${margin}%</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #4f46e5;">${fmtMoney(globxUnit)}</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #4f46e5; background-color: #f5f3ff;">${fmtMoney(globxTotal)}</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #059669; background-color: #ecfdf5;">${fmtMoney(profitTotal)}</td>
+        </tr>
+      `
+    }).join('')
+
+    return `
+      <div style="margin-top: 14px; margin-bottom: 14px; border: 1px solid #c7d2fe; border-radius: 10px; overflow: hidden; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+        <div style="background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%); padding: 12px 16px; color: #ffffff; font-size: 13px; font-weight: 700;">
+          📊 Commercial Pricing Calculation Breakdown — L1 Distributor: ${l1Q.distName}
+        </div>
+        <div style="overflow-x: auto;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+            <thead>
+              <tr style="background-color: #f8fafc; color: #475569; font-size: 11px; font-weight: 700; text-transform: uppercase; border-bottom: 2px solid #e2e8f0;">
+                <th style="padding: 10px; text-align: center; border-right: 1px solid #e2e8f0;">S.No</th>
+                <th style="padding: 10px; border-right: 1px solid #e2e8f0;">Item Description</th>
+                <th style="padding: 10px; text-align: center; border-right: 1px solid #e2e8f0;">Qty</th>
+                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">Basic (₹)</th>
+                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">GST 18%</th>
+                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">Purchase w/ GST</th>
+                <th style="padding: 10px; text-align: center; border-right: 1px solid #e2e8f0;">Margin</th>
+                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">GlobX Unit</th>
+                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0; background-color: #ede9fe; color: #3730a3;">GlobX Total (₹)</th>
+                <th style="padding: 10px; text-align: right; background-color: #d1fae5; color: #065f46;">Total Profit (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+            <tfoot>
+              <tr style="background-color: #f8fafc; font-weight: bold; border-top: 2px solid #cbd5e1;">
+                <td colspan="6" style="padding: 12px 10px; text-align: right; color: #334155; font-size: 12px; border-right: 1px solid #e2e8f0;">Grand Total Summary:</td>
+                <td style="padding: 12px 10px; text-align: center; color: #4338ca; font-size: 12px; border-right: 1px solid #e2e8f0;">${margin}%</td>
+                <td style="padding: 12px 10px; text-align: right; color: #64748b; font-size: 11px; border-right: 1px solid #e2e8f0;">TOTAL SELLING</td>
+                <td style="padding: 12px 10px; text-align: right; font-family: monospace; font-size: 14px; font-weight: 800; color: #4338ca; background-color: #ede9fe; border-right: 1px solid #e2e8f0;">${fmtMoney(totalGlobxPrice)}</td>
+                <td style="padding: 12px 10px; text-align: right; font-family: monospace; font-size: 14px; font-weight: 800; color: #047857; background-color: #d1fae5;">${fmtMoney(grandTotalProfit)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    `
+  }
+
   const handleSendApproval = () => {
     if (!pricingData.approvalRecipients.length) { toast.error('Select at least one recipient'); return }
+    const tableHtml = buildPricingTableHtml(l1Quote, marginPct)
     import('../../services/alerts').then(({ createAlert }) => {
       pricingData.approvalRecipients.forEach(role => {
         createAlert({ target_role: role.toUpperCase(), bid_id: bid.id, type: 'ACTION_REQUIRED',
           title: `Pricing Approval Required — ${bid.title}`,
-          message: `Bid #${bid.gem_bid_no || bid.id}: Pricing calculation from L1 distributor is ready for approval. Please review and approve or request modification.`
+          message: `<p style="margin: 0 0 12px 0;">Bid #${bid.gem_bid_no || bid.id}: Commercial pricing calculation from L1 distributor (<strong>${l1Quote?.distName || 'N/A'}</strong>) is ready for management & finance review.</p>${tableHtml}<p style="margin: 12px 0 0 0;">Please review, approve, or request a margin adjustment.</p>`
         })
       })
     })
     save({ phase: 'APPROVAL' })
+    logStageMicroEvent(bid.id, {
+      fromStage: 'PRICING_REQUEST',
+      toStage: 'PRICING_REQUEST',
+      eventType: 'ALERT',
+      transitionReason: `Dispatched pricing approval notification with formatted commercial table to: ${pricingData.approvalRecipients.join(', ')} (Margin: ${marginPct}%, L1 Distributor: ${l1Quote?.distName || 'N/A'})`,
+      details: { recipients: pricingData.approvalRecipients, marginPct, l1Distributor: l1Quote?.distName }
+    })
     setShowApprovalDlg(false)
-    toast.success('Approval request sent to selected recipients!')
+    toast.success('Approval request with formatted pricing table sent to selected recipients!')
   }
 
   const toggleRecipient = (r) => {
@@ -860,14 +1073,19 @@ export function Stage4Workspace({ bid, onRefresh }) {
                 <Send className="size-3.5" /> Send Pricing Request
               </Button>
             )}
-            {(pricingData.phase === 'AWAITING' || pricingData.phase === 'QUOTING') && (
+            {pricingData.phase !== 'INIT' && (
+              <Button size="sm" variant="outline" onClick={() => setShowAddDistDlg(true)} className="gap-1.5 border-violet-300 text-violet-800 dark:text-violet-300 hover:bg-violet-100 text-xs">
+                <Plus className="size-3.5" /> Add More Distributors
+              </Button>
+            )}
+            {pricingData.phase !== 'INIT' && (
               <Button size="sm" variant="outline" onClick={() => setShowQuoteDlg(true)} className="gap-1.5 border-violet-300 text-violet-800 dark:text-violet-300 hover:bg-violet-100 text-xs">
                 <Plus className="size-3.5" /> Add Distributor Quote
               </Button>
             )}
-            {pricingData.phase === 'QUOTING' && l1Quote && (
-              <Button size="sm" variant="outline" onClick={() => setShowApprovalDlg(true)} className="gap-1.5 border-amber-300 text-amber-800 dark:text-amber-300 hover:bg-amber-100 text-xs">
-                <Send className="size-3.5" /> Send for Approval
+            {(pricingData.phase === 'QUOTING' || pricingData.phase === 'APPROVAL') && l1Quote && (
+              <Button size="sm" variant="outline" onClick={() => setShowApprovalDlg(true)} className={`gap-1.5 text-xs ${pricingData.phase === 'APPROVAL' ? 'border-orange-300 text-orange-800 hover:bg-orange-100' : 'border-amber-300 text-amber-800 dark:text-amber-300 hover:bg-amber-100'}`}>
+                <Send className="size-3.5" /> {pricingData.phase === 'APPROVAL' ? 'Resend Approval Request' : 'Send for Approval'}
               </Button>
             )}
             <StageHeaderActions
@@ -901,9 +1119,31 @@ export function Stage4Workspace({ bid, onRefresh }) {
           <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Distributor Quotes Received</h4>
           {allQuotes.map(q => (
             <div key={q.id} className={`p-3 rounded-lg border text-xs ${l1Quote && l1Quote.id === q.id ? 'border-emerald-300 bg-emerald-50/40' : 'border-border bg-muted/20'}`}>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="font-bold text-foreground">{q.distName}</span>
-                {l1Quote && l1Quote.id === q.id && <span className="px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-800 font-bold">L1 — Lowest Quote</span>}
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-foreground">{q.distName}</span>
+                  {l1Quote && l1Quote.id === q.id && <span className="px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-800 font-bold">L1 — Lowest Quote</span>}
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 px-2 text-[11px] gap-1 border-violet-200 hover:border-violet-400 text-violet-700 hover:bg-violet-50 dark:border-violet-900 dark:text-violet-300"
+                    onClick={() => handleOpenEditQuote(q)}
+                    title="Edit Distributor Quote"
+                  >
+                    <Edit2 className="size-3" /> Edit Quote
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 text-[11px] text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                    onClick={() => handleDeleteQuote(q.id, q.distName)}
+                    title="Delete Quote"
+                  >
+                    <Trash2 className="size-3" />
+                  </Button>
+                </div>
               </div>
               <table className="w-full text-[11px] border-collapse">
                 <thead><tr className="bg-muted/40 text-muted-foreground"><th className="border border-border p-1.5">Description</th><th className="border border-border p-1.5">Qty</th><th className="border border-border p-1.5">Basic Price</th><th className="border border-border p-1.5">Total</th></tr></thead>
@@ -937,13 +1177,14 @@ export function Stage4Workspace({ bid, onRefresh }) {
                   <th className="border border-border p-2">Description</th>
                   <th className="border border-border p-2">Qty</th>
                   <th className="border border-border p-2">Purchase Price Basic</th>
-                  <th className="border border-border p-2">GST</th>
-                  <th className="border border-border p-2">Purchase Price with GST</th>
+                  <th className="border border-border p-2">GST (18%)</th>
+                  <th className="border border-border p-2">Unit Price with GST</th>
                   <th className="border border-border p-2">Total Purchase Price with GST</th>
-                  <th className="border border-border p-2">Margin</th>
-                  <th className="border border-border p-2">GlobX Unit Price</th>
+                  <th className="border border-border p-2">Margin %</th>
+                  <th className="border border-border p-2">GlobX Unit Selling Price</th>
                   <th className="border border-border p-2">GlobX Total Price</th>
-                  <th className="border border-border p-2">Price Check</th>
+                  <th className="border border-border p-2">GlobX Profit (Per Unit)</th>
+                  <th className="border border-border p-2">GlobX Profit (Total)</th>
                 </tr>
               </thead>
               <tbody>
@@ -951,10 +1192,11 @@ export function Stage4Workspace({ bid, onRefresh }) {
                   const gst = it.basicPrice * 0.18
                   const priceWithGst = it.basicPrice + gst
                   const totalWithGst = priceWithGst * it.qty
-                  const marginAmt = priceWithGst * (marginPct / 100)
-                  const globxUnit = priceWithGst + marginAmt
-                  const globxTotal = globxUnit * it.qty
-                  const priceCheck = globxTotal - totalWithGst
+                  const marginAmt = priceWithGst * (marginPct / 100)     // profit per unit
+                  const globxUnit = priceWithGst + marginAmt              // selling price per unit
+                  const globxTotal = globxUnit * it.qty                   // total selling price
+                  const profitPerUnit = marginAmt                         // same as marginAmt
+                  const profitTotal = profitPerUnit * it.qty              // total profit
                   return (
                     <tr key={ii} className="hover:bg-muted/10">
                       <td className="border border-border p-1.5 text-center font-mono font-bold">{ii + 1}</td>
@@ -967,21 +1209,32 @@ export function Stage4Workspace({ bid, onRefresh }) {
                       <td className="border border-border p-1.5 text-center">{marginPct}%</td>
                       <td className="border border-border p-1.5 font-mono text-violet-700 font-bold">{fmtMoney(globxUnit)}</td>
                       <td className="border border-border p-1.5 font-mono text-violet-700 font-bold">{fmtMoney(globxTotal)}</td>
-                      <td className={`border border-border p-1.5 font-mono font-bold ${priceCheck >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{fmtMoney(priceCheck)}</td>
+                      <td className="border border-border p-1.5 font-mono text-emerald-700 font-semibold">{fmtMoney(profitPerUnit)}</td>
+                      <td className="border border-border p-1.5 font-mono text-emerald-700 font-bold">{fmtMoney(profitTotal)}</td>
                     </tr>
                   )
                 })}
-                <tr className="bg-emerald-50/60 font-bold">
-                  <td colSpan={9} className="border border-border p-2 text-right text-xs font-bold">GlobX Grand Total:</td>
-                  <td className="border border-border p-2 font-mono text-emerald-700 text-sm">
-                    {fmtMoney(l1Quote.items.reduce((s, it) => {
-                      const gstU = it.basicPrice * 0.18
-                      const unit = (it.basicPrice + gstU) * (1 + marginPct / 100)
-                      return s + unit * it.qty
-                    }, 0))}
-                  </td>
-                  <td className="border border-border p-2"></td>
-                </tr>
+                {/* Grand Total row */}
+                {(() => {
+                  const grandSell = l1Quote.items.reduce((s, it) => {
+                    const gstU = it.basicPrice * 0.18
+                    const unit = (it.basicPrice + gstU) * (1 + marginPct / 100)
+                    return s + unit * it.qty
+                  }, 0)
+                  const grandCost = l1Quote.items.reduce((s, it) => {
+                    const gstU = it.basicPrice * 0.18
+                    return s + (it.basicPrice + gstU) * it.qty
+                  }, 0)
+                  const grandProfit = grandSell - grandCost
+                  return (
+                    <tr className="bg-emerald-50/60 dark:bg-emerald-950/20 font-bold">
+                      <td colSpan={9} className="border border-border p-2 text-right text-xs font-bold">Grand Total:</td>
+                      <td className="border border-border p-2 font-mono text-violet-700 text-sm font-bold">{fmtMoney(grandSell)}</td>
+                      <td colSpan={1} className="border border-border p-2 text-center text-xs text-muted-foreground">—</td>
+                      <td className="border border-border p-2 font-mono text-emerald-700 text-sm font-bold">{fmtMoney(grandProfit)}</td>
+                    </tr>
+                  )
+                })()}
               </tbody>
             </table>
           </div>
@@ -1015,10 +1268,10 @@ export function Stage4Workspace({ bid, onRefresh }) {
               <select value={quoteDistSel} onChange={e => setQuoteDistSel(e.target.value)} className="w-full text-xs border border-border rounded px-2 py-1.5 bg-background">
                 <option value="">-- Select --</option>
                 {pricingData.distNames.map(n => <option key={n} value={n}>{n}</option>)}
-                <option value="Others">Others</option>
+                <option value="Others">Others (New Distributor)</option>
               </select>
               {quoteDistSel === 'Others' && (
-                <Input value={newDistNameInput} onChange={e => setNewDistNameInput(e.target.value)} placeholder="Enter distributor name" className="text-xs mt-1" onBlur={() => { if (newDistNameInput) setQuoteDistSel(newDistNameInput) }} />
+                <Input value={quoteCustomName} onChange={e => setQuoteCustomName(e.target.value)} placeholder="Enter new distributor name" className="text-xs mt-1" />
               )}
             </div>
             <div className="space-y-2">
@@ -1036,6 +1289,42 @@ export function Stage4Workspace({ bid, onRefresh }) {
             <div className="flex gap-2 justify-end">
               <Button size="sm" variant="outline" onClick={() => setShowQuoteDlg(false)}>Cancel</Button>
               <Button size="sm" onClick={handleAddQuote}>Save Quote</Button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Edit Distributor Quote Dialog */}
+      {showEditQuoteDlg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-2xl bg-card border border-border rounded-xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-sm font-semibold">Edit Distributor Quote</h3>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Select Distributor</Label>
+              <select value={quoteDistSel} onChange={e => setQuoteDistSel(e.target.value)} className="w-full text-xs border border-border rounded px-2 py-1.5 bg-background">
+                <option value="">-- Select --</option>
+                {pricingData.distNames.map(n => <option key={n} value={n}>{n}</option>)}
+                <option value="Others">Others (New Distributor)</option>
+              </select>
+              {quoteDistSel === 'Others' && (
+                <Input value={quoteCustomName} onChange={e => setQuoteCustomName(e.target.value)} placeholder="Enter new distributor name" className="text-xs mt-1" />
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold">Line Items</Label>
+              {quoteItems.map((it, ii) => (
+                <div key={ii} className="grid grid-cols-5 gap-1.5 items-end">
+                  <div className="col-span-2"><Input value={it.desc} onChange={e => { const a = [...quoteItems]; a[ii].desc = e.target.value; setQuoteItems(a) }} placeholder="Description" className="h-8 text-xs" /></div>
+                  <div><Input type="number" value={it.qty} onChange={e => { const a = [...quoteItems]; a[ii].qty = e.target.value; setQuoteItems(a) }} placeholder="Qty" className="h-8 text-xs" /></div>
+                  <div><Input type="number" value={it.basicPrice} onChange={e => { const a = [...quoteItems]; a[ii].basicPrice = e.target.value; setQuoteItems(a) }} placeholder="Basic Price ₹" className="h-8 text-xs" /></div>
+                  <button onClick={() => setQuoteItems(quoteItems.filter((_, i) => i !== ii))} className="h-8 text-destructive border border-border rounded px-2 text-xs">✕</button>
+                </div>
+              ))}
+              <Button size="sm" variant="outline" onClick={() => setQuoteItems([...quoteItems, { desc: '', qty: 1, basicPrice: '' }])} className="text-xs gap-1"><Plus className="size-3" /> Add Line</Button>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button size="sm" variant="outline" onClick={() => { setShowEditQuoteDlg(false); setEditingQuoteId(null); setQuoteDistSel(''); setQuoteCustomName(''); setQuoteItems([{ desc: '', qty: 1, basicPrice: '' }]) }}>Cancel</Button>
+              <Button size="sm" onClick={handleUpdateQuote} className="bg-violet-600 hover:bg-violet-700 text-white">Update Quote</Button>
             </div>
           </motion.div>
         </div>
@@ -1063,6 +1352,46 @@ export function Stage4Workspace({ bid, onRefresh }) {
         </div>
       )}
 
+      {/* Add More Distributors Dialog */}
+      {showAddDistDlg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-md bg-card border border-border rounded-xl p-6 space-y-4">
+            <h3 className="text-sm font-semibold">Add More Distributors to Request</h3>
+            <p className="text-xs text-muted-foreground">Already contacted: <span className="font-medium text-foreground">{pricingData.distNames.join(', ')}</span></p>
+            <div className="space-y-1.5">
+              <Label className="text-xs">New Distributor Names (comma separated)</Label>
+              <Input value={addMoreDistNames} onChange={e => setAddMoreDistNames(e.target.value)} placeholder="e.g. Ingram Micro, ScanPoint" className="text-xs" onKeyDown={e => e.key === 'Enter' && handleAddMoreDistributors()} />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button size="sm" variant="outline" onClick={() => { setShowAddDistDlg(false); setAddMoreDistNames('') }}>Cancel</Button>
+              <Button size="sm" onClick={handleAddMoreDistributors} className="bg-violet-600 hover:bg-violet-700 text-white">Add Distributors</Button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Delete Quote Confirmation Dialog */}
+      <Dialog open={!!quoteToDelete} onOpenChange={(open) => !open && setQuoteToDelete(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-rose-600 dark:text-rose-400 flex items-center gap-2 text-base font-bold">
+              <Trash2 className="size-5" /> Confirm Quotation Deletion
+            </DialogTitle>
+            <DialogDescription className="pt-2 text-foreground/80 text-xs leading-relaxed">
+              Are you sure you want to delete the commercial quotation from <strong className="text-foreground font-semibold">{quoteToDelete?.distName}</strong>? This action will remove all recorded line items and recalculate L1 pricing.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0 pt-4">
+            <Button variant="outline" size="sm" onClick={() => setQuoteToDelete(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" size="sm" onClick={confirmDeleteQuote}>
+              Yes, Delete Quote
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {showModal && (
         <CompleteStageModal
           title="Save Commercial & Complete Stage 4"
@@ -1087,7 +1416,7 @@ export function Stage5Workspace({ bid, onRefresh }) {
       <div className="p-4 rounded-xl border border-purple-200 bg-purple-50/50 dark:bg-purple-950/20 dark:border-purple-900/50 flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold text-purple-900 dark:text-purple-300">Stage 5: Document Checklist Preparation</h3>
-          <p className="text-xs text-purple-700 dark:text-purple-400">Ensure all mandatory bidder and OEM documents are compiled and verified.</p>
+          <p className="text-xs text-purple-700 dark:text-purple-400">Ensure all mandatory bidder and OEM documents are compiled, verified, and tracked below.</p>
         </div>
         <StageHeaderActions
           bid={bid}
@@ -1099,9 +1428,9 @@ export function Stage5Workspace({ bid, onRefresh }) {
         />
       </div>
 
-      <div className="p-4 rounded-xl border border-border bg-card space-y-4">
-        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Document Compilation Status</h4>
-        <p className="text-xs text-muted-foreground">Use the Checklist tab above to check off individual items. When all documents are verified, proceed to EMD Processing.</p>
+      {/* Embedded Dynamic Interactive Checklist UI */}
+      <div className="rounded-xl border border-border/80 bg-card p-1">
+        <ChecklistTab bid={bid} onRefresh={onRefresh} />
       </div>
 
       {showModal && (
@@ -1132,6 +1461,13 @@ export function Stage6Workspace({ bid, onRefresh }) {
         type: 'ACTION_REQUIRED',
         title: `EMD Processing Required — ${bid.title}`,
         message: `Bid ${bid.gem_bid_no || bid.id} requires EMD/Bank Guarantee processing. EMD Amount: ${fmtMoney(bid.emd_amount)}. EMD Exempted: ${bid.emd_exempted ? 'Yes' : 'No'}. Please process and confirm.`,
+      })
+      logStageMicroEvent(bid.id, {
+        fromStage: 'EMD_PROCESSING',
+        toStage: 'EMD_PROCESSING',
+        eventType: 'ALERT',
+        transitionReason: `Alerted Finance Team for EMD/Bank Guarantee processing (EMD Amount: ${fmtMoney(bid.emd_amount)}, Exempted: ${bid.emd_exempted ? 'Yes' : 'No'})`,
+        details: { emdAmount: bid.emd_amount, exempted: bid.emd_exempted }
       })
       toast.success('Finance team alerted via in-app notification + email!')
     } catch (e) {
@@ -1293,13 +1629,28 @@ export function Stage9Workspace({ bid, onRefresh }) {
   const [finalPrice, setFinalPrice] = useState('')
   const { isLocked } = checkStageState(bid, 'GEM_SUBMISSION')
 
-  const handleConfettiSubmit = async () => {
+  const handleConfettiSubmit = async (remarks) => {
+    let priceNum = finalPrice ? Number(finalPrice) : (bid?.quoted_price ? Number(bid.quoted_price) : null)
     try {
+      // Save the final quoted price submitted on GeM to the bid record
+      if (priceNum) {
+        await updateBid(bid.id, { quoted_price: priceNum }).catch(() => {})
+      }
       if (typeof confetti === 'function') {
         confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } })
       }
     } catch { /* non-fatal animation */ }
     onRefresh()
+
+    return {
+      customReason: priceNum
+        ? `Tender Final Submission Recorded — Offered Price on GeM Portal: ${fmtMoney(priceNum)} (Remarks: ${remarks})`
+        : `Tender Final Submission Recorded on GeM Portal (Remarks: ${remarks})`,
+      quoted_price: priceNum,
+      submission_portal: 'GeM Portal',
+      submitted_at: new Date().toISOString(),
+      remarks: remarks
+    }
   }
 
   if (isLocked) {
@@ -1351,6 +1702,7 @@ export function Stage9Workspace({ bid, onRefresh }) {
               placeholder="e.g. 1450000"
               required
             />
+            <p className="text-[10px] text-muted-foreground">This is the exact price submitted on the GeM portal. It will be saved as your official quoted price for all further comparisons.</p>
           </div>
         </CompleteStageModal>
       )}
@@ -1428,32 +1780,104 @@ export function Stage10Workspace({ bid, onRefresh }) {
   )
 }
 
-// ── Stage 11: Financial Evaluation ─────────────────────────────────────────
+
 export function Stage11Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
   const [outcome, setOutcome] = useState('WON')
-  const [l1Name, setL1Name] = useState('')
-  const [l1Price, setL1Price] = useState('')
+  const [l1Name, setL1Name] = useState(bid?.l1_company_name || '')
+  const [l1Price, setL1Price] = useState(bid?.l1_price ? String(bid.l1_price) : '')
+  const [ourRank, setOurRank] = useState(bid?.our_rank || '')
+  // Our quoted price comes from Stage 9 (GeM submission final price saved to bid.quoted_price)
+  // If not yet set, allow manual entry
+  const [manualOurPrice, setManualOurPrice] = useState('')
+
+  const ourQuotedPrice = bid?.quoted_price || (manualOurPrice ? Number(manualOurPrice) : null)
+
+  const l1PriceNum = Number(l1Price) || 0
+  const ourPriceNum = Number(ourQuotedPrice) || 0
+  const priceDiffPct = (l1PriceNum > 0 && ourPriceNum > 0)
+    ? (((ourPriceNum - l1PriceNum) / l1PriceNum) * 100)
+    : null
+
+  const buildFormalReason = (remarks) => {
+    const date = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })
+    if (outcome === 'LOST') {
+      return [
+        `Financial Opening Result — ${date}`,
+        ``,
+        `Outcome: LOST`,
+        `L1 (Lowest Bidder): ${l1Name || 'N/A'} quoted at ${fmtMoney(l1PriceNum)}.`,
+        `GlobX Quoted Price (as submitted on GeM Portal): ${fmtMoney(ourPriceNum)}.`,
+        `GlobX Rank: ${ourRank || 'N/A'}.`,
+        `Price Variance vs L1: ${priceDiffPct !== null ? (priceDiffPct > 0 ? '+' : '') + priceDiffPct.toFixed(2) + '% (GlobX quoted ' + (priceDiffPct > 0 ? 'higher' : 'lower') + ' than L1)' : 'N/A'}.`,
+        ``,
+        `Additional Remarks: ${remarks}`,
+      ].join('\n')
+    } else {
+      return [
+        `Financial Opening Result — ${date}`,
+        ``,
+        `Outcome: WON / L1`,
+        `GlobX has been determined as the L1 bidder.`,
+        `GlobX Quoted Price (as submitted on GeM Portal): ${fmtMoney(ourPriceNum)}.`,
+        ``,
+        `Additional Remarks: ${remarks}`,
+      ].join('\n')
+    }
+  }
 
   const handleFinancialResult = async (remarks) => {
+    const formalReason = buildFormalReason(remarks)
+    const nowISO = new Date().toISOString()
     if (outcome === 'WON') {
       confetti({ particleCount: 150, spread: 90 })
-      // Stage 11 completion is handled atomically by CompleteStageModal
+      await updateBid(bid.id, {
+        bid_outcome: 'WON',
+        outcome_reason: formalReason,
+      }).catch(() => {})
+      await recordBidOutcome(bid.id, {
+        bid_outcome: 'WON',
+        quoted_price: ourPriceNum || undefined,
+        outcome_reason: formalReason,
+        result_date: nowISO,
+      }).catch(() => {})
     } else {
+      // Persist all L1 analytics to the bid record via PATCH
+      await updateBid(bid.id, {
+        l1_company_name: l1Name || undefined,
+        l1_price: l1PriceNum || undefined,
+        quoted_price: ourPriceNum || undefined,
+        price_difference_pct: priceDiffPct !== null ? Number(priceDiffPct.toFixed(2)) : undefined,
+      }).catch(() => {})
       await recordBidOutcome(bid.id, {
         bid_outcome: 'LOST',
-        l1_price: l1Price ? Number(l1Price) : undefined,
-        outcome_reason: `Lost to L1: ${l1Name || 'Competitor'}. ${remarks}`,
+        l1_price: l1PriceNum || undefined,
+        quoted_price: ourPriceNum || undefined,
+        outcome_reason: formalReason,
+        result_date: nowISO,
       })
     }
     onRefresh()
+
+    return {
+      customReason: outcome === 'WON'
+        ? `Financial Opening Outcome: WON / L1 — Offered Price: ${fmtMoney(ourPriceNum)} (Remarks: ${remarks})`
+        : `Financial Opening Outcome: LOST — L1 Bidder (${l1Name || 'N/A'}) @ ${fmtMoney(l1PriceNum)} vs GlobX @ ${fmtMoney(ourPriceNum)} (Diff: ${priceDiffPct !== null ? (priceDiffPct > 0 ? '+' : '') + priceDiffPct.toFixed(2) + '%' : 'N/A'}) (Remarks: ${remarks})`,
+      outcome: outcome,
+      quoted_price: ourPriceNum || null,
+      l1_price: l1PriceNum || null,
+      l1_company_name: l1Name || null,
+      price_difference_pct: priceDiffPct !== null ? Number(priceDiffPct.toFixed(2)) : null,
+      our_rank: ourRank || null,
+      remarks: remarks
+    }
   }
 
   return (
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-cyan-200 bg-cyan-50/50 dark:bg-cyan-950/20 dark:border-cyan-900/50 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-cyan-900 dark:text-cyan-300">Stage 11: Financial Evaluation & L1 Determination</h3>
+          <h3 className="text-sm font-semibold text-cyan-900 dark:text-cyan-300">Stage 11: Financial Evaluation &amp; L1 Determination</h3>
           <p className="text-xs text-cyan-700 dark:text-cyan-400">Record financial bid opening outcome (L1 / Won / Lost).</p>
         </div>
         <StageHeaderActions
@@ -1465,6 +1889,27 @@ export function Stage11Workspace({ bid, onRefresh }) {
           completeClass="bg-cyan-600 hover:bg-cyan-700 text-white"
         />
       </div>
+
+      {/* Show existing L1 result if already recorded */}
+      {(bid?.l1_company_name || bid?.l1_price || bid?.our_rank) && (
+        <div className="rounded-xl border border-cyan-200 bg-cyan-50/30 dark:bg-cyan-950/10 p-4 space-y-3">
+          <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-700 dark:text-cyan-400">Recorded Financial Result</h4>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+            {bid.l1_company_name && <div><span className="text-muted-foreground block">L1 Company</span><span className="font-bold text-foreground">{bid.l1_company_name}</span></div>}
+            {bid.l1_price && <div><span className="text-muted-foreground block">L1 Price</span><span className="font-mono font-bold text-red-600">{fmtMoney(bid.l1_price)}</span></div>}
+            {bid.quoted_price && <div><span className="text-muted-foreground block">Our Quoted Price</span><span className="font-mono font-bold text-foreground">{fmtMoney(bid.quoted_price)}</span></div>}
+            {bid.our_rank && <div><span className="text-muted-foreground block">Our Rank</span><span className="font-bold text-foreground">{bid.our_rank}</span></div>}
+            {bid.price_diff_pct != null && (
+              <div><span className="text-muted-foreground block">Price Difference</span>
+                <span className={`font-bold font-mono ${bid.price_diff_pct > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                  {bid.price_diff_pct > 0 ? '+' : ''}{bid.price_diff_pct.toFixed(2)}%
+                  <span className="ml-1 text-muted-foreground font-normal">{bid.price_diff_pct > 0 ? '(we quoted higher)' : '(we quoted lower)'}</span>
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {showModal && (
         <CompleteStageModal
@@ -1488,10 +1933,48 @@ export function Stage11Workspace({ bid, onRefresh }) {
               </label>
             </div>
           </div>
+          {/* Our quoted price from GeM Submission (Stage 9) */}
+          {bid?.quoted_price ? (
+            <div className="p-2.5 rounded-lg bg-blue-50 border border-blue-200 dark:bg-blue-950/20 text-xs flex items-center justify-between">
+              <div>
+                <span className="font-semibold text-blue-800 dark:text-blue-300">Our GeM Submitted Price</span>
+                <p className="text-blue-600 dark:text-blue-400 text-[10px]">Saved from Stage 9 — GeM Portal Submission</p>
+              </div>
+              <span className="font-mono font-bold text-blue-900 dark:text-blue-200 text-sm">{fmtMoney(bid.quoted_price)}</span>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-amber-700">Our GeM Submitted Price (₹) <span className="text-[10px] font-normal text-muted-foreground">— not found from Stage 9, enter manually</span></Label>
+              <Input
+                type="number"
+                value={manualOurPrice}
+                onChange={e => setManualOurPrice(e.target.value)}
+                placeholder="Enter the exact price submitted on GeM portal"
+                className="h-8 text-xs border-amber-300"
+              />
+            </div>
+          )}
           {outcome === 'LOST' && (
             <div className="space-y-3">
-              <div className="space-y-1"><Label className="text-xs">L1 Company Name</Label><Input size="sm" value={l1Name} onChange={e=>setL1Name(e.target.value)} placeholder="Winning bidder name" className="h-8 text-xs"/></div>
-              <div className="space-y-1"><Label className="text-xs">L1 Price (₹)</Label><Input type="number" size="sm" value={l1Price} onChange={e=>setL1Price(e.target.value)} placeholder="Winning price" className="h-8 text-xs"/></div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1"><Label className="text-xs">L1 Company Name</Label><Input size="sm" value={l1Name} onChange={e => setL1Name(e.target.value)} placeholder="Winning bidder name" className="h-8 text-xs"/></div>
+                <div className="space-y-1"><Label className="text-xs">Our Rank (e.g. L2, L3)</Label><Input size="sm" value={ourRank} onChange={e => setOurRank(e.target.value)} placeholder="e.g. L2" className="h-8 text-xs"/></div>
+              </div>
+              <div className="space-y-1"><Label className="text-xs">L1 Price (₹)</Label><Input type="number" size="sm" value={l1Price} onChange={e => setL1Price(e.target.value)} placeholder="Winning price" className="h-8 text-xs"/></div>
+              {/* Auto price-diff calculation */}
+              {l1PriceNum > 0 && ourPriceNum > 0 && (
+                <div className={`p-2.5 rounded-lg border text-xs space-y-1 ${priceDiffPct > 0 ? 'bg-red-50 border-red-200 dark:bg-red-950/20' : 'bg-emerald-50 border-emerald-200 dark:bg-emerald-950/20'}`}>
+                  <p className="font-semibold text-muted-foreground">Auto Price Comparison</p>
+                  <div className="flex justify-between"><span>Our Price:</span><span className="font-mono font-bold">{fmtMoney(ourPriceNum)}</span></div>
+                  <div className="flex justify-between"><span>L1 Price:</span><span className="font-mono font-bold text-red-600">{fmtMoney(l1PriceNum)}</span></div>
+                  <div className="flex justify-between border-t border-border/60 pt-1">
+                    <span>Difference:</span>
+                    <span className={`font-mono font-bold ${priceDiffPct > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                      {priceDiffPct > 0 ? '+' : ''}{priceDiffPct.toFixed(2)}% {priceDiffPct > 0 ? '(we quoted higher by this %)' : '(we quoted lower)'}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </CompleteStageModal>
@@ -1506,6 +1989,11 @@ export function Stage12Workspace({ bid, onRefresh }) {
   const [emdReturned, setEmdReturned] = useState(!!bid?.emd_returned)
   const [bgProceeded, setBgProceeded] = useState(!!bid?.bg_discharged)
 
+  // Determine if this is a WON or LOST scenario
+  // Lost is set when financial eval records LOST outcome, or bid_status is LOST
+  const isLostScenario = bid?.bid_status === 'LOST' || bid?.bid_outcome === 'LOST'
+  const isWonScenario = !isLostScenario
+
   useEffect(() => {
     setEmdReturned(!!bid?.emd_returned)
     setBgProceeded(!!bid?.bg_discharged)
@@ -1516,6 +2004,13 @@ export function Stage12Workspace({ bid, onRefresh }) {
     try {
       const res = await updateBid(bid.id, { emd_returned: checked })
       if (res.ok) {
+        logStageMicroEvent(bid.id, {
+          fromStage: 'AWARD_HANDOVER',
+          toStage: 'AWARD_HANDOVER',
+          eventType: 'FINANCE',
+          transitionReason: checked ? 'Marked EMD as Refunded / Returned by Procuring Authority' : 'Marked EMD Return as Pending',
+          details: { emdReturned: checked }
+        })
         toast.success(checked ? 'EMD marked as Returned' : 'EMD marked as Pending Return')
         onRefresh()
       }
@@ -1529,6 +2024,13 @@ export function Stage12Workspace({ bid, onRefresh }) {
     try {
       const res = await updateBid(bid.id, { bg_discharged: checked })
       if (res.ok) {
+        logStageMicroEvent(bid.id, {
+          fromStage: 'AWARD_HANDOVER',
+          toStage: 'AWARD_HANDOVER',
+          eventType: 'FINANCE',
+          transitionReason: checked ? 'Marked Performance Bank Guarantee (PBG) as Issued & Submitted' : 'Marked PBG as Pending Submission',
+          details: { bgDischarged: checked }
+        })
         toast.success(checked ? 'PBG recorded as Issued & Submitted' : 'PBG marked pending')
         onRefresh()
       }
@@ -1537,22 +2039,34 @@ export function Stage12Workspace({ bid, onRefresh }) {
     }
   }
 
-  const handleFinalAward = async (remarks) => {
-    await recordBidOutcome(bid.id, {
-      bid_outcome: 'WON',
-      outcome_reason: `Award & Handover Completed. EMD Returned: ${emdReturned ? 'Yes' : 'No'}, BG Proceeded: ${bgProceeded ? 'Yes' : 'No'}. ${remarks}`,
-    })
-    confetti({ particleCount: 200, spread: 100 })
+  const handleFinalClose = async (remarks) => {
+    if (isWonScenario) {
+      await recordBidOutcome(bid.id, {
+        bid_outcome: 'WON',
+        outcome_reason: `Award & Handover Completed. EMD Returned: ${emdReturned ? 'Yes' : 'No'}, PBG Submitted: ${bgProceeded ? 'Yes' : 'No'}. ${remarks}`,
+      })
+      confetti({ particleCount: 200, spread: 100 })
+    } else {
+      // LOST — just mark closure with EMD return
+      await updateBid(bid.id, {
+        emd_returned: emdReturned,
+      }).catch(() => {})
+      // Update outcome reason if not already set
+      await recordBidOutcome(bid.id, {
+        bid_outcome: 'LOST',
+        outcome_reason: `Bid closed as Lost. EMD Returned: ${emdReturned ? 'Yes' : 'No'}. ${remarks}`,
+      }).catch(() => {})
+    }
     onRefresh()
   }
 
   const handleCompleteClick = () => {
     if (!emdReturned) {
-      toast.error('Mandatory Checklist Required: EMD Return must be checked before completing Stage 12.')
+      toast.error('Mandatory: EMD Return must be confirmed before closing Stage 12.')
       return
     }
-    if (!bgProceeded) {
-      toast.error('Mandatory Checklist Required: PBG Submission must be checked before completing Stage 12.')
+    if (isWonScenario && !bgProceeded) {
+      toast.error('Mandatory: Performance Bank Guarantee (PBG) must be confirmed for WON bids.')
       return
     }
     setShowModal(true)
@@ -1560,44 +2074,64 @@ export function Stage12Workspace({ bid, onRefresh }) {
 
   return (
     <div className="space-y-6">
-      <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/20 dark:border-emerald-900/50 flex items-center justify-between">
+      <div className={`p-4 rounded-xl border flex items-center justify-between ${
+        isWonScenario
+          ? 'border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/20 dark:border-emerald-900/50'
+          : 'border-red-200 bg-red-50/50 dark:bg-red-950/20 dark:border-red-900/50'
+      }`}>
         <div>
-          <h3 className="text-sm font-semibold text-emerald-900 dark:text-emerald-300">Stage 12: Contract Award & Operations Handover</h3>
-          <p className="text-xs text-emerald-700 dark:text-emerald-400">Final post-win maintenance (EMD return tracking, Bank Guarantee proceed, operations handover).</p>
+          <h3 className={`text-sm font-semibold ${isWonScenario ? 'text-emerald-900 dark:text-emerald-300' : 'text-red-900 dark:text-red-300'}`}>
+            Stage 12: {isWonScenario ? 'Contract Award & Operations Handover' : 'Bid Closure (Lost)'}
+          </h3>
+          <p className={`text-xs ${isWonScenario ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
+            {isWonScenario
+              ? 'Final post-win maintenance (EMD return tracking, Performance Bank Guarantee, operations handover).'
+              : 'Close out lost bid: confirm EMD return and record final closure remarks.'}
+          </p>
         </div>
         <StageHeaderActions
           bid={bid}
           stageKey="AWARD_HANDOVER"
           onCompleteClick={handleCompleteClick}
           onRefresh={onRefresh}
-          completeLabel="Close Bid as WON 🏆"
-          completeClass="bg-emerald-600 hover:bg-emerald-700 text-white"
+          completeLabel={isWonScenario ? 'Close Bid as WON 🏆' : 'Close Bid as LOST ❌'}
+          completeClass={isWonScenario ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-red-600 hover:bg-red-700 text-white'}
         />
       </div>
 
       <div className="p-4 rounded-xl border border-border bg-card space-y-3">
-        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Post-Win Maintenance Checklist</h4>
+        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Post-Bid Closure Checklist</h4>
         <div className="space-y-2 text-xs">
-          <label className="flex items-center gap-2 cursor-pointer">
+          {/* EMD Return — shown for BOTH WON and LOST */}
+          <label className="flex items-center gap-2 cursor-pointer p-2.5 rounded-lg border border-border hover:bg-muted/20 transition-colors">
             <input type="checkbox" checked={emdReturned} onChange={e => handleEmdToggle(e.target.checked)} className="rounded" />
-            <span>EMD Returned by Procuring Authority</span>
+            <div>
+              <span className="font-medium">EMD Returned by Procuring Authority</span>
+              <p className="text-muted-foreground text-[10px]">Confirm EMD amount has been refunded (applicable for both WON and LOST)</p>
+            </div>
           </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={bgProceeded} onChange={e => handleBgToggle(e.target.checked)} className="rounded" />
-            <span>Performance Bank Guarantee (PBG) Issued & Submitted</span>
-          </label>
+          {/* PBG — shown ONLY for WON bids */}
+          {isWonScenario && (
+            <label className="flex items-center gap-2 cursor-pointer p-2.5 rounded-lg border border-border hover:bg-muted/20 transition-colors">
+              <input type="checkbox" checked={bgProceeded} onChange={e => handleBgToggle(e.target.checked)} className="rounded" />
+              <div>
+                <span className="font-medium">Performance Bank Guarantee (PBG) Issued &amp; Submitted</span>
+                <p className="text-muted-foreground text-[10px]">Confirm PBG has been submitted to the procuring authority (WON bids only)</p>
+              </div>
+            </label>
+          )}
         </div>
       </div>
 
       {showModal && (
         <CompleteStageModal
-          title="Finalize Contract Award & Close Workspace"
-          description="Marks bid outcome as WON in analytics and completes tender lifecycle."
+          title={isWonScenario ? 'Finalize Contract Award & Close Workspace' : 'Close Bid as Lost'}
+          description={isWonScenario ? 'Marks bid outcome as WON in analytics and completes tender lifecycle.' : 'Records final closure for lost bid. EMD return must be confirmed.'}
           stageKey="AWARD_HANDOVER"
           bidId={bid.id}
           bid={bid}
           onClose={() => setShowModal(false)}
-          onComplete={handleFinalAward}
+          onComplete={handleFinalClose}
         />
       )}
     </div>
@@ -1606,6 +2140,12 @@ export function Stage12Workspace({ bid, onRefresh }) {
 
 // ── Dynamic Dispatcher for Active Stage Workspace ────────────────────────────
 export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
+  const currentUser = tokenStorage.getUser()
+  const userRoles = [
+    ...(Array.isArray(currentUser?.roles) ? currentUser.roles : []),
+    ...(currentUser?.role ? [currentUser.role] : [])
+  ].map(r => String(r).toUpperCase())
+
   const stage = selectedStage || bid.workflow_stage
   const { isLocked, stageIdx } = checkStageState(bid, stage)
 
@@ -1629,6 +2169,62 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
         </div>
       </div>
     )
+  }
+
+  // Full access roles (Super Admin, Admin, Manager, Bid Executive)
+  const fullAccessRoles = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'BID_EXECUTIVE']
+  const isFullAccess = userRoles.some(r => fullAccessRoles.includes(r))
+
+  if (!isFullAccess) {
+    // Stages 1, 2, 4, 7, 8, 12 for PRE_SALES
+    const preSalesStages = [
+      'DISCOVERED',
+      'ELIGIBILITY_ASSESSMENT',
+      'PRICING_REQUEST',
+      'BID_DOCUMENTATION',
+      'INTERNAL_APPROVAL',
+      'AWARD_HANDOVER'
+    ]
+
+    // Stages 1, 5, 6, 12 for FINANCE
+    const financeStages = [
+      'DISCOVERED',
+      'DOCUMENT_CHECKLIST_PREPARATION',
+      'EMD_PROCESSING',
+      'AWARD_HANDOVER'
+    ]
+
+    const isPreSales = userRoles.includes('PRE_SALES')
+    const isFinance = userRoles.includes('FINANCE')
+
+    let isAuthorized = false
+    if (isPreSales && preSalesStages.includes(stage)) {
+      isAuthorized = true
+    } else if (isFinance && financeStages.includes(stage)) {
+      isAuthorized = true
+    }
+
+    if (!isAuthorized) {
+      const primaryRole = userRoles[0] ? userRoles[0].replace(/_/g, ' ') : 'USER'
+      return (
+        <div className="p-8 rounded-xl border border-rose-500/30 bg-rose-500/5 dark:bg-rose-950/20 text-center space-y-4 max-w-2xl mx-auto my-6 shadow-sm">
+          <div className="size-14 rounded-full bg-rose-500/10 dark:bg-rose-950/50 flex items-center justify-center mx-auto text-rose-600 dark:text-rose-400 border border-rose-500/20 shadow-xs">
+            <AlertCircle className="size-7" />
+          </div>
+          <div className="space-y-1.5">
+            <h3 className="text-base font-bold text-foreground">Unauthorized Access</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed max-w-md mx-auto">
+              Your role (<span className="font-semibold text-rose-600 dark:text-rose-400">{primaryRole}</span>) is not authorized to access <span className="font-semibold text-foreground">Stage {stageIdx + 1}: {stage.replace(/_/g, ' ')}</span>.
+            </p>
+          </div>
+          <div className="pt-2 flex justify-center">
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-1.5 rounded-full bg-rose-500/10 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-500/20">
+              <Lock className="size-3.5" /> Restricted Stage Workspace
+            </span>
+          </div>
+        </div>
+      )
+    }
   }
 
   switch (stage) {

@@ -225,10 +225,8 @@ export function AddTenderPage() {
         opening_date:    form.start_date ? new Date(form.start_date).toISOString() : undefined,
         closing_date:    form.end_date ? new Date(form.end_date).toISOString() : undefined,
         target_month_date: form.target_month_date ? new Date(form.target_month_date).toISOString() : undefined,
-        checklists:      [
-          ...bidderChecklists.map((item) => `[Bidder] ${item}`),
-          ...oemChecklists.map((item) => `[OEM] ${item}`)
-        ],
+        bidder_checklists: bidderChecklists.map((item) => `[Bidder] ${item.replace(/^\[(Bidder|OEM)\]\s*/i, '')}`),
+        oem_checklists:    oemChecklists.map((item) => `[OEM] ${item.replace(/^\[(Bidder|OEM)\]\s*/i, '')}`),
       }
 
       // Remove empty strings

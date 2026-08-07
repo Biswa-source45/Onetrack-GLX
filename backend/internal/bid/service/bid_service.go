@@ -165,8 +165,8 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 	if len(req.OEMChecklists) > 0 {
 		_ = s.repo.BulkInsertChecklistsWithGroup(ctx, id, req.OEMChecklists, "OEM")
 	}
-	// Legacy checklists support
-	if len(req.Checklists) > 0 {
+	// Legacy checklists support (only run if specific bidder/oem arrays are empty)
+	if len(req.Checklists) > 0 && len(req.BidderChecklists) == 0 && len(req.OEMChecklists) == 0 {
 		_ = s.repo.BulkInsertChecklists(ctx, id, req.Checklists)
 	}
 
@@ -659,6 +659,7 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, techM
 		CreatedAt:        bid.CreatedAt,
 		UpdatedAt:        bid.UpdatedAt,
 		ArchivedAt:       bid.ArchivedAt,
+		ResultDate:       bid.ResultDate,
 		DaysRemaining:    calcDaysRemaining(bid.ArchivedAt),
 	}
 }

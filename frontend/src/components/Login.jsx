@@ -34,7 +34,7 @@ export default function Login() {
     setIsLoading(true)
     
     try {
-      const result = await authService.login(username, password)
+      const result = await authService.login(username.trim().toLowerCase(), password)
       
       if (result.ok && result.success) {
         toast.success(result.message || "Logged in successfully!")

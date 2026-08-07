@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useLocation, useOutletContext, Outlet } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Layers, LogOut, Key, CheckCircle, Eye, EyeOff, Loader2,
   Users, LayoutDashboard, Menu, X, ChevronRight,
   FileText, TrendingUp, Activity, BarChart2, ShieldCheck, Bell,
-  Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Trash2
+  Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Trash2, Pencil
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -17,7 +17,8 @@ import { Badge }     from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 
 import { authService, tokenStorage } from '../services/auth'
-import { getMyProfile } from '../services/users'
+import { getMyProfile, updateUserProfile } from '../services/users'
+import { getAlerts } from '../services/alerts'
 import { usePermissions } from '../hooks/usePermissions'
 import { UserManagement } from './admin/UserManagement'
 import { UserAvatar }     from './admin/UserAvatar'
@@ -771,8 +772,60 @@ export function OverviewPanel() {
   )
 }
 // ── User Profile Modal ────────────────────────────────────────────────────────
-function UserProfileModal({ user, open, onClose, onOpenPasswordChange }) {
+function UserProfileModal({ user, open, onClose, onOpenPasswordChange, onUpdateUser }) {
+  const [isEditing, setIsEditing] = useState(false)
+  const [fullName, setFullName]     = useState('')
+  const [email, setEmail]         = useState('')
+  const [phone, setPhone]         = useState('')
+  const [department, setDepartment] = useState('')
+  const [saving, setSaving]       = useState(false)
+
+  useEffect(() => {
+    if (user) {
+      setFullName(user.full_name || '')
+      setEmail(user.email || '')
+      setPhone(user.phone || '')
+      setDepartment(user.department || '')
+      setIsEditing(false)
+    }
+  }, [user, open])
+
   if (!open || !user) return null
+
+  async function handleSaveProfile(e) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      const payload = {
+        full_name:  fullName.trim(),
+        email:      email.trim(),
+        phone:      phone.trim(),
+        department: department.trim(),
+      }
+      const res = await updateUserProfile(user.id, payload)
+      if (res.ok && res.success) {
+        toast.success('Profile updated successfully')
+        const updatedUser = { ...user, ...res.data }
+        onUpdateUser?.(updatedUser)
+
+        const currentLocalUser = tokenStorage.getUser()
+        if (currentLocalUser) {
+          tokenStorage.setTokens(
+            tokenStorage.getAccessToken(),
+            tokenStorage.getRefreshToken(),
+            { ...currentLocalUser, ...res.data }
+          )
+        }
+        setIsEditing(false)
+      } else {
+        toast.error(res.error?.message || 'Failed to update profile')
+      }
+    } catch {
+      toast.error('Network error updating profile')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <AnimatePresence>
@@ -791,41 +844,119 @@ function UserProfileModal({ user, open, onClose, onOpenPasswordChange }) {
           {/* Header */}
           <div className="p-5 border-b border-border bg-muted/20 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <UserAvatar fullName={user.full_name} username={user.username} size="lg" />
+              <UserAvatar fullName={isEditing ? fullName : user.full_name} username={user.username} size="lg" />
               <div>
                 <h3 className="font-heading font-semibold text-base text-foreground leading-snug">
-                  {user.full_name || user.username}
+                  {(isEditing ? fullName : user.full_name) || user.username}
                 </h3>
                 <p className="text-xs text-muted-foreground font-medium">@{user.username}</p>
               </div>
             </div>
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors"
-            >
-              <X className="size-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant={isEditing ? "ghost" : "outline"}
+                size="sm"
+                onClick={() => setIsEditing(!isEditing)}
+                className="h-8 gap-1.5 text-xs"
+                disabled={saving}
+              >
+                <Pencil className="size-3.5 text-primary" />
+                {isEditing ? 'Cancel' : 'Edit Profile'}
+              </Button>
+              <button
+                onClick={onClose}
+                className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
           </div>
 
           <ScrollArea className="p-6 space-y-6 flex-1">
-            {/* Account Details */}
-            <div className="space-y-3">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Account Overview</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-1">
-                  <span className="text-muted-foreground">Employee Code</span>
-                  <p className="font-mono font-medium text-foreground">{user.employee_code || 'N/A'}</p>
+            {/* Account Details / Edit Form */}
+            {isEditing ? (
+              <form onSubmit={handleSaveProfile} className="space-y-4">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Edit Profile Information</h4>
+                
+                <div className="space-y-1.5">
+                  <Label htmlFor="upm-fullname">Full Name</Label>
+                  <Input
+                    id="upm-fullname"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="Enter full name"
+                    disabled={saving}
+                  />
                 </div>
-                <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-1">
-                  <span className="text-muted-foreground">Department</span>
-                  <p className="font-medium text-foreground">{user.department || 'General'}</p>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="upm-email">Email Address</Label>
+                  <Input
+                    id="upm-email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="name@company.com"
+                    disabled={saving}
+                  />
                 </div>
-                <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-1 sm:col-span-2">
-                  <span className="text-muted-foreground">Email Address</span>
-                  <p className="font-medium text-foreground truncate">{user.email || 'No email associated'}</p>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="upm-phone">Phone Number</Label>
+                    <Input
+                      id="upm-phone"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="9876543210"
+                      disabled={saving}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="upm-dept">Department</Label>
+                    <Input
+                      id="upm-dept"
+                      value={department}
+                      onChange={(e) => setDepartment(e.target.value)}
+                      placeholder="e.g. Sales"
+                      disabled={saving}
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2 flex justify-end gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setIsEditing(false)} disabled={saving}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" size="sm" disabled={saving}>
+                    {saving && <Loader2 className="size-3.5 animate-spin mr-1.5" />}
+                    Save Changes
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <div className="space-y-3">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Account Overview</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-1">
+                    <span className="text-muted-foreground">Employee Code</span>
+                    <p className="font-mono font-medium text-foreground">{user.employee_code || 'N/A'}</p>
+                  </div>
+                  <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-1">
+                    <span className="text-muted-foreground">Department</span>
+                    <p className="font-medium text-foreground">{user.department || 'General'}</p>
+                  </div>
+                  <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-1">
+                    <span className="text-muted-foreground">Email Address</span>
+                    <p className="font-medium text-foreground truncate">{user.email || 'No email associated'}</p>
+                  </div>
+                  <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-1">
+                    <span className="text-muted-foreground">Phone Number</span>
+                    <p className="font-medium text-foreground">{user.phone || 'N/A'}</p>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             <Separator />
 
@@ -838,8 +969,6 @@ function UserProfileModal({ user, open, onClose, onOpenPasswordChange }) {
                 ))}
               </div>
             </div>
-
-
 
             <Separator />
 
@@ -886,8 +1015,27 @@ export default function Dashboard() {
   const [showPassNew,     setShowPassNew]     = useState(false)
   const [isChangingPassword, setIsChangingPassword] = useState(false)
   const [showSuccessDialog, setShowSuccessDialog] = useState(false)
+  const [unreadAlertsCount, setUnreadAlertsCount] = useState(0)
 
   const { hasPermission } = usePermissions()
+
+  const fetchAlertsCount = useCallback(async () => {
+    try {
+      const res = await getAlerts()
+      if (res.ok && Array.isArray(res.data)) {
+        const count = res.data.filter((a) => !a.is_read).length
+        setUnreadAlertsCount(count)
+      }
+    } catch {
+      // Silently catch background errors
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchAlertsCount()
+    const interval = setInterval(fetchAlertsCount, 30000)
+    return () => clearInterval(interval)
+  }, [fetchAlertsCount])
 
   // Load user on mount
   useEffect(() => {
@@ -1024,18 +1172,26 @@ export default function Dashboard() {
             {visibleNavItems.map((item) => {
               const active = activeSection === item.id
               const Icon = item.icon
+              const isAlerts = item.id === 'alerts'
               return (
                 <button
                   key={item.id}
                   onClick={() => navigate(item.id === 'overview' ? '/dashboard' : `/dashboard/${item.id}`)}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors text-left
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors text-left
                     ${active
                       ? 'bg-primary/8 text-primary border border-primary/15'
                       : 'text-muted-foreground hover:text-foreground hover:bg-muted'
                     }`}
                 >
-                  <Icon className="size-4 shrink-0" />
-                  {item.label}
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Icon className="size-4 shrink-0" />
+                    <span className="truncate">{item.label}</span>
+                  </div>
+                  {isAlerts && unreadAlertsCount > 0 && (
+                    <span className="flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold shrink-0 ml-1 shadow-xs animate-pulse">
+                      {unreadAlertsCount > 99 ? '99+' : unreadAlertsCount}
+                    </span>
+                  )}
                 </button>
               )
             })}
@@ -1064,6 +1220,7 @@ export default function Dashboard() {
                   {visibleNavItems.map((item) => {
                     const active = activeSection === item.id
                     const Icon = item.icon
+                    const isAlerts = item.id === 'alerts'
                     return (
                       <button
                         key={item.id}
@@ -1071,14 +1228,21 @@ export default function Dashboard() {
                           navigate(item.id === 'overview' ? '/dashboard' : `/dashboard/${item.id}`)
                           setSidebarOpen(false)
                         }}
-                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors text-left
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors text-left
                           ${active
                             ? 'bg-primary/8 text-primary border border-primary/15'
                             : 'text-muted-foreground hover:text-foreground hover:bg-muted'
                           }`}
                       >
-                        <Icon className="size-4 shrink-0" />
-                        {item.label}
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <Icon className="size-4 shrink-0" />
+                          <span className="truncate">{item.label}</span>
+                        </div>
+                        {isAlerts && unreadAlertsCount > 0 && (
+                          <span className="flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold shrink-0 ml-1 shadow-xs animate-pulse">
+                            {unreadAlertsCount > 99 ? '99+' : unreadAlertsCount}
+                          </span>
+                        )}
                       </button>
                     )
                   })}
@@ -1091,7 +1255,7 @@ export default function Dashboard() {
         {/* ── Main Content ─────────────────────────────────────────────────── */}
         <div className="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden bg-background">
           <main className="w-full min-w-0 p-6 md:p-6">
-            <Outlet context={{ user, onOpenProfile: () => setShowProfileModal(true) }} />
+            <Outlet context={{ user, onOpenProfile: () => setShowProfileModal(true), unreadAlertsCount, refreshAlertsCount: fetchAlertsCount }} />
           </main>
         </div>
       </div>
@@ -1102,6 +1266,7 @@ export default function Dashboard() {
         open={showProfileModal}
         onClose={() => setShowProfileModal(false)}
         onOpenPasswordChange={() => setShowPasswordModal(true)}
+        onUpdateUser={(updated) => setUser(updated)}
       />
 
       {/* ── Change Password Modal ─────────────────────────────────────────── */}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -38,6 +39,7 @@ func NewAuthService(repo domain.AuthRepository, jwtService domain.JWTService, em
 }
 
 func (s *authService) Login(ctx context.Context, req domain.LoginRequest) (*domain.LoginResponse, error) {
+	req.Username = strings.ToLower(strings.TrimSpace(req.Username))
 	user, err := s.repo.GetUserByUsername(ctx, req.Username)
 	if err != nil {
 		return nil, ErrInvalidCredentials

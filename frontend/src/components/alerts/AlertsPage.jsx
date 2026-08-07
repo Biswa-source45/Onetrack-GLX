@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { useOutletContext } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Bell, CheckCheck, FileText, AlertCircle, Info, ShieldAlert, CheckCircle2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -9,6 +10,7 @@ import { getAlerts, markAlertRead, markAllAlertsRead } from '../../services/aler
 export function AlertsPage() {
   const [alerts, setAlerts] = useState([])
   const [loading, setLoading] = useState(true)
+  const { refreshAlertsCount } = useOutletContext() || {}
 
   const fetchAlerts = async () => {
     try {
@@ -16,6 +18,7 @@ export function AlertsPage() {
       const res = await getAlerts()
       if (res.ok) {
         setAlerts(res.data || [])
+        refreshAlertsCount?.()
       }
     } catch {
       toast.error('Failed to load system alerts')
@@ -33,6 +36,7 @@ export function AlertsPage() {
       const res = await markAlertRead(id)
       if (res.ok) {
         setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, is_read: true } : a)))
+        refreshAlertsCount?.()
       }
     } catch {
       toast.error('Failed to update alert status')
@@ -44,6 +48,7 @@ export function AlertsPage() {
       const res = await markAllAlertsRead()
       if (res.ok) {
         setAlerts((prev) => prev.map((a) => ({ ...a, is_read: true })))
+        refreshAlertsCount?.()
         toast.success('All alerts marked as read')
       }
     } catch {
@@ -134,7 +139,14 @@ export function AlertsPage() {
                         <span className="size-2 rounded-full bg-primary" title="Unread notification" />
                       )}
                     </div>
-                    <p className="text-sm text-muted-foreground leading-relaxed">{alert.message}</p>
+                    {alert.message?.includes('<') ? (
+                      <div 
+                        className="text-sm text-foreground leading-relaxed overflow-x-auto my-1" 
+                        dangerouslySetInnerHTML={{ __html: alert.message }} 
+                      />
+                    ) : (
+                      <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">{alert.message}</p>
+                    )}
                     <p className="text-xs text-muted-foreground/70 font-mono pt-1">
                       {new Date(alert.created_at).toLocaleString()}
                     </p>

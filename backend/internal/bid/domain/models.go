@@ -454,6 +454,7 @@ type BidResponse struct {
 	CreatedAt              time.Time        `json:"created_at"`
 	UpdatedAt              time.Time        `json:"updated_at"`
 	ArchivedAt             *time.Time       `json:"archived_at"`
+	ResultDate             *time.Time       `json:"result_date,omitempty"`
 	DaysRemaining          *int             `json:"days_remaining,omitempty"`
 }
 

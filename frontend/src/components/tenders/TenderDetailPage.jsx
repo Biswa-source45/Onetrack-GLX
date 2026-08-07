@@ -102,30 +102,31 @@ function StageBadge({ stage }) {
 }
 
 // ── Workflow Stepper ─────────────────────────────────────────────────────────
-function WorkflowStepper({ currentStage }) {
+function WorkflowStepper({ currentStage, stageCompletions = {} }) {
   const idx = WORKFLOW_STAGES_ORDERED.indexOf(currentStage)
   return (
     <div className="overflow-x-auto pb-1">
       <div className="flex items-center gap-0 min-w-max">
         {WORKFLOW_STAGES_ORDERED.map((stage, i) => {
-          const done   = i < idx
-          const active = i === idx
+          const isExplicitlyDone = stageCompletions[stage] === true
+          const done   = i < idx || isExplicitlyDone
+          const active = i === idx && !isExplicitlyDone
           return (
             <React.Fragment key={stage}>
               <div className="flex flex-col items-center gap-1">
                 <div className={`size-6 rounded-full flex items-center justify-center text-xs font-semibold border-2 transition-all
-                  ${done   ? 'bg-primary border-primary text-primary-foreground'
-                  : active ? 'bg-primary/10 border-primary text-primary'
+                  ${done   ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
+                  : active ? 'bg-primary/10 border-primary text-primary ring-2 ring-primary/20 font-bold'
                            : 'bg-background border-border text-muted-foreground'}`}>
                   {done ? <CheckCircle2 className="size-3.5" /> : i + 1}
                 </div>
                 <span className={`text-[10px] font-medium max-w-[60px] text-center leading-tight
-                  ${active ? 'text-primary' : done ? 'text-foreground' : 'text-muted-foreground'}`}>
+                  ${active ? 'text-primary font-bold' : done ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-muted-foreground'}`}>
                   {STAGE_LABELS[stage]}
                 </span>
               </div>
               {i < WORKFLOW_STAGES_ORDERED.length - 1 && (
-                <div className={`h-0.5 w-8 mb-4 mx-0.5 transition-colors ${i < idx ? 'bg-primary' : 'bg-border'}`} />
+                <div className={`h-0.5 w-8 mb-4 mx-0.5 transition-colors ${i < idx || isExplicitlyDone ? 'bg-emerald-600' : 'bg-border'}`} />
               )}
             </React.Fragment>
           )
@@ -134,6 +135,7 @@ function WorkflowStepper({ currentStage }) {
     </div>
   )
 }
+
 
 // ── Transition Dialog ────────────────────────────────────────────────────────
 function TransitionDialog({ bid, onClose, onDone }) {
@@ -256,23 +258,103 @@ function getUserDisplayName(actor) {
   return active?.full_name || active?.username || 'Super Admin'
 }
 
-function StageDetailCard({ entry, isLatest }) {
+function getEventTypeBadge(type) {
+  switch (type) {
+    case 'PRICING':
+      return { label: 'Pricing & Quotes', class: 'bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 border-purple-200' }
+    case 'CHECKLIST':
+      return { label: 'Checklist Audit', class: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 border-indigo-200' }
+    case 'ALERT':
+      return { label: 'Alert & Mail Log', class: 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200' }
+    case 'OUTCOME':
+      return { label: 'Bid Result / Outcome', class: 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200' }
+    case 'OEM':
+      return { label: 'OEM Coordination', class: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-950/60 dark:text-cyan-300 border-cyan-200' }
+    case 'STAGE_CHANGE':
+    default:
+      return { label: 'Stage Transition', class: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200' }
+  }
+}
+
+function extractCommercialDetails(entry, bid) {
+  if (!entry) return { hasCommercialData: false }
+  const details = entry.details || {}
+  
+  let quotedPrice = details.quoted_price || details.final_price || details.offered_price || details.finalPrice
+  let l1Price = details.l1_price || details.l1Price
+  let l1Company = details.l1_company_name || details.l1Name || details.l1Distributor
+  let priceDiffPct = details.price_difference_pct ?? details.priceDiffPct
+  let ourRank = details.our_rank || details.ourRank
+  let outcome = details.outcome || details.bid_outcome
+  let marginPct = details.marginPct
+  let grandTotalGlobxPrice = details.grandTotalGlobxPrice
+  let grandTotalProfit = details.grandTotalProfit
+
+  // Fallback: If stage is GEM_SUBMISSION and bid.quoted_price exists
+  if (!quotedPrice && (entry.to_stage === 'GEM_SUBMISSION' || entry.from_stage === 'GEM_SUBMISSION') && bid?.quoted_price) {
+    quotedPrice = bid.quoted_price
+  }
+
+  // Fallback: Parse from transition_reason if missing in details (e.g. ₹14,50,000)
+  if (!quotedPrice && entry.transition_reason) {
+    const match = entry.transition_reason.match(/₹\s*([\d,]+(?:\.\d+)?)/)
+    if (match) {
+      const cleanNum = Number(match[1].replace(/,/g, ''))
+      if (!isNaN(cleanNum) && cleanNum > 0) {
+        quotedPrice = cleanNum
+      }
+    }
+  }
+
+  if (!l1Price && entry.transition_reason) {
+    const l1Match = entry.transition_reason.match(/L1.*quoted at ₹\s*([\d,]+(?:\.\d+)?)/i)
+    if (l1Match) {
+      const cleanNum = Number(l1Match[1].replace(/,/g, ''))
+      if (!isNaN(cleanNum) && cleanNum > 0) {
+        l1Price = cleanNum
+      }
+    }
+  }
+
+  return {
+    quotedPrice,
+    l1Price,
+    l1Company,
+    priceDiffPct,
+    ourRank,
+    outcome,
+    marginPct,
+    grandTotalGlobxPrice,
+    grandTotalProfit,
+    hasCommercialData: !!(quotedPrice || l1Price || outcome || marginPct || grandTotalGlobxPrice || l1Company)
+  }
+}
+
+function StageDetailCard({ entry, isLatest, bid }) {
   if (!entry) return null
 
-  const IconComponent = STAGE_ICONS[entry.to_stage] || Clock
+  const IconComponent = STAGE_ICONS[entry.to_stage] || Activity
   const stageColorClass = STAGE_COLORS[entry.to_stage] ?? 'bg-gray-100 text-gray-700 border-gray-200'
-
   const displayName = getUserDisplayName(entry.transitioned_by)
+  const eventBadge = getEventTypeBadge(entry.event_type || (entry.to_stage === 'CHECKLIST_UPDATE' ? 'CHECKLIST' : 'STAGE_CHANGE'))
+  const comm = extractCommercialDetails(entry, bid)
 
   return (
     <div className="rounded-xl border border-border bg-card shadow-sm p-4 space-y-4 transition-all duration-300">
-      {/* Title */}
+      {/* Inspector Header */}
       <div className="flex items-center justify-between border-b border-border/60 pb-3">
         <div className="space-y-1">
-          <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest block">
-            {isLatest ? 'Current Stage' : 'Stage Details'}
-          </span>
-          <h4 className="font-heading font-semibold text-foreground text-sm">
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${eventBadge.class}`}>
+              {eventBadge.label}
+            </span>
+            {isLatest && (
+              <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded border border-emerald-200 uppercase tracking-widest">
+                Latest Action
+              </span>
+            )}
+          </div>
+          <h4 className="font-heading font-semibold text-foreground text-sm pt-1">
             {STAGE_LABELS[entry.to_stage] ?? entry.to_stage}
           </h4>
         </div>
@@ -283,7 +365,7 @@ function StageDetailCard({ entry, isLatest }) {
 
       {/* Transition Path */}
       <div className="space-y-1">
-        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">Transition Path</span>
+        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">Stage Context / Lifecycle Target</span>
         <div className="flex items-center gap-1.5 flex-wrap bg-muted/30 p-2 rounded-md border border-border/40 text-xs">
           {entry.from_stage ? (
             <>
@@ -291,45 +373,137 @@ function StageDetailCard({ entry, isLatest }) {
               <ArrowRight className="size-3 text-muted-foreground" />
             </>
           ) : (
-            <span className="text-xs text-muted-foreground font-medium italic">Start</span>
+            <span className="text-xs text-muted-foreground font-medium italic">Workspace Stage</span>
           )}
           <StageBadge stage={entry.to_stage} />
         </div>
       </div>
 
-      {/* Time Audit */}
+      {/* Time & Actor Audit */}
       <div className="grid grid-cols-2 gap-3 pt-1 text-xs">
         <div>
-          <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">Action Timestamp</span>
+          <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">Timestamp</span>
           <span className="font-medium text-foreground text-[11px] font-mono">{formatFullDateTime(entry.created_at)}</span>
         </div>
         <div>
-          <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">Actioned By</span>
-          <span className="font-semibold text-primary text-xs">
+          <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">Triggered By</span>
+          <span className="font-semibold text-primary text-xs flex items-center gap-1">
+            <Users className="size-3 text-primary/70" />
             {displayName}
           </span>
         </div>
       </div>
 
-      {/* Reason */}
+      {/* Commercial & Final Value Highlights Box */}
+      {comm.hasCommercialData && (
+        <div className="pt-3 border-t border-border/60 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+              <Coins className="size-3.5 text-emerald-600 dark:text-emerald-400" /> Commercial &amp; Final Submitted Value
+            </span>
+            {comm.outcome && (
+              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider border ${
+                comm.outcome === 'WON' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200' : 'bg-red-100 text-red-800 border-red-300 dark:bg-red-950 dark:text-red-200'
+              }`}>
+                {comm.outcome === 'WON' ? '🏆 WON / L1' : '❌ LOST'}
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-2.5 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 rounded-lg border border-emerald-200 dark:border-emerald-900/50">
+            {comm.quotedPrice && (
+              <div className="col-span-2 sm:col-span-1">
+                <span className="text-[10px] text-muted-foreground font-semibold block">Final Offered / Quoted Price</span>
+                <span className="font-mono font-extrabold text-sm text-emerald-700 dark:text-emerald-300">
+                  {fmtMoney(comm.quotedPrice)}
+                </span>
+              </div>
+            )}
+            {comm.grandTotalGlobxPrice && (
+              <div className="col-span-2 sm:col-span-1">
+                <span className="text-[10px] text-muted-foreground font-semibold block">GlobX Total Selling Price</span>
+                <span className="font-mono font-extrabold text-sm text-indigo-600 dark:text-indigo-300">
+                  {fmtMoney(comm.grandTotalGlobxPrice)}
+                </span>
+              </div>
+            )}
+            {comm.grandTotalProfit && (
+              <div>
+                <span className="text-[10px] text-muted-foreground font-semibold block">Estimated GlobX Profit</span>
+                <span className="font-mono font-extrabold text-xs text-emerald-600 dark:text-emerald-400">
+                  {fmtMoney(comm.grandTotalProfit)} {comm.marginPct ? `(${comm.marginPct}%)` : ''}
+                </span>
+              </div>
+            )}
+            {comm.l1Company && (
+              <div>
+                <span className="text-[10px] text-muted-foreground font-semibold block">L1 Distributor / Company</span>
+                <span className="font-bold text-xs text-foreground">{comm.l1Company}</span>
+              </div>
+            )}
+            {comm.l1Price && (
+              <div>
+                <span className="text-[10px] text-muted-foreground font-semibold block">L1 Winning Bid Price</span>
+                <span className="font-mono font-bold text-xs text-red-600 dark:text-red-400">{fmtMoney(comm.l1Price)}</span>
+              </div>
+            )}
+            {comm.priceDiffPct != null && (
+              <div>
+                <span className="text-[10px] text-muted-foreground font-semibold block">Price Variance</span>
+                <span className={`font-mono font-bold text-xs ${comm.priceDiffPct > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                  {comm.priceDiffPct > 0 ? '+' : ''}{comm.priceDiffPct}%
+                </span>
+              </div>
+            )}
+            {comm.ourRank && (
+              <div>
+                <span className="text-[10px] text-muted-foreground font-semibold block">GlobX Bid Rank</span>
+                <span className="font-bold text-xs text-foreground">{comm.ourRank}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Reason / Micro-Log Summary */}
       <div className="pt-3 border-t border-border/60 space-y-1">
-        <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">Transition / Action Remarks</span>
-        <div className="bg-muted/10 p-2.5 rounded-md border border-border/40 min-h-[50px] flex items-start gap-1.5">
-          <FileText className="size-3.5 text-muted-foreground shrink-0 mt-0.5" />
-          <p className="text-xs text-foreground italic leading-normal whitespace-pre-wrap">
-            {entry.transition_reason || 'No comments provided.'}
+        <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">Micro Event / Transition Summary</span>
+        <div className="bg-muted/10 p-3 rounded-md border border-border/40 min-h-[60px] flex items-start gap-2">
+          <FileText className="size-4 text-muted-foreground shrink-0 mt-0.5" />
+          <p className="text-xs text-foreground font-medium leading-relaxed whitespace-pre-wrap">
+            {entry.transition_reason || 'No specific remarks recorded.'}
           </p>
         </div>
       </div>
+
+      {/* Micro Details Payload Inspector */}
+      {entry.details && typeof entry.details === 'object' && (
+        <div className="pt-2 border-t border-border/60 space-y-1">
+          <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">Recorded Payload Metadata</span>
+          <div className="bg-slate-950 text-slate-100 p-2.5 rounded-md font-mono text-[11px] overflow-x-auto border border-slate-800">
+            <pre>{JSON.stringify(entry.details, null, 2)}</pre>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function StageHistoryTab({ bidId }) {
+function StageHistoryTab({ bidId, bid }) {
   const [history, setHistory] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedIndex, setSelectedIndex] = useState(null)
   const [hoveredIndex, setHoveredIndex] = useState(null)
+  const [filterType, setFilterType] = useState('ALL')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedStageFilter, setSelectedStageFilter] = useState(null)
+
+  const WORKFLOW_STAGES = [
+    'DISCOVERED', 'ELIGIBILITY_ASSESSMENT', 'OEM_AUTHORIZATION_REQUEST',
+    'PRICING_REQUEST', 'DOCUMENT_CHECKLIST_PREPARATION', 'EMD_PROCESSING',
+    'BID_DOCUMENTATION', 'INTERNAL_APPROVAL', 'GEM_SUBMISSION',
+    'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER'
+  ]
 
   useEffect(() => {
     function loadHistory() {
@@ -338,10 +512,26 @@ function StageHistoryTab({ bidId }) {
         const localHistoryKey = `onetrack_checklist_history_${bidId}`
         const localEvents = JSON.parse(localStorage.getItem(localHistoryKey) || '[]')
 
-        // Reverse chronological order: Latest / Newest events first
-        const combined = [...backendData, ...localEvents].sort(
-          (a, b) => new Date(b.created_at) - new Date(a.created_at)
-        )
+        // Combine and derive event_type for legacy events if missing
+        const combined = [...backendData, ...localEvents].map(item => {
+          let derivedType = item.event_type || item.eventType
+          if (!derivedType) {
+            if (item.to_stage === 'CHECKLIST_UPDATE' || item.transition_reason?.toLowerCase().includes('checklist')) {
+              derivedType = 'CHECKLIST'
+            } else if (item.transition_reason?.toLowerCase().includes('pricing') || item.transition_reason?.toLowerCase().includes('quote')) {
+              derivedType = 'PRICING'
+            } else if (item.transition_reason?.toLowerCase().includes('oem')) {
+              derivedType = 'OEM'
+            } else if (item.transition_reason?.toLowerCase().includes('alert') || item.transition_reason?.toLowerCase().includes('mail')) {
+              derivedType = 'ALERT'
+            } else if (item.transition_reason?.toLowerCase().includes('outcome')) {
+              derivedType = 'OUTCOME'
+            } else {
+              derivedType = 'STAGE_CHANGE'
+            }
+          }
+          return { ...item, event_type: derivedType }
+        }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
 
         setHistory(combined)
         if (combined.length > 0) {
@@ -356,103 +546,276 @@ function StageHistoryTab({ bidId }) {
     return () => window.removeEventListener('onetrack_history_updated', loadHistory)
   }, [bidId])
 
-  if (loading) return <div className="flex justify-center py-8"><Loader2 className="size-5 animate-spin text-muted-foreground"/></div>
-  if (history.length === 0) return <p className="text-sm text-muted-foreground py-4 text-center">No stage history yet.</p>
+  if (loading) return <div className="flex justify-center py-12"><Loader2 className="size-6 animate-spin text-primary"/></div>
+
+  // Filter history
+  const filteredHistory = history.filter(item => {
+    if (filterType !== 'ALL' && item.event_type !== filterType) return false
+    if (selectedStageFilter && item.to_stage !== selectedStageFilter && item.from_stage !== selectedStageFilter) return false
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      const reason = (item.transition_reason || '').toLowerCase()
+      const user = getUserDisplayName(item.transitioned_by).toLowerCase()
+      const stage = (item.to_stage || '').toLowerCase()
+      return reason.includes(q) || user.includes(q) || stage.includes(q)
+    }
+    return true
+  })
+
+  // Stage event counters for graph
+  const stageEventCounts = WORKFLOW_STAGES.reduce((acc, stg) => {
+    acc[stg] = history.filter(h => h.to_stage === stg || h.from_stage === stg).length
+    return acc
+  }, {})
 
   const activeIndex = hoveredIndex !== null ? hoveredIndex : (selectedIndex !== null ? selectedIndex : 0)
-  const activeEntry = history[activeIndex]
-  const isLatestActive = activeIndex === 0
+  const activeEntry = filteredHistory[activeIndex] || filteredHistory[0]
+  const isLatestActive = activeIndex === 0 && filterType === 'ALL' && !searchQuery && !selectedStageFilter
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-5 gap-6 items-start">
-      {/* Left Column: Interactive Timeline Tree */}
-      <div className="md:col-span-3 space-y-4 relative pl-4">
-        {/* Timeline Connecting Line */}
-        <div className="absolute left-[29px] top-4 bottom-4 w-0.5 bg-border/60" />
+    <div className="space-y-6">
+      {/* Header Audit Control Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border border-border bg-card shadow-sm">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold font-heading text-foreground flex items-center gap-2">
+              <History className="size-4 text-primary" /> Enterprise Stage & Audit History Log
+            </h3>
+            <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 px-2 py-0.5 rounded border border-emerald-200">
+              Granular Micro-Traceability Active
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Complete event stream capturing stage advances, commercial quotes, alerts, checklist modifications, and bid outcome entries.
+          </p>
+        </div>
 
-        <div className="space-y-4">
-          {history.map((h, i) => {
-            const isSelected = i === activeIndex
-            const isLatest = i === 0
-            const IconComponent = STAGE_ICONS[h.to_stage] || Clock
+        {/* Search input */}
+        <div className="relative w-full sm:w-64">
+          <Search className="size-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search audit trail..."
+            className="pl-9 text-xs h-9"
+          />
+          {searchQuery && (
+            <button onClick={() => setSearchQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+              <X className="size-3" />
+            </button>
+          )}
+        </div>
+      </div>
 
+      {/* 12-Stage Visual Stepper Pipeline Map */}
+      <div className="p-4 rounded-xl border border-border bg-card space-y-3 shadow-sm">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+            <Layers className="size-3.5 text-primary" /> Lifecycle Stage Activity Graph
+          </span>
+          {selectedStageFilter && (
+            <button
+              onClick={() => setSelectedStageFilter(null)}
+              className="text-xs text-primary font-medium hover:underline flex items-center gap-1"
+            >
+              Clear Stage Filter ({selectedStageFilter})
+            </button>
+          )}
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2 pt-1">
+          {WORKFLOW_STAGES.map((stg, i) => {
+            const count = stageEventCounts[stg] || 0
+            const isFilterActive = selectedStageFilter === stg
             return (
-              <motion.div
-                key={h.id ?? i}
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.04 }}
-                onMouseEnter={() => setHoveredIndex(i)}
-                onMouseLeave={() => setHoveredIndex(null)}
-                onClick={() => setSelectedIndex(i)}
-                className="relative cursor-pointer pl-8 group"
+              <button
+                key={stg}
+                onClick={() => setSelectedStageFilter(isFilterActive ? null : stg)}
+                className={`p-2 rounded-lg border text-left transition-all text-xs flex flex-col justify-between h-16 ${
+                  isFilterActive
+                    ? 'border-primary bg-primary/10 shadow-sm ring-2 ring-primary/20'
+                    : count > 0
+                    ? 'border-border bg-muted/20 hover:border-primary/50'
+                    : 'border-border/40 bg-muted/5 opacity-60 hover:opacity-100'
+                }`}
               >
-                {/* Node Bullet Icon */}
-                <div
-                  className={`absolute left-0 top-1.5 size-6 rounded-full border bg-background flex items-center justify-center transition-all duration-300 z-10 shadow-sm
-                    ${isSelected
-                      ? 'border-primary ring-4 ring-primary/10 scale-110'
-                      : isLatest
-                      ? 'border-emerald-500 ring-2 ring-emerald-500/10'
-                      : 'border-border group-hover:border-muted-foreground'
-                    }`}
-                >
-                  <IconComponent className={`size-3 transition-colors
-                    ${isSelected
-                      ? 'text-primary'
-                      : isLatest
-                      ? 'text-emerald-500'
-                      : 'text-muted-foreground group-hover:text-foreground'
-                    }`}
-                  />
-                </div>
-
-                {/* Node Card */}
-                <div
-                  className={`p-3 rounded-lg border transition-all duration-300
-                    ${isSelected
-                      ? 'bg-primary/5 border-primary/30 shadow-sm'
-                      : 'bg-card border-border/50 group-hover:border-border group-hover:bg-muted/10'
-                    }`}
-                >
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {h.from_stage && (
-                        <>
-                          <StageBadge stage={h.from_stage} />
-                          <ArrowRight className="size-3 text-muted-foreground" />
-                        </>
-                      )}
-                      <StageBadge stage={h.to_stage} />
-                    </div>
-                  </div>
-
-                  {h.transition_reason && (
-                    <p className="text-xs text-muted-foreground mt-1.5 line-clamp-1 italic">
-                      "{h.transition_reason}"
-                    </p>
+                <div className="flex items-center justify-between w-full">
+                  <span className="font-mono text-[9px] font-bold text-muted-foreground">S{i + 1}</span>
+                  {count > 0 && (
+                    <span className="text-[9px] font-bold bg-primary text-primary-foreground px-1.5 py-0.2 rounded-full">
+                      {count}
+                    </span>
                   )}
-
-                  <div className="flex items-center justify-between mt-2 text-[10px] text-muted-foreground border-t border-border/30 pt-1.5">
-                    <span>
-                      By {getUserDisplayName(h.transitioned_by)}
-                    </span>
-                    <span className="flex items-center gap-1 font-mono text-[9px] text-primary/80 font-medium bg-primary/5 px-2 py-0.5 rounded border border-primary/10">
-                      <Clock className="size-2.5" />
-                      {formatFullDateTime(h.created_at)}
-                    </span>
-                  </div>
                 </div>
-              </motion.div>
+                <span className="font-semibold text-[10px] line-clamp-1 text-foreground leading-tight">
+                  {STAGE_LABELS[stg] || stg}
+                </span>
+              </button>
             )
           })}
         </div>
       </div>
 
-      {/* Right Column: Dynamic Info Card (Sticky) */}
-      <div className="md:col-span-2 md:sticky md:top-4">
-        <StageDetailCard entry={activeEntry} isLatest={isLatestActive} />
+      {/* Filter Category Pills */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        {[
+          { id: 'ALL', label: `All Events (${history.length})` },
+          { id: 'STAGE_CHANGE', label: 'Stage Transitions' },
+          { id: 'OEM', label: 'OEM Matrix' },
+          { id: 'PRICING', label: 'Pricing & Quotes' },
+          { id: 'CHECKLIST', label: 'Checklist Audit' },
+          { id: 'ALERT', label: 'Alerts & Mail' },
+          { id: 'OUTCOME', label: 'Bid Outcomes' }
+        ].map(cat => (
+          <button
+            key={cat.id}
+            onClick={() => setFilterType(cat.id)}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors border ${
+              filterType === cat.id
+                ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                : 'bg-card border-border text-muted-foreground hover:text-foreground hover:bg-muted/30'
+            }`}
+          >
+            {cat.label}
+          </button>
+        ))}
       </div>
+
+      {/* Timeline Stream & Inspector Grid */}
+      {filteredHistory.length === 0 ? (
+        <div className="p-8 text-center border border-dashed border-border rounded-xl bg-card">
+          <AlertCircle className="size-8 text-muted-foreground mx-auto mb-2 opacity-40" />
+          <p className="text-sm font-medium text-foreground">No events found matching your search or filters.</p>
+          <p className="text-xs text-muted-foreground mt-1">Try resetting the stage filter or search term.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-6 items-start">
+          {/* Left Column: Interactive Audit Event Timeline */}
+          <div className="md:col-span-3 space-y-4 relative pl-4">
+            <div className="absolute left-[29px] top-4 bottom-4 w-0.5 bg-border/60" />
+
+            <div className="space-y-4">
+              {filteredHistory.map((h, i) => {
+                const isSelected = i === activeIndex
+                const isLatest = i === 0 && isLatestActive
+                const IconComponent = STAGE_ICONS[h.to_stage] || Clock
+                const badgeInfo = getEventTypeBadge(h.event_type)
+
+                return (
+                  <motion.div
+                    key={h.id ?? i}
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.03 }}
+                    onMouseEnter={() => setHoveredIndex(i)}
+                    onMouseLeave={() => setHoveredIndex(null)}
+                    onClick={() => setSelectedIndex(i)}
+                    className="relative cursor-pointer pl-8 group"
+                  >
+                    {/* Bullet Node */}
+                    <div
+                      className={`absolute left-0 top-1.5 size-6 rounded-full border bg-background flex items-center justify-center transition-all duration-300 z-10 shadow-sm
+                        ${isSelected
+                          ? 'border-primary ring-4 ring-primary/10 scale-110'
+                          : isLatest
+                          ? 'border-emerald-500 ring-2 ring-emerald-500/10'
+                          : 'border-border group-hover:border-muted-foreground'
+                        }`}
+                    >
+                      <IconComponent className={`size-3 transition-colors
+                        ${isSelected
+                          ? 'text-primary'
+                          : isLatest
+                          ? 'text-emerald-500'
+                          : 'text-muted-foreground group-hover:text-foreground'
+                        }`}
+                      />
+                    </div>
+
+                    {/* Card Container */}
+                    <div
+                      className={`p-3.5 rounded-xl border transition-all duration-300 space-y-2
+                        ${isSelected
+                          ? 'bg-primary/5 border-primary/40 shadow-md ring-1 ring-primary/20'
+                          : 'bg-card border-border/70 group-hover:border-border group-hover:bg-muted/10'
+                        }`}
+                    >
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded border ${badgeInfo.class}`}>
+                            {badgeInfo.label}
+                          </span>
+                          {h.from_stage && h.from_stage !== h.to_stage && (
+                            <>
+                              <StageBadge stage={h.from_stage} />
+                              <ArrowRight className="size-3 text-muted-foreground" />
+                            </>
+                          )}
+                          <StageBadge stage={h.to_stage} />
+                        </div>
+                        <span className="flex items-center gap-1 font-mono text-[9px] text-muted-foreground font-medium bg-muted/40 px-2 py-0.5 rounded border border-border/40">
+                          <Clock className="size-2.5" />
+                          {formatFullDateTime(h.created_at)}
+                        </span>
+                      </div>
+
+                      {h.transition_reason && (
+                        <p className="text-xs text-foreground font-medium italic leading-relaxed">
+                          "{h.transition_reason}"
+                        </p>
+                      )}
+
+                      {/* Prominent Commercial & Final Price Chip */}
+                      {(() => {
+                        const c = extractCommercialDetails(h, bid)
+                        if (!c.hasCommercialData) return null
+                        return (
+                          <div className="flex items-center gap-2 flex-wrap pt-1">
+                            {c.quotedPrice && (
+                              <span className="inline-flex items-center gap-1.5 text-[11px] font-mono font-extrabold px-2.5 py-1 rounded-md bg-emerald-500 text-white shadow-xs">
+                                <Coins className="size-3.5 text-emerald-100" />
+                                Final Price: {fmtMoney(c.quotedPrice)}
+                              </span>
+                            )}
+                            {c.grandTotalGlobxPrice && !c.quotedPrice && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-indigo-100 text-indigo-900 dark:bg-indigo-950 dark:text-indigo-200 border border-indigo-300/60">
+                                Total GlobX Price: {fmtMoney(c.grandTotalGlobxPrice)}
+                              </span>
+                            )}
+                            {c.l1Price && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 border border-amber-300/60">
+                                L1: {fmtMoney(c.l1Price)}
+                              </span>
+                            )}
+                            {c.outcome && (
+                              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded border uppercase tracking-wider ${
+                                c.outcome === 'WON' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200' : 'bg-red-100 text-red-800 border-red-300 dark:bg-red-950 dark:text-red-200'
+                              }`}>
+                                {c.outcome === 'WON' ? 'WON / L1' : 'LOST'}
+                              </span>
+                            )}
+                          </div>
+                        )
+                      })()}
+
+                      <div className="flex items-center justify-between text-[10px] text-muted-foreground border-t border-border/40 pt-1.5">
+                        <span className="font-semibold text-primary/90 flex items-center gap-1">
+                          <Users className="size-3 text-primary/60" /> By {getUserDisplayName(h.transitioned_by)}
+                        </span>
+                        <span className="font-mono text-[9px]">ID: {h.id ? String(h.id).substring(0, 14) : `evt-${i}`}</span>
+                      </div>
+                    </div>
+                  </motion.div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Right Column: Audit Inspector Detail Card (Sticky) */}
+          <div className="md:col-span-2 md:sticky md:top-4">
+            <StageDetailCard entry={activeEntry} isLatest={isLatestActive} bid={bid} />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1106,6 +1469,17 @@ function StageActionPanel({ bid, onSelectStage }) {
 function OutcomePanel({ bid }) {
   if (!bid.bid_outcome) return null
 
+  // Calculate price difference percentage dynamically from quoted_price and l1_price
+  let priceDiffPct = null
+  const ourP = bid.quoted_price ? Number(bid.quoted_price) : null
+  const l1P = bid.l1_price ? Number(bid.l1_price) : null
+
+  if (ourP != null && l1P != null && l1P > 0) {
+    priceDiffPct = ((ourP - l1P) / l1P) * 100
+  } else if (bid.price_difference_pct != null) {
+    priceDiffPct = Number(bid.price_difference_pct)
+  }
+
   return (
     <div className="rounded-lg border border-border p-4 space-y-3 bg-muted/10">
       <div className="flex items-center justify-between">
@@ -1124,26 +1498,47 @@ function OutcomePanel({ bid }) {
         {bid.bid_outcome !== 'CANCELLED' && (
           <>
             <div>
-              <span className="text-muted-foreground text-[10px] uppercase tracking-wider block">Final Value</span>
-              <span className="font-semibold text-foreground">{fmtMoney(bid.final_bid_value)}</span>
+              <span className="text-muted-foreground text-[10px] uppercase tracking-wider block">Our Quoted Price</span>
+              <span className="font-semibold text-foreground">{bid.quoted_price ? fmtMoney(bid.quoted_price) : '—'}</span>
             </div>
             <div>
               <span className="text-muted-foreground text-[10px] uppercase tracking-wider block">Result Date</span>
-              <span className="font-semibold text-foreground">{fmt(bid.result_date)}</span>
+              <span className="font-semibold text-foreground">{bid.result_date ? fmt(bid.result_date) : '—'}</span>
             </div>
-            <div>
-              <span className="text-muted-foreground text-[10px] uppercase tracking-wider block">Quoted Price</span>
-              <span className="font-semibold text-foreground">{fmtMoney(bid.quoted_price)}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground text-[10px] uppercase tracking-wider block">L1 Price</span>
-              <span className="font-semibold text-foreground">{fmtMoney(bid.l1_price)}</span>
-            </div>
+            {bid.l1_price && (
+              <div>
+                <span className="text-muted-foreground text-[10px] uppercase tracking-wider block">L1 Price</span>
+                <span className={`font-semibold ${bid.bid_outcome === 'LOST' ? 'text-red-600 dark:text-red-400' : 'text-foreground'}`}>{fmtMoney(bid.l1_price)}</span>
+              </div>
+            )}
+            {/* LOST-specific comparative analytics */}
+            {bid.bid_outcome === 'LOST' && bid.l1_company_name && (
+              <div>
+                <span className="text-muted-foreground text-[10px] uppercase tracking-wider block">L1 Company</span>
+                <span className="font-semibold text-foreground">{bid.l1_company_name}</span>
+              </div>
+            )}
+            {bid.bid_outcome === 'LOST' && priceDiffPct != null && (
+              <div className="col-span-2">
+                <span className="text-muted-foreground text-[10px] uppercase tracking-wider block">Price Difference vs L1</span>
+                <span className={`font-bold font-mono text-sm ${priceDiffPct > 0 ? 'text-red-600 dark:text-red-400' : priceDiffPct < 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`}>
+                  {priceDiffPct > 0 ? '+' : ''}{priceDiffPct.toFixed(2)}%
+                  <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                    {priceDiffPct > 0
+                      ? '(GlobX quoted higher than L1)'
+                      : priceDiffPct < 0
+                      ? '(GlobX quoted lower than L1)'
+                      : '(Same price as L1)'}
+                  </span>
+                </span>
+              </div>
+            )}
           </>
         )}
+
         <div className="col-span-2">
-          <span className="text-muted-foreground text-[10px] uppercase tracking-wider block">Reason / Remarks</span>
-          <p className="text-foreground mt-1 whitespace-pre-wrap text-xs bg-card p-3 rounded-lg border border-border/80 leading-relaxed">{bid.outcome_reason || 'No remarks provided.'}</p>
+          <span className="text-muted-foreground text-[10px] uppercase tracking-wider block">Formal Outcome Summary</span>
+          <pre className="text-foreground mt-1 whitespace-pre-wrap text-xs bg-card p-3 rounded-lg border border-border/80 leading-relaxed font-sans">{bid.outcome_reason || 'No remarks provided.'}</pre>
         </div>
         {bid.bid_outcome !== 'CANCELLED' && bid.competitor_info && bid.competitor_info.length > 0 && (
           <div className="col-span-2 pt-2 border-t border-border/80">
@@ -1719,7 +2114,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
 
         {/* Visual 12-Stage Stepper */}
         <div className="pt-2 border-t border-border/40">
-          <WorkflowStepper currentStage={bid.workflow_stage}/>
+          <WorkflowStepper currentStage={bid.workflow_stage} stageCompletions={bid.stage_completions} />
         </div>
 
         {/* Quick meta */}
@@ -1836,7 +2231,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
           )}
           {activeTab === 'stages' && <StageSectionsTab bid={bid} onRefresh={loadBid} onAdvance={() => setShowTransition(true)} />}
           {activeTab === 'checklist' && <ChecklistTab bid={bid} onRefresh={loadBid}/>}
-          {activeTab === 'history' && <StageHistoryTab bidId={bid.id}/>}
+          {activeTab === 'history' && <StageHistoryTab bidId={bid.id} bid={bid} />}
           {activeTab === 'members' && <MembersTab bid={bid} onRefresh={loadBid}/>}
         </motion.div>
       </AnimatePresence>

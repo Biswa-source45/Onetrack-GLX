@@ -161,7 +161,7 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
       const payload = {
         employee_code: form.employee_code.trim(),
         full_name:     form.full_name.trim(),
-        username:      form.username.trim(),
+        username:      form.username.trim().toLowerCase(),
         password:      form.password,
         roles:         form.roles,
         ...(form.email.trim()      && { email:      form.email.trim() }),
