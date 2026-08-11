@@ -366,6 +366,18 @@ type UserSummary struct {
 	ID       string `json:"id"`
 	FullName string `json:"full_name"`
 	Username string `json:"username"`
+	Role     string `json:"role,omitempty"`
+}
+
+type GlobalAuditItem struct {
+	ID               string      `json:"id"`
+	BidID            string      `json:"bid_id"`
+	BidTitle         string      `json:"bid_title"`
+	FromStage        *string     `json:"from_stage,omitempty"`
+	ToStage          string      `json:"to_stage"`
+	TransitionReason *string     `json:"transition_reason,omitempty"`
+	TransitionedBy   UserSummary `json:"transitioned_by"`
+	CreatedAt        time.Time   `json:"created_at"`
 }
 
 type MemberResponse struct {

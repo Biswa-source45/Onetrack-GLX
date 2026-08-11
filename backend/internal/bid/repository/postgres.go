@@ -804,13 +804,51 @@ func (r *postgresBidRepo) ToggleChecklist(ctx context.Context, checklistID strin
 func (r *postgresBidRepo) GetUserSummary(ctx context.Context, userID string) (*domain.UserSummary, error) {
 	var u domain.UserSummary
 	err := r.pool.QueryRow(ctx,
-		"SELECT id, COALESCE(full_name, username), username FROM auth.users WHERE id = $1",
+		"SELECT id, COALESCE(full_name, username), username, COALESCE(role, 'USER') FROM auth.users WHERE id = $1",
 		userID,
-	).Scan(&u.ID, &u.FullName, &u.Username)
+	).Scan(&u.ID, &u.FullName, &u.Username, &u.Role)
 	if err != nil {
 		return nil, err
 	}
 	return &u, nil
+}
+
+func (r *postgresBidRepo) GetGlobalAuditLogs(ctx context.Context, limit int) ([]domain.GlobalAuditItem, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT h.id, h.bid_id, COALESCE(b.title, 'Deleted Bid'), h.from_stage, h.to_stage,
+		       h.transition_reason, h.transitioned_by, h.created_at,
+		       COALESCE(u.full_name, u.username, 'System User'), COALESCE(u.username, 'system'), COALESCE(u.role, 'USER')
+		FROM bid.bid_stage_history h
+		LEFT JOIN bid.bid_workspaces b ON b.id = h.bid_id
+		LEFT JOIN auth.users u ON u.id = h.transitioned_by
+		ORDER BY h.created_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []domain.GlobalAuditItem
+	for rows.Next() {
+		var item domain.GlobalAuditItem
+		var user domain.UserSummary
+		if err := rows.Scan(&item.ID, &item.BidID, &item.BidTitle, &item.FromStage, &item.ToStage,
+			&item.TransitionReason, &item.TransitionedBy.ID, &item.CreatedAt,
+			&user.FullName, &user.Username, &user.Role); err != nil {
+			return nil, err
+		}
+		user.ID = item.TransitionedBy.ID
+		item.TransitionedBy = user
+		logs = append(logs, item)
+	}
+	if logs == nil {
+		logs = []domain.GlobalAuditItem{}
+	}
+	return logs, nil
 }
 
 // ────────────────────────────────────────

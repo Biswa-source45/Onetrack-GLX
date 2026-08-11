@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	alertDomain "github.com/onetrack/backend/internal/alert/domain"
@@ -375,10 +376,94 @@ func (s *bidService) ListBids(ctx context.Context, params domain.ListBidsParams)
 	}, nil
 }
 
-func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.UpdateBidRequest) error {
+func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.UpdateBidRequest, actorID string) error {
 	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
+	}
+
+	if actorID == "" {
+		actorID = "SYSTEM"
+	}
+
+	// Build human-readable audit change summaries for field changes
+	var changes []string
+
+	if req.Title != nil && *req.Title != bid.Title {
+		changes = append(changes, fmt.Sprintf("Title: '%s' → '%s'", bid.Title, *req.Title))
+	}
+	if req.EstimatedValue != nil {
+		oldVal := 0.0
+		if bid.EstimatedValue != nil { oldVal = *bid.EstimatedValue }
+		if *req.EstimatedValue != oldVal {
+			changes = append(changes, fmt.Sprintf("Est Value: ₹%.2f → ₹%.2f", oldVal, *req.EstimatedValue))
+		}
+	}
+	if req.EMDAmount != nil {
+		oldVal := 0.0
+		if bid.EMDAmount != nil { oldVal = *bid.EMDAmount }
+		if *req.EMDAmount != oldVal {
+			changes = append(changes, fmt.Sprintf("EMD Amount: ₹%.2f → ₹%.2f", oldVal, *req.EMDAmount))
+		}
+	}
+	if req.GemSubmissionPrice != nil {
+		oldVal := 0.0
+		if bid.GemSubmissionPrice != nil { oldVal = *bid.GemSubmissionPrice }
+		if *req.GemSubmissionPrice != oldVal {
+			changes = append(changes, fmt.Sprintf("Submitted Price: ₹%.2f → ₹%.2f", oldVal, *req.GemSubmissionPrice))
+		}
+	}
+	if req.FinalPrice != nil {
+		oldVal := 0.0
+		if bid.FinalPrice != nil { oldVal = *bid.FinalPrice }
+		if *req.FinalPrice != oldVal {
+			changes = append(changes, fmt.Sprintf("Final Price: ₹%.2f → ₹%.2f", oldVal, *req.FinalPrice))
+		}
+	}
+	if req.L1Price != nil {
+		oldVal := 0.0
+		if bid.L1Price != nil { oldVal = *bid.L1Price }
+		if *req.L1Price != oldVal {
+			changes = append(changes, fmt.Sprintf("L1 Price: ₹%.2f → ₹%.2f", oldVal, *req.L1Price))
+		}
+	}
+	if req.Category != nil {
+		oldCat := "—"
+		if bid.Category != nil { oldCat = *bid.Category }
+		if *req.Category != oldCat {
+			changes = append(changes, fmt.Sprintf("Category: '%s' → '%s'", oldCat, *req.Category))
+		}
+	}
+	if req.PortalSource != nil && *req.PortalSource != bid.PortalSource {
+		changes = append(changes, fmt.Sprintf("Portal Source: '%s' → '%s'", bid.PortalSource, *req.PortalSource))
+	}
+	if req.DepartmentName != nil {
+		oldDept := "—"
+		if bid.DepartmentName != nil { oldDept = *bid.DepartmentName }
+		if *req.DepartmentName != oldDept {
+			changes = append(changes, fmt.Sprintf("Department: '%s' → '%s'", oldDept, *req.DepartmentName))
+		}
+	}
+	if req.POReceivedStatus != nil {
+		oldStatus := "Pending"
+		if bid.POReceivedStatus != nil { oldStatus = *bid.POReceivedStatus }
+		if *req.POReceivedStatus != oldStatus {
+			changes = append(changes, fmt.Sprintf("PO Received Status: '%s' → '%s'", oldStatus, *req.POReceivedStatus))
+		}
+	}
+	if req.Team != nil {
+		oldTeam := "—"
+		if bid.Team != nil { oldTeam = *bid.Team }
+		if *req.Team != oldTeam {
+			changes = append(changes, fmt.Sprintf("Team: '%s' → '%s'", oldTeam, *req.Team))
+		}
+	}
+	if req.ScopeType != nil {
+		oldScope := "—"
+		if bid.ScopeType != nil { oldScope = *bid.ScopeType }
+		if *req.ScopeType != oldScope {
+			changes = append(changes, fmt.Sprintf("Scope Type: '%s' → '%s'", oldScope, *req.ScopeType))
+		}
 	}
 
 	// Automate transition to LOST when technical_result is DISQUALIFIED during Technical Evaluation stage
@@ -397,13 +482,36 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 				FromStage:        &prevStage,
 				ToStage:          "LOST",
 				TransitionReason: &reason,
-				TransitionedBy:   "SYSTEM",
+				TransitionedBy:   actorID,
 			})
 			_ = s.repo.UpdateStage(ctx, id, "LOST", "LOST")
 		}
 	}
 
-	return s.repo.Update(ctx, id, req)
+	if err := s.repo.Update(ctx, id, req); err != nil {
+		return err
+	}
+
+	if len(changes) > 0 {
+		reason := strings.Join(changes, " | ")
+		toStage := bid.WorkflowStage
+		if req.WorkflowStage != nil {
+			toStage = *req.WorkflowStage
+		}
+		_ = s.repo.AddStageHistory(ctx, &domain.BidStageHistory{
+			BidID:            id,
+			FromStage:        &bid.WorkflowStage,
+			ToStage:          toStage,
+			TransitionReason: &reason,
+			TransitionedBy:   actorID,
+		})
+	}
+
+	return nil
+}
+
+func (s *bidService) GetGlobalAuditLogs(ctx context.Context, limit int) ([]domain.GlobalAuditItem, error) {
+	return s.repo.GetGlobalAuditLogs(ctx, limit)
 }
 
 func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain.TransitionStageRequest, actorID string) (*domain.TransitionResult, error) {

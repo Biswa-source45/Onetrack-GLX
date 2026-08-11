@@ -105,11 +105,22 @@ func (h *BidHandler) UpdateBid(c *gin.Context) {
 		response.BadRequest(c, err.Error(), nil)
 		return
 	}
-	if err := h.svc.UpdateBid(c.Request.Context(), id, &req); err != nil {
+	actorID := c.GetString("user_id")
+	if err := h.svc.UpdateBid(c.Request.Context(), id, &req, actorID); err != nil {
 		response.NotFound(c, "Bid not found")
 		return
 	}
 	response.Success(c, http.StatusOK, "Bid updated successfully", nil)
+}
+
+func (h *BidHandler) GetGlobalAuditLogs(c *gin.Context) {
+	limit := parseIntQuery(c, "limit", 100)
+	logs, err := h.svc.GetGlobalAuditLogs(c.Request.Context(), limit)
+	if err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Audit history retrieved successfully", logs)
 }
 
 func (h *BidHandler) TransitionStage(c *gin.Context) {

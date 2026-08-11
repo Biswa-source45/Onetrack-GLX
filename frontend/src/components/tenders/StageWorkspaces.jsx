@@ -1835,14 +1835,14 @@ export function Stage11Workspace({ bid, onRefresh }) {
   const [l1Name, setL1Name] = useState(bid?.l1_company_name || '')
   const [l1Price, setL1Price] = useState(bid?.l1_price ? String(bid.l1_price) : '')
   const [ourRank, setOurRank] = useState(bid?.our_rank || '')
-  // Our quoted price comes from Stage 9 (GeM submission final price saved to bid.quoted_price)
-  // If not yet set, allow manual entry
-  const [manualOurPrice, setManualOurPrice] = useState('')
 
-  const ourQuotedPrice = bid?.quoted_price || (manualOurPrice ? Number(manualOurPrice) : null)
+  // Pre-populate from Stage 9: quoted_price is saved when Stage 9 completes.
+  // gem_submission_price is an alternate field. User can still edit if needed.
+  const stage9Price = bid?.quoted_price || bid?.gem_submission_price || ''
+  const [ourPrice, setOurPrice] = useState(stage9Price ? String(stage9Price) : '')
 
   const l1PriceNum = Number(l1Price) || 0
-  const ourPriceNum = Number(ourQuotedPrice) || 0
+  const ourPriceNum = Number(ourPrice) || 0
   const priceDiffPct = (l1PriceNum > 0 && ourPriceNum > 0)
     ? (((ourPriceNum - l1PriceNum) / l1PriceNum) * 100)
     : null
@@ -1981,27 +1981,31 @@ export function Stage11Workspace({ bid, onRefresh }) {
               </label>
             </div>
           </div>
-          {/* Our quoted price from GeM Submission (Stage 9) */}
-          {bid?.quoted_price ? (
-            <div className="p-2.5 rounded-lg bg-blue-50 border border-blue-200 dark:bg-blue-950/20 text-xs flex items-center justify-between">
-              <div>
-                <span className="font-semibold text-blue-800 dark:text-blue-300">Our GeM Submitted Price</span>
-                <p className="text-blue-600 dark:text-blue-400 text-[10px]">Saved from Stage 9 — GeM Portal Submission</p>
-              </div>
-              <span className="font-mono font-bold text-blue-900 dark:text-blue-200 text-sm">{fmtMoney(bid.quoted_price)}</span>
+          {/* Our GeM Submitted Price — pre-filled from Stage 9, always editable */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs font-medium">Our GeM Submitted Price (₹) *</Label>
+              {stage9Price ? (
+                <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 dark:bg-emerald-950/30 dark:text-emerald-400">
+                  ✓ Auto-filled from Stage 9
+                </span>
+              ) : (
+                <span className="text-[10px] text-amber-600 italic">Stage 9 price not set — enter manually</span>
+              )}
             </div>
-          ) : (
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-amber-700">Our GeM Submitted Price (₹) <span className="text-[10px] font-normal text-muted-foreground">— not found from Stage 9, enter manually</span></Label>
-              <Input
-                type="number"
-                value={manualOurPrice}
-                onChange={e => setManualOurPrice(e.target.value)}
-                placeholder="Enter the exact price submitted on GeM portal"
-                className="h-8 text-xs border-amber-300"
-              />
-            </div>
-          )}
+            <Input
+              type="number"
+              value={ourPrice}
+              onChange={e => setOurPrice(e.target.value)}
+              placeholder="Enter the exact price submitted on GeM portal"
+              className={`h-8 text-xs font-mono ${stage9Price && !ourPrice ? 'border-amber-300' : ''}`}
+            />
+            {ourPriceNum > 0 && (
+              <p className="text-[10px] text-muted-foreground">
+                ≈ {fmtMoney(ourPriceNum)} — this is the price GlobX submitted on GeM Portal
+              </p>
+            )}
+          </div>
           {outcome === 'LOST' && (
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-2">
@@ -2036,6 +2040,8 @@ export function Stage12Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
   const [emdReturned, setEmdReturned] = useState(!!bid?.emd_returned)
   const [bgProceeded, setBgProceeded] = useState(!!bid?.bg_discharged)
+  // PO Received: true when po_received_status === 'PO Received'
+  const [poReceived, setPoReceived] = useState(bid?.po_received_status === 'PO Received')
 
   // Determine if this is a WON or LOST scenario
   // Lost is set when financial eval records LOST outcome, or bid_status is LOST
@@ -2045,7 +2051,8 @@ export function Stage12Workspace({ bid, onRefresh }) {
   useEffect(() => {
     setEmdReturned(!!bid?.emd_returned)
     setBgProceeded(!!bid?.bg_discharged)
-  }, [bid?.emd_returned, bid?.bg_discharged])
+    setPoReceived(bid?.po_received_status === 'PO Received')
+  }, [bid?.emd_returned, bid?.bg_discharged, bid?.po_received_status])
 
   const handleEmdToggle = async (checked) => {
     setEmdReturned(checked)
@@ -2060,6 +2067,29 @@ export function Stage12Workspace({ bid, onRefresh }) {
           details: { emdReturned: checked }
         })
         toast.success(checked ? 'EMD marked as Returned' : 'EMD marked as Pending Return')
+        onRefresh()
+      }
+    } catch {
+      toast.error('Network error')
+    }
+  }
+
+  const handlePoReceivedToggle = async (checked) => {
+    setPoReceived(checked)
+    const newStatus = checked ? 'PO Received' : 'Pending'
+    try {
+      const res = await updateBid(bid.id, { po_received_status: newStatus })
+      if (res.ok) {
+        logStageMicroEvent(bid.id, {
+          fromStage: 'AWARD_HANDOVER',
+          toStage: 'AWARD_HANDOVER',
+          eventType: 'FINANCE',
+          transitionReason: checked
+            ? 'Purchase Order (PO) confirmed as Received from Procuring Authority'
+            : 'PO Received status reverted to Pending',
+          details: { poReceived: checked, po_received_status: newStatus }
+        })
+        toast.success(checked ? '✅ PO marked as Received' : 'PO status set to Pending')
         onRefresh()
       }
     } catch {
@@ -2091,7 +2121,7 @@ export function Stage12Workspace({ bid, onRefresh }) {
     if (isWonScenario) {
       await recordBidOutcome(bid.id, {
         bid_outcome: 'WON',
-        outcome_reason: `Award & Handover Completed. EMD Returned: ${emdReturned ? 'Yes' : 'No'}, PBG Submitted: ${bgProceeded ? 'Yes' : 'No'}. ${remarks}`,
+        outcome_reason: `Award & Handover Completed. EMD Returned: ${emdReturned ? 'Yes' : 'No'}, PBG Submitted: ${bgProceeded ? 'Yes' : 'No'}, PO Received: ${poReceived ? 'Yes' : 'Pending'}. ${remarks}`,
       })
       confetti({ particleCount: 200, spread: 100 })
     } else {
@@ -2165,6 +2195,27 @@ export function Stage12Workspace({ bid, onRefresh }) {
               <div>
                 <span className="font-medium">Performance Bank Guarantee (PBG) Issued &amp; Submitted</span>
                 <p className="text-muted-foreground text-[10px]">Confirm PBG has been submitted to the procuring authority (WON bids only)</p>
+              </div>
+            </label>
+          )}
+          {/* PO Received — shown ONLY for WON bids */}
+          {isWonScenario && (
+            <label className={`flex items-center gap-2 cursor-pointer p-2.5 rounded-lg border transition-colors ${
+              poReceived
+                ? 'border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 hover:bg-emerald-50 dark:hover:bg-emerald-950/30'
+                : 'border-amber-200 bg-amber-50/30 dark:bg-amber-950/10 hover:bg-amber-50/50'
+            }`}>
+              <input type="checkbox" checked={poReceived} onChange={e => handlePoReceivedToggle(e.target.checked)} className="rounded" />
+              <div className="flex-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">Purchase Order (PO) Received</span>
+                  {poReceived ? (
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 border border-emerald-300 rounded px-1.5 py-0.5">✓ Received</span>
+                  ) : (
+                    <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5">⏳ Pending</span>
+                  )}
+                </div>
+                <p className="text-muted-foreground text-[10px] mt-0.5">Confirm Purchase Order has been formally received from the procuring authority (WON bids only)</p>
               </div>
             </label>
           )}

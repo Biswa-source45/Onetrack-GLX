@@ -6,7 +6,7 @@ import {
   Building2, Calendar, DollarSign, Tag, ArrowUpRight, Loader2, X,
   AlertCircle, TrendingUp, FileText, Zap, MoreHorizontal, Eye,
   CheckCircle2, XCircle, Clock, Archive, LayoutGrid, TableProperties, ShieldCheck,
-  User, Check, Square, Trash2, RotateCcw, Ban
+  User, Check, Square, Trash2, RotateCcw, Ban, History, PanelRightOpen, Eraser
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -26,10 +26,11 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 import {
-  listBids, getBid, updateBid, transitionBidStage, restoreBid, permanentDeleteBid, STAGE_LABELS, STAGE_COLORS, STATUS_COLORS, STAGE_TRANSITIONS,
+  listBids, getBid, updateBid, transitionBidStage, restoreBid, permanentDeleteBid, getGlobalAuditHistory, STAGE_LABELS, STAGE_COLORS, STATUS_COLORS, STAGE_TRANSITIONS,
 } from '../../services/bids'
 import { usePermissions } from '../../hooks/usePermissions'
 import { useBidStore } from '../../store/useBidStore'
+import { tokenStorage } from '../../services/auth'
 
 // ── Stage List order for progress computation ────────────────────────────────
 const STAGES_ORDER = [
@@ -178,12 +179,12 @@ function getFinEvalStatusVal(bid) {
 }
 
 function getPoRecvStatusVal(bid) {
+  // Only show value from DB — never auto-set as PO Received just because bid is WON.
+  // PO Received is manually toggled inside Stage 12 checklist.
   if (bid.po_received_status && bid.po_received_status.trim() !== '') {
     return bid.po_received_status
   }
   const status = bid.bid_status || ''
-  const stage = bid.workflow_stage || ''
-  if (status === 'WON' || stage === 'AWARD_DELIVERY_HANDOVER') return 'PO Received'
   if (status === 'LOST' || status === 'CANCELLED') return 'N/A'
   return 'Pending'
 }
@@ -450,6 +451,29 @@ export function TendersPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [sheetEditable, setSheetEditable] = useState(false)
+  const [showAuditPanel, setShowAuditPanel] = useState(false)
+  const [sheetAuditLog, setSheetAuditLog] = useState([])
+  const [loadingAudit, setLoadingAudit] = useState(false)
+
+  const fetchAuditLogs = useCallback(async () => {
+    setLoadingAudit(true)
+    try {
+      const res = await getGlobalAuditHistory(100)
+      if (res.ok && Array.isArray(res.data)) {
+        setSheetAuditLog(res.data)
+      }
+    } catch (err) {
+      console.error('Failed to load audit history:', err)
+    } finally {
+      setLoadingAudit(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (showAuditPanel) {
+      fetchAuditLogs()
+    }
+  }, [showAuditPanel, fetchAuditLogs])
 
   const toggleSheetEditable = () => {
     const nextState = !sheetEditable
@@ -738,6 +762,10 @@ export function TendersPage() {
           })
           useBidStore.setState({ bids: updated })
         }
+        // Refresh database-backed audit log if open
+        if (showAuditPanel) {
+          fetchAuditLogs()
+        }
       } else {
         toast.error(res.error?.message ?? 'Failed to auto-save field')
         loadBids()
@@ -995,6 +1023,20 @@ export function TendersPage() {
               </button>
             )}
 
+            {viewMode === 'sheets' && (
+              <button
+                onClick={() => setShowAuditPanel(p => !p)}
+                className={`h-8.5 px-3 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm
+                  ${showAuditPanel
+                    ? 'bg-indigo-600 text-white ring-2 ring-indigo-500/20'
+                    : 'bg-background hover:bg-muted border border-border text-muted-foreground hover:text-foreground'}`}
+                title="Sheet Change History"
+              >
+                <History className={`size-3.5 ${showAuditPanel ? 'text-white' : 'text-muted-foreground'}`} />
+                {sheetAuditLog.length > 0 ? `History (${sheetAuditLog.length})` : 'History'}
+              </button>
+            )}
+
             <div className="flex items-center border border-border rounded-lg p-0.5 bg-muted/40">
               <button
                 onClick={() => setViewMode('cards')}
@@ -1238,7 +1280,9 @@ export function TendersPage() {
             </div>
           ) : (
             /* ── Sheet View (Wide Spreadsheet Table) ── */
-            <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden w-full">
+            <div className={`flex gap-3 w-full items-start`}>
+              {/* Table */}
+              <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden flex-1 min-w-0">
               <div className="w-full overflow-x-auto overflow-y-hidden">
                 <table className="min-w-full w-max text-left border-collapse text-xs">
                   <thead>
@@ -1272,11 +1316,9 @@ export function TendersPage() {
                   </thead>
                   <tbody className="divide-y divide-border">
                     {effectiveBids.map((bid) => {
-                      const isReadOnly = !sheetEditable || 
-                        bid.bid_status === 'ARCHIVED' || 
-                        bid.bid_status === 'CANCELLED' || 
-                        bid.bid_status === 'WON' || 
-                        bid.bid_status === 'LOST'
+                      // WON and LOST bids are still editable (for typo corrections etc.).
+                      // Only ARCHIVED/CANCELLED are truly read-only in sheet mode.
+                      const isReadOnly = !sheetEditable || bid.bid_status === 'ARCHIVED'
                       return (
                         <tr 
                           key={bid.id} 
@@ -1783,6 +1825,101 @@ export function TendersPage() {
                   </tbody>
                 </table>
               </div>
+              </div>{/* close table card div */}
+
+              {/* ── Sheet Audit Panel (Smooth Sliding Sidebar Drawer) ─────────────────── */}
+              <AnimatePresence>
+                {showAuditPanel && (
+                  <motion.div
+                    initial={{ opacity: 0, x: 60, scale: 0.96 }}
+                    animate={{ opacity: 1, x: 0, scale: 1 }}
+                    exit={{ opacity: 0, x: 60, scale: 0.96 }}
+                    transition={{ type: 'spring', damping: 25, stiffness: 320 }}
+                    className="w-84 shrink-0 rounded-xl border border-indigo-200 bg-indigo-50/70 dark:bg-indigo-950/30 dark:border-indigo-900/60 shadow-lg overflow-hidden flex flex-col max-h-[80vh] sticky top-4"
+                  >
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-indigo-200 dark:border-indigo-900/60 bg-indigo-100/80 dark:bg-indigo-900/40 backdrop-blur-sm">
+                      <div className="flex items-center gap-2">
+                        <History className="size-4 text-indigo-600 dark:text-indigo-400" />
+                        <span className="text-xs font-bold text-indigo-900 dark:text-indigo-200 tracking-wide">Database Audit Trail</span>
+                        {sheetAuditLog.length > 0 && (
+                          <span className="text-[10px] font-bold bg-indigo-600 text-white rounded-full px-2 py-0.5 shadow-xs">
+                            {sheetAuditLog.length}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={fetchAuditLogs}
+                          className="p-1 rounded-md text-indigo-600 dark:text-indigo-400 hover:bg-indigo-200/60 dark:hover:bg-indigo-800/50 transition-colors"
+                          title="Refresh Audit Logs"
+                        >
+                          <RefreshCw className={`size-3.5 ${loadingAudit ? 'animate-spin' : ''}`} />
+                        </button>
+                        <button
+                          onClick={() => setShowAuditPanel(false)}
+                          className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-indigo-200/60 dark:hover:bg-indigo-800/50 transition-colors"
+                          title="Close / Minimize Panel"
+                        >
+                          <X className="size-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Log entries */}
+                    <div className="overflow-y-auto flex-1 divide-y divide-indigo-100 dark:divide-indigo-900/40">
+                      {loadingAudit ? (
+                        <div className="p-6 text-center text-xs text-muted-foreground flex flex-col items-center gap-2">
+                          <Loader2 className="size-5 animate-spin text-indigo-500" />
+                          Loading database audit trail...
+                        </div>
+                      ) : sheetAuditLog.length === 0 ? (
+                        <div className="p-6 text-center text-xs text-muted-foreground">
+                          <History className="size-8 mx-auto mb-2 text-indigo-200" />
+                          No system logs recorded yet.<br />Edit tender fields to create audit entries.
+                        </div>
+                      ) : sheetAuditLog.map(entry => {
+                        const user = entry.transitioned_by || {}
+                        const userName = user.full_name || user.username || 'System'
+                        const userRole = user.role || 'USER'
+                        const dateStr = entry.created_at ? new Date(entry.created_at) : new Date()
+
+                        return (
+                          <div key={entry.id} className="px-3.5 py-2.5 text-[11px] space-y-1.5 hover:bg-indigo-100/50 dark:hover:bg-indigo-900/20 transition-colors">
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold text-indigo-900 dark:text-indigo-300 truncate max-w-[170px]" title={entry.bid_title}>
+                                {entry.bid_title}
+                              </span>
+                              <span className="text-muted-foreground text-[10px] shrink-0 ml-1">
+                                {dateStr.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                              </span>
+                            </div>
+
+                            <div className="text-[11px] font-medium text-foreground bg-background/90 border border-indigo-100 dark:border-indigo-900/50 rounded-lg p-2 leading-snug shadow-2xs">
+                              {entry.transition_reason || (
+                                <span className="text-indigo-600 dark:text-indigo-400 font-semibold">
+                                  Stage: {entry.from_stage ? `${entry.from_stage} → ` : ''}{entry.to_stage}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-0.5">
+                              <div className="flex items-center gap-1">
+                                <span>By</span>
+                                <span className="font-semibold text-foreground">{userName}</span>
+                                <span className="text-[9px] uppercase font-mono bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 rounded px-1.5 py-0.2 font-semibold">
+                                  {userRole}
+                                </span>
+                              </div>
+                              <span>{dateStr.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}</span>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           )}
         </div>

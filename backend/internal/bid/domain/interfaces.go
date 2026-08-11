@@ -22,11 +22,10 @@ type BidRepository interface {
 	// Stage history
 	AddStageHistory(ctx context.Context, history *BidStageHistory) error
 	GetStageHistory(ctx context.Context, bidID string) ([]BidStageHistory, error)
+	GetGlobalAuditLogs(ctx context.Context, limit int) ([]GlobalAuditItem, error)
 
 	// User lookup for response enrichment
 	GetUserSummary(ctx context.Context, userID string) (*UserSummary, error)
-
-	// Bid-scoped checklists
 	BulkInsertChecklists(ctx context.Context, bidID string, titles []string) error
 	BulkInsertChecklistsWithGroup(ctx context.Context, bidID string, titles []string, group string) error
 	GetChecklists(ctx context.Context, bidID string) ([]BidChecklist, error)
@@ -43,9 +42,10 @@ type BidService interface {
 	CreateBid(ctx context.Context, req *CreateBidRequest, createdBy string) (*BidResponse, error)
 	GetBid(ctx context.Context, id string) (*BidResponse, error)
 	ListBids(ctx context.Context, params ListBidsParams) (*BidListResponse, error)
-	UpdateBid(ctx context.Context, id string, req *UpdateBidRequest) error
+	UpdateBid(ctx context.Context, id string, req *UpdateBidRequest, actorID string) error
 	TransitionStage(ctx context.Context, id string, req *TransitionStageRequest, actorID string) (*TransitionResult, error)
 	GetStageHistory(ctx context.Context, id string) ([]StageHistoryResponse, error)
+	GetGlobalAuditLogs(ctx context.Context, limit int) ([]GlobalAuditItem, error)
 	AddMember(ctx context.Context, bidID string, req *AddMemberRequest, actorID string) error
 	RemoveMember(ctx context.Context, bidID string, userID string) error
 	RecordOutcome(ctx context.Context, id string, req *RecordOutcomeRequest) error
