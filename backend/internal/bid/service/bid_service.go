@@ -588,6 +588,11 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, techM
 		_ = json.Unmarshal(bid.StageReviews, &reviews)
 	}
 
+	var pricingWorkspace interface{}
+	if len(bid.PricingWorkspace) > 0 {
+		_ = json.Unmarshal(bid.PricingWorkspace, &pricingWorkspace)
+	}
+
 	return &domain.BidResponse{
 		ID:               bid.ID,
 		BidNo:            bid.BidNo,
@@ -656,6 +661,7 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, techM
 		StageCompletions:       completions,
 		StageRemarks:           remarks,
 		StageReviews:           reviews,
+		PricingWorkspace:       pricingWorkspace,
 		CreatedAt:        bid.CreatedAt,
 		UpdatedAt:        bid.UpdatedAt,
 		ArchivedAt:       bid.ArchivedAt,

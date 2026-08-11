@@ -802,14 +802,37 @@ export function Stage3Workspace({ bid, onRefresh }) {
 
 // ── Stage 4: Pricing Request ────────────────────────────────────────────────
 export function Stage4Workspace({ bid, onRefresh }) {
+  const { hasRole } = usePermissions()
+  // Presales can only VIEW Stage 4, not edit it
+  const isReadOnly = hasRole('PRESALES')
+
   const key4 = `onetrack_pricing_${bid.id}`
-  const [pricingData, setPricingData] = useState(() => JSON.parse(localStorage.getItem(key4) || JSON.stringify({
-    phase: 'INIT', // INIT | AWAITING | QUOTING | APPROVAL
-    distNames: [],
-    quotes: [], // [{id,distName,items:[{desc,qty,basicPrice}]}]
-    selectedDist: '',
-    approvalRecipients: [],
-  })))
+
+  // Initialize: DB value (bid.pricing_workspace) takes priority, then localStorage cache
+  const [pricingData, setPricingData] = useState(() => {
+    const DEFAULTS = {
+      phase: 'INIT', // INIT | AWAITING | QUOTING | APPROVAL
+      distNames: [],
+      quotes: [], // [{id,distName,items:[{desc,qty,basicPrice}]}]
+      selectedDist: '',
+      approvalRecipients: [],
+      marginPct: 2.45,
+    }
+    // Prefer server-stored data (visible to all users)
+    if (bid.pricing_workspace && typeof bid.pricing_workspace === 'object') {
+      return { ...DEFAULTS, ...bid.pricing_workspace }
+    }
+    // Fallback: local cache (for backward compat)
+    try {
+      const cached = localStorage.getItem(key4)
+      if (cached) return { ...DEFAULTS, ...JSON.parse(cached) }
+    } catch (_) {}
+    return DEFAULTS
+  })
+
+  const marginPct = pricingData.marginPct ?? 2.45
+  const setMarginPct = (val) => save({ marginPct: Number(val) })
+
   const [showModal, setShowModal] = useState(false)
   const [showRequestDlg, setShowRequestDlg] = useState(false)
   const [showAddDistDlg, setShowAddDistDlg] = useState(false)
@@ -824,12 +847,14 @@ export function Stage4Workspace({ bid, onRefresh }) {
   const [quoteDistSel, setQuoteDistSel] = useState('')
   const [quoteCustomName, setQuoteCustomName] = useState('')
   const [quoteItems, setQuoteItems] = useState([{ desc: '', qty: 1, basicPrice: '' }])
-  const [marginPct, setMarginPct] = useState(2.45)
 
+  // Keep localStorage in sync as a fast cache, but source of truth is DB
   const save = (upd) => {
     const next = { ...pricingData, ...upd }
     setPricingData(next)
     localStorage.setItem(key4, JSON.stringify(next))
+    // Persist to database so ALL users see the same data
+    updateBid(bid.id, { pricing_workspace: JSON.stringify(next) }).catch(() => {})
   }
 
   const handleSendRequest = () => {
@@ -1068,25 +1093,35 @@ export function Stage4Workspace({ bid, onRefresh }) {
             <p className="text-xs text-violet-700 dark:text-violet-400">Send pricing request → Collect distributor quotes → Calculate GlobX pricing → Send for approval</p>
           </div>
           <div className="flex gap-2 flex-wrap items-center">
-            {pricingData.phase === 'INIT' && (
+            {!isReadOnly && pricingData.phase === 'INIT' && (
               <Button size="sm" onClick={() => setShowRequestDlg(true)} className="gap-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs">
                 <Send className="size-3.5" /> Send Pricing Request
               </Button>
             )}
-            {pricingData.phase !== 'INIT' && (
+            {isReadOnly && pricingData.phase === 'INIT' && (
+              <span className="text-[10px] font-semibold text-violet-500 italic px-2 py-1 rounded bg-violet-50 border border-violet-200 dark:bg-violet-950/40 dark:border-violet-800">
+                👁️ View only — awaiting pricing request
+              </span>
+            )}
+            {!isReadOnly && pricingData.phase !== 'INIT' && (
               <Button size="sm" variant="outline" onClick={() => setShowAddDistDlg(true)} className="gap-1.5 border-violet-300 text-violet-800 dark:text-violet-300 hover:bg-violet-100 text-xs">
                 <Plus className="size-3.5" /> Add More Distributors
               </Button>
             )}
-            {pricingData.phase !== 'INIT' && (
+            {!isReadOnly && pricingData.phase !== 'INIT' && (
               <Button size="sm" variant="outline" onClick={() => setShowQuoteDlg(true)} className="gap-1.5 border-violet-300 text-violet-800 dark:text-violet-300 hover:bg-violet-100 text-xs">
                 <Plus className="size-3.5" /> Add Distributor Quote
               </Button>
             )}
-            {(pricingData.phase === 'QUOTING' || pricingData.phase === 'APPROVAL') && l1Quote && (
+            {!isReadOnly && (pricingData.phase === 'QUOTING' || pricingData.phase === 'APPROVAL') && l1Quote && (
               <Button size="sm" variant="outline" onClick={() => setShowApprovalDlg(true)} className={`gap-1.5 text-xs ${pricingData.phase === 'APPROVAL' ? 'border-orange-300 text-orange-800 hover:bg-orange-100' : 'border-amber-300 text-amber-800 dark:text-amber-300 hover:bg-amber-100'}`}>
                 <Send className="size-3.5" /> {pricingData.phase === 'APPROVAL' ? 'Resend Approval Request' : 'Send for Approval'}
               </Button>
+            )}
+            {isReadOnly && pricingData.phase !== 'INIT' && (
+              <span className="text-[10px] font-semibold text-amber-600 italic px-2 py-1 rounded bg-amber-50 border border-amber-200 dark:bg-amber-950/40 dark:border-amber-800">
+                🔒 Read-only access — contact bid executive to make changes
+              </span>
             )}
             <StageHeaderActions
               bid={bid}
@@ -1125,24 +1160,28 @@ export function Stage4Workspace({ bid, onRefresh }) {
                   {l1Quote && l1Quote.id === q.id && <span className="px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-800 font-bold">L1 — Lowest Quote</span>}
                 </div>
                 <div className="flex items-center gap-1">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-6 px-2 text-[11px] gap-1 border-violet-200 hover:border-violet-400 text-violet-700 hover:bg-violet-50 dark:border-violet-900 dark:text-violet-300"
-                    onClick={() => handleOpenEditQuote(q)}
-                    title="Edit Distributor Quote"
-                  >
-                    <Edit2 className="size-3" /> Edit Quote
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-6 px-2 text-[11px] text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30"
-                    onClick={() => handleDeleteQuote(q.id, q.distName)}
-                    title="Delete Quote"
-                  >
-                    <Trash2 className="size-3" />
-                  </Button>
+                  {!isReadOnly && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 px-2 text-[11px] gap-1 border-violet-200 hover:border-violet-400 text-violet-700 hover:bg-violet-50 dark:border-violet-900 dark:text-violet-300"
+                      onClick={() => handleOpenEditQuote(q)}
+                      title="Edit Distributor Quote"
+                    >
+                      <Edit2 className="size-3" /> Edit Quote
+                    </Button>
+                  )}
+                  {!isReadOnly && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 px-2 text-[11px] text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                      onClick={() => handleDeleteQuote(q.id, q.distName)}
+                      title="Delete Quote"
+                    >
+                      <Trash2 className="size-3" />
+                    </Button>
+                  )}
                 </div>
               </div>
               <table className="w-full text-[11px] border-collapse">
@@ -1166,7 +1205,16 @@ export function Stage4Workspace({ bid, onRefresh }) {
             </h4>
             <div className="flex items-center gap-2 text-xs">
               <Label className="text-xs">GlobX Margin (%):</Label>
-              <Input type="number" value={marginPct} onChange={e => setMarginPct(Number(e.target.value))} className="w-20 h-7 text-xs font-bold text-center" step="0.01" />
+              <Input
+                type="number"
+                value={marginPct}
+                onChange={e => !isReadOnly && setMarginPct(Number(e.target.value))}
+                readOnly={isReadOnly}
+                disabled={isReadOnly}
+                className={`w-20 h-7 text-xs font-bold text-center ${isReadOnly ? 'opacity-60 cursor-not-allowed' : ''}`}
+                step="0.01"
+              />
+              {isReadOnly && <span className="text-[10px] text-muted-foreground italic">(read-only)</span>}
             </div>
           </div>
           <div className="overflow-x-auto">

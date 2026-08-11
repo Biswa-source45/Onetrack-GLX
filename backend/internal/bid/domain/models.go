@@ -133,6 +133,7 @@ type BidWorkspace struct {
 	StageCompletions  []byte `json:"-"` // raw JSONB
 	StageRemarks      []byte `json:"-"` // raw JSONB
 	StageReviews      []byte `json:"-"` // raw JSONB
+	PricingWorkspace  []byte `json:"-"` // raw JSONB — Stage 4 pricing workspace (shared across users)
 	FinanceAlerted    bool   `json:"finance_alerted"`
 	FinanceAlertAt    *time.Time `json:"finance_alert_at,omitempty"`
 	EMDReady          bool   `json:"emd_ready"`
@@ -328,6 +329,7 @@ type UpdateBidRequest struct {
 	StageCompletions   map[string]bool   `json:"stage_completions,omitempty"`
 	StageRemarks       map[string]string `json:"stage_remarks,omitempty"`
 	StageReviews       map[string]bool   `json:"stage_reviews,omitempty"`
+	PricingWorkspace   *string           `json:"pricing_workspace,omitempty"` // raw JSON string for Stage 4
 }
 
 type TransitionStageRequest struct {
@@ -451,6 +453,7 @@ type BidResponse struct {
 	StageCompletions       map[string]bool   `json:"stage_completions"`
 	StageRemarks           map[string]string `json:"stage_remarks"`
 	StageReviews           map[string]bool   `json:"stage_reviews"`
+	PricingWorkspace       interface{}       `json:"pricing_workspace"` // Stage 4 workspace data (JSONB)
 	CreatedAt              time.Time        `json:"created_at"`
 	UpdatedAt              time.Time        `json:"updated_at"`
 	ArchivedAt             *time.Time       `json:"archived_at"`
