@@ -489,20 +489,50 @@ export function Stage2Workspace({ bid, onRefresh }) {
 // ── Stage 3: OEM Authorization Request ─────────────────────────────────────
 export function Stage3Workspace({ bid, onRefresh }) {
   const key = `onetrack_oem_${bid.id}`
+
+  // Initialize: DB value (bid.oem_workspace) takes priority, then localStorage cache
   const [oems, setOems] = useState(() => {
-    const saved = localStorage.getItem(key)
-    if (saved) {
-      try { return JSON.parse(saved) } catch { return [] }
+    if (bid.oem_workspace) {
+      if (Array.isArray(bid.oem_workspace)) return bid.oem_workspace
+      if (typeof bid.oem_workspace === 'object' && Array.isArray(bid.oem_workspace.oems)) return bid.oem_workspace.oems
     }
+    try {
+      const saved = localStorage.getItem(key)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed)) return parsed
+      }
+    } catch (_) {}
     return []
   })
+
+  // Sync state if bid.oem_workspace changes from background sync or onRefresh
+  useEffect(() => {
+    if (bid.oem_workspace) {
+      let serverOems = []
+      if (Array.isArray(bid.oem_workspace)) {
+        serverOems = bid.oem_workspace
+      } else if (typeof bid.oem_workspace === 'object' && Array.isArray(bid.oem_workspace.oems)) {
+        serverOems = bid.oem_workspace.oems
+      }
+      if (serverOems.length > 0) {
+        setOems(serverOems)
+        localStorage.setItem(key, JSON.stringify(serverOems))
+      }
+    }
+  }, [bid.oem_workspace, key])
+
   const [isEditing, setIsEditing] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [newOemName, setNewOemName] = useState('')
 
-  const saveOemsToStorage = (list) => {
+  const saveOems = (list) => {
     setOems(list)
     localStorage.setItem(key, JSON.stringify(list))
+    // Persist to database so ALL users see the same data immediately
+    updateBid(bid.id, { oem_workspace: JSON.stringify(list) }).catch((err) => {
+      console.error('Failed to save OEM workspace to backend:', err)
+    })
   }
 
   const addOem = () => {
@@ -514,7 +544,7 @@ export function Stage3Workspace({ bid, onRefresh }) {
       followUp: '', remark: '', clarificationRequired: '', clarificationProvided: ''
     }
     const nextList = [...oems, entry]
-    saveOemsToStorage(nextList)
+    saveOems(nextList)
     logStageMicroEvent(bid.id, {
       fromStage: 'OEM_AUTHORIZATION_REQUEST',
       toStage: 'OEM_AUTHORIZATION_REQUEST',
@@ -531,7 +561,7 @@ export function Stage3Workspace({ bid, onRefresh }) {
   }
 
   const handleSaveMatrix = () => {
-    localStorage.setItem(key, JSON.stringify(oems))
+    saveOems(oems)
     setIsEditing(false)
     logStageMicroEvent(bid.id, {
       fromStage: 'OEM_AUTHORIZATION_REQUEST',
@@ -541,12 +571,13 @@ export function Stage3Workspace({ bid, onRefresh }) {
       details: { oems }
     })
     toast.success('OEM Authorization Matrix saved successfully')
+    if (onRefresh) onRefresh()
   }
 
   const deleteOem = (id) => {
     const target = oems.find(o => o.id === id)
     const updated = oems.filter(o => o.id !== id)
-    saveOemsToStorage(updated)
+    saveOems(updated)
     logStageMicroEvent(bid.id, {
       fromStage: 'OEM_AUTHORIZATION_REQUEST',
       toStage: 'OEM_AUTHORIZATION_REQUEST',

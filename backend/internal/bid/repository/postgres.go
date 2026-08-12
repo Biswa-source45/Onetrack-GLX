@@ -93,7 +93,7 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 		       l1_company_name, price_difference, price_difference_pct,
 		       eligibility_remarks, emd_remarks,
 		       COALESCE(stage_completions, '{}'::jsonb), COALESCE(stage_remarks, '{}'::jsonb), COALESCE(stage_reviews, '{}'::jsonb),
-		       pricing_workspace
+		       pricing_workspace, oem_workspace
 		FROM bid.bid_workspaces
 		WHERE id = $1
 	`
@@ -261,7 +261,7 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		       b.l1_company_name, b.price_difference, b.price_difference_pct,
 		       b.eligibility_remarks, b.emd_remarks,
 		       COALESCE(b.stage_completions, '{}'::jsonb), COALESCE(b.stage_remarks, '{}'::jsonb), COALESCE(b.stage_reviews, '{}'::jsonb),
-		       b.pricing_workspace
+		       b.pricing_workspace, b.oem_workspace
 		FROM bid.bid_workspaces b
 		LEFT JOIN auth.users u ON b.bid_owner_id = u.id
 		%s
@@ -484,6 +484,9 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	}
 	if req.PricingWorkspace != nil {
 		addSet("pricing_workspace", []byte(*req.PricingWorkspace))
+	}
+	if req.OEMWorkspace != nil {
+		addSet("oem_workspace", []byte(*req.OEMWorkspace))
 	}
 	if req.TechnicalManagerID != nil {
 		addSet("technical_manager_id", *req.TechnicalManagerID)
@@ -893,7 +896,7 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 		&b.L1CompanyName, &b.PriceDifference, &b.PriceDifferencePct,
 		&b.EligibilityRemarks, &b.EMDRemarks,
 		&b.StageCompletions, &b.StageRemarks, &b.StageReviews,
-		&b.PricingWorkspace,
+		&b.PricingWorkspace, &b.OEMWorkspace,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan bid: %w", err)

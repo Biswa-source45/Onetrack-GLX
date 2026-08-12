@@ -13,6 +13,7 @@ import { AddTenderPage } from "./components/tenders/AddTenderPage"
 import { TenderDetailPage } from "./components/tenders/TenderDetailPage"
 import { UserManagement } from "./components/admin/UserManagement"
 import { AlertsPage } from "./components/alerts/AlertsPage"
+import { AnalyticsPage } from "./components/analytics/AnalyticsPage"
 
 // Auth Guard to protect routes
 function AuthGuard() {
@@ -73,6 +74,13 @@ export default function App() {
                 <Route path="tenders" element={<TendersPage />} />
                 <Route path="tenders/:bidId" element={<TenderDetailPage />} />
                 <Route path="alerts" element={<AlertsPage />} />
+              </Route>
+
+              {/* Analytics sub-routes */}
+              <Route element={<PermissionGuard permission="bid.view" />}>
+                <Route path="analytics" element={<Navigate to="/dashboard/analytics/tenders" replace />} />
+                <Route path="analytics/tenders" element={<AnalyticsPage defaultTab="tender-analytics" />} />
+                <Route path="analytics/performance-matrix" element={<AnalyticsPage defaultTab="owner-matrix" />} />
               </Route>
 
               {/* Admin sub-routes */}
