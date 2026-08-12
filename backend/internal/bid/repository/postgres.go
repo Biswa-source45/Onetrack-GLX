@@ -952,6 +952,94 @@ func (r *postgresBidRepo) AddChecklistWithGroup(ctx context.Context, bidID strin
 	return &c, nil
 }
 
+func (r *postgresBidRepo) GetTenderPerformanceMatrix(ctx context.Context) ([]domain.TenderOwnerPerformanceStat, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			u.id                                             AS user_id,
+			COALESCE(u.full_name, u.username)                AS full_name,
+			u.username,
+			COALESCE(
+				(SELECT r.name
+				 FROM auth.user_roles ur
+				 JOIN auth.roles r ON r.id = ur.role_id
+				 WHERE ur.user_id = u.id
+				 ORDER BY r.name
+				 LIMIT 1),
+				'USER'
+			)                                                AS role,
+			COUNT(*)                                         AS total,
+			COUNT(*) FILTER (
+				WHERE b.archived_at IS NULL
+				AND b.bid_status NOT IN ('WON', 'LOST', 'CANCELLED')
+				AND b.workflow_stage NOT IN ('WON', 'LOST', 'CANCELLED', 'GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER')
+				AND COALESCE(b.bid_outcome, '') NOT IN ('WON', 'LOST', 'CANCELLED')
+				AND COALESCE(b.technical_result, '') != 'DISQUALIFIED'
+			)                                                AS active,
+			COUNT(*) FILTER (
+				WHERE b.archived_at IS NULL
+				AND (b.submission_done = true
+					OR b.workflow_stage IN ('GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER')
+					OR b.submission_status = 'SUBMITTED'
+					OR b.bid_status = 'SUBMITTED')
+			)                                                AS submitted,
+			COUNT(*) FILTER (
+				WHERE b.archived_at IS NULL
+				AND (b.workflow_stage = 'TECHNICAL_EVALUATION'
+					OR b.bid_status = 'TECHNICAL_EVALUATION')
+			)                                                AS tech_eval,
+			COUNT(*) FILTER (
+				WHERE b.archived_at IS NULL
+				AND b.workflow_stage = 'FINANCIAL_EVALUATION'
+			)                                                AS fin_eval,
+			COUNT(*) FILTER (
+				WHERE b.archived_at IS NULL
+				AND b.workflow_stage = 'AWARD_HANDOVER'
+			)                                                AS award,
+			COUNT(*) FILTER (
+				WHERE b.bid_status = 'WON'
+					OR b.workflow_stage = 'WON'
+					OR b.bid_outcome = 'WON'
+			)                                                AS won,
+			COUNT(*) FILTER (
+				WHERE b.bid_status = 'LOST'
+					OR b.workflow_stage = 'LOST'
+					OR b.bid_outcome = 'LOST'
+					OR b.technical_result = 'DISQUALIFIED'
+			)                                                AS lost,
+			COUNT(*) FILTER (
+				WHERE b.bid_status = 'CANCELLED'
+					OR b.workflow_stage = 'CANCELLED'
+					OR b.bid_outcome = 'CANCELLED'
+			)                                                AS cancelled
+		FROM bid.bid_workspaces b
+		JOIN auth.users u ON u.id = b.bid_owner_id
+		GROUP BY u.id, u.full_name, u.username
+		ORDER BY COUNT(*) DESC, COALESCE(u.full_name, u.username) ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("performance matrix query: %w", err)
+	}
+	defer rows.Close()
+
+	var stats []domain.TenderOwnerPerformanceStat
+	for rows.Next() {
+		var s domain.TenderOwnerPerformanceStat
+		if err := rows.Scan(
+			&s.UserID, &s.FullName, &s.Username, &s.Role,
+			&s.Total, &s.Active, &s.Submitted, &s.TechEval,
+			&s.FinEval, &s.Award, &s.Won, &s.Lost, &s.Cancelled,
+		); err != nil {
+			return nil, fmt.Errorf("scan performance matrix row: %w", err)
+		}
+		stats = append(stats, s)
+	}
+	if stats == nil {
+		stats = []domain.TenderOwnerPerformanceStat{}
+	}
+	return stats, nil
+}
+
+
 func calcPages(total, limit int) int {
 	if limit == 0 {
 		return 0

@@ -123,6 +123,15 @@ func (h *BidHandler) GetGlobalAuditLogs(c *gin.Context) {
 	response.Success(c, http.StatusOK, "Audit history retrieved successfully", logs)
 }
 
+func (h *BidHandler) GetTenderPerformanceMatrix(c *gin.Context) {
+	stats, err := h.svc.GetTenderPerformanceMatrix(c.Request.Context())
+	if err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Tender performance matrix retrieved", stats)
+}
+
 func (h *BidHandler) TransitionStage(c *gin.Context) {
 	id := c.Param("id")
 	var req domain.TransitionStageRequest

@@ -23,6 +23,7 @@ type BidRepository interface {
 	AddStageHistory(ctx context.Context, history *BidStageHistory) error
 	GetStageHistory(ctx context.Context, bidID string) ([]BidStageHistory, error)
 	GetGlobalAuditLogs(ctx context.Context, limit int) ([]GlobalAuditItem, error)
+	GetTenderPerformanceMatrix(ctx context.Context) ([]TenderOwnerPerformanceStat, error)
 
 	// User lookup for response enrichment
 	GetUserSummary(ctx context.Context, userID string) (*UserSummary, error)
@@ -46,6 +47,7 @@ type BidService interface {
 	TransitionStage(ctx context.Context, id string, req *TransitionStageRequest, actorID string) (*TransitionResult, error)
 	GetStageHistory(ctx context.Context, id string) ([]StageHistoryResponse, error)
 	GetGlobalAuditLogs(ctx context.Context, limit int) ([]GlobalAuditItem, error)
+	GetTenderPerformanceMatrix(ctx context.Context) ([]TenderOwnerPerformanceStat, error)
 	AddMember(ctx context.Context, bidID string, req *AddMemberRequest, actorID string) error
 	RemoveMember(ctx context.Context, bidID string, userID string) error
 	RecordOutcome(ctx context.Context, id string, req *RecordOutcomeRequest) error

@@ -25,6 +25,7 @@ import { UserAvatar }     from './admin/UserAvatar'
 import { RoleBadge }      from './admin/RoleBadge'
 import { TendersPage }    from './tenders/TendersPage'
 import { listBids }       from '../services/bids'
+import { getTenderPerformanceMatrix } from '../services/bids'
 
 // ── Navigation items (each gated by a permission check) ──────────────────────
 const NAV_ITEMS = [
@@ -165,6 +166,12 @@ export function OverviewPanel() {
   const [binCount, setBinCount] = useState(0)
   const [loading, setLoading] = useState(true)
 
+  // Tender Performance Matrix (real-time, dedicated endpoint)
+  const [perfMatrix, setPerfMatrix]         = useState([])
+  const [matrixLoading, setMatrixLoading]   = useState(true)
+  const [matrixError, setMatrixError]       = useState(null)
+  const [lastMatrixRefresh, setLastMatrixRefresh] = useState(null)
+
   // Custom Analytics Filters
   const [startDateFilter, setStartDateFilter] = useState('')
   const [endDateFilter, setEndDateFilter] = useState('')
@@ -196,6 +203,31 @@ export function OverviewPanel() {
   useEffect(() => {
     fetchBids()
   }, [])
+
+  // Fetch performance matrix on mount and auto-refresh every 60s
+  const fetchMatrix = useCallback(async () => {
+    setMatrixLoading(true)
+    setMatrixError(null)
+    try {
+      const r = await getTenderPerformanceMatrix()
+      if (r.ok && r.data) {
+        setPerfMatrix(Array.isArray(r.data) ? r.data : [])
+        setLastMatrixRefresh(new Date())
+      } else {
+        setMatrixError('Failed to load performance matrix')
+      }
+    } catch {
+      setMatrixError('Network error loading performance matrix')
+    } finally {
+      setMatrixLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchMatrix()
+    const interval = setInterval(fetchMatrix, 60000) // refresh every 60s
+    return () => clearInterval(interval)
+  }, [fetchMatrix])
 
   // Management Role Gating: Only Super Admin, Admin, and Manager get full BI Analytics
   const isManagement = user?.roles?.some(r => ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(r))
@@ -296,24 +328,7 @@ export function OverviewPanel() {
     return { ...grp, count, val, pct }
   })
 
-  // Executive Performance Grouping
-  const execStatsMap = {}
-  filteredBids.forEach(b => {
-    const ownerName = b.bid_owner?.full_name || b.bid_owner?.username || 'Unassigned'
-    if (!execStatsMap[ownerName]) {
-      execStatsMap[ownerName] = { name: ownerName, total: 0, submitted: 0, tech: 0, fin: 0, won: 0, lost: 0 }
-    }
-    const stat = execStatsMap[ownerName]
-    stat.total += 1
-    if (b.submission_done || ['GEM_SUBMISSION', 'GE_M_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER'].includes(b.workflow_stage)) stat.submitted += 1
-    if (b.workflow_stage === 'TECHNICAL_EVALUATION' || b.bid_status === 'TECHNICAL_EVALUATION') stat.tech += 1
-    if (b.workflow_stage === 'FINANCIAL_EVALUATION') stat.fin += 1
-    if (b.bid_status === 'WON' || b.bid_outcome === 'WON' || b.workflow_stage === 'WON') stat.won += 1
-    if (b.bid_status === 'LOST' || b.bid_outcome === 'LOST' || b.workflow_stage === 'LOST' || b.technical_result === 'DISQUALIFIED') stat.lost += 1
-  })
-  const execStatsList = Object.values(execStatsMap)
-
-  // Executive dropdown options
+  // Executive dropdown options (for analytics filter toolbar)
   const uniqueExecs = Array.from(new Set(bids.map(b => b.bid_owner?.full_name || b.bid_owner?.username).filter(Boolean)))
 
   const headerStats = [
@@ -609,59 +624,141 @@ export function OverviewPanel() {
             </div>
           </div>
 
-          {/* Executive Performance Matrix (Management BI) */}
-          {execStatsList.length > 0 && (
-            <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-heading font-semibold text-base text-foreground">Bid Executive Performance Matrix</h3>
-                  <p className="text-xs text-muted-foreground">Tender submission and conversion metrics per team member</p>
-                </div>
-                <Badge variant="secondary" className="text-xs font-mono">{execStatsList.length} Executives</Badge>
+          {/* Tender Owner Performance Matrix (Management BI) — Real-time from backend */}
+          <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <h3 className="font-heading font-semibold text-base text-foreground flex items-center gap-2">
+                  <UserCheck className="size-4 text-primary" />
+                  Tender Owner Performance Matrix
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Real-time tender lifecycle metrics per owner — all roles (Admin, Super Admin, Manager, Bid Executive)
+                </p>
               </div>
+              <div className="flex items-center gap-2">
+                {lastMatrixRefresh && (
+                  <span className="text-[11px] text-muted-foreground font-mono">
+                    Updated {lastMatrixRefresh.toLocaleTimeString()}
+                  </span>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={fetchMatrix}
+                  disabled={matrixLoading}
+                  className="gap-1.5 text-xs h-7"
+                >
+                  <RefreshCw className={`size-3 ${matrixLoading ? 'animate-spin' : ''}`} />
+                  Refresh
+                </Button>
+                <Badge variant="secondary" className="text-xs font-mono">
+                  {perfMatrix.length} Owner{perfMatrix.length !== 1 ? 's' : ''}
+                </Badge>
+              </div>
+            </div>
 
+            {matrixError ? (
+              <div className="flex items-center gap-2 text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-3">
+                <XCircle className="size-4 shrink-0" />
+                {matrixError}
+              </div>
+            ) : matrixLoading && perfMatrix.length === 0 ? (
+              <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground text-xs">
+                <Loader2 className="size-4 animate-spin text-primary" /> Loading performance matrix...
+              </div>
+            ) : perfMatrix.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-6">No tender owners found yet.</p>
+            ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs text-left border-collapse">
                   <thead>
                     <tr className="border-b border-border bg-muted/30 text-muted-foreground uppercase font-semibold text-[10px] tracking-wider">
-                      <th className="py-2.5 px-3">Bid Executive</th>
-                      <th className="py-2.5 px-3 text-center">Total Tenders</th>
+                      <th className="py-2.5 px-3">Tender Owner</th>
+                      <th className="py-2.5 px-2 text-center">Role</th>
+                      <th className="py-2.5 px-3 text-center font-bold text-foreground">Total</th>
+                      <th className="py-2.5 px-3 text-center">Active</th>
                       <th className="py-2.5 px-3 text-center">Submitted</th>
                       <th className="py-2.5 px-3 text-center">Tech Eval</th>
                       <th className="py-2.5 px-3 text-center">Fin Eval</th>
+                      <th className="py-2.5 px-3 text-center">Award</th>
                       <th className="py-2.5 px-3 text-center">Won</th>
                       <th className="py-2.5 px-3 text-center">Lost</th>
-                      <th className="py-2.5 px-3 text-right">Win Rate %</th>
+                      <th className="py-2.5 px-3 text-center">Cancelled</th>
+                      <th className="py-2.5 px-3 text-right">Win Rate</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/60">
-                    {execStatsList.map((st) => {
+                    {perfMatrix.map((st) => {
                       const winRate = st.total > 0 ? ((st.won / st.total) * 100).toFixed(1) : '0.0'
+                      const roleColor = {
+                        SUPER_ADMIN: 'bg-violet-50 text-violet-700 border-violet-200',
+                        ADMIN:       'bg-blue-50 text-blue-700 border-blue-200',
+                        MANAGER:     'bg-indigo-50 text-indigo-700 border-indigo-200',
+                        BID_EXECUTIVE: 'bg-teal-50 text-teal-700 border-teal-200',
+                        FINANCE:     'bg-amber-50 text-amber-700 border-amber-200',
+                        PRE_SALES:   'bg-emerald-50 text-emerald-700 border-emerald-200',
+                      }[st.role] || 'bg-slate-50 text-slate-600 border-slate-200'
+                      const roleLabel = {
+                        SUPER_ADMIN: 'Super Admin',
+                        ADMIN: 'Admin',
+                        MANAGER: 'Manager',
+                        BID_EXECUTIVE: 'Bid Exec',
+                        FINANCE: 'Finance',
+                        PRE_SALES: 'Pre-Sales',
+                      }[st.role] || (st.role || 'User')
                       return (
-                        <tr key={st.name} className="hover:bg-muted/20 transition-colors">
-                          <td className="py-3 px-3 font-semibold text-foreground flex items-center gap-2">
-                            <UserAvatar fullName={st.name} username={st.name} size="xs" />
-                            {st.name}
+                        <motion.tr
+                          key={st.user_id}
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          className="hover:bg-muted/20 transition-colors"
+                        >
+                          <td className="py-3 px-3 font-semibold text-foreground">
+                            <div className="flex items-center gap-2">
+                              <UserAvatar fullName={st.full_name} username={st.username} size="xs" />
+                              <div className="min-w-0">
+                                <p className="font-semibold text-foreground text-xs truncate max-w-[140px]">{st.full_name || st.username}</p>
+                                <p className="text-[10px] text-muted-foreground font-mono truncate max-w-[140px]">@{st.username}</p>
+                              </div>
+                            </div>
                           </td>
-                          <td className="py-3 px-3 text-center font-bold">{st.total}</td>
-                          <td className="py-3 px-3 text-center text-emerald-600 font-medium">{st.submitted}</td>
-                          <td className="py-3 px-3 text-center text-blue-600 font-medium">{st.tech}</td>
-                          <td className="py-3 px-3 text-center text-indigo-600 font-medium">{st.fin}</td>
-                          <td className="py-3 px-3 text-center text-teal-600 font-bold">{st.won}</td>
+                          <td className="py-3 px-2 text-center">
+                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap ${roleColor}`}>
+                              {roleLabel}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-center font-bold text-foreground text-sm">{st.total}</td>
+                          <td className="py-3 px-3 text-center text-blue-600 font-medium">{st.active}</td>
+                          <td className="py-3 px-3 text-center text-lime-600 font-medium">{st.submitted}</td>
+                          <td className="py-3 px-3 text-center text-teal-600 font-medium">{st.tech_eval}</td>
+                          <td className="py-3 px-3 text-center text-cyan-600 font-medium">{st.fin_eval}</td>
+                          <td className="py-3 px-3 text-center text-emerald-600 font-medium">{st.award}</td>
+                          <td className="py-3 px-3 text-center text-teal-700 font-bold">{st.won}</td>
                           <td className="py-3 px-3 text-center text-rose-600 font-medium">{st.lost}</td>
+                          <td className="py-3 px-3 text-center text-slate-500 font-medium">{st.cancelled}</td>
                           <td className="py-3 px-3 text-right">
-                            <Badge variant="outline" className={`font-mono text-[11px] ${Number(winRate) >= 50 ? 'border-emerald-300 text-emerald-700 bg-emerald-50' : 'border-slate-300 text-slate-700 bg-slate-50'}`}>
+                            <Badge
+                              variant="outline"
+                              className={`font-mono text-[11px] ${
+                                Number(winRate) >= 50
+                                  ? 'border-emerald-300 text-emerald-700 bg-emerald-50'
+                                  : Number(winRate) > 0
+                                  ? 'border-amber-300 text-amber-700 bg-amber-50'
+                                  : 'border-slate-300 text-slate-600 bg-slate-50'
+                              }`}
+                            >
                               {winRate}%
                             </Badge>
                           </td>
-                        </tr>
+                        </motion.tr>
                       )
                     })}
                   </tbody>
                 </table>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </>
       ) : (
         /* ── NON-MANAGEMENT OPERATIONAL OVERVIEW (Finance, Bid Exec, Pre-Sales, etc) ──── */

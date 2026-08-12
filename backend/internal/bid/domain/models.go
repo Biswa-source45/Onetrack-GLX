@@ -536,6 +536,23 @@ type BidListResponse struct {
 	SubmittedCount int           `json:"submitted_count"`
 }
 
+// TenderOwnerPerformanceStat represents aggregated tender stats per user owner
+type TenderOwnerPerformanceStat struct {
+	UserID    string `json:"user_id"`
+	FullName  string `json:"full_name"`
+	Username  string `json:"username"`
+	Role      string `json:"role"`
+	Total     int    `json:"total"`
+	Active    int    `json:"active"`
+	Submitted int    `json:"submitted"`
+	TechEval  int    `json:"tech_eval"`
+	FinEval   int    `json:"fin_eval"`
+	Award     int    `json:"award"`
+	Won       int    `json:"won"`
+	Lost      int    `json:"lost"`
+	Cancelled int    `json:"cancelled"`
+}
+
 // ────────────────────────────────────────
 // Repository-level insert type
 // ────────────────────────────────────────

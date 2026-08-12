@@ -514,6 +514,11 @@ func (s *bidService) GetGlobalAuditLogs(ctx context.Context, limit int) ([]domai
 	return s.repo.GetGlobalAuditLogs(ctx, limit)
 }
 
+func (s *bidService) GetTenderPerformanceMatrix(ctx context.Context) ([]domain.TenderOwnerPerformanceStat, error) {
+	return s.repo.GetTenderPerformanceMatrix(ctx)
+}
+
+
 func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain.TransitionStageRequest, actorID string) (*domain.TransitionResult, error) {
 	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {

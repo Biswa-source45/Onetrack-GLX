@@ -89,6 +89,13 @@ export async function getGlobalAuditHistory(limit = 100) {
   return { ok: res.ok, status: res.status, ...data }
 }
 
+// ── Get Tender Owner Performance Matrix ─────────────────────────────────────
+export async function getTenderPerformanceMatrix() {
+  const res = await apiFetch(`${BASE}/bids/performance-matrix`)
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, ...data }
+}
+
 // ── Add Member ───────────────────────────────────────────────────────────────
 export async function addBidMember(bidId, user_id, role = 'MEMBER') {
   const res = await apiFetch(`${BASE}/bids/${bidId}/members`, {
