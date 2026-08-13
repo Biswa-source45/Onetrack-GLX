@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams, useLocation, useOutletContext } from 'react-router-dom'
 import {
   Plus, Search, Filter, Download, RefreshCw, ChevronLeft, ChevronRight, ChevronDown,
   Building2, Calendar, DollarSign, Tag, ArrowUpRight, Loader2, X,
   AlertCircle, TrendingUp, FileText, Zap, MoreHorizontal, Eye,
   CheckCircle2, XCircle, Clock, Archive, LayoutGrid, TableProperties, ShieldCheck,
-  User, Check, Square, Trash2, RotateCcw, Ban, History, PanelRightOpen, Eraser
+  User, Check, Square, Trash2, RotateCcw, Ban, History, PanelRightOpen, Eraser,
+  UserCheck, Layers
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -446,10 +447,16 @@ function useDebounce(value, delay = 350) {
   return debounced
 }
 
-export function TendersPage() {
+export function TendersPage({ initialScope = 'all' }) {
   const { hasPermission } = usePermissions()
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
+  const outletContext = useOutletContext() || {}
+  const currentUser = outletContext.user || tokenStorage.getUser()
+
+  const isOwnedView = location.pathname.includes('/dashboard/tenders/owned') || initialScope === 'owned'
+
   const [sheetEditable, setSheetEditable] = useState(false)
   const [showAuditPanel, setShowAuditPanel] = useState(false)
   const [sheetAuditLog, setSheetAuditLog] = useState([])
@@ -503,6 +510,7 @@ export function TendersPage() {
     setDebouncedSearch,
     setInBin,
     setViewMode,
+    setScope,
     loadBids,
     users,
     loadUsers,
@@ -531,11 +539,10 @@ export function TendersPage() {
       hasParamUpdate = true
     }
 
-    if (!hasParamUpdate) {
-      loadBids()
-    }
+    const targetOwnerId = isOwnedView ? (currentUser?.id || '') : ''
+    setScope(isOwnedView ? 'owned' : 'all', targetOwnerId)
     loadUsers()
-  }, [searchParams])
+  }, [searchParams, isOwnedView, currentUser?.id])
 
   const handleRestoreBid = async (bidId, bidTitle) => {
     try {
@@ -568,14 +575,28 @@ export function TendersPage() {
     }
   }
 
-  const effectiveBids = bids.map(bid => {
-    const { status, outcome } = getDerivedBidStatusAndOutcome(bid)
-    return {
-      ...bid,
-      bid_status: status,
-      bid_outcome: outcome
-    }
-  })
+  const isBidOwnedByUser = (bid, user) => {
+    if (!user || !user.id) return true
+    const ownerId = bid.bid_owner?.id || bid.bid_owner_id
+    const creatorId = bid.created_by
+    return (ownerId && ownerId === user.id) || (creatorId && creatorId === user.id)
+  }
+
+  const effectiveBids = bids
+    .filter(bid => {
+      if (isOwnedView && currentUser?.id) {
+        return isBidOwnedByUser(bid, currentUser)
+      }
+      return true
+    })
+    .map(bid => {
+      const { status, outcome } = getDerivedBidStatusAndOutcome(bid)
+      return {
+        ...bid,
+        bid_status: status,
+        bid_outcome: outcome
+      }
+    })
 
   // Setup search debouncing to update store's debouncedSearch
   const debouncedSearchVal = useDebounce(searchInput, 300)
@@ -795,33 +816,69 @@ export function TendersPage() {
       {/* ── Page Header ─────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <h1 className="font-heading text-2xl font-bold text-foreground">
-              {inBin ? 'Tender Bin' : 'Tenders'}
+              {inBin ? 'Tender Bin' : isOwnedView ? 'Owned Tenders' : 'Tenders Workspace'}
             </h1>
 
-            {/* Workspace View Switcher (Active Tenders vs Tender Bin) */}
-            <div className="flex items-center bg-muted/60 border border-border p-1 rounded-lg text-xs">
+            {/* Workspace Navigation Tabs */}
+            <div className="flex items-center bg-muted/60 border border-border p-1 rounded-lg text-xs gap-1">
               <button
                 type="button"
-                onClick={() => { setInBin(false); setSearchParams({}) }}
-                className={`px-3 py-1 rounded-md font-semibold transition-all ${!inBin ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'}`}
+                onClick={() => {
+                  setInBin(false)
+                  setSearchParams({})
+                  navigate('/dashboard/tenders')
+                }}
+                className={`px-3 py-1 rounded-md font-semibold transition-all flex items-center gap-1.5 ${
+                  !inBin && !isOwnedView
+                    ? 'bg-card text-foreground shadow-xs'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
               >
-                Active Workspace
+                <Layers className="size-3.5" />
+                All Tenders
               </button>
+
               <button
                 type="button"
-                onClick={() => { setInBin(true); setSearchParams({ bin: 'true' }) }}
-                className={`px-3 py-1 rounded-md font-semibold transition-all flex items-center gap-1.5 ${inBin ? 'bg-rose-600 text-white shadow-xs' : 'text-muted-foreground hover:text-rose-600'}`}
+                onClick={() => {
+                  setInBin(false)
+                  setSearchParams({})
+                  navigate('/dashboard/tenders/owned')
+                }}
+                className={`px-3 py-1 rounded-md font-semibold transition-all flex items-center gap-1.5 ${
+                  !inBin && isOwnedView
+                    ? 'bg-card text-foreground shadow-xs text-primary'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <UserCheck className="size-3.5" />
+                Owned Tenders
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setInBin(true)
+                  setSearchParams({ bin: 'true' })
+                }}
+                className={`px-3 py-1 rounded-md font-semibold transition-all flex items-center gap-1.5 ${
+                  inBin
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'text-muted-foreground hover:text-rose-600'
+                }`}
               >
                 <Trash2 className="size-3.5" />
-                Tender Bin (Trash)
+                Tender Bin
               </button>
             </div>
           </div>
           <p className="text-sm text-muted-foreground mt-1">
-            {inBin 
-              ? 'Soft-deleted tender workspaces. Items are retained for 15 days before permanent auto-purge. Super Admins can restore or purge them.'
+            {inBin
+              ? 'Soft-deleted tender workspaces. Items are retained for 15 days before permanent auto-purge.'
+              : isOwnedView
+              ? `Displaying tenders assigned to or created by ${currentUser?.full_name || currentUser?.username || 'your account'}.`
               : 'Manage and track all organizational bid workspaces and GeM tenders.'}
           </p>
         </div>
@@ -1081,19 +1138,30 @@ export function TendersPage() {
         <div className="flex flex-col items-center justify-center py-20 gap-3 text-muted-foreground bg-card border border-border rounded-xl">
           <FileText className="size-12 text-muted-foreground/20" />
           <div className="text-center">
-            <p className="font-semibold text-sm text-foreground">No matching tenders found</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {searchInput || stageFilter || statusFilter
+            <p className="font-semibold text-sm text-foreground">
+              {isOwnedView ? 'No Owned Tenders Found' : 'No matching tenders found'}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1 max-w-md">
+              {isOwnedView
+                ? 'You do not currently own or have not created any tenders matching the applied filters.'
+                : searchInput || stageFilter || statusFilter
                 ? 'Refine your query filters or criteria.'
                 : 'Create your first tender to spin up a workflow workspace.'}
             </p>
           </div>
-          {hasPermission('bid.create') && !searchInput && !stageFilter && !statusFilter && (
-            <Button size="sm" className="gap-1.5 mt-2" onClick={() => navigate('/dashboard/tenders/new')}>
-              <Plus className="size-3.5" />
-              Add Tender
-            </Button>
-          )}
+          <div className="flex items-center gap-2 mt-2">
+            {isOwnedView && (
+              <Button variant="outline" size="sm" onClick={() => navigate('/dashboard/tenders')}>
+                View All Tenders
+              </Button>
+            )}
+            {hasPermission('bid.create') && !searchInput && !stageFilter && !statusFilter && (
+              <Button size="sm" className="gap-1.5" onClick={() => navigate('/dashboard/tenders/new')}>
+                <Plus className="size-3.5" />
+                Add Tender
+              </Button>
+            )}
+          </div>
         </div>
       ) : (
         <div>

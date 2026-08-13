@@ -71,7 +71,8 @@ export default function App() {
               </Route>
 
               <Route element={<PermissionGuard permission="bid.view" />}>
-                <Route path="tenders" element={<TendersPage />} />
+                <Route path="tenders" element={<TendersPage initialScope="all" />} />
+                <Route path="tenders/owned" element={<TendersPage initialScope="owned" />} />
                 <Route path="tenders/:bidId" element={<TenderDetailPage />} />
                 <Route path="alerts" element={<AlertsPage />} />
               </Route>

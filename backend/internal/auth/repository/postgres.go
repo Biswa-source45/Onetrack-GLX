@@ -102,6 +102,7 @@ func (r *postgresAuthRepo) GetUserRoles(ctx context.Context, userID string) ([]d
 		FROM auth.roles r
 		INNER JOIN auth.user_roles ur ON ur.role_id = r.id
 		WHERE ur.user_id = $1
+		ORDER BY ur.role_order ASC, ur.is_primary DESC, ur.assigned_at ASC
 	`
 
 	rows, err := r.pool.Query(ctx, query, userID)

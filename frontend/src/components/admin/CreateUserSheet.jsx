@@ -1,12 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
-import { Loader2, Eye, EyeOff, UserPlus, X } from 'lucide-react'
+import { Loader2, Eye, EyeOff, UserPlus, X, Star, Shield, ArrowLeftRight } from 'lucide-react'
 
 import { Button }    from '@/components/ui/button'
 import { Input }     from '@/components/ui/input'
 import { Label }     from '@/components/ui/label'
+import { Badge }     from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
 
@@ -22,7 +23,7 @@ const INITIAL_FORM = {
   phone:         '',
   department:    '',
   password:      '',
-  roles:         [],
+  roles:         [], // index 0 is Primary, index 1 is Secondary
 }
 
 // ── Framer Motion variants ────────────────────────────────────────────────────
@@ -79,17 +80,10 @@ const closeButtonVariants = {
 /**
  * CreateUserSheet
  *
- * A right-panel drawer (50% viewport width) that slides in from the right
- * using Framer Motion. A floating circular close button hangs off the left
- * edge of the panel.
- *
- * Props — same interface as the old CreateUserDialog:
- *   open        {boolean}
- *   onOpenChange {(open: boolean) => void}
- *   onCreated   {(user) => void}
+ * Right-panel drawer with primary & secondary role selection (max 2 roles).
  */
 export function CreateUserSheet({ open, onOpenChange, onCreated }) {
-  const [form, setForm]               = useState(INITIAL_FORM)
+  const [form, setForm]                 = useState(INITIAL_FORM)
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading]           = useState(false)
   const [fieldErrors, setFieldErrors]   = useState({})
@@ -132,12 +126,45 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
 
   function toggleRole(role) {
     setForm((prev) => {
-      const has = prev.roles.includes(role)
+      const isAlreadySelected = prev.roles.includes(role)
+      if (isAlreadySelected) {
+        return {
+          ...prev,
+          roles: prev.roles.filter((r) => r !== role),
+        }
+      }
+
+      if (prev.roles.length >= 2) {
+        toast.warning('Maximum 2 roles allowed per user (1 Primary + 1 Secondary).')
+        return prev
+      }
+
       return {
         ...prev,
-        roles: has ? prev.roles.filter((r) => r !== role) : [...prev.roles, role],
+        roles: [...prev.roles, role],
       }
     })
+    if (fieldErrors.roles) setFieldErrors((prev) => ({ ...prev, roles: undefined }))
+  }
+
+  function handleSwapRoles() {
+    if (form.roles.length === 2) {
+      setForm((prev) => ({
+        ...prev,
+        roles: [prev.roles[1], prev.roles[0]],
+      }))
+      toast.info('Swapped Primary and Secondary roles.')
+    }
+  }
+
+  function setPrimaryRole(role) {
+    if (!form.roles.includes(role)) return
+    if (form.roles[0] === role) return
+    const remaining = form.roles.filter((r) => r !== role)
+    setForm((prev) => ({
+      ...prev,
+      roles: [role, ...remaining],
+    }))
   }
 
   function validate() {
@@ -148,6 +175,7 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
     if (!form.password)             errors.password      = 'Required'
     else if (form.password.length < 8) errors.password   = 'Minimum 8 characters'
     if (form.roles.length === 0)    errors.roles         = 'Select at least one role'
+    else if (form.roles.length > 2) errors.roles         = 'A user can have at most 2 roles'
     return errors
   }
 
@@ -163,7 +191,7 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
         full_name:     form.full_name.trim(),
         username:      form.username.trim().toLowerCase(),
         password:      form.password,
-        roles:         form.roles,
+        roles:         form.roles, // [primaryRole, secondaryRole?]
         ...(form.email.trim()      && { email:      form.email.trim() }),
         ...(form.phone.trim()      && { phone:      form.phone.trim() }),
         ...(form.department.trim() && { department: form.department.trim() }),
@@ -195,6 +223,9 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
     }
   }
 
+  const primaryRole = form.roles[0] || null
+  const secondaryRole = form.roles[1] || null
+
   // ── Render via portal so nothing clips ───────────────────────────────────
   const content = (
     <AnimatePresence mode="wait">
@@ -216,7 +247,6 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
           <div className="fixed inset-y-0 right-0 z-50 w-full sm:w-1/2 flex">
 
             {/* ── Floating close button ──────────────────────────────────── */}
-            {/* Positioned outside the panel's left edge, vertically centered */}
             <motion.button
               key="cu-close-btn"
               variants={closeButtonVariants}
@@ -265,10 +295,10 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
                     Create New User
                   </h2>
                   <p className="text-xs text-muted-foreground">
-                    The user will receive a temporary password and be prompted to change it on first login.
+                    Assign basic details and up to 2 system roles (Primary & Secondary).
                   </p>
                 </div>
-                {/* Mobile close button (hidden on sm+, where the floating btn is visible) */}
+                {/* Mobile close button */}
                 <button
                   onClick={requestClose}
                   disabled={loading}
@@ -414,54 +444,112 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
 
                     <Separator />
 
-                    {/* Row 6: Role Selection */}
-                    <div className="space-y-2.5">
+                    {/* Row 6: Role Selection (Max 2 Roles, Primary & Secondary) */}
+                    <div className="space-y-3">
                       <div className="flex items-center justify-between">
-                        <Label>
-                          Roles <span className="text-destructive">*</span>
+                        <Label className="flex items-center gap-1.5">
+                          Assigned Roles <span className="text-destructive">*</span>
                         </Label>
                         <span className="text-xs text-muted-foreground">
-                          {form.roles.length} selected
+                          {form.roles.length} of 2 selected
                         </span>
                       </div>
+
+                      {/* Primary / Secondary Indicators */}
+                      {form.roles.length > 0 && (
+                        <div className="p-3 rounded-lg border border-primary/20 bg-primary/5 space-y-2 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-foreground text-[11px] uppercase tracking-wide">
+                              Role Priority
+                            </span>
+                            {form.roles.length === 2 && (
+                              <button
+                                type="button"
+                                onClick={handleSwapRoles}
+                                className="text-[11px] text-primary hover:underline font-semibold flex items-center gap-1"
+                              >
+                                <ArrowLeftRight className="size-3" /> Swap Roles
+                              </button>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-2 items-center">
+                            {primaryRole && (
+                              <Badge className="text-[10px] font-bold bg-amber-500 text-white gap-1 py-0.5 px-2 shadow-2xs">
+                                <Star className="size-3 fill-white" /> Primary: {ROLE_LABELS[primaryRole]?.label || primaryRole}
+                              </Badge>
+                            )}
+                            {secondaryRole && (
+                              <Badge className="text-[10px] font-bold bg-blue-600 text-white gap-1 py-0.5 px-2 shadow-2xs">
+                                <Shield className="size-3" /> Secondary: {ROLE_LABELS[secondaryRole]?.label || secondaryRole}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
                       <div className="grid grid-cols-2 gap-2">
                         {ALL_ROLES.map((role) => {
-                          const checked = form.roles.includes(role)
+                          const isPrimary = form.roles[0] === role
+                          const isSecondary = form.roles[1] === role
+                          const checked = isPrimary || isSecondary
+                          const isLimitReached = form.roles.length >= 2 && !checked
+
                           return (
                             <button
                               key={role}
                               type="button"
-                              onClick={() => toggleRole(role)}
-                              disabled={loading}
+                              onClick={() => !isLimitReached && toggleRole(role)}
+                              disabled={loading || isLimitReached}
                               className={`
-                                flex items-center gap-2 rounded-md border px-3 py-2.5
+                                flex items-center justify-between gap-2 rounded-md border px-3 py-2.5
                                 text-xs font-medium text-left transition-all duration-150
-                                ${checked
-                                  ? 'border-primary bg-primary/5 text-primary shadow-sm'
+                                ${isLimitReached
+                                  ? 'opacity-40 cursor-not-allowed border-border bg-muted/20 text-muted-foreground'
+                                  : isPrimary
+                                  ? 'border-amber-400 bg-amber-500/10 text-foreground shadow-xs ring-1 ring-amber-400/30'
+                                  : isSecondary
+                                  ? 'border-blue-400 bg-blue-500/10 text-foreground shadow-xs ring-1 ring-blue-400/30'
                                   : 'border-border bg-background text-muted-foreground hover:bg-muted hover:border-muted-foreground/30'
                                 }
                               `}
                             >
-                              <span
-                                className={`
-                                  size-3.5 rounded-sm border flex items-center justify-center flex-shrink-0 transition-colors
-                                  ${checked ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40'}
-                                `}
-                              >
-                                {checked && (
-                                  <svg viewBox="0 0 10 10" className="size-2.5 fill-current">
-                                    <path
-                                      d="M1.5 5L4 7.5L8.5 2.5"
-                                      stroke="currentColor"
-                                      strokeWidth="1.5"
-                                      fill="none"
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                    />
-                                  </svg>
-                                )}
-                              </span>
-                              {ROLE_LABELS[role]?.label ?? role}
+                              <div className="flex items-center gap-2 truncate">
+                                <span
+                                  className={`
+                                    size-3.5 rounded-sm border flex items-center justify-center shrink-0 transition-colors
+                                    ${isPrimary
+                                      ? 'border-amber-500 bg-amber-500 text-white'
+                                      : isSecondary
+                                      ? 'border-blue-500 bg-blue-500 text-white'
+                                      : 'border-muted-foreground/40'}
+                                  `}
+                                >
+                                  {checked && (
+                                    <svg viewBox="0 0 10 10" className="size-2.5 fill-current">
+                                      <path
+                                        d="M1.5 5L4 7.5L8.5 2.5"
+                                        stroke="currentColor"
+                                        strokeWidth="1.5"
+                                        fill="none"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      />
+                                    </svg>
+                                  )}
+                                </span>
+                                <span className="truncate">{ROLE_LABELS[role]?.label ?? role}</span>
+                              </div>
+
+                              {isPrimary && (
+                                <span className="text-[9px] font-bold text-amber-600 dark:text-amber-400 shrink-0">
+                                  ★ Primary
+                                </span>
+                              )}
+                              {isSecondary && (
+                                <span className="text-[9px] font-semibold text-blue-600 dark:text-blue-400 shrink-0">
+                                  Secondary
+                                </span>
+                              )}
                             </button>
                           )
                         })}
@@ -505,6 +593,5 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
     </AnimatePresence>
   )
 
-  // Portal to document.body so nothing clips or z-index-fights with the layout
   return createPortal(content, document.body)
 }

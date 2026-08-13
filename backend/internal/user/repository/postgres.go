@@ -242,15 +242,16 @@ func (r *postgresUserRepo) AssignRoles(ctx context.Context, userID string, roleN
 		return fmt.Errorf("failed to clear existing roles: %w", err)
 	}
 
-	// Insert new roles
-	for _, roleName := range roleNames {
+	// Insert new roles (first element is Primary role, second element if present is Secondary role)
+	for orderIdx, roleName := range roleNames {
+		isPrimary := (orderIdx == 0)
 		query := `
-			INSERT INTO auth.user_roles (user_id, role_id, assigned_by)
-			SELECT $1, r.id, $3
+			INSERT INTO auth.user_roles (user_id, role_id, assigned_by, is_primary, role_order)
+			SELECT $1, r.id, $3, $4, $5
 			FROM auth.roles r
 			WHERE r.name = $2
 		`
-		result, err := tx.Exec(ctx, query, userID, roleName, assignedBy)
+		result, err := tx.Exec(ctx, query, userID, roleName, assignedBy, isPrimary, orderIdx)
 		if err != nil {
 			return fmt.Errorf("failed to assign role %s: %w", roleName, err)
 		}
@@ -326,6 +327,7 @@ func (r *postgresUserRepo) GetRolesByUserID(ctx context.Context, userID string) 
 		FROM auth.roles r
 		INNER JOIN auth.user_roles ur ON ur.role_id = r.id
 		WHERE ur.user_id = $1
+		ORDER BY ur.role_order ASC, ur.is_primary DESC, ur.assigned_at ASC
 	`
 
 	rows, err := r.pool.Query(ctx, query, userID)

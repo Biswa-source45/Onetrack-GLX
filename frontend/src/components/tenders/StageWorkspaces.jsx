@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Search, ShieldCheck, Share2, Coins, FileText, CheckSquare,
@@ -1003,23 +1003,31 @@ export function Stage4Workspace({ bid, onRefresh }) {
   const buildPricingTableHtml = (l1Q, margin) => {
     if (!l1Q || !l1Q.items) return ''
 
-    let totalPurchaseWithGst = 0
-    let totalGlobxPrice = 0
+    let grandBasePurchase = 0
+    let grandSellingExclGst = 0
+    let grandTotalGst = 0
+    let grandGlobxTotal = 0
     let grandTotalProfit = 0
 
     const rowsHtml = l1Q.items.map((it, i) => {
       const basic = Number(it.basicPrice) || 0
       const qty = Number(it.qty) || 1
-      const gst = basic * 0.18
-      const priceWithGst = basic + gst
-      const totalWithGst = priceWithGst * qty
-      const marginAmt = priceWithGst * (margin / 100)
-      const globxUnit = priceWithGst + marginAmt
-      const globxTotal = globxUnit * qty
-      const profitTotal = marginAmt * qty
+      const itMargin = it.marginPct != null && it.marginPct !== '' ? Number(it.marginPct) : margin
+      const itGstPct = it.gstPct != null && it.gstPct !== '' ? Number(it.gstPct) : 18
 
-      totalPurchaseWithGst += totalWithGst
-      totalGlobxPrice += globxTotal
+      const profitPerUnit = basic * (itMargin / 100)
+      const unitPriceExclGst = basic + profitPerUnit
+      const unitGst = unitPriceExclGst * (itGstPct / 100)
+      const globxUnit = unitPriceExclGst + unitGst
+      const totalBase = basic * qty
+      const globxTotal = globxUnit * qty
+      const profitTotal = profitPerUnit * qty
+      const totalGst = unitGst * qty
+
+      grandBasePurchase += totalBase
+      grandSellingExclGst += unitPriceExclGst * qty
+      grandTotalGst += totalGst
+      grandGlobxTotal += globxTotal
       grandTotalProfit += profitTotal
 
       return `
@@ -1028,9 +1036,10 @@ export function Stage4Workspace({ bid, onRefresh }) {
           <td style="padding: 8px 10px; font-weight: 600; color: #1e293b;">${it.desc}</td>
           <td style="padding: 8px 10px; text-align: center; color: #334155; font-weight: 500;">${qty}</td>
           <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #475569;">${fmtMoney(basic)}</td>
-          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #64748b;">${fmtMoney(gst)}</td>
-          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #334155;">${fmtMoney(priceWithGst)}</td>
-          <td style="padding: 8px 10px; text-align: center; color: #4338ca; font-weight: 700;">${margin}%</td>
+          <td style="padding: 8px 10px; text-align: center; color: #4338ca; font-weight: 700;">${itMargin}%</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #059669; font-weight: 600;">${fmtMoney(profitPerUnit)}</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #334155;">${fmtMoney(unitPriceExclGst)}</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #64748b;">${fmtMoney(unitGst)} <span style="font-size:10px;color:#94a3b8;">(${itGstPct}%)</span></td>
           <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #4f46e5;">${fmtMoney(globxUnit)}</td>
           <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #4f46e5; background-color: #f5f3ff;">${fmtMoney(globxTotal)}</td>
           <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #059669; background-color: #ecfdf5;">${fmtMoney(profitTotal)}</td>
@@ -1038,10 +1047,13 @@ export function Stage4Workspace({ bid, onRefresh }) {
       `
     }).join('')
 
+    const effectiveMargin = grandBasePurchase > 0 ? ((grandTotalProfit / grandBasePurchase) * 100).toFixed(2) : margin
+
     return `
       <div style="margin-top: 14px; margin-bottom: 14px; border: 1px solid #c7d2fe; border-radius: 10px; overflow: hidden; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-        <div style="background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%); padding: 12px 16px; color: #ffffff; font-size: 13px; font-weight: 700;">
-          📊 Commercial Pricing Calculation Breakdown — L1 Distributor: ${l1Q.distName}
+        <div style="background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%); padding: 12px 16px; color: #ffffff; font-size: 13px; font-weight: 700; display: flex; justify-content: space-between; align-items: center;">
+          <span>📊 Commercial Pricing Breakdown (Base → Margin → Unit Price w/ GST → GlobX Total)</span>
+          <span style="font-size: 11px; background: rgba(255,255,255,0.2); padding: 3px 8px; border-radius: 4px;">L1 Distributor: ${l1Q.distName}</span>
         </div>
         <div style="overflow-x: auto;">
           <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
@@ -1050,11 +1062,12 @@ export function Stage4Workspace({ bid, onRefresh }) {
                 <th style="padding: 10px; text-align: center; border-right: 1px solid #e2e8f0;">S.No</th>
                 <th style="padding: 10px; border-right: 1px solid #e2e8f0;">Item Description</th>
                 <th style="padding: 10px; text-align: center; border-right: 1px solid #e2e8f0;">Qty</th>
-                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">Basic (₹)</th>
-                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">GST 18%</th>
-                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">Purchase w/ GST</th>
-                <th style="padding: 10px; text-align: center; border-right: 1px solid #e2e8f0;">Margin</th>
-                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">GlobX Unit</th>
+                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">Base Price (₹)</th>
+                <th style="padding: 10px; text-align: center; border-right: 1px solid #e2e8f0;">Margin %</th>
+                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">Profit / Unit (₹)</th>
+                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">Unit Price (Excl GST)</th>
+                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">GST (₹)</th>
+                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">Unit Price w/ GST</th>
                 <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0; background-color: #ede9fe; color: #3730a3;">GlobX Total (₹)</th>
                 <th style="padding: 10px; text-align: right; background-color: #d1fae5; color: #065f46;">Total Profit (₹)</th>
               </tr>
@@ -1064,11 +1077,11 @@ export function Stage4Workspace({ bid, onRefresh }) {
             </tbody>
             <tfoot>
               <tr style="background-color: #f8fafc; font-weight: bold; border-top: 2px solid #cbd5e1;">
-                <td colspan="6" style="padding: 12px 10px; text-align: right; color: #334155; font-size: 12px; border-right: 1px solid #e2e8f0;">Grand Total Summary:</td>
-                <td style="padding: 12px 10px; text-align: center; color: #4338ca; font-size: 12px; border-right: 1px solid #e2e8f0;">${margin}%</td>
-                <td style="padding: 12px 10px; text-align: right; color: #64748b; font-size: 11px; border-right: 1px solid #e2e8f0;">TOTAL SELLING</td>
-                <td style="padding: 12px 10px; text-align: right; font-family: monospace; font-size: 14px; font-weight: 800; color: #4338ca; background-color: #ede9fe; border-right: 1px solid #e2e8f0;">${fmtMoney(totalGlobxPrice)}</td>
-                <td style="padding: 12px 10px; text-align: right; font-family: monospace; font-size: 14px; font-weight: 800; color: #047857; background-color: #d1fae5;">${fmtMoney(grandTotalProfit)}</td>
+                <td colspan="4" style="padding: 12px 10px; text-align: right; color: #334155; font-size: 12px; border-right: 1px solid #e2e8f0;">Grand Total Summary (Base Cost: ${fmtMoney(grandBasePurchase)}):</td>
+                <td style="padding: 12px 10px; text-align: center; color: #4338ca; font-size: 12px; border-right: 1px solid #e2e8f0;">${effectiveMargin}%</td>
+                <td colspan="4" style="padding: 12px 10px; text-align: right; color: #64748b; font-size: 11px; border-right: 1px solid #e2e8f0;">TOTAL OFFERED VALUE (INCL. GST)</td>
+                <td style="padding: 12px 10px; text-align: right; font-family: monospace; font-size: 13px; font-weight: 800; color: #4338ca; background-color: #ede9fe; border-right: 1px solid #e2e8f0;">${fmtMoney(grandGlobxTotal)}</td>
+                <td style="padding: 12px 10px; text-align: right; font-family: monospace; font-size: 13px; font-weight: 800; color: #047857; background-color: #d1fae5;">${fmtMoney(grandTotalProfit)}</td>
               </tr>
             </tfoot>
           </table>
@@ -1107,13 +1120,83 @@ export function Stage4Workspace({ bid, onRefresh }) {
     save({ approvalRecipients: list })
   }
 
-  // Find L1 (lowest total per item across all quotes)
+  // Find L1 (lowest total basic cost across all quotes)
   const allQuotes = pricingData.quotes
   const l1Quote = allQuotes.length > 0 ? allQuotes.reduce((best, q) => {
-    const tot = q.items.reduce((s, i) => s + i.basicPrice * i.qty, 0)
-    const bTot = best.items.reduce((s, i) => s + i.basicPrice * i.qty, 0)
+    const tot = q.items.reduce((s, i) => s + (Number(i.basicPrice) || 0) * (Number(i.qty) || 1), 0)
+    const bTot = best.items.reduce((s, i) => s + (Number(i.basicPrice) || 0) * (Number(i.qty) || 1), 0)
     return tot < bTot ? q : best
   }, allQuotes[0]) : null
+
+  // Calculate pricing breakdown based on: Base Price -> Margin (of Base) -> Unit Price w/ GST -> GlobX Total -> Profit
+  const l1Calculations = useMemo(() => {
+    if (!l1Quote || !l1Quote.items || l1Quote.items.length === 0) return null
+
+    let grandBaseCost = 0
+    let grandSellingExclGst = 0
+    let grandGstAmount = 0
+    let grandGlobxTotal = 0
+    let grandTotalProfit = 0
+
+    const items = l1Quote.items.map((it, idx) => {
+      const qty = Number(it.qty) || 1
+      const basicPrice = Number(it.basicPrice) || 0
+      const itemMargin = it.marginPct != null && it.marginPct !== '' ? Number(it.marginPct) : marginPct
+      const itemGstRate = it.gstPct != null && it.gstPct !== '' ? Number(it.gstPct) : 18
+
+      // 1. Margin / Profit Per Unit from Base Price
+      const profitPerUnit = basicPrice * (itemMargin / 100)
+      // 2. Unit Selling Price (Excl. GST) = Base Price + Margin
+      const unitPriceExclGst = basicPrice + profitPerUnit
+      // 3. GST Amount Per Unit = Unit Price (Excl GST) * (GST Rate / 100)
+      const unitGst = unitPriceExclGst * (itemGstRate / 100)
+      // 4. GlobX Unit Price With GST = Unit Price (Excl GST) + GST Amount
+      const globxUnit = unitPriceExclGst + unitGst
+
+      // Totals for this item
+      const totalBase = basicPrice * qty
+      const totalSellingExclGst = unitPriceExclGst * qty
+      const totalGst = unitGst * qty
+      const globxTotal = globxUnit * qty
+      const profitTotal = profitPerUnit * qty
+
+      grandBaseCost += totalBase
+      grandSellingExclGst += totalSellingExclGst
+      grandGstAmount += totalGst
+      grandGlobxTotal += globxTotal
+      grandTotalProfit += profitTotal
+
+      return {
+        sNo: idx + 1,
+        desc: it.desc,
+        qty,
+        basicPrice,
+        itemMargin,
+        profitPerUnit,
+        unitPriceExclGst,
+        itemGstRate,
+        unitGst,
+        globxUnit,
+        totalBase,
+        totalSellingExclGst,
+        totalGst,
+        globxTotal,
+        profitTotal,
+      }
+    })
+
+    const effectiveMarginPct = grandBaseCost > 0 ? (grandTotalProfit / grandBaseCost) * 100 : marginPct
+
+    return {
+      items,
+      grandBaseCost,
+      grandSellingExclGst,
+      grandGstAmount,
+      grandGlobxTotal,
+      grandTotalProfit,
+      effectiveMarginPct,
+    }
+  }, [l1Quote, marginPct])
 
   return (
     <div className="space-y-5">
@@ -1174,147 +1257,222 @@ export function Stage4Workspace({ bid, onRefresh }) {
       </div>
 
       {pricingData.distNames.length > 0 && (
-        <div className="p-3 rounded-lg border border-border bg-card text-xs">
-          <span className="font-semibold text-muted-foreground">Distributors Contacted: </span>
-          {pricingData.distNames.map(n => <span key={n} className="ml-1 px-2 py-0.5 rounded bg-violet-50 text-violet-800 border border-violet-200">{n}</span>)}
+        <div className="p-3 rounded-lg border border-border bg-card text-xs flex items-center gap-2 flex-wrap">
+          <span className="font-semibold text-muted-foreground">Distributors Contacted:</span>
+          {pricingData.distNames.map(n => <span key={n} className="px-2 py-0.5 rounded bg-violet-50 dark:bg-violet-950/50 text-violet-800 dark:text-violet-300 border border-violet-200 dark:border-violet-800 font-medium">{n}</span>)}
         </div>
       )}
 
       {allQuotes.length > 0 && (
         <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-          <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Distributor Quotes Received</h4>
-          {allQuotes.map(q => (
-            <div key={q.id} className={`p-3 rounded-lg border text-xs ${l1Quote && l1Quote.id === q.id ? 'border-emerald-300 bg-emerald-50/40' : 'border-border bg-muted/20'}`}>
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-foreground">{q.distName}</span>
-                  {l1Quote && l1Quote.id === q.id && <span className="px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-800 font-bold">L1 — Lowest Quote</span>}
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Distributor Quotes Received ({allQuotes.length})</h4>
+            <span className="text-[11px] text-muted-foreground">L1 selection determined by lowest basic purchase cost</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {allQuotes.map(q => {
+              const qTotal = q.items.reduce((s, it) => s + (Number(it.basicPrice) || 0) * (Number(it.qty) || 1), 0)
+              const isL1 = l1Quote && l1Quote.id === q.id
+              return (
+                <div key={q.id} className={`p-3 rounded-xl border text-xs transition-all ${isL1 ? 'border-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20 shadow-sm ring-1 ring-emerald-400/30' : 'border-border bg-card hover:border-border/80'}`}>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-sm text-foreground">{q.distName}</span>
+                      {isL1 && (
+                        <span className="px-2 py-0.5 text-[10px] rounded-full bg-emerald-600 text-white font-bold tracking-wide">
+                          ⭐ L1 Lowest Quote
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {!isReadOnly && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 px-2 text-[11px] gap-1 border-violet-200 hover:border-violet-400 text-violet-700 hover:bg-violet-50 dark:border-violet-900 dark:text-violet-300"
+                          onClick={() => handleOpenEditQuote(q)}
+                          title="Edit Distributor Quote"
+                        >
+                          <Edit2 className="size-3" /> Edit
+                        </Button>
+                      )}
+                      {!isReadOnly && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-2 text-[11px] text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                          onClick={() => handleDeleteQuote(q.id, q.distName)}
+                          title="Delete Quote"
+                        >
+                          <Trash2 className="size-3" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  <table className="w-full text-[11px] border-collapse">
+                    <thead>
+                      <tr className="bg-muted/40 text-muted-foreground">
+                        <th className="border border-border p-1.5 text-left">Description</th>
+                        <th className="border border-border p-1.5 text-center">Qty</th>
+                        <th className="border border-border p-1.5 text-right">Base Price</th>
+                        <th className="border border-border p-1.5 text-right">Total Base</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {q.items.map((it, ii) => (
+                        <tr key={ii} className="hover:bg-muted/20">
+                          <td className="border border-border p-1.5">{it.desc}</td>
+                          <td className="border border-border p-1.5 text-center">{it.qty}</td>
+                          <td className="border border-border p-1.5 text-right font-mono">{fmtMoney(it.basicPrice)}</td>
+                          <td className="border border-border p-1.5 text-right font-mono font-semibold text-foreground">{fmtMoney((Number(it.basicPrice) || 0) * (Number(it.qty) || 1))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-muted/30 font-bold border-t border-border">
+                        <td colSpan={3} className="border border-border p-1.5 text-right text-muted-foreground text-[10px]">Total Base Value:</td>
+                        <td className="border border-border p-1.5 text-right font-mono text-foreground">{fmtMoney(qTotal)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
                 </div>
-                <div className="flex items-center gap-1">
-                  {!isReadOnly && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-6 px-2 text-[11px] gap-1 border-violet-200 hover:border-violet-400 text-violet-700 hover:bg-violet-50 dark:border-violet-900 dark:text-violet-300"
-                      onClick={() => handleOpenEditQuote(q)}
-                      title="Edit Distributor Quote"
-                    >
-                      <Edit2 className="size-3" /> Edit Quote
-                    </Button>
-                  )}
-                  {!isReadOnly && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 px-2 text-[11px] text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30"
-                      onClick={() => handleDeleteQuote(q.id, q.distName)}
-                      title="Delete Quote"
-                    >
-                      <Trash2 className="size-3" />
-                    </Button>
-                  )}
-                </div>
-              </div>
-              <table className="w-full text-[11px] border-collapse">
-                <thead><tr className="bg-muted/40 text-muted-foreground"><th className="border border-border p-1.5">Description</th><th className="border border-border p-1.5">Qty</th><th className="border border-border p-1.5">Basic Price</th><th className="border border-border p-1.5">Total</th></tr></thead>
-                <tbody>
-                  {q.items.map((it, ii) => (
-                    <tr key={ii}><td className="border border-border p-1.5">{it.desc}</td><td className="border border-border p-1.5 text-center">{it.qty}</td><td className="border border-border p-1.5 font-mono">{fmtMoney(it.basicPrice)}</td><td className="border border-border p-1.5 font-mono font-semibold">{fmtMoney(it.basicPrice * it.qty)}</td></tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ))}
+              )
+            })}
+          </div>
         </div>
       )}
 
-      {l1Quote && (
-        <div className="rounded-xl border border-emerald-200 bg-card p-4 space-y-3">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-700 flex items-center gap-2">
-              <Calculator className="size-4" /> Pricing Calculation from L1 — {l1Quote.distName}
-            </h4>
-            <div className="flex items-center gap-2 text-xs">
-              <Label className="text-xs">GlobX Margin (%):</Label>
-              <Input
-                type="number"
-                value={marginPct}
-                onChange={e => !isReadOnly && setMarginPct(Number(e.target.value))}
-                readOnly={isReadOnly}
-                disabled={isReadOnly}
-                className={`w-20 h-7 text-xs font-bold text-center ${isReadOnly ? 'opacity-60 cursor-not-allowed' : ''}`}
-                step="0.01"
-              />
-              {isReadOnly && <span className="text-[10px] text-muted-foreground italic">(read-only)</span>}
+      {l1Quote && l1Calculations && (
+        <div className="rounded-xl border border-indigo-200 dark:border-indigo-900 bg-card p-5 space-y-4 shadow-sm">
+          {/* Header & Margin Selector */}
+          <div className="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-border">
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400">
+                  <Calculator className="size-4" />
+                </div>
+                <h4 className="text-sm font-bold text-foreground">
+                  Commercial Pricing Calculation (from L1: <span className="text-indigo-600 dark:text-indigo-400">{l1Quote.distName}</span>)
+                </h4>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Calculation Sequence: <strong>Base Price → Margin % (applied to Base) → Unit Price (Excl GST) → GST (18%) → Unit Price with GST → GlobX Total Price</strong>
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <Label className="text-xs font-semibold text-muted-foreground">Margin Presets:</Label>
+              <div className="flex items-center gap-1">
+                {[2.0, 2.45, 3.0, 5.0, 7.5, 10.0].map(val => (
+                  <button
+                    key={val}
+                    type="button"
+                    disabled={isReadOnly}
+                    onClick={() => setMarginPct(val)}
+                    className={`px-2 py-1 text-[11px] font-semibold rounded-md border transition-all ${
+                      marginPct === val
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                        : 'bg-muted/40 hover:bg-muted text-foreground border-border'
+                    } ${isReadOnly ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                  >
+                    {val}%
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-border">
+                <Label className="text-xs font-bold">Custom %:</Label>
+                <Input
+                  type="number"
+                  value={marginPct}
+                  onChange={e => !isReadOnly && setMarginPct(Number(e.target.value))}
+                  readOnly={isReadOnly}
+                  disabled={isReadOnly}
+                  className={`w-20 h-8 text-xs font-bold text-center ${isReadOnly ? 'opacity-60 cursor-not-allowed' : ''}`}
+                  step="0.01"
+                />
+              </div>
             </div>
           </div>
-          <div className="overflow-x-auto">
+
+          {/* Quick Metrics Summary Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div className="p-3 rounded-lg border border-border bg-muted/20">
+              <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Base Purchase Cost</div>
+              <div className="text-sm font-bold font-mono text-foreground mt-0.5">{fmtMoney(l1Calculations.grandBaseCost)}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">L1: {l1Quote.distName}</div>
+            </div>
+            <div className="p-3 rounded-lg border border-border bg-muted/20">
+              <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Selling (Excl. GST)</div>
+              <div className="text-sm font-bold font-mono text-foreground mt-0.5">{fmtMoney(l1Calculations.grandSellingExclGst)}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">Base + Profit Margin</div>
+            </div>
+            <div className="p-3 rounded-lg border border-border bg-muted/20">
+              <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">GST Tax Component</div>
+              <div className="text-sm font-bold font-mono text-foreground mt-0.5">{fmtMoney(l1Calculations.grandGstAmount)}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">Standard 18% Output</div>
+            </div>
+            <div className="p-3 rounded-lg border border-indigo-300 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/30">
+              <div className="text-[10px] font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">GlobX Total (w/ GST)</div>
+              <div className="text-base font-extrabold font-mono text-indigo-700 dark:text-indigo-300 mt-0.5">{fmtMoney(l1Calculations.grandGlobxTotal)}</div>
+              <div className="text-[10px] font-semibold text-indigo-600/80 dark:text-indigo-400 mt-0.5">Final Quoted Bid Value</div>
+            </div>
+            <div className="p-3 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/30">
+              <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider">Net Profit</div>
+              <div className="text-base font-extrabold font-mono text-emerald-700 dark:text-emerald-300 mt-0.5">{fmtMoney(l1Calculations.grandTotalProfit)}</div>
+              <div className="text-[10px] font-semibold text-emerald-600/80 dark:text-emerald-400 mt-0.5">{l1Calculations.effectiveMarginPct.toFixed(2)}% of Base Cost</div>
+            </div>
+          </div>
+
+          {/* Interactive Pricing Calculation Table */}
+          <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-[11px] border-collapse">
               <thead>
-                <tr className="bg-muted/50 text-muted-foreground font-bold">
-                  <th className="border border-border p-2">S.No</th>
-                  <th className="border border-border p-2">Description</th>
-                  <th className="border border-border p-2">Qty</th>
-                  <th className="border border-border p-2">Purchase Price Basic</th>
-                  <th className="border border-border p-2">GST (18%)</th>
-                  <th className="border border-border p-2">Unit Price with GST</th>
-                  <th className="border border-border p-2">Total Purchase Price with GST</th>
-                  <th className="border border-border p-2">Margin %</th>
-                  <th className="border border-border p-2">GlobX Unit Selling Price</th>
-                  <th className="border border-border p-2">GlobX Total Price</th>
-                  <th className="border border-border p-2">GlobX Profit (Per Unit)</th>
-                  <th className="border border-border p-2">GlobX Profit (Total)</th>
+                <tr className="bg-muted/60 text-muted-foreground font-bold text-[10px] uppercase tracking-wider">
+                  <th className="border border-border p-2 text-center">S.No</th>
+                  <th className="border border-border p-2 text-left">Item Description</th>
+                  <th className="border border-border p-2 text-center">Qty</th>
+                  <th className="border border-border p-2 text-right">Base Price (₹)</th>
+                  <th className="border border-border p-2 text-center">Margin %</th>
+                  <th className="border border-border p-2 text-right">Profit / Unit (₹)</th>
+                  <th className="border border-border p-2 text-right">Unit Price (Excl GST)</th>
+                  <th className="border border-border p-2 text-right">GST (₹)</th>
+                  <th className="border border-border p-2 text-right">Unit Price w/ GST</th>
+                  <th className="border border-border p-2 text-right bg-indigo-50/80 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200">GlobX Total (₹)</th>
+                  <th className="border border-border p-2 text-right bg-emerald-50/80 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200">Total Profit (₹)</th>
                 </tr>
               </thead>
               <tbody>
-                {l1Quote.items.map((it, ii) => {
-                  const gst = it.basicPrice * 0.18
-                  const priceWithGst = it.basicPrice + gst
-                  const totalWithGst = priceWithGst * it.qty
-                  const marginAmt = priceWithGst * (marginPct / 100)     // profit per unit
-                  const globxUnit = priceWithGst + marginAmt              // selling price per unit
-                  const globxTotal = globxUnit * it.qty                   // total selling price
-                  const profitPerUnit = marginAmt                         // same as marginAmt
-                  const profitTotal = profitPerUnit * it.qty              // total profit
-                  return (
-                    <tr key={ii} className="hover:bg-muted/10">
-                      <td className="border border-border p-1.5 text-center font-mono font-bold">{ii + 1}</td>
-                      <td className="border border-border p-1.5">{it.desc}</td>
-                      <td className="border border-border p-1.5 text-center">{it.qty}</td>
-                      <td className="border border-border p-1.5 font-mono">{fmtMoney(it.basicPrice)}</td>
-                      <td className="border border-border p-1.5 font-mono">{fmtMoney(gst)}</td>
-                      <td className="border border-border p-1.5 font-mono">{fmtMoney(priceWithGst)}</td>
-                      <td className="border border-border p-1.5 font-mono font-semibold">{fmtMoney(totalWithGst)}</td>
-                      <td className="border border-border p-1.5 text-center">{marginPct}%</td>
-                      <td className="border border-border p-1.5 font-mono text-violet-700 font-bold">{fmtMoney(globxUnit)}</td>
-                      <td className="border border-border p-1.5 font-mono text-violet-700 font-bold">{fmtMoney(globxTotal)}</td>
-                      <td className="border border-border p-1.5 font-mono text-emerald-700 font-semibold">{fmtMoney(profitPerUnit)}</td>
-                      <td className="border border-border p-1.5 font-mono text-emerald-700 font-bold">{fmtMoney(profitTotal)}</td>
-                    </tr>
-                  )
-                })}
-                {/* Grand Total row */}
-                {(() => {
-                  const grandSell = l1Quote.items.reduce((s, it) => {
-                    const gstU = it.basicPrice * 0.18
-                    const unit = (it.basicPrice + gstU) * (1 + marginPct / 100)
-                    return s + unit * it.qty
-                  }, 0)
-                  const grandCost = l1Quote.items.reduce((s, it) => {
-                    const gstU = it.basicPrice * 0.18
-                    return s + (it.basicPrice + gstU) * it.qty
-                  }, 0)
-                  const grandProfit = grandSell - grandCost
-                  return (
-                    <tr className="bg-emerald-50/60 dark:bg-emerald-950/20 font-bold">
-                      <td colSpan={9} className="border border-border p-2 text-right text-xs font-bold">Grand Total:</td>
-                      <td className="border border-border p-2 font-mono text-violet-700 text-sm font-bold">{fmtMoney(grandSell)}</td>
-                      <td colSpan={1} className="border border-border p-2 text-center text-xs text-muted-foreground">—</td>
-                      <td className="border border-border p-2 font-mono text-emerald-700 text-sm font-bold">{fmtMoney(grandProfit)}</td>
-                    </tr>
-                  )
-                })()}
+                {l1Calculations.items.map((row) => (
+                  <tr key={row.sNo} className="hover:bg-muted/10 transition-colors">
+                    <td className="border border-border p-2 text-center font-mono font-bold text-muted-foreground">{row.sNo}</td>
+                    <td className="border border-border p-2 font-medium text-foreground">{row.desc}</td>
+                    <td className="border border-border p-2 text-center font-semibold">{row.qty}</td>
+                    <td className="border border-border p-2 text-right font-mono text-muted-foreground">{fmtMoney(row.basicPrice)}</td>
+                    <td className="border border-border p-2 text-center font-semibold text-indigo-600 dark:text-indigo-400">{row.itemMargin}%</td>
+                    <td className="border border-border p-2 text-right font-mono font-medium text-emerald-600 dark:text-emerald-400">{fmtMoney(row.profitPerUnit)}</td>
+                    <td className="border border-border p-2 text-right font-mono text-foreground">{fmtMoney(row.unitPriceExclGst)}</td>
+                    <td className="border border-border p-2 text-right font-mono text-muted-foreground">
+                      {fmtMoney(row.unitGst)} <span className="text-[9px] text-muted-foreground/70">({row.itemGstRate}%)</span>
+                    </td>
+                    <td className="border border-border p-2 text-right font-mono font-bold text-indigo-600 dark:text-indigo-400">{fmtMoney(row.globxUnit)}</td>
+                    <td className="border border-border p-2 text-right font-mono font-extrabold text-indigo-700 dark:text-indigo-300 bg-indigo-50/40 dark:bg-indigo-950/20">{fmtMoney(row.globxTotal)}</td>
+                    <td className="border border-border p-2 text-right font-mono font-extrabold text-emerald-700 dark:text-emerald-300 bg-emerald-50/40 dark:bg-emerald-950/20">{fmtMoney(row.profitTotal)}</td>
+                  </tr>
+                ))}
               </tbody>
+              <tfoot>
+                <tr className="bg-muted/40 font-bold border-t-2 border-border text-xs">
+                  <td colSpan={3} className="border border-border p-2.5 text-right text-muted-foreground uppercase tracking-wider">Grand Total Summary:</td>
+                  <td className="border border-border p-2.5 text-right font-mono font-bold text-foreground">{fmtMoney(l1Calculations.grandBaseCost)}</td>
+                  <td className="border border-border p-2.5 text-center font-bold text-indigo-700 dark:text-indigo-300">{l1Calculations.effectiveMarginPct.toFixed(2)}%</td>
+                  <td className="border border-border p-2.5 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">—</td>
+                  <td className="border border-border p-2.5 text-right font-mono font-bold text-foreground">{fmtMoney(l1Calculations.grandSellingExclGst)}</td>
+                  <td className="border border-border p-2.5 text-right font-mono font-bold text-muted-foreground">{fmtMoney(l1Calculations.grandGstAmount)}</td>
+                  <td className="border border-border p-2.5 text-right font-mono text-muted-foreground">—</td>
+                  <td className="border border-border p-2.5 text-right font-mono text-sm font-extrabold text-indigo-700 dark:text-indigo-300 bg-indigo-50/80 dark:bg-indigo-950/40">{fmtMoney(l1Calculations.grandGlobxTotal)}</td>
+                  <td className="border border-border p-2.5 text-right font-mono text-sm font-extrabold text-emerald-700 dark:text-emerald-300 bg-emerald-50/80 dark:bg-emerald-950/40">{fmtMoney(l1Calculations.grandTotalProfit)}</td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         </div>

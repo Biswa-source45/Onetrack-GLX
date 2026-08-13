@@ -6,7 +6,7 @@ import {
   Filter, RefreshCw, Award, XCircle, Clock, FileText,
   ShieldCheck, ArrowUpRight, ArrowDownRight, Eye, Sparkles, Activity,
   IndianRupee, AlertCircle, Building2, Calendar, PieChart as PieIcon,
-  TrendingDown, Info, HelpCircle
+  TrendingDown, Info, HelpCircle, Layers, UserCheck, Plus
 } from 'lucide-react'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip,
@@ -27,6 +27,7 @@ import {
   CardContent
 } from '@/components/ui/card'
 import { listBids, getTenderPerformanceMatrix } from '../../services/bids'
+import { tokenStorage } from '../../services/auth'
 
 // Currency Formatter Helper
 function formatCurrency(val) {
@@ -160,6 +161,28 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
   // Hover state for 3D Pop-out Pie Chart
   const [activePieIndex, setActivePieIndex] = useState(0)
 
+  // Sub-tab Scope for Tender Analytics: 'all' (Total Tender Analytics) vs 'owned' (Owned Tender Analytics)
+  const [tenderAnalyticsScope, setTenderAnalyticsScope] = useState('all')
+  const currentUser = useMemo(() => tokenStorage.getUser(), [])
+
+  // Ownership Matcher Helper
+  const isBidOwnedByUser = useCallback((bid, user) => {
+    if (!user || !bid) return false
+    const ownerId = bid.bid_owner_id || bid.bid_owner?.id
+    const creatorId = bid.created_by
+    const userEmail = user.email?.toLowerCase()
+    const ownerEmail = bid.bid_owner?.email?.toLowerCase()
+    const username = user.username?.toLowerCase()
+    const ownerUsername = bid.bid_owner?.username?.toLowerCase()
+
+    return (
+      (ownerId && String(ownerId) === String(user.id)) ||
+      (creatorId && String(creatorId) === String(user.id)) ||
+      (ownerEmail && userEmail && ownerEmail === userEmail) ||
+      (ownerUsername && username && ownerUsername === username)
+    )
+  }, [])
+
   // Individual User Owned Tenders State
   const [userOwnedBids, setUserOwnedBids] = useState([])
   const [loadingUserBids, setLoadingUserBids] = useState(false)
@@ -211,7 +234,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
     return () => clearInterval(interval)
   }, [fetchData])
 
-  // Fetch selected user owned tenders
+  // Fetch selected user owned tenders for Owner Performance Matrix
   useEffect(() => {
     if (!selectedUserId) {
       setUserOwnedBids([])
@@ -256,9 +279,23 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
     return matrixStats.find(u => u.user_id === selectedUserId) || matrixStats[0] || null
   }, [matrixStats, selectedUserId])
 
+  // Count of tenders owned by logged-in user
+  const ownedCount = useMemo(() => {
+    if (!currentUser) return 0
+    return bids.filter(b => isBidOwnedByUser(b, currentUser)).length
+  }, [bids, currentUser, isBidOwnedByUser])
+
+  // Active Scoped Tenders (Total vs Owned)
+  const scopedBids = useMemo(() => {
+    if (tenderAnalyticsScope === 'owned' && currentUser) {
+      return bids.filter(b => isBidOwnedByUser(b, currentUser))
+    }
+    return bids
+  }, [bids, tenderAnalyticsScope, currentUser, isBidOwnedByUser])
+
   // Filtered Bids
   const filteredBids = useMemo(() => {
-    return bids.filter(b => {
+    return scopedBids.filter(b => {
       const matchSearch = !searchQuery ||
         b.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         b.bid_no?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -267,7 +304,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
       const matchStage = stageFilter === 'ALL' || b.workflow_stage === stageFilter
       return matchSearch && matchCategory && matchStage
     })
-  }, [bids, searchQuery, categoryFilter, stageFilter])
+  }, [scopedBids, searchQuery, categoryFilter, stageFilter])
 
   // Comprehensive Analytics & Visualizations Calculations
   const analyticsSummary = useMemo(() => {
@@ -473,7 +510,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
         </div>
       </div>
 
-      {/* ── Content View 1: Tender Analytics ─────────────────────────────── */}
+      {/* ── Content View 1: Tender Analytics (Nested: Total vs Owned) ─── */}
       {activeTab === 'tender-analytics' && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
@@ -481,8 +518,97 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
           transition={{ duration: 0.25 }}
           className="space-y-6"
         >
-          {/* Filter Bar */}
-          <Card size="sm" className="p-4">
+          {/* Sub-Tab Navigation Bar: Total Tender Analytics vs Owned Tender Analytics */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card border border-border p-2.5 rounded-xl shadow-xs">
+            <div className="flex items-center bg-muted/60 border border-border p-1 rounded-lg text-xs">
+              <button
+                type="button"
+                onClick={() => setTenderAnalyticsScope('all')}
+                className={`px-3.5 py-1.5 rounded-md font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  tenderAnalyticsScope === 'all'
+                    ? 'bg-card text-foreground shadow-xs'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Layers className="size-3.5" />
+                Total Tender Analytics
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-primary/10 text-primary font-bold ml-1">
+                  {bids.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTenderAnalyticsScope('owned')}
+                className={`px-3.5 py-1.5 rounded-md font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  tenderAnalyticsScope === 'owned'
+                    ? 'bg-primary text-primary-foreground shadow-xs'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <UserCheck className="size-3.5" />
+                Owned Tender Analytics
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ml-1 ${
+                  tenderAnalyticsScope === 'owned'
+                    ? 'bg-primary-foreground/20 text-white'
+                    : 'bg-primary/10 text-primary'
+                }`}>
+                  {ownedCount}
+                </span>
+              </button>
+            </div>
+
+            <div className="text-xs text-muted-foreground flex items-center gap-2">
+              {tenderAnalyticsScope === 'owned' ? (
+                <span className="flex items-center gap-1 text-primary font-medium">
+                  <UserCheck className="size-3.5" />
+                  Showing personal metrics for <strong>{currentUser?.full_name || currentUser?.username || 'Your Account'}</strong> ({ownedCount} tenders owned)
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-muted-foreground">
+                  <Layers className="size-3.5" />
+                  Showing organizational metrics across all company tenders ({bids.length} total)
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* If in Owned mode and no tenders are owned, show an informative card */}
+          {tenderAnalyticsScope === 'owned' && ownedCount === 0 ? (
+            <Card className="p-12 text-center flex flex-col items-center justify-center gap-3">
+              <div className="p-3.5 rounded-full bg-primary/10 text-primary">
+                <UserCheck className="size-8" />
+              </div>
+              <div className="max-w-md">
+                <h3 className="font-bold text-base text-foreground">No Owned Tenders Found</h3>
+                <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+                  You are not currently designated as the Bid Owner on any tender records. You can view organization-wide statistics or create a new tender workspace to start building your portfolio.
+                </p>
+              </div>
+              <div className="flex items-center gap-2.5 mt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setTenderAnalyticsScope('all')}
+                  className="gap-1.5 text-xs"
+                >
+                  <Layers className="size-3.5" />
+                  View Total Tender Analytics
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => navigate('/dashboard/tenders')}
+                  className="gap-1.5 text-xs"
+                >
+                  <Plus className="size-3.5" />
+                  Go to Tenders
+                </Button>
+              </div>
+            </Card>
+          ) : (
+            <>
+              {/* Filter Bar */}
+              <Card size="sm" className="p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2 flex-1 min-w-[240px]">
                 <Search className="size-4 text-muted-foreground shrink-0" />
@@ -885,8 +1011,10 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
               </CardContent>
             </Card>
           </div>
-        </motion.div>
+        </>
       )}
+    </motion.div>
+  )}
 
       {/* ── Content View 2: Tender Owner Performance Matrix ─────────────── */}
       {activeTab === 'owner-matrix' && (

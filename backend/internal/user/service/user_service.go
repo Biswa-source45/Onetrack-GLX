@@ -55,6 +55,14 @@ func (s *userService) CreateUser(ctx context.Context, req domain.CreateUserReque
 		return nil, fmt.Errorf("failed to hash password: %w", err)
 	}
 
+	// Validate roles (1 or 2 roles: Primary and optional Secondary)
+	if len(req.Roles) == 0 {
+		return nil, fmt.Errorf("at least one role must be assigned")
+	}
+	if len(req.Roles) > 2 {
+		return nil, fmt.Errorf("a user cannot have more than 2 roles (one primary and one secondary)")
+	}
+
 	// Create user
 	user := &authDomain.User{
 		EmployeeCode: req.EmployeeCode,
@@ -171,6 +179,13 @@ func (s *userService) UpdateRoles(ctx context.Context, userID string, req domain
 	_, err := s.repo.GetByID(ctx, userID)
 	if err != nil {
 		return ErrUserNotFound
+	}
+
+	if len(req.Roles) == 0 {
+		return fmt.Errorf("at least one role must be assigned")
+	}
+	if len(req.Roles) > 2 {
+		return fmt.Errorf("a user cannot have more than 2 roles (one primary and one secondary)")
 	}
 
 	return s.repo.AssignRoles(ctx, userID, req.Roles, assignedBy)

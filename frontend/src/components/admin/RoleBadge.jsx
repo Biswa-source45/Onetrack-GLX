@@ -3,7 +3,7 @@ import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 
 /**
- * V2 System Roles — exactly as defined in OneTrack_Migration.pdf
+ * V2 System Roles — defined in OneTrack RBAC architecture
  */
 const ROLE_CONFIG = {
   SUPER_ADMIN:   { label: 'Super Admin',   className: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/30 dark:text-violet-400 dark:border-violet-800' },
@@ -15,20 +15,34 @@ const ROLE_CONFIG = {
 }
 
 /**
- * Renders a styled role badge. Falls back gracefully for unknown roles.
+ * Renders a styled role badge with optional Primary / Secondary indicators.
  */
-export function RoleBadge({ role, className }) {
+export function RoleBadge({ role, isPrimary, isSecondary, className }) {
   const config = ROLE_CONFIG[role] ?? { label: role, className: 'bg-neutral-100 text-neutral-600 border-neutral-200' }
   return (
     <Badge
       variant="outline"
-      className={cn('text-[11px] font-semibold tracking-wide border', config.className, className)}
+      className={cn(
+        'text-[11px] font-semibold tracking-wide border inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md shadow-2xs',
+        config.className,
+        className
+      )}
     >
-      {config.label}
+      {isPrimary && <span className="text-amber-500 font-bold text-xs leading-none">★</span>}
+      <span>{config.label}</span>
+      {isPrimary && (
+        <span className="text-[9px] bg-primary/10 text-primary px-1 py-0.2 rounded font-medium tracking-tight">
+          Primary
+        </span>
+      )}
+      {isSecondary && (
+        <span className="text-[9px] bg-muted text-muted-foreground px-1 py-0.2 rounded font-normal tracking-tight">
+          Secondary
+        </span>
+      )}
     </Badge>
   )
 }
 
 export const ALL_ROLES = Object.keys(ROLE_CONFIG)
 export const ROLE_LABELS = ROLE_CONFIG
-

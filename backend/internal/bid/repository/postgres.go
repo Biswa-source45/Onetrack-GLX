@@ -152,9 +152,9 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		idx++
 	}
 	if params.BidOwnerID != "" {
-		conditions = append(conditions, fmt.Sprintf("b.bid_owner_id = $%d", idx))
-		args = append(args, params.BidOwnerID)
-		idx++
+		conditions = append(conditions, fmt.Sprintf("(b.bid_owner_id = $%d OR b.created_by = $%d)", idx, idx+1))
+		args = append(args, params.BidOwnerID, params.BidOwnerID)
+		idx += 2
 	}
 	if params.Category != "" {
 		conditions = append(conditions, fmt.Sprintf("b.category ILIKE $%d", idx))
@@ -199,10 +199,17 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 
 	// Calculate global status counts (unfiltered by tab selection, so top summary cards remain persistent)
 	baseConditions := []string{}
+	baseArgs := []interface{}{}
+	baseIdx := 1
 	if params.InBin {
 		baseConditions = append(baseConditions, "b.archived_at IS NOT NULL")
 	} else {
 		baseConditions = append(baseConditions, "b.archived_at IS NULL")
+	}
+	if params.BidOwnerID != "" {
+		baseConditions = append(baseConditions, fmt.Sprintf("(b.bid_owner_id = $%d OR b.created_by = $%d)", baseIdx, baseIdx+1))
+		baseArgs = append(baseArgs, params.BidOwnerID, params.BidOwnerID)
+		baseIdx += 2
 	}
 	baseWhere := "WHERE " + strings.Join(baseConditions, " AND ")
 
@@ -222,7 +229,7 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		GROUP BY 1
 	`, baseWhere)
 
-	rowsStatus, err := r.pool.Query(ctx, statusQuery)
+	rowsStatus, err := r.pool.Query(ctx, statusQuery, baseArgs...)
 	if err != nil {
 		return nil, 0, nil, fmt.Errorf("status counts: %w", err)
 	}

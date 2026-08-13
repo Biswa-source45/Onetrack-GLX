@@ -323,14 +323,17 @@ export function UserTable({
 
                   {/* Roles */}
                   <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1 max-w-[200px]">
-                      {(user.roles || []).slice(0, 2).map((role) => (
-                        <RoleBadge key={role} role={role} />
+                    <div className="flex flex-wrap gap-1.5 max-w-[240px]">
+                      {(user.roles || []).slice(0, 2).map((role, idx) => (
+                        <RoleBadge
+                          key={role}
+                          role={role}
+                          isPrimary={idx === 0}
+                          isSecondary={idx === 1}
+                        />
                       ))}
-                      {(user.roles || []).length > 2 && (
-                        <Badge variant="outline" className="text-[11px] text-muted-foreground">
-                          +{user.roles.length - 2}
-                        </Badge>
+                      {(user.roles || []).length === 0 && (
+                        <span className="text-xs text-muted-foreground italic">No roles</span>
                       )}
                     </div>
                   </td>

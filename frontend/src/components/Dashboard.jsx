@@ -30,7 +30,16 @@ import { getTenderPerformanceMatrix } from '../services/bids'
 // ── Navigation items (each gated by a permission check) ──────────────────────
 const NAV_ITEMS = [
   { id: 'overview',   label: 'Overview',        icon: LayoutDashboard, permission: null },
-  { id: 'tenders',    label: 'Tenders',          icon: FileText,        permission: 'bid.view' },
+  { 
+    id: 'tenders',    
+    label: 'Tenders',          
+    icon: FileText,        
+    permission: 'bid.view',
+    children: [
+      { id: 'tenders-all', label: 'All Tenders', icon: Layers, path: '/dashboard/tenders' },
+      { id: 'tenders-owned', label: 'Owned Tenders', icon: UserCheck, path: '/dashboard/tenders/owned' }
+    ]
+  },
   { 
     id: 'analytics',  
     label: 'Analytics',        
@@ -44,6 +53,22 @@ const NAV_ITEMS = [
   { id: 'alerts',     label: 'Alerts',           icon: Bell,            permission: 'bid.view' },
   { id: 'users',      label: 'User Management',  icon: Users,           permission: 'user.view' },
 ]
+
+function isChildActive(child, pathname) {
+  if (child.id === 'tenders-all') {
+    return pathname === '/dashboard/tenders' || pathname === '/dashboard/tenders/'
+  }
+  if (child.id === 'tenders-owned') {
+    return pathname.startsWith('/dashboard/tenders/owned')
+  }
+  if (child.id === 'analytics-tenders') {
+    return pathname === '/dashboard/analytics' || pathname.startsWith('/dashboard/analytics/tenders')
+  }
+  if (child.id === 'analytics-matrix') {
+    return pathname.startsWith('/dashboard/analytics/performance-matrix')
+  }
+  return pathname === child.path
+}
 
 // Currency Helper
 function formatCurrency(val) {
@@ -1069,10 +1094,20 @@ function UserProfileModal({ user, open, onClose, onOpenPasswordChange, onUpdateU
 
             {/* Roles & Permissions */}
             <div className="space-y-3">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Assigned Roles</h4>
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Assigned Roles</h4>
+                <span className="text-[11px] text-muted-foreground font-medium">
+                  {user.roles?.length || 1} Active Role{(user.roles?.length || 1) > 1 ? 's' : ''}
+                </span>
+              </div>
               <div className="flex flex-wrap gap-2">
-                {(user.roles || ['USER']).map((r) => (
-                  <RoleBadge key={r} role={r} />
+                {(user.roles || ['USER']).map((r, idx) => (
+                  <RoleBadge
+                    key={r}
+                    role={r}
+                    isPrimary={idx === 0}
+                    isSecondary={idx === 1}
+                  />
                 ))}
               </div>
             </div>
@@ -1253,8 +1288,13 @@ export default function Dashboard() {
               <UserAvatar fullName={user.full_name} username={user.username} size="sm" />
               <div className="hidden md:block">
                 <p className="text-xs font-semibold text-foreground leading-none group-hover:text-primary transition-colors">{user.full_name || user.username}</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5 font-medium">
-                  {user.roles?.[0] ?? 'USER'}
+                <p className="text-[11px] text-muted-foreground mt-0.5 font-medium flex items-center gap-1">
+                  <span>{user.roles?.[0] ?? 'USER'}</span>
+                  {user.roles?.[1] && (
+                    <span className="text-[10px] text-primary/80 font-normal">
+                      · {user.roles[1]}
+                    </span>
+                  )}
                 </p>
               </div>
             </button>
@@ -1325,7 +1365,7 @@ export default function Dashboard() {
                     <div className="overflow-hidden space-y-1">
                       {item.children?.map((child) => {
                         const ChildIcon = child.icon
-                        const childActive = location.pathname === child.path || (child.path.endsWith('/tenders') && location.pathname === '/dashboard/analytics')
+                        const childActive = isChildActive(child, location.pathname)
                         return (
                           <button
                             key={child.id}
@@ -1415,7 +1455,7 @@ export default function Dashboard() {
                           <div className="overflow-hidden space-y-1">
                             {item.children?.map((child) => {
                               const ChildIcon = child.icon
-                              const childActive = location.pathname === child.path || (child.path.endsWith('/tenders') && location.pathname === '/dashboard/analytics')
+                              const childActive = isChildActive(child, location.pathname)
                               return (
                                 <button
                                   key={child.id}

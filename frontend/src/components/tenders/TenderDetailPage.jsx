@@ -31,6 +31,7 @@ import {
   WORKFLOW_STAGES_ORDERED,
 } from '../../services/bids'
 import { usePermissions } from '../../hooks/usePermissions'
+import { tokenStorage } from '../../services/auth'
 import { TaskDashboard } from '../tasks/TaskDashboard'
 import { ChecklistTab } from './ChecklistTab'
 import { listUsers } from '../../services/users'
@@ -231,31 +232,35 @@ const STAGE_ICONS = {
 }
 
 function getUserDisplayName(actor) {
-  if (!actor) {
-    const active = tokenStorage.getUser()
-    return active?.full_name || active?.username || 'Super Admin'
-  }
-  if (typeof actor === 'string') {
-    if (['user', 'User', 'Anonymous', 'Current User', ''].includes(actor.trim())) {
+  try {
+    if (!actor) {
       const active = tokenStorage.getUser()
       return active?.full_name || active?.username || 'Super Admin'
     }
-    return actor
+    if (typeof actor === 'string') {
+      if (['user', 'User', 'Anonymous', 'Current User', ''].includes(actor.trim())) {
+        const active = tokenStorage.getUser()
+        return active?.full_name || active?.username || 'Super Admin'
+      }
+      return actor
+    }
+    if (typeof actor === 'object') {
+      const fn = actor.full_name || actor.name || actor.displayName
+      if (fn && !['Anonymous', 'User', 'Current User', 'user'].includes(fn.trim())) {
+        return fn
+      }
+      if (actor.username && !['user', 'Anonymous', 'unknown'].includes(actor.username.trim())) {
+        return actor.username
+      }
+      if (actor.email) {
+        return actor.email.split('@')[0]
+      }
+    }
+    const active = tokenStorage.getUser()
+    return active?.full_name || active?.username || 'Super Admin'
+  } catch {
+    return 'Super Admin'
   }
-  if (typeof actor === 'object') {
-    const fn = actor.full_name || actor.name || actor.displayName
-    if (fn && !['Anonymous', 'User', 'Current User', 'user'].includes(fn.trim())) {
-      return fn
-    }
-    if (actor.username && !['user', 'Anonymous', 'unknown'].includes(actor.username.trim())) {
-      return actor.username
-    }
-    if (actor.email) {
-      return actor.email.split('@')[0]
-    }
-  }
-  const active = tokenStorage.getUser()
-  return active?.full_name || active?.username || 'Super Admin'
 }
 
 function getEventTypeBadge(type) {

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { listBids } from '../services/bids'
 import { listUsers } from '../services/users'
+import { tokenStorage } from '../services/auth'
 
 export const useBidStore = create((set, get) => ({
   bids: [],
@@ -10,6 +11,8 @@ export const useBidStore = create((set, get) => ({
   page: 1,
   stageFilter: '',
   statusFilter: '',
+  bidOwnerId: '',
+  scope: 'all',
   inBin: false,
   searchInput: '',
   debouncedSearch: '',
@@ -18,6 +21,17 @@ export const useBidStore = create((set, get) => ({
   // Cache users in store to prevent multiple separate API requests
   users: [],
   usersLoading: false,
+
+  setScope: (scope, ownerId = '') => {
+    const finalOwnerId = scope === 'owned' ? (ownerId || tokenStorage.getUser()?.id || '') : ''
+    set({ scope, bidOwnerId: finalOwnerId, page: 1 })
+    get().loadBids(finalOwnerId)
+  },
+
+  setBidOwnerId: (bidOwnerId) => {
+    set({ bidOwnerId, page: 1 })
+    get().loadBids()
+  },
 
   setPage: (page) => {
     set({ page })
@@ -48,8 +62,12 @@ export const useBidStore = create((set, get) => ({
 
   setViewMode: (viewMode) => set({ viewMode }),
 
-  loadBids: async () => {
-    const { page, debouncedSearch, stageFilter, statusFilter, inBin } = get()
+  loadBids: async (overrideOwnerId) => {
+    const { page, debouncedSearch, stageFilter, statusFilter, inBin, bidOwnerId, scope } = get()
+    let finalOwnerId = overrideOwnerId !== undefined ? overrideOwnerId : bidOwnerId
+    if (scope === 'owned' && !finalOwnerId) {
+      finalOwnerId = tokenStorage.getUser()?.id || ''
+    }
     set({ loading: true, error: null })
     try {
       const res = await listBids({
@@ -58,6 +76,7 @@ export const useBidStore = create((set, get) => ({
         search: debouncedSearch,
         workflow_stage: stageFilter,
         bid_status: statusFilter,
+        bid_owner_id: (scope === 'owned' || finalOwnerId) ? finalOwnerId : undefined,
         in_bin: inBin,
       })
       if (res.ok) {
