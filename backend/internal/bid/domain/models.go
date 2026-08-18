@@ -1,6 +1,13 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrValidation wraps request-validation failures so handlers can distinguish
+// a 400 (bad input) from a genuine 500 (unexpected server/repo failure).
+var ErrValidation = errors.New("validation failed")
 
 // CreationMode drives how the bid was initialized — not its lifecycle
 const (
@@ -8,7 +15,10 @@ const (
 	CreationModeIntelligence = "INTELLIGENCE"
 )
 
-// 12 Workflow stages matching OneTrack V2 GeM migration plan
+// 11 Workflow stages matching OneTrack V2 GeM migration plan.
+// BID_DOCUMENTATION was removed — its only real function (stakeholder
+// notification) folded into DOCUMENT_CHECKLIST_PREPARATION, since document
+// tracking already lives there end-to-end.
 const (
 	StageDiscovered              = "DISCOVERED"
 	StageEligibilityAssessment   = "ELIGIBILITY_ASSESSMENT"
@@ -16,7 +26,6 @@ const (
 	StagePricingRequest          = "PRICING_REQUEST"
 	StageDocumentChecklistPrep   = "DOCUMENT_CHECKLIST_PREPARATION"
 	StageEMDProcessing           = "EMD_PROCESSING"
-	StageBidDocumentation        = "BID_DOCUMENTATION"
 	StageInternalApproval        = "INTERNAL_APPROVAL"
 	StageGeMSubmission           = "GEM_SUBMISSION"
 	StageTechnicalEvaluation     = "TECHNICAL_EVALUATION"
@@ -35,7 +44,6 @@ var OrderedWorkflowStages = []string{
 	StagePricingRequest,
 	StageDocumentChecklistPrep,
 	StageEMDProcessing,
-	StageBidDocumentation,
 	StageInternalApproval,
 	StageGeMSubmission,
 	StageTechnicalEvaluation,
@@ -86,6 +94,16 @@ type BidWorkspace struct {
 	FinalBidValue  *float64 `json:"final_bid_value,omitempty"`
 	L1Price        *float64 `json:"l1_price,omitempty"`
 	QuotedPrice    *float64 `json:"quoted_price,omitempty"`
+
+	// EMD Bank / Online Payment details (when EMD mode = ONLINE)
+	EMDBankName      *string `json:"emd_bank_name,omitempty"`
+	EMDAccountNumber *string `json:"emd_account_number,omitempty"`
+	EMDIFSCCode      *string `json:"emd_ifsc_code,omitempty"`
+	EMDBranch        *string `json:"emd_branch,omitempty"`
+
+	// EMD DD (Demand Draft) details (when EMD mode = DD)
+	EMDBeneficiary *string `json:"emd_beneficiary,omitempty"`
+	EMDPayableAt   *string `json:"emd_payable_at,omitempty"`
 
 	// Dates
 	OpeningDate    *time.Time `json:"opening_date,omitempty"`
@@ -139,7 +157,11 @@ type BidWorkspace struct {
 	FinanceAlertAt    *time.Time `json:"finance_alert_at,omitempty"`
 	EMDReady          bool   `json:"emd_ready"`
 	EMDReturned       bool   `json:"emd_returned"`
+	EMDReturnedDate   *time.Time `json:"emd_returned_date,omitempty"`
 	BGDischarged      bool   `json:"bg_discharged"`
+	BGDischargedDate  *time.Time `json:"bg_discharged_date,omitempty"`
+	BGTargetDate      *time.Time `json:"bg_target_date,omitempty"`
+	POReceivedDate    *time.Time `json:"po_received_date,omitempty"`
 	SubmissionDone    bool   `json:"submission_done"`
 	GemSubmissionPrice *float64 `json:"gem_submission_price,omitempty"`
 	FinalPrice         *float64 `json:"final_price,omitempty"`
@@ -245,6 +267,13 @@ type CreateBidRequest struct {
 	EMDAmount        *float64 `json:"emd_amount"`
 	EMDType          *string  `json:"emd_type"`
 	EMDExempted      *bool    `json:"emd_exempted"`
+	// EMD bank / DD detail fields
+	EMDBankName      *string  `json:"emd_bank_name"`
+	EMDAccountNumber *string  `json:"emd_account_number"`
+	EMDIFSCCode      *string  `json:"emd_ifsc_code"`
+	EMDBranch        *string  `json:"emd_branch"`
+	EMDBeneficiary   *string  `json:"emd_beneficiary"`
+	EMDPayableAt     *string  `json:"emd_payable_at"`
 	HighLevelScope   *string  `json:"high_level_scope"`
 	BGRequired       *bool    `json:"bg_required"`
 	StartDate        *string  `json:"start_date"`
@@ -286,6 +315,13 @@ type UpdateBidRequest struct {
 	EMDAmount        *float64 `json:"emd_amount"`
 	EMDType          *string  `json:"emd_type"`
 	EMDExempted      *bool    `json:"emd_exempted"`
+	// EMD bank / DD detail fields
+	EMDBankName      *string  `json:"emd_bank_name"`
+	EMDAccountNumber *string  `json:"emd_account_number"`
+	EMDIFSCCode      *string  `json:"emd_ifsc_code"`
+	EMDBranch        *string  `json:"emd_branch"`
+	EMDBeneficiary   *string  `json:"emd_beneficiary"`
+	EMDPayableAt     *string  `json:"emd_payable_at"`
 	HighLevelScope   *string  `json:"high_level_scope"`
 	BGRequired       *bool    `json:"bg_required"`
 	BGRate           *float64 `json:"bg_rate"`
@@ -314,9 +350,14 @@ type UpdateBidRequest struct {
 	FinanceAlerted    *bool    `json:"finance_alerted,omitempty"`
 	EMDReady          *bool    `json:"emd_ready,omitempty"`
 	EMDReturned       *bool    `json:"emd_returned,omitempty"`
+	EMDReturnedDate   *string  `json:"emd_returned_date,omitempty"`
 	BGDischarged      *bool    `json:"bg_discharged,omitempty"`
+	BGDischargedDate  *string  `json:"bg_discharged_date,omitempty"`
+	BGTargetDate      *string  `json:"bg_target_date,omitempty"`
+	POReceivedDate    *string  `json:"po_received_date,omitempty"`
 	SubmissionDone    *bool    `json:"submission_done,omitempty"`
 	GemSubmissionPrice *float64 `json:"gem_submission_price,omitempty"`
+	QuotedPrice        *float64 `json:"quoted_price,omitempty"`
 	FinalPrice         *float64 `json:"final_price,omitempty"`
 	TechnicalResult    *string  `json:"technical_result,omitempty"`
 	DisqualificationReason *string `json:"disqualification_reason,omitempty"`
@@ -414,6 +455,12 @@ type BidResponse struct {
 	EMDAmount              *float64         `json:"emd_amount"`
 	EMDType                *string          `json:"emd_type"`
 	EMDExempted            bool             `json:"emd_exempted"`
+	EMDBankName            *string          `json:"emd_bank_name"`
+	EMDAccountNumber       *string          `json:"emd_account_number"`
+	EMDIFSCCode            *string          `json:"emd_ifsc_code"`
+	EMDBranch              *string          `json:"emd_branch"`
+	EMDBeneficiary         *string          `json:"emd_beneficiary"`
+	EMDPayableAt           *string          `json:"emd_payable_at"`
 	FinalBidValue          *float64         `json:"final_bid_value"`
 	L1Price                *float64         `json:"l1_price"`
 	QuotedPrice            *float64         `json:"quoted_price"`
@@ -448,11 +495,17 @@ type BidResponse struct {
 	ActivityType           *string          `json:"activity_type,omitempty"`
 	ExcelBidStatus         *string          `json:"excel_bid_status,omitempty"`
 	SubmissionStatus       *string          `json:"submission_status,omitempty"`
+	FinancialEvaluationStatus *string       `json:"financial_evaluation_status,omitempty"`
+	POReceivedStatus       *string          `json:"po_received_status,omitempty"`
 	BidResult              *string          `json:"bid_result,omitempty"`
 	FinanceAlerted         bool             `json:"finance_alerted"`
 	EMDReady               bool             `json:"emd_ready"`
 	EMDReturned            bool             `json:"emd_returned"`
+	EMDReturnedDate        *time.Time       `json:"emd_returned_date,omitempty"`
 	BGDischarged           bool             `json:"bg_discharged"`
+	BGDischargedDate       *time.Time       `json:"bg_discharged_date,omitempty"`
+	BGTargetDate           *time.Time       `json:"bg_target_date,omitempty"`
+	POReceivedDate         *time.Time       `json:"po_received_date,omitempty"`
 	SubmissionDone         bool             `json:"submission_done"`
 	GemSubmissionPrice     *float64         `json:"gem_submission_price,omitempty"`
 	FinalPrice             *float64         `json:"final_price,omitempty"`
@@ -575,6 +628,12 @@ type CreateBidParams struct {
 	EMDAmount                 *float64
 	EMDType                   *string
 	EMDExempted               bool
+	EMDBankName               *string
+	EMDAccountNumber          *string
+	EMDIFSCCode               *string
+	EMDBranch                 *string
+	EMDBeneficiary            *string
+	EMDPayableAt              *string
 	BGRequired                bool
 	BGRate                    *float64
 	HighLevelScope            *string

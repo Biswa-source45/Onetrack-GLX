@@ -32,7 +32,6 @@ import {
 } from '../../services/bids'
 import { usePermissions } from '../../hooks/usePermissions'
 import { tokenStorage } from '../../services/auth'
-import { TaskDashboard } from '../tasks/TaskDashboard'
 import { ChecklistTab } from './ChecklistTab'
 import { listUsers } from '../../services/users'
 import { EditTenderDialog } from './EditTenderDialog'
@@ -73,9 +72,11 @@ function getBidStartDate(bid) {
 
 function getBidEndDate(bid) {
   if (!bid) return 'Not Specified'
-  if (isValidDate(bid.end_date)) return fmt(bid.end_date)
-  if (isValidDate(bid.closing_date)) return fmt(bid.closing_date)
-  if (isValidDate(bid.submission_deadline)) return fmt(bid.submission_deadline)
+  // end_date/closing_date/submission_deadline carry a real time-of-day —
+  // show it in full so a same-day deadline isn't misread as "any time today".
+  if (isValidDate(bid.end_date)) return formatFullDateTime(bid.end_date)
+  if (isValidDate(bid.closing_date)) return formatFullDateTime(bid.closing_date)
+  if (isValidDate(bid.submission_deadline)) return formatFullDateTime(bid.submission_deadline)
   if (isValidDate(bid.target_month_date)) return fmt(bid.target_month_date)
   return 'Not Specified'
 }
@@ -506,7 +507,7 @@ function StageHistoryTab({ bidId, bid }) {
   const WORKFLOW_STAGES = [
     'DISCOVERED', 'ELIGIBILITY_ASSESSMENT', 'OEM_AUTHORIZATION_REQUEST',
     'PRICING_REQUEST', 'DOCUMENT_CHECKLIST_PREPARATION', 'EMD_PROCESSING',
-    'BID_DOCUMENTATION', 'INTERNAL_APPROVAL', 'GEM_SUBMISSION',
+    'INTERNAL_APPROVAL', 'GEM_SUBMISSION',
     'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER'
   ]
 
@@ -991,7 +992,7 @@ function StageSectionsTab({ bid, onRefresh, onAdvance }) {
       <div className="flex items-center justify-between gap-4 flex-wrap bg-card border border-border p-4 rounded-xl">
         <div>
           <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-            <Layers className="size-4 text-primary" /> Tender Lifecycle Stage Sections (1 to 12)
+            <Layers className="size-4 text-primary" /> Tender Lifecycle Stage Sections (1 to {WORKFLOW_STAGES_ORDERED.length})
           </h3>
           <p className="text-xs text-muted-foreground mt-0.5">
             Click on <strong>any stage section below</strong> to view requirements, manage stage tasks, or set the active workflow stage.
@@ -1014,12 +1015,12 @@ function StageSectionsTab({ bid, onRefresh, onAdvance }) {
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Select Stage Section:</span>
-          <span className="text-xs text-primary font-medium">Stage {selectedIdx + 1} of 12 Selected</span>
+          <span className="text-xs text-primary font-medium">Stage {selectedIdx + 1} of {WORKFLOW_STAGES_ORDERED.length} Selected</span>
         </div>
         
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
           {WORKFLOW_STAGES_ORDERED.map((stageKey, idx) => {
-            const { isCompleted, isCurrent: isCurrentWorkflow, isLocked, isInReview } = checkStageState(bid, stageKey)
+            const { isCompleted, isCurrent: isCurrentWorkflow, isLocked, isInReview, isEmdExempt } = checkStageState(bid, stageKey)
             const isSelected = selectedStage === stageKey
             const guide = STAGE_GUIDE[stageKey]
 
@@ -1027,14 +1028,18 @@ function StageSectionsTab({ bid, onRefresh, onAdvance }) {
               <button
                 key={stageKey}
                 type="button"
+                disabled={isEmdExempt}
                 onClick={() => {
+                  if (isEmdExempt) return
                   if (isLocked) {
                     toast.error(`Stage ${idx + 1} is locked. Complete preceding stages first.`)
                   }
                   setSelectedStage(stageKey)
                 }}
                 className={`flex flex-col items-start p-2.5 rounded-xl border text-left transition-all relative overflow-hidden group ${
-                  isSelected
+                  isEmdExempt
+                    ? 'border-border/40 bg-muted/10 opacity-50 cursor-not-allowed'
+                    : isSelected
                     ? isInReview
                       ? 'border-orange-500 ring-2 ring-orange-500/60 bg-gradient-to-br from-amber-500/20 via-orange-500/25 to-rose-500/20 shadow-md'
                       : isCompleted
@@ -1055,7 +1060,9 @@ function StageSectionsTab({ bid, onRefresh, onAdvance }) {
               >
                 <div className="flex items-center justify-between w-full mb-1">
                   <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${
-                    isInReview
+                    isEmdExempt
+                      ? 'bg-muted text-muted-foreground/70'
+                      : isInReview
                       ? 'bg-gradient-to-r from-orange-500 to-rose-500 text-white shadow-xs'
                       : isLocked
                       ? 'bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-200'
@@ -1068,7 +1075,9 @@ function StageSectionsTab({ bid, onRefresh, onAdvance }) {
                     #{idx + 1}
                   </span>
 
-                  {isInReview ? (
+                  {isEmdExempt ? (
+                    <Ban className="size-3.5 text-muted-foreground/60" />
+                  ) : isInReview ? (
                     <AlertTriangle className="size-3.5 text-orange-600 dark:text-orange-400 animate-pulse" />
                   ) : isLocked ? (
                     <Lock className="size-3.5 text-amber-500" />
@@ -1080,7 +1089,9 @@ function StageSectionsTab({ bid, onRefresh, onAdvance }) {
                 </div>
 
                 <span className={`text-xs font-bold line-clamp-1 ${
-                  isInReview
+                  isEmdExempt
+                    ? 'text-muted-foreground'
+                    : isInReview
                     ? 'text-orange-950 dark:text-orange-200 font-extrabold'
                     : isSelected
                     ? 'text-primary'
@@ -1092,7 +1103,9 @@ function StageSectionsTab({ bid, onRefresh, onAdvance }) {
                 </span>
 
                 <span className={`text-[9px] mt-0.5 truncate w-full ${
-                  isInReview
+                  isEmdExempt
+                    ? 'text-muted-foreground/70'
+                    : isInReview
                     ? 'text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-0.5'
                     : isCompleted
                     ? 'text-emerald-600 dark:text-emerald-400 font-medium'
@@ -1100,7 +1113,7 @@ function StageSectionsTab({ bid, onRefresh, onAdvance }) {
                     ? 'text-primary font-medium'
                     : 'text-muted-foreground'
                 }`}>
-                  {isInReview ? '⚠️ Marked for Review' : isLocked ? '🔒 Locked' : isCompleted ? '✓ Completed' : isCurrentWorkflow ? '● Active Workflow' : 'Available Stage'}
+                  {isEmdExempt ? '🚫 EMD Exempted' : isInReview ? '⚠️ Marked for Review' : isLocked ? '🔒 Locked' : isCompleted ? '✓ Completed' : isCurrentWorkflow ? '● Active Workflow' : 'Available Stage'}
                 </span>
               </button>
             )
@@ -1221,26 +1234,10 @@ const STAGE_GUIDE = {
       'Save EMD transaction reference/receipt',
       'Update EMD details in the tender workspace',
     ],
-    note: 'Advance to Bid Documentation once EMD is successfully submitted.',
-  },
-  BID_DOCUMENTATION: {
-    title: '7. Bid Documentation',
-    GuideIcon: FileText,
-    color: 'text-orange-600',
-    bg: 'bg-orange-50 border-orange-200 dark:bg-orange-950/20 dark:border-orange-800',
-    description: 'Assemble all bid documents and upload them to the GeM portal in the correct format.',
-    responsible: 'Bid Executive / Manager',
-    actions: [
-      'Prepare bid cover letter and declarations',
-      'Package all technical and commercial documents',
-      'Upload documents to GeM portal in required format',
-      'Verify all uploads are complete and accessible',
-      'Double-check document completeness against checklist',
-    ],
-    note: 'Advance to Internal Approval once all documents are uploaded and verified.',
+    note: 'Advance to Internal Approval once EMD is successfully submitted.',
   },
   INTERNAL_APPROVAL: {
-    title: '8. Internal Approval',
+    title: '7. Internal Approval',
     GuideIcon: Eye,
     color: 'text-yellow-600',
     bg: 'bg-yellow-50 border-yellow-200 dark:bg-yellow-950/20 dark:border-yellow-800',
@@ -1256,7 +1253,7 @@ const STAGE_GUIDE = {
     note: 'Advance to GeM Submission only after internal management approval is received.',
   },
   GEM_SUBMISSION: {
-    title: '9. GeM Portal Submission',
+    title: '8. GeM Portal Submission',
     GuideIcon: Send,
     color: 'text-lime-700',
     bg: 'bg-lime-50 border-lime-200 dark:bg-lime-950/20 dark:border-lime-800',
@@ -1272,7 +1269,7 @@ const STAGE_GUIDE = {
     note: 'After successful submission, advance to Technical Evaluation stage.',
   },
   TECHNICAL_EVALUATION: {
-    title: '10. Technical Evaluation',
+    title: '9. Technical Evaluation',
     GuideIcon: ShieldCheck,
     color: 'text-teal-600',
     bg: 'bg-teal-50 border-teal-200 dark:bg-teal-950/20 dark:border-teal-800',
@@ -1288,7 +1285,7 @@ const STAGE_GUIDE = {
     note: 'Advance to Financial Evaluation after technical qualification is confirmed.',
   },
   FINANCIAL_EVALUATION: {
-    title: '11. Financial Evaluation',
+    title: '10. Financial Evaluation',
     GuideIcon: Activity,
     color: 'text-cyan-600',
     bg: 'bg-cyan-50 border-cyan-200 dark:bg-cyan-950/20 dark:border-cyan-800',
@@ -1304,7 +1301,7 @@ const STAGE_GUIDE = {
     note: 'Advance to Award & Handover if GlobX wins. Record outcome (WON/LOST) accordingly.',
   },
   AWARD_HANDOVER: {
-    title: '12. Award & Delivery Handover',
+    title: '11. Award & Delivery Handover',
     GuideIcon: Trophy,
     color: 'text-emerald-600',
     bg: 'bg-emerald-50 border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800',
@@ -1331,12 +1328,12 @@ function StageActionPanel({ bid, onSelectStage }) {
   const pendingStages = []
 
   WORKFLOW_STAGES_ORDERED.forEach((stageKey, idx) => {
-    const { isCompleted, isCurrent, isLocked } = checkStageState(bid, stageKey)
+    const { isCompleted, isCurrent, isLocked, isEmdExempt } = checkStageState(bid, stageKey)
     const isInReview = reviews[stageKey] === true || (remarks[stageKey] && typeof remarks[stageKey] === 'string' && remarks[stageKey].startsWith('[Re-Verification]'))
     const stageLabel = STAGE_LABELS[stageKey] || stageKey
     const num = idx + 1
 
-    const item = { stageKey, stageLabel, num, isCurrent, isCompleted, isInReview, isLocked }
+    const item = { stageKey, stageLabel, num, isCurrent, isCompleted, isInReview, isLocked, isEmdExempt }
 
     if (isInReview) {
       reviewStages.push(item)
@@ -1373,11 +1370,19 @@ function StageActionPanel({ bid, onSelectStage }) {
                 <button
                   key={stg.stageKey}
                   type="button"
-                  onClick={() => onSelectStage && onSelectStage(stg.stageKey)}
-                  className="group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-100/80 text-emerald-800 border border-emerald-200/80 hover:bg-emerald-200/80 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800 dark:hover:bg-emerald-900/80 transition-all shadow-2xs cursor-pointer active:scale-95"
+                  disabled={stg.isEmdExempt}
+                  onClick={() => !stg.isEmdExempt && onSelectStage && onSelectStage(stg.stageKey)}
+                  className={stg.isEmdExempt
+                    ? "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-muted/50 text-muted-foreground border border-border/60 opacity-60 cursor-not-allowed"
+                    : "group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-100/80 text-emerald-800 border border-emerald-200/80 hover:bg-emerald-200/80 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800 dark:hover:bg-emerald-900/80 transition-all shadow-2xs cursor-pointer active:scale-95"}
                 >
-                  <CheckCircle2 className="size-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  {stg.isEmdExempt ? (
+                    <Ban className="size-3 text-muted-foreground/70 shrink-0" />
+                  ) : (
+                    <CheckCircle2 className="size-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  )}
                   <span>#{stg.num} {stg.stageLabel}</span>
+                  {stg.isEmdExempt && <span className="text-[9px] bg-muted text-muted-foreground/80 px-1.5 py-0.2 rounded-full font-bold">Exempted</span>}
                 </button>
               ))
             )}
@@ -2168,6 +2173,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                   </p>
                   <div className="space-y-2 text-sm">
                     {[
+                      ['Owner', bid.bid_owner?.full_name || 'Unassigned'],
                       ['Organization Name', bid.organization_name || 'Not Specified'],
                       ['Department', bid.department_name || 'Not Specified'],
                       ['Category / Scope', bid.category || 'Not Specified'],
@@ -2187,7 +2193,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                   </p>
                   <div className="space-y-2 text-sm">
                     {[
-                      ['EMD Processing Type', bid.emd_type || 'ONLINE'],
+                      ['EMD Processing Type', bid.emd_exempted ? 'EXEMPTED' : (bid.emd_type || 'ONLINE')],
                       ['Start Date', getBidStartDate(bid)],
                       ['End Date', getBidEndDate(bid)],
                     ].map(([l,v])=>(
@@ -2196,31 +2202,33 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                         <span className="font-medium text-foreground text-right">{v}</span>
                       </div>
                     ))}
-                    {!bid.emd_exempted && Number(bid.emd_amount) > 0 && (
-                      <div className="pt-2 border-t border-border/40 flex items-center justify-between">
-                        <span className="text-xs font-medium text-muted-foreground">EMD Return Status:</span>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs font-semibold">
-                          <input
-                            type="checkbox"
-                            checked={!!bid.emd_returned}
-                            onChange={async (e) => {
-                              try {
-                                const res = await updateBid(bid.id, { emd_returned: e.target.checked })
-                                if (res.ok) {
-                                  toast.success(e.target.checked ? 'EMD marked as Returned / Refunded' : 'EMD marked as Pending Return')
-                                  loadBid()
-                                } else {
-                                  toast.error(res.error?.message || 'Failed to update EMD status')
-                                }
-                              } catch { toast.error('Network error') }
-                            }}
-                            className="rounded accent-emerald-600"
-                          />
-                          <span className={bid.emd_returned ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-amber-600 dark:text-amber-400 font-semibold'}>
-                            {bid.emd_returned ? 'Returned / Refunded' : 'Pending Return'}
-                          </span>
-                        </label>
-                      </div>
+                    {!bid.emd_exempted && bid.emd_type === 'ONLINE' && (
+                      <>
+                        {[
+                          ['Bank Name', bid.emd_bank_name],
+                          ['Account Number', bid.emd_account_number],
+                          ['IFSC Code', bid.emd_ifsc_code],
+                          ['Branch', bid.emd_branch],
+                        ].filter(([, v]) => v).map(([l, v]) => (
+                          <div key={l} className="flex justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0 last:pb-0">
+                            <span className="text-muted-foreground shrink-0">{l}</span>
+                            <span className="font-medium text-foreground text-right">{v}</span>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                    {!bid.emd_exempted && bid.emd_type === 'DD' && (
+                      <>
+                        {[
+                          ['Beneficiary', bid.emd_beneficiary],
+                          ['Payable At', bid.emd_payable_at],
+                        ].filter(([, v]) => v).map(([l, v]) => (
+                          <div key={l} className="flex justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0 last:pb-0">
+                            <span className="text-muted-foreground shrink-0">{l}</span>
+                            <span className="font-medium text-foreground text-right">{v}</span>
+                          </div>
+                        ))}
+                      </>
                     )}
                   </div>
                 </div>

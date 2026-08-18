@@ -8,13 +8,12 @@ import "github.com/onetrack/backend/internal/bid/domain"
 // Both modes share all stages from QUALIFICATION_REVIEW onward.
 var allowedTransitions = map[string]map[string][]string{
 	domain.CreationModeManual: {
-		domain.StageDiscovered:            {domain.StageEligibilityAssessment, domain.StageOEMAuthorizationRequest, domain.StageCancelled},
+		domain.StageDiscovered:              {domain.StageEligibilityAssessment, domain.StageOEMAuthorizationRequest, domain.StageCancelled},
 		domain.StageEligibilityAssessment:   {domain.StageOEMAuthorizationRequest, domain.StagePricingRequest, domain.StageCancelled},
 		domain.StageOEMAuthorizationRequest: {domain.StagePricingRequest, domain.StageDocumentChecklistPrep, domain.StageCancelled},
 		domain.StagePricingRequest:          {domain.StageDocumentChecklistPrep, domain.StageEMDProcessing, domain.StageCancelled},
-		domain.StageDocumentChecklistPrep:   {domain.StageEMDProcessing, domain.StageBidDocumentation, domain.StageCancelled},
-		domain.StageEMDProcessing:           {domain.StageBidDocumentation, domain.StageInternalApproval, domain.StageCancelled},
-		domain.StageBidDocumentation:        {domain.StageInternalApproval, domain.StageGeMSubmission, domain.StageCancelled},
+		domain.StageDocumentChecklistPrep:   {domain.StageEMDProcessing, domain.StageInternalApproval, domain.StageCancelled},
+		domain.StageEMDProcessing:           {domain.StageInternalApproval, domain.StageGeMSubmission, domain.StageCancelled},
 		domain.StageInternalApproval:        {domain.StageGeMSubmission, domain.StageCancelled},
 		domain.StageGeMSubmission:           {domain.StageTechnicalEvaluation, domain.StageCancelled},
 		domain.StageTechnicalEvaluation:     {domain.StageFinancialEvaluation, domain.StageLost, domain.StageCancelled},
@@ -22,13 +21,12 @@ var allowedTransitions = map[string]map[string][]string{
 		domain.StageAwardHandover:           {},
 	},
 	domain.CreationModeIntelligence: {
-		domain.StageDiscovered:            {domain.StageEligibilityAssessment, domain.StageCancelled},
+		domain.StageDiscovered:              {domain.StageEligibilityAssessment, domain.StageCancelled},
 		domain.StageEligibilityAssessment:   {domain.StageOEMAuthorizationRequest, domain.StagePricingRequest, domain.StageCancelled},
 		domain.StageOEMAuthorizationRequest: {domain.StagePricingRequest, domain.StageDocumentChecklistPrep, domain.StageCancelled},
 		domain.StagePricingRequest:          {domain.StageDocumentChecklistPrep, domain.StageEMDProcessing, domain.StageCancelled},
-		domain.StageDocumentChecklistPrep:   {domain.StageEMDProcessing, domain.StageBidDocumentation, domain.StageCancelled},
-		domain.StageEMDProcessing:           {domain.StageBidDocumentation, domain.StageInternalApproval, domain.StageCancelled},
-		domain.StageBidDocumentation:        {domain.StageInternalApproval, domain.StageGeMSubmission, domain.StageCancelled},
+		domain.StageDocumentChecklistPrep:   {domain.StageEMDProcessing, domain.StageInternalApproval, domain.StageCancelled},
+		domain.StageEMDProcessing:           {domain.StageInternalApproval, domain.StageGeMSubmission, domain.StageCancelled},
 		domain.StageInternalApproval:        {domain.StageGeMSubmission, domain.StageCancelled},
 		domain.StageGeMSubmission:           {domain.StageTechnicalEvaluation, domain.StageCancelled},
 		domain.StageTechnicalEvaluation:     {domain.StageFinancialEvaluation, domain.StageLost, domain.StageCancelled},
@@ -71,24 +69,9 @@ func IsTransitionAllowed(creationMode, currentStage, targetStage string) bool {
 	}
 
 	// Allow backward transitions (Undo/Revert to any previous stage)
-	stagesOrder := []string{
-		domain.StageDiscovered,
-		domain.StageEligibilityAssessment,
-		domain.StageOEMAuthorizationRequest,
-		domain.StagePricingRequest,
-		domain.StageDocumentChecklistPrep,
-		domain.StageEMDProcessing,
-		domain.StageBidDocumentation,
-		domain.StageInternalApproval,
-		domain.StageGeMSubmission,
-		domain.StageTechnicalEvaluation,
-		domain.StageFinancialEvaluation,
-		domain.StageAwardHandover,
-	}
-
 	currIdx := -1
 	targetIdx := -1
-	for i, s := range stagesOrder {
+	for i, s := range domain.OrderedWorkflowStages {
 		if s == currentStage {
 			currIdx = i
 		}
@@ -121,24 +104,9 @@ func GetAllowedTransitions(creationMode, currentStage string) []string {
 	}
 
 	// Also append preceding stage if available (for Undo/Revert)
-	stagesOrder := []string{
-		domain.StageDiscovered,
-		domain.StageEligibilityAssessment,
-		domain.StageOEMAuthorizationRequest,
-		domain.StagePricingRequest,
-		domain.StageDocumentChecklistPrep,
-		domain.StageEMDProcessing,
-		domain.StageBidDocumentation,
-		domain.StageInternalApproval,
-		domain.StageGeMSubmission,
-		domain.StageTechnicalEvaluation,
-		domain.StageFinancialEvaluation,
-		domain.StageAwardHandover,
-	}
-
-	for i, s := range stagesOrder {
+	for i, s := range domain.OrderedWorkflowStages {
 		if s == currentStage && i > 0 {
-			prevStage := stagesOrder[i-1]
+			prevStage := domain.OrderedWorkflowStages[i-1]
 			// Check if already in res
 			alreadyIn := false
 			for _, r := range res {

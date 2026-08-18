@@ -37,9 +37,10 @@ function useMacOSDialog(open, originX, originY) {
   }
 }
 
-const PORTAL_SOURCES = ['GeM', 'CPPP', 'eProcure']
-const BID_TYPES      = ['CUSTOM_BID', 'REGULAR', 'RA_BID']
-const EMD_TYPES      = ['ONLINE', 'DD', 'BG', 'EXEMPTED']
+const PORTAL_SOURCES = ['GeM', 'CPPP', 'eProcure', 'Others']
+const BID_TYPES      = ['BID', 'BID_TO_RA']
+const EMD_TYPES      = ['ONLINE', 'DD']
+const SCOPE_TYPES    = ['Supply', 'Implementation', 'Support']
 
 function safeDateStr(dt) {
   if (!dt) return ''
@@ -48,6 +49,21 @@ function safeDateStr(dt) {
     if (isNaN(d.getTime())) return ''
     if (d.getFullYear() <= 1970) return ''
     return d.toISOString().split('T')[0]
+  } catch {
+    return ''
+  }
+}
+
+// Preserves time-of-day for <input type="datetime-local"> — unlike safeDateStr,
+// which truncates to a date-only string and silently drops the time.
+function safeDateTimeStr(dt) {
+  if (!dt) return ''
+  try {
+    const d = new Date(dt)
+    if (isNaN(d.getTime())) return ''
+    if (d.getFullYear() <= 1970) return ''
+    const pad = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
   } catch {
     return ''
   }
@@ -74,25 +90,34 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
 
   const [form, setForm] = useState({
     title:             '',
-    bid_no:            '',
+    high_level_scope:  '',
     gem_bid_no:        '',
     organization_name: '',
     department_name:   '',
     portal_source:     'GeM',
-    bid_type:          'CUSTOM_BID',
+    bid_type:          'BID',
     category:          '',
+    scope_type:        'Supply',
     estimated_value:   '',
     emd_amount:        '',
     emd_type:          'ONLINE',
     emd_exempted:      false,
-    oem_required:      false,
-    has_tech_eval:     false,
+    bg_required:       false,
+    bg_rate:           '',
     opening_date:      '',
     closing_date:      '',
+    target_month_date: '',
     bid_owner_id:      '',
     remarks:           '',
     technical_manager_id:        '',
-    bid_result:                  '',
+    // EMD bank/online payment details
+    emd_bank_name:               '',
+    emd_account_number:          '',
+    emd_ifsc_code:               '',
+    emd_branch:                  '',
+    // EMD DD (Demand Draft) details
+    emd_beneficiary:             '',
+    emd_payable_at:              '',
   })
 
   const [errors, setErrors]   = useState({})
@@ -132,25 +157,32 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
           const b = res.data
           setForm({
             title:             b.title || '',
-            bid_no:            b.bid_no || '',
+            high_level_scope:  b.high_level_scope || '',
             gem_bid_no:        b.gem_bid_no || '',
             organization_name: b.organization_name || '',
             department_name:   b.department_name || '',
             portal_source:     b.portal_source || 'GeM',
-            bid_type:          b.bid_type || 'CUSTOM_BID',
+            bid_type:          b.bid_type || 'BID',
             category:          b.category || '',
+            scope_type:        b.scope_type || 'Supply',
             estimated_value:   b.estimated_value !== undefined && b.estimated_value !== null ? String(b.estimated_value) : '',
             emd_amount:        b.emd_amount !== undefined && b.emd_amount !== null ? String(b.emd_amount) : '',
             emd_type:          b.emd_type || 'ONLINE',
             emd_exempted:      !!b.emd_exempted,
-            oem_required:      !!b.oem_required,
-            has_tech_eval:     !!b.has_tech_eval,
+            bg_required:       !!b.bg_required,
+            bg_rate:           b.bg_rate !== undefined && b.bg_rate !== null ? String(b.bg_rate) : '',
             opening_date:      safeDateStr(b.opening_date || b.start_date),
-            closing_date:      safeDateStr(b.closing_date || b.end_date || b.submission_deadline || b.target_month_date),
+            closing_date:      safeDateTimeStr(b.closing_date || b.end_date || b.submission_deadline || b.target_month_date),
+            target_month_date: safeDateStr(b.target_month_date),
             bid_owner_id:      b.bid_owner?.id || b.bid_owner_id || '',
             remarks:           b.remarks || '',
             technical_manager_id: b.technical_manager?.id || b.technical_manager_id || '',
-            bid_result:        b.bid_result || '',
+            emd_bank_name:      b.emd_bank_name || '',
+            emd_account_number: b.emd_account_number || '',
+            emd_ifsc_code:      b.emd_ifsc_code || '',
+            emd_branch:         b.emd_branch || '',
+            emd_beneficiary:    b.emd_beneficiary || '',
+            emd_payable_at:     b.emd_payable_at || '',
           })
         }
       } catch (err) {
@@ -165,25 +197,32 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
     if (bid && open) {
       setForm({
         title:             bid.title || '',
-        bid_no:            bid.bid_no || '',
+        high_level_scope:  bid.high_level_scope || '',
         gem_bid_no:        bid.gem_bid_no || '',
         organization_name: bid.organization_name || '',
         department_name:   bid.department_name || '',
         portal_source:     bid.portal_source || 'GeM',
-        bid_type:          bid.bid_type || 'CUSTOM_BID',
+        bid_type:          bid.bid_type || 'BID',
         category:          bid.category || '',
+        scope_type:        bid.scope_type || 'Supply',
         estimated_value:   bid.estimated_value !== undefined && bid.estimated_value !== null ? String(bid.estimated_value) : '',
         emd_amount:        bid.emd_amount !== undefined && bid.emd_amount !== null ? String(bid.emd_amount) : '',
         emd_type:          bid.emd_type || 'ONLINE',
         emd_exempted:      !!bid.emd_exempted,
-        oem_required:      !!bid.oem_required,
-        has_tech_eval:     !!bid.has_tech_eval,
+        bg_required:       !!bid.bg_required,
+        bg_rate:           bid.bg_rate !== undefined && bid.bg_rate !== null ? String(bid.bg_rate) : '',
         opening_date:      safeDateStr(bid.opening_date || bid.start_date),
-        closing_date:      safeDateStr(bid.closing_date || bid.end_date || bid.submission_deadline || bid.target_month_date),
+        closing_date:      safeDateTimeStr(bid.closing_date || bid.end_date || bid.submission_deadline || bid.target_month_date),
+        target_month_date: safeDateStr(bid.target_month_date),
         bid_owner_id:      bid.bid_owner?.id || bid.bid_owner_id || '',
         remarks:           bid.remarks || '',
         technical_manager_id: bid.technical_manager?.id || bid.technical_manager_id || '',
-        bid_result:        bid.bid_result || '',
+        emd_bank_name:      bid.emd_bank_name || '',
+        emd_account_number: bid.emd_account_number || '',
+        emd_ifsc_code:      bid.emd_ifsc_code || '',
+        emd_branch:         bid.emd_branch || '',
+        emd_beneficiary:    bid.emd_beneficiary || '',
+        emd_payable_at:     bid.emd_payable_at || '',
       })
       setErrors({})
       loadFullBid()
@@ -214,6 +253,13 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
         } else {
           updated.emd_exempted = false
         }
+      } else if (field === 'closing_date' && value) {
+        const d = new Date(value)
+        if (!isNaN(d.getTime())) {
+          const year = d.getFullYear()
+          const monthStr = String(d.getMonth() + 1).padStart(2, '0')
+          updated.target_month_date = `${year}-${monthStr}-01`
+        }
       }
 
       return updated
@@ -225,13 +271,28 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
     const e = {}
     if (!form.title.trim())      e.title = 'Tender title is required'
     if (!form.bid_owner_id)      e.bid_owner_id = 'Bid owner is required'
+    // EMD bank/DD mandatory fields (mirrors AddTenderPage's create-time validation)
+    if (!form.emd_exempted) {
+      if (form.emd_type === 'ONLINE') {
+        if (!form.emd_bank_name.trim()) e.emd_bank_name = 'Bank name is required for Online EMD'
+        if (!form.emd_account_number.trim()) e.emd_account_number = 'Account number is required'
+        if (!form.emd_ifsc_code.trim()) e.emd_ifsc_code = 'IFSC code is required'
+      } else if (form.emd_type === 'DD') {
+        if (!form.emd_beneficiary.trim()) e.emd_beneficiary = 'Beneficiary is required for DD EMD'
+        if (!form.emd_payable_at.trim()) e.emd_payable_at = 'Payable at location is required'
+      }
+    }
     return e
   }
 
   async function handleSubmit(ev) {
     ev.preventDefault()
     const e = validate()
-    if (Object.keys(e).length > 0) { setErrors(e); return }
+    if (Object.keys(e).length > 0) {
+      setErrors(e)
+      toast.error('Please resolve validation errors')
+      return
+    }
 
     setLoading(true)
     try {
@@ -239,14 +300,13 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
         ...form,
         estimated_value: form.estimated_value ? Number(form.estimated_value) : null,
         emd_amount:      form.emd_amount ? Number(form.emd_amount) : null,
-        bg_rate:         form.bg_rate ? Number(form.bg_rate) : null,
+        bg_rate:         form.bg_required && form.bg_rate ? Number(form.bg_rate) : null,
         start_date:      form.opening_date ? new Date(form.opening_date).toISOString() : null,
         end_date:        form.closing_date ? new Date(form.closing_date).toISOString() : null,
         opening_date:    form.opening_date ? new Date(form.opening_date).toISOString() : null,
         closing_date:    form.closing_date ? new Date(form.closing_date).toISOString() : null,
         target_month_date: form.target_month_date ? new Date(form.target_month_date).toISOString() : null,
         technical_manager_id: form.technical_manager_id || null,
-        bid_result: form.bid_result || null,
       }
 
       const res = await updateBid(bid.id, payload)
@@ -326,10 +386,16 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
                         />
                       </Field>
                     </div>
-                    <Field label="Bid No / Reference">
-                      <Input value={form.bid_no} onChange={(e) => set('bid_no', e.target.value)}
-                        placeholder="TENDER/2026/IT/001" className={inputCls()} />
-                    </Field>
+                    <div className="col-span-2">
+                      <Field label="High Level Scope">
+                        <Textarea
+                          value={form.high_level_scope}
+                          onChange={(e) => set('high_level_scope', e.target.value)}
+                          placeholder="Detail overall technical and operational scope..."
+                          className="text-sm min-h-[60px]"
+                        />
+                      </Field>
+                    </div>
                     <Field label="GeM Bid No">
                       <Input value={form.gem_bid_no} onChange={(e) => set('gem_bid_no', e.target.value)}
                         placeholder="GEM/2026/B/12345" className={inputCls()} />
@@ -357,7 +423,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="outline" size="sm" className="w-full h-8 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5">
-                            <span>{form.bid_type}</span>
+                            <span>{form.bid_type === 'BID_TO_RA' ? 'BID to RA' : 'BID'}</span>
                             <ChevronDown className="size-3 text-muted-foreground ml-auto" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -366,7 +432,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
                           <DropdownMenuSeparator />
                           {BID_TYPES.map((t) => (
                             <DropdownMenuItem key={t} onSelect={() => set('bid_type', t)}>
-                              {t}
+                              {t === 'BID_TO_RA' ? 'BID to RA' : 'BID'}
                             </DropdownMenuItem>
                           ))}
                         </DropdownMenuContent>
@@ -375,6 +441,25 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
                     <Field label="Category">
                       <Input value={form.category} onChange={(e) => set('category', e.target.value)}
                         placeholder="e.g. Networking Equipment" className={inputCls()} />
+                    </Field>
+                    <Field label="Scope Type">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm" className="w-full h-8 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5">
+                            <span>{form.scope_type}</span>
+                            <ChevronDown className="size-3 text-muted-foreground ml-auto" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="w-[180px]">
+                          <DropdownMenuLabel>Select Scope Type</DropdownMenuLabel>
+                          <DropdownMenuSeparator />
+                          {SCOPE_TYPES.map((st) => (
+                            <DropdownMenuItem key={st} onSelect={() => set('scope_type', st)}>
+                              {st}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </Field>
                   </div>
                 </section>
@@ -417,46 +502,120 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
                         placeholder="e.g. 50000" className={`${inputCls()} ${form.emd_exempted ? 'opacity-50' : ''}`}
                         disabled={form.emd_exempted} />
                     </Field>
-                    <Field label="EMD Type">
+                    <Field label="EMD Mode">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild disabled={form.emd_exempted}>
                           <Button variant="outline" size="sm" className="w-full h-8 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5 disabled:opacity-50">
-                            <span>{form.emd_type}</span>
+                            <span>{form.emd_exempted ? 'EXEMPTED' : (form.emd_type === 'ONLINE' ? 'Online Payment' : form.emd_type)}</span>
                             <ChevronDown className="size-3 text-muted-foreground ml-auto" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent className="w-[180px]">
-                          <DropdownMenuLabel>Select EMD Type</DropdownMenuLabel>
+                          <DropdownMenuLabel>Select EMD Mode</DropdownMenuLabel>
                           <DropdownMenuSeparator />
                           {EMD_TYPES.map((t) => (
                             <DropdownMenuItem key={t} onSelect={() => set('emd_type', t)}>
-                              {t}
+                              {t === 'ONLINE' ? 'Online Payment' : 'DD (Demand Draft)'}
                             </DropdownMenuItem>
                           ))}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </Field>
 
-                    {/* Toggles */}
-                    <div className="space-y-2 pt-1">
-                      {[
-                        { field: 'emd_exempted', label: 'EMD Exempted' },
-                        { field: 'oem_required', label: 'OEM Authorization Required' },
-                        { field: 'has_tech_eval', label: 'Technical Evaluation' },
-                      ].map(({ field, label }) => (
-                        <label key={field} className="flex items-center gap-2 cursor-pointer">
+                    <label className="flex items-center gap-2 cursor-pointer pt-1">
+                      <div
+                        onClick={() => set('emd_exempted', !form.emd_exempted)}
+                        className={`w-8 h-4 rounded-full transition-colors relative cursor-pointer
+                          ${form.emd_exempted ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+                      >
+                        <span className={`absolute top-0.5 size-3 rounded-full bg-white shadow transition-transform
+                          ${form.emd_exempted ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                      </div>
+                      <span className="text-xs text-muted-foreground">EMD Exempted</span>
+                    </label>
+
+                    {/* Bank Guarantee (BG) */}
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium text-foreground">Bank Guarantee (BG)</Label>
+                      <div className="flex items-center gap-3 h-8">
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
                           <div
-                            onClick={() => set(field, !form[field])}
+                            onClick={() => set('bg_required', !form.bg_required)}
                             className={`w-8 h-4 rounded-full transition-colors relative cursor-pointer
-                              ${form[field] ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+                              ${form.bg_required ? 'bg-primary' : 'bg-muted-foreground/30'}`}
                           >
                             <span className={`absolute top-0.5 size-3 rounded-full bg-white shadow transition-transform
-                              ${form[field] ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                              ${form.bg_required ? 'translate-x-4' : 'translate-x-0.5'}`} />
                           </div>
-                          <span className="text-xs text-muted-foreground">{label}</span>
+                          <span className="text-xs text-muted-foreground">BG Required</span>
                         </label>
-                      ))}
+                      </div>
                     </div>
+                    {form.bg_required && (
+                      <Field label="BG Rate (%)">
+                        <Input type="number" step="any" value={form.bg_rate} onChange={(e) => set('bg_rate', e.target.value)}
+                          placeholder="e.g. 2.5" className={inputCls()} />
+                      </Field>
+                    )}
+
+                    {/* Dynamic EMD Detail Fields */}
+                    {!form.emd_exempted && form.emd_type === 'ONLINE' && (
+                      <>
+                        <Field label="Bank Name" error={errors.emd_bank_name} required>
+                          <Input
+                            value={form.emd_bank_name}
+                            onChange={(e) => set('emd_bank_name', e.target.value)}
+                            placeholder="e.g. State Bank of India"
+                            className={inputCls(errors.emd_bank_name)}
+                          />
+                        </Field>
+                        <Field label="Account Number" error={errors.emd_account_number} required>
+                          <Input
+                            value={form.emd_account_number}
+                            onChange={(e) => set('emd_account_number', e.target.value)}
+                            placeholder="e.g. 012345678901"
+                            className={inputCls(errors.emd_account_number)}
+                          />
+                        </Field>
+                        <Field label="IFSC Code" error={errors.emd_ifsc_code} required>
+                          <Input
+                            value={form.emd_ifsc_code}
+                            onChange={(e) => set('emd_ifsc_code', e.target.value.toUpperCase())}
+                            placeholder="e.g. SBIN0001234"
+                            className={inputCls(errors.emd_ifsc_code)}
+                          />
+                        </Field>
+                        <Field label="Branch (If Required)">
+                          <Input
+                            value={form.emd_branch}
+                            onChange={(e) => set('emd_branch', e.target.value)}
+                            placeholder="e.g. New Delhi Main Branch"
+                            className={inputCls()}
+                          />
+                        </Field>
+                      </>
+                    )}
+
+                    {!form.emd_exempted && form.emd_type === 'DD' && (
+                      <>
+                        <Field label="Beneficiary" error={errors.emd_beneficiary} required>
+                          <Input
+                            value={form.emd_beneficiary}
+                            onChange={(e) => set('emd_beneficiary', e.target.value)}
+                            placeholder="e.g. The Accounts Officer, NIC Delhi"
+                            className={inputCls(errors.emd_beneficiary)}
+                          />
+                        </Field>
+                        <Field label="Payable At" error={errors.emd_payable_at} required>
+                          <Input
+                            value={form.emd_payable_at}
+                            onChange={(e) => set('emd_payable_at', e.target.value)}
+                            placeholder="e.g. New Delhi"
+                            className={inputCls(errors.emd_payable_at)}
+                          />
+                        </Field>
+                      </>
+                    )}
                   </div>
                 </section>
 
@@ -474,7 +633,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
                         onChange={(e) => set('opening_date', e.target.value)} className={inputCls()} />
                     </Field>
                     <Field label="End Date">
-                      <Input type="date" value={form.closing_date}
+                      <Input type="datetime-local" value={form.closing_date}
                         onChange={(e) => set('closing_date', e.target.value)} className={inputCls()} />
                     </Field>
                   </div>
@@ -523,26 +682,6 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </Field>
-
-                    <div className="sm:col-span-2">
-                      <Field label="Bid Result / Outcome">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="outline" size="sm" className="w-full h-8 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5">
-                              <span>{form.bid_result || 'Pending'}</span>
-                              <ChevronDown className="size-3 text-muted-foreground ml-auto" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent className="w-[180px]">
-                            {['Pending', 'Won', 'Lost', 'Result Pending', 'L1'].map((br) => (
-                              <DropdownMenuItem key={br} onSelect={() => set('bid_result', br)}>
-                                {br}
-                              </DropdownMenuItem>
-                            ))}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </Field>
-                    </div>
 
                     <div className="sm:col-span-2">
                       <Field label="Remarks / Notes">

@@ -18,8 +18,28 @@ func NewEmailService(cfg config.EmailConfig) *EmailService {
 	return &EmailService{cfg: cfg}
 }
 
+func uniqueNonEmpty(emails []string) []string {
+	seen := make(map[string]bool)
+	var res []string
+	for _, e := range emails {
+		trimmed := strings.TrimSpace(e)
+		if trimmed != "" && !seen[trimmed] {
+			seen[trimmed] = true
+			res = append(res, trimmed)
+		}
+	}
+	return res
+}
+
 func (s *EmailService) SendEmail(to []string, subject string, htmlBody string) error {
-	if len(to) == 0 {
+	return s.SendEmailWithCC(to, nil, subject, htmlBody)
+}
+
+func (s *EmailService) SendEmailWithCC(to []string, cc []string, subject string, htmlBody string) error {
+	cleanTo := uniqueNonEmpty(to)
+	cleanCc := uniqueNonEmpty(cc)
+
+	if len(cleanTo) == 0 && len(cleanCc) == 0 {
 		return nil
 	}
 	if s.cfg.Username == "" || s.cfg.Password == "" {
@@ -30,7 +50,12 @@ func (s *EmailService) SendEmail(to []string, subject string, htmlBody string) e
 	from := s.cfg.Username
 	headers := make(map[string]string)
 	headers["From"] = fmt.Sprintf("OneTrack Support <%s>", from)
-	headers["To"] = strings.Join(to, ",")
+	if len(cleanTo) > 0 {
+		headers["To"] = strings.Join(cleanTo, ", ")
+	}
+	if len(cleanCc) > 0 {
+		headers["Cc"] = strings.Join(cleanCc, ", ")
+	}
 	headers["Subject"] = subject
 	headers["MIME-Version"] = "1.0"
 	headers["Content-Type"] = "text/html; charset=UTF-8"
@@ -40,6 +65,8 @@ func (s *EmailService) SendEmail(to []string, subject string, htmlBody string) e
 		message += fmt.Sprintf("%s: %s\r\n", k, v)
 	}
 	message += "\r\n" + htmlBody
+
+	allRecipients := uniqueNonEmpty(append(cleanTo, cleanCc...))
 
 	addr := fmt.Sprintf("%s:%s", s.cfg.SMTPServer, s.cfg.SMTPPort)
 	auth := smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.SMTPServer)
@@ -71,7 +98,7 @@ func (s *EmailService) SendEmail(to []string, subject string, htmlBody string) e
 				log.Printf("[EmailService] Mail from failed: %v", err)
 				return
 			}
-			for _, recipient := range to {
+			for _, recipient := range allRecipients {
 				if err = client.Rcpt(recipient); err != nil {
 					log.Printf("[EmailService] Rcpt failed for %s: %v", recipient, err)
 					return
@@ -85,13 +112,13 @@ func (s *EmailService) SendEmail(to []string, subject string, htmlBody string) e
 			_, _ = w.Write([]byte(message))
 			_ = w.Close()
 			client.Quit()
-			log.Printf("[EmailService] Successfully sent email '%s' to %v via TLS 465", subject, to)
+			log.Printf("[EmailService] Successfully sent email '%s' to TO:%v CC:%v via TLS 465", subject, cleanTo, cleanCc)
 		} else {
-			err = smtp.SendMail(addr, auth, from, to, []byte(message))
+			err = smtp.SendMail(addr, auth, from, allRecipients, []byte(message))
 			if err != nil {
-				log.Printf("[EmailService] Failed to send email '%s' to %v: %v", subject, to, err)
+				log.Printf("[EmailService] Failed to send email '%s' to TO:%v CC:%v: %v", subject, cleanTo, cleanCc, err)
 			} else {
-				log.Printf("[EmailService] Successfully sent email '%s' to %v", subject, to)
+				log.Printf("[EmailService] Successfully sent email '%s' to TO:%v CC:%v", subject, cleanTo, cleanCc)
 			}
 		}
 	}()

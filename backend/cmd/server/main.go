@@ -25,9 +25,6 @@ import (
 	"github.com/onetrack/backend/internal/platform/database"
 	emailService "github.com/onetrack/backend/internal/platform/email"
 	redisClient "github.com/onetrack/backend/internal/platform/redis"
-	taskHandler "github.com/onetrack/backend/internal/task/handler"
-	taskRepo "github.com/onetrack/backend/internal/task/repository"
-	taskService "github.com/onetrack/backend/internal/task/service"
 	userHandler "github.com/onetrack/backend/internal/user/handler"
 	userRepo "github.com/onetrack/backend/internal/user/repository"
 	userService "github.com/onetrack/backend/internal/user/service"
@@ -113,12 +110,6 @@ func main() {
 	bidSvc := bidService.NewBidService(bidRepository, alertSvc)
 	bidHdlr := bidHandler.NewBidHandler(bidSvc)
 	bidHandler.RegisterBidRoutes(v1, bidHdlr, authMiddleware)
-
-	// Initialize task module (shared surface for MANUAL + INTELLIGENCE modes)
-	taskRepository := taskRepo.NewPostgresTaskRepository(dbPool)
-	taskSvc := taskService.NewTaskService(taskRepository)
-	taskHdlr := taskHandler.NewTaskHandler(taskSvc)
-	taskHandler.RegisterTaskRoutes(v1, taskHdlr, authMiddleware)
 
 	// Start server
 	srv := &http.Server{

@@ -32,6 +32,7 @@ type createAlertReq struct {
 	TargetRole string  `json:"target_role"`
 	UserID     *string `json:"user_id"`
 	BidID      *string `json:"bid_id"`
+	CreatedBy  *string `json:"created_by"`
 	Type       string  `json:"type"`
 	Title      string  `json:"title"`
 	Message    string  `json:"message"`
@@ -47,10 +48,19 @@ func (h *AlertHandler) CreateAlert(c *gin.Context) {
 		response.BadRequest(c, "title and message are required", nil)
 		return
 	}
+
+	createdBy := req.CreatedBy
+	if createdBy == nil || *createdBy == "" {
+		if uid := c.GetString("user_id"); uid != "" {
+			createdBy = &uid
+		}
+	}
+
 	alert := &domain.Alert{
 		TargetRole: req.TargetRole,
 		UserID:     req.UserID,
 		BidID:      req.BidID,
+		CreatedBy:  createdBy,
 		Type:       req.Type,
 		Title:      req.Title,
 		Message:    req.Message,

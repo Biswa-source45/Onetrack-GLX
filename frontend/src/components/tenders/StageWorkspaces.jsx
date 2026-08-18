@@ -4,7 +4,8 @@ import {
   Search, ShieldCheck, Share2, Coins, FileText, CheckSquare,
   AlertCircle, CheckCircle2, Send, Upload, Hourglass, Trophy,
   XCircle, Plus, Trash2, ArrowRight, DollarSign, Building2,
-  Lock, Sparkles, UserCheck, Bell, Calculator, ExternalLink, RefreshCw, Edit2, Loader2, AlertTriangle
+  Lock, Sparkles, UserCheck, Bell, Calculator, ExternalLink, RefreshCw, Edit2, Loader2, AlertTriangle,
+  Calendar, Clock, History, MessageSquare, Eye, ChevronRight, Ban
 } from 'lucide-react'
 import { toast } from 'sonner'
 import confetti from 'canvas-confetti'
@@ -42,14 +43,20 @@ function fmtDate(dt) {
 // IMPORTANT: This modal ONLY marks stageKey as complete in stage_completions.
 // It does NOT call transitionBidStage — that would move the workflow_stage pointer
 // and cause a cascade overwrite on other stages. Each stage is completed atomically.
-function CompleteStageModal({ title, description, stageKey, bidId, bid, onComplete, onClose, children }) {
+function CompleteStageModal({ title, description, stageKey, bidId, bid, onComplete, onClose, children, hideDefaultRemarks, remarksValue }) {
   const [remarks, setRemarks] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
+  // When a caller already collects its own mandatory reason (e.g. a
+  // disqualification reason), it can suppress the built-in remarks field
+  // via hideDefaultRemarks and supply that reason as remarksValue instead
+  // of asking for the same information twice.
+  const effectiveRemarks = hideDefaultRemarks ? (remarksValue || '') : remarks
+
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!remarks.trim()) {
-      toast.error('Remarks are required to complete stage action')
+    if (!effectiveRemarks.trim()) {
+      toast.error(hideDefaultRemarks ? 'Please provide the required reason before completing this stage' : 'Remarks are required to complete stage action')
       return
     }
     setSubmitting(true)
@@ -61,7 +68,7 @@ function CompleteStageModal({ title, description, stageKey, bidId, bid, onComple
       currentCompletions[stageKey] = true   // ← mark ONLY this stage complete
 
       const currentRemarks = { ...(bid?.stage_remarks || {}) }
-      currentRemarks[stageKey] = `[Completed]: ${remarks}`
+      currentRemarks[stageKey] = `[Completed]: ${effectiveRemarks}`
 
       const currentReviews = { ...(bid?.stage_reviews || {}) }
       currentReviews[stageKey] = false  // clear any review flag
@@ -93,11 +100,11 @@ function CompleteStageModal({ title, description, stageKey, bidId, bid, onComple
       // Call workspace-specific side effect (alerts, confetti, quoted_price update, etc.) FIRST
       let sideEffectResult = null
       if (onComplete) {
-        sideEffectResult = await onComplete(remarks)
+        sideEffectResult = await onComplete(effectiveRemarks)
       }
 
       if (stageKey) {
-        let actionReason = `[Completed Stage Action]: ${remarks}`
+        let actionReason = `[Completed Stage Action]: ${effectiveRemarks}`
         let detailsPayload = null
 
         if (sideEffectResult && typeof sideEffectResult === 'object') {
@@ -129,16 +136,18 @@ function CompleteStageModal({ title, description, stageKey, bidId, bid, onComple
         {description && <p className="text-xs text-muted-foreground">{description}</p>}
         <form onSubmit={handleSubmit} className="space-y-4">
           {children}
-          <div className="space-y-1.5">
-            <Label className="text-xs font-medium">Stage Completion Remarks *</Label>
-            <Textarea
-              value={remarks}
-              onChange={(e) => setRemarks(e.target.value)}
-              placeholder="Provide mandatory completion/handover remarks..."
-              className="text-xs min-h-[80px]"
-              required
-            />
-          </div>
+          {!hideDefaultRemarks && (
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Stage Completion Remarks *</Label>
+              <Textarea
+                value={remarks}
+                onChange={(e) => setRemarks(e.target.value)}
+                placeholder="Provide mandatory completion/handover remarks..."
+                className="text-xs min-h-[80px]"
+                required
+              />
+            </div>
+          )}
           <div className="flex gap-2 justify-end pt-2">
             <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={submitting}>Cancel</Button>
             <Button type="submit" size="sm" disabled={submitting} className="gap-2">
@@ -166,7 +175,6 @@ export const WORKFLOW_STAGES_ORDERED = [
   'PRICING_REQUEST',
   'DOCUMENT_CHECKLIST_PREPARATION',
   'EMD_PROCESSING',
-  'BID_DOCUMENTATION',
   'INTERNAL_APPROVAL',
   'GEM_SUBMISSION',
   'TECHNICAL_EVALUATION',
@@ -198,21 +206,25 @@ export function checkStageState(bid, stageKey) {
     remarks[stageKey] && typeof remarks[stageKey] === 'string' && remarks[stageKey].startsWith('[Re-Verification]')
   )
 
+  // EMD Processing has nothing to configure when EMD is exempted for this tender —
+  // treat it as auto-done so it doesn't block later stages from unlocking.
+  const isEmdExempt = stageKey === 'EMD_PROCESSING' && !!bid?.emd_exempted
+
   // Stage 1 (DISCOVERED) is completed by default upon tender creation unless explicitly set to false
   const isCompleted = completions[stageKey] === true || (
     stageKey === 'DISCOVERED' && completions['DISCOVERED'] !== false
-  ) || (isTerminal && stageIdx <= currentIdx && completions[stageKey] !== false)
+  ) || isEmdExempt || (isTerminal && stageIdx <= currentIdx && completions[stageKey] !== false)
 
-  const isCurrent = stageIdx === currentIdx && !isTerminal
+  const isCurrent = stageIdx === currentIdx && !isTerminal && !isEmdExempt
 
   // Stage Locking:
-  // Stages 1 through 8 (indices 0 through 7) are NEVER locked.
-  // Stage locking applies ONLY from GeM Portal Submission onwards (stageIdx >= 8).
+  // Stages 1 through 7 (indices 0 through 6) are NEVER locked.
+  // Stage locking applies ONLY from GeM Portal Submission onwards (stageIdx >= 7).
   let isLocked = false
-  if (stageIdx >= 8 && !isTerminal) {
+  if (stageIdx >= 7 && !isTerminal) {
     for (let i = 0; i < stageIdx; i++) {
       const priorKey = WORKFLOW_STAGES_ORDERED[i]
-      const priorDone = completions[priorKey] === true || priorKey === 'DISCOVERED'
+      const priorDone = completions[priorKey] === true || priorKey === 'DISCOVERED' || (priorKey === 'EMD_PROCESSING' && !!bid?.emd_exempted)
       if (!priorDone) {
         isLocked = true
         break
@@ -220,7 +232,7 @@ export function checkStageState(bid, stageKey) {
     }
   }
 
-  return { isCompleted, isCurrent, isLocked, isInReview, currentIdx, stageIdx }
+  return { isCompleted, isCurrent, isLocked, isInReview, isEmdExempt, currentIdx, stageIdx }
 }
 
 export function ReVerificationModal({ title, stageKey, bidId, bid, onClose, onComplete }) {
@@ -486,6 +498,224 @@ export function Stage2Workspace({ bid, onRefresh }) {
   )
 }
 
+// ── Helper to extract follow-up array safely ──────────────────────────────────
+function getOemFollowUps(oem) {
+  if (!oem) return []
+  const user = tokenStorage.getUser()
+  const activeUserLabel = user?.full_name || user?.username || 'Super Admin'
+
+  if (Array.isArray(oem.followUps) && oem.followUps.length > 0) {
+    return oem.followUps.map(fu => ({
+      ...fu,
+      loggedBy: (!fu.loggedBy || fu.loggedBy === 'System' || fu.loggedBy === 'system') ? activeUserLabel : fu.loggedBy
+    }))
+  }
+  if (oem.followUp && typeof oem.followUp === 'string' && oem.followUp.trim() !== '') {
+    return [
+      {
+        id: `legacy-${oem.id || Date.now()}`,
+        date: oem.followUp,
+        remarks: oem.remark || 'Follow-up date scheduled/recorded',
+        loggedBy: activeUserLabel,
+        createdAt: new Date().toISOString()
+      }
+    ]
+  }
+  return []
+}
+
+// ── OEM Follow-up Log History Modal Component ─────────────────────────────────
+function OEMFollowUpModal({ oem, bidId, onClose, onSaveFollowUps }) {
+  const initialFollowUps = useMemo(() => getOemFollowUps(oem), [oem])
+  const [followUps, setFollowUps] = useState(initialFollowUps)
+  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], [])
+  const [newDate, setNewDate] = useState(todayStr)
+  const [newRemarks, setNewRemarks] = useState('')
+
+  const handleAddFollowUp = (e) => {
+    e.preventDefault()
+    if (!newDate) {
+      toast.error('Follow-up date is required')
+      return
+    }
+    if (newDate > todayStr) {
+      toast.error('Follow-up date cannot be a future date (maximum allowed date is today)')
+      return
+    }
+    const user = tokenStorage.getUser()
+    const currentUserLabel = user?.full_name || user?.username || 'Super Admin'
+    
+    const newEntry = {
+      id: `fu-${Date.now()}`,
+      date: newDate,
+      remarks: newRemarks.trim() || `Follow-up #${followUps.length + 1} recorded`,
+      loggedBy: currentUserLabel,
+      createdAt: new Date().toISOString()
+    }
+
+    const updated = [newEntry, ...followUps]
+    setFollowUps(updated)
+    setNewRemarks('')
+
+    const latestDate = newEntry.date
+    onSaveFollowUps(oem.id, updated, latestDate)
+
+    logStageMicroEvent(bidId, {
+      fromStage: 'OEM_AUTHORIZATION_REQUEST',
+      toStage: 'OEM_AUTHORIZATION_REQUEST',
+      eventType: 'OEM',
+      transitionReason: `Logged Follow-up #${updated.length} for OEM "${oem.name}" (Date: ${newDate})`,
+      details: {
+        oem_name: oem.name,
+        follow_up_date: newDate,
+        follow_up_remarks: newEntry.remarks,
+        total_follow_ups: updated.length
+      }
+    })
+
+    toast.success(`Follow-up #${updated.length} logged for "${oem.name}"`)
+  }
+
+  const handleDeleteFollowUp = (fuId) => {
+    const updated = followUps.filter(f => f.id !== fuId)
+    setFollowUps(updated)
+    const latestDate = updated.length > 0 ? updated[0].date : ''
+    onSaveFollowUps(oem.id, updated, latestDate)
+    toast.success('Follow-up log entry removed')
+  }
+
+  return (
+    <Dialog open={true} onOpenChange={onClose}>
+      <DialogContent className="max-w-xl bg-card border-border shadow-2xl p-0 overflow-hidden rounded-2xl">
+        <DialogHeader className="p-5 bg-purple-50/80 dark:bg-purple-950/40 border-b border-purple-200/60 dark:border-purple-900/60">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-purple-600 text-white shadow-md">
+              <History className="size-5" />
+            </div>
+            <div>
+              <DialogTitle className="text-base font-bold font-heading text-purple-950 dark:text-purple-200">
+                OEM Follow-up Tracking Log
+              </DialogTitle>
+              <DialogDescription className="text-xs text-purple-700 dark:text-purple-400 mt-0.5">
+                Manage multiple follow-up dates &amp; interaction notes for <strong className="text-purple-900 dark:text-purple-100">{oem?.name}</strong>
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
+          {/* New Follow-up Form */}
+          <form onSubmit={handleAddFollowUp} className="p-4 rounded-xl border border-purple-200 dark:border-purple-900/50 bg-purple-50/40 dark:bg-purple-950/20 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-purple-900 dark:text-purple-300 flex items-center gap-1.5 uppercase tracking-wider">
+                <Plus className="size-3.5 text-purple-600" /> Log New Follow-up
+              </span>
+              <span className="text-[11px] font-semibold text-purple-700 dark:text-purple-400 bg-purple-100 dark:bg-purple-900/50 px-2.5 py-0.5 rounded-full">
+                Total Logged: {followUps.length}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="space-y-1 sm:col-span-1">
+                <Label className="text-[11px] font-semibold text-muted-foreground">Follow-up Date *</Label>
+                <Input
+                  type="date"
+                  max={todayStr}
+                  value={newDate}
+                  onChange={e => setNewDate(e.target.value)}
+                  className="h-8 text-xs font-mono bg-background"
+                  required
+                />
+              </div>
+              <div className="space-y-1 sm:col-span-2">
+                <Label className="text-[11px] font-semibold text-muted-foreground">Remarks / Response Note</Label>
+                <Input
+                  value={newRemarks}
+                  onChange={e => setNewRemarks(e.target.value)}
+                  placeholder="e.g. Sent 2nd reminder email / Phone call with OEM head..."
+                  className="h-8 text-xs bg-background"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-1">
+              <Button type="submit" size="sm" className="h-8 text-xs gap-1.5 bg-purple-600 hover:bg-purple-700 text-white shadow-sm font-semibold">
+                <Plus className="size-3.5" /> Record Follow-up Entry
+              </Button>
+            </div>
+          </form>
+
+          {/* Timeline History */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+              <span>Follow-up History Log</span>
+              <span className="text-[11px] font-normal text-muted-foreground">Chronological Timeline</span>
+            </h4>
+
+            {followUps.length === 0 ? (
+              <div className="p-6 text-center border border-dashed border-border rounded-xl bg-muted/20 text-muted-foreground">
+                <Clock className="size-6 text-muted-foreground/40 mx-auto mb-1.5" />
+                <p className="text-xs font-medium">No follow-ups logged yet for {oem?.name}.</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Record your first follow-up using the input form above.</p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {followUps.map((fu, idx) => {
+                  const currentUser = tokenStorage.getUser()
+                  const activeUserLabel = currentUser?.full_name || currentUser?.username || 'Super Admin'
+                  const displayAuthor = (!fu.loggedBy || fu.loggedBy === 'System' || fu.loggedBy === 'system') ? activeUserLabel : fu.loggedBy
+
+                  return (
+                    <div key={fu.id || idx} className="p-3.5 rounded-xl border border-border bg-card shadow-2xs hover:border-purple-300 dark:hover:border-purple-800 transition-all space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300 border border-purple-200">
+                            Follow-up #{followUps.length - idx}
+                          </span>
+                          <span className="font-mono text-xs font-bold text-foreground flex items-center gap-1">
+                            <Calendar className="size-3 text-purple-600" />
+                            {fu.date}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-muted-foreground font-medium bg-muted px-2 py-0.5 rounded">
+                            by {displayAuthor}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteFollowUp(fu.id)}
+                            className="text-muted-foreground hover:text-destructive p-1 rounded hover:bg-muted transition-colors"
+                            title="Delete follow-up entry"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-foreground font-medium leading-relaxed bg-muted/30 p-2.5 rounded-lg border border-border/40">
+                        {fu.remarks || 'No remarks added.'}
+                      </p>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <DialogFooter className="p-4 bg-muted/40 border-t border-border flex items-center justify-between">
+          <span className="text-xs text-muted-foreground font-medium">
+            💡 All follow-up logs are synced to the workspace database.
+          </span>
+          <Button variant="outline" size="sm" onClick={onClose} className="text-xs">
+            Done &amp; Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ── Stage 3: OEM Authorization Request ─────────────────────────────────────
 export function Stage3Workspace({ bid, onRefresh }) {
   const key = `onetrack_oem_${bid.id}`
@@ -524,6 +754,7 @@ export function Stage3Workspace({ bid, onRefresh }) {
 
   const [isEditing, setIsEditing] = useState(false)
   const [showModal, setShowModal] = useState(false)
+  const [activeFollowUpOem, setActiveFollowUpOem] = useState(null)
   const [newOemName, setNewOemName] = useState('')
 
   const saveOems = (list) => {
@@ -541,7 +772,7 @@ export function Stage3Workspace({ bid, onRefresh }) {
       id: Date.now(), name: newOemName.trim(),
       initiated: 'YES', maf: 'NOT RECEIVED', mii: 'NOT RECEIVED',
       noMalicious: 'NOT RECEIVED', additionalDocs: '',
-      followUp: '', remark: '', clarificationRequired: '', clarificationProvided: ''
+      followUp: '', followUps: [], remark: ''
     }
     const nextList = [...oems, entry]
     saveOems(nextList)
@@ -558,6 +789,23 @@ export function Stage3Workspace({ bid, onRefresh }) {
 
   const updateOemField = (id, field, value) => {
     setOems(prev => prev.map(o => o.id === id ? { ...o, [field]: value } : o))
+  }
+
+  const handleSaveFollowUpsForOem = (oemId, newFollowUps, latestDate) => {
+    setOems(prev => {
+      const nextList = prev.map(o => {
+        if (o.id === oemId) {
+          return {
+            ...o,
+            followUps: newFollowUps,
+            followUp: latestDate || o.followUp || ''
+          }
+        }
+        return o
+      })
+      saveOems(nextList)
+      return nextList
+    })
   }
 
   const handleSaveMatrix = () => {
@@ -594,24 +842,40 @@ export function Stage3Workspace({ bid, onRefresh }) {
     return { label: 'Not Started', cls: 'bg-muted text-muted-foreground border-border' }
   }
 
+  const totalOEMs = oems.length
+  const totalFollowUpsCount = useMemo(() => {
+    return oems.reduce((acc, o) => acc + getOemFollowUps(o).length, 0)
+  }, [oems])
+  const mafReceivedCount = useMemo(() => {
+    return oems.filter(o => o.maf === 'RECEIVED').length
+  }, [oems])
+  const miiReceivedCount = useMemo(() => {
+    return oems.filter(o => o.mii === 'RECEIVED').length
+  }, [oems])
+
   return (
     <div className="space-y-6">
       {/* Stage Header */}
-      <div className="p-4 rounded-xl border border-purple-200 bg-purple-50/50 dark:bg-purple-950/20 dark:border-purple-900/50 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="p-4.5 rounded-2xl border border-purple-200/90 bg-purple-50/60 dark:bg-purple-950/30 dark:border-purple-900/50 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-2xs">
         <div>
-          <div className="flex items-center gap-2">
-            <h3 className="text-sm font-bold text-purple-900 dark:text-purple-300">Stage 3: OEM Authorization Matrix</h3>
-            <span className="text-[11px] px-2 py-0.5 rounded-full bg-purple-200/80 text-purple-900 dark:bg-purple-900 dark:text-purple-200 font-semibold">{oems.length} OEMs Tracked</span>
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-purple-600 text-white shadow-xs">
+              <ShieldCheck className="size-4.5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-purple-950 dark:text-purple-200">Stage 3: OEM Authorization Matrix</h3>
+              <p className="text-xs text-purple-700 dark:text-purple-400 mt-0.5">Track MAF, MII, certificates, multiple follow-up logs, and OEM clarifications.</p>
+            </div>
           </div>
-          <p className="text-xs text-purple-700 dark:text-purple-400 mt-0.5">Manage MAF, MII, No Malicious certificates, follow-ups, and OEM clarifications.</p>
         </div>
+
         <div className="flex items-center gap-2 flex-wrap">
           {isEditing ? (
-            <Button size="sm" onClick={handleSaveMatrix} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm text-xs">
+            <Button size="sm" onClick={handleSaveMatrix} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm text-xs font-semibold">
               <CheckCircle2 className="size-4" /> Save Matrix
             </Button>
           ) : (
-            <Button size="sm" variant="outline" onClick={() => setIsEditing(true)} className="gap-1.5 border-purple-300 text-purple-900 dark:text-purple-200 hover:bg-purple-100 dark:hover:bg-purple-900/40 text-xs">
+            <Button size="sm" variant="outline" onClick={() => setIsEditing(true)} className="gap-1.5 border-purple-300 text-purple-900 dark:text-purple-200 hover:bg-purple-100 dark:hover:bg-purple-900/40 text-xs font-medium">
               <Edit2 className="size-3.5" /> Edit Matrix
             </Button>
           )}
@@ -621,176 +885,231 @@ export function Stage3Workspace({ bid, onRefresh }) {
             onCompleteClick={() => setShowModal(true)}
             onRefresh={onRefresh}
             completeLabel="Complete & Advance"
-            completeClass="bg-purple-600 hover:bg-purple-700 text-white shadow-sm"
+            completeClass="bg-purple-600 hover:bg-purple-700 text-white shadow-sm font-semibold"
           />
         </div>
       </div>
 
-      {/* OEM Authorization Matrix Table */}
-      <div className="rounded-xl border border-border bg-card p-4 space-y-4 shadow-sm">
-        <div className="flex items-center justify-between">
-          <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-            <ShieldCheck className="size-4 text-purple-600" /> OEM Authorization Tracking Sheet
-          </h4>
-          <span className="text-xs text-muted-foreground font-mono">
-            {isEditing ? '✏️ EDITING MODE ACTIVE' : '🔒 READ ONLY (Click Edit Matrix to make changes)'}
+      {/* OEM Summary KPI Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="p-3.5 rounded-xl border border-border bg-card shadow-2xs flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300">
+            <Building2 className="size-4" />
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">OEMs Tracked</div>
+            <div className="text-base font-extrabold text-foreground font-mono">{totalOEMs}</div>
+          </div>
+        </div>
+
+        <div className="p-3.5 rounded-xl border border-purple-200 dark:border-purple-900/60 bg-purple-50/40 dark:bg-purple-950/20 shadow-2xs flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-purple-600 text-white shadow-2xs">
+            <History className="size-4" />
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold text-purple-800 dark:text-purple-300 uppercase tracking-wider">Total Follow-ups</div>
+            <div className="text-base font-extrabold text-purple-950 dark:text-purple-100 font-mono">{totalFollowUpsCount} Logged</div>
+          </div>
+        </div>
+
+        <div className="p-3.5 rounded-xl border border-border bg-card shadow-2xs flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+            <CheckCircle2 className="size-4" />
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">MAF Received</div>
+            <div className="text-base font-extrabold text-foreground font-mono">{mafReceivedCount} / {totalOEMs}</div>
+          </div>
+        </div>
+
+        <div className="p-3.5 rounded-xl border border-border bg-card shadow-2xs flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300">
+            <ShieldCheck className="size-4" />
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">MII Received</div>
+            <div className="text-base font-extrabold text-foreground font-mono">{miiReceivedCount} / {totalOEMs}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* OEM Authorization Tracking Sheet */}
+      <div className="rounded-2xl border border-border bg-card p-5 space-y-4 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/60 pb-3">
+          <div className="flex items-center gap-2.5">
+            <h4 className="text-xs font-extrabold uppercase tracking-wider text-foreground flex items-center gap-2">
+              <ShieldCheck className="size-4 text-purple-600" /> OEM Authorization Tracking Sheet
+            </h4>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-bold border border-purple-200">
+              Multiple Follow-up System
+            </span>
+          </div>
+          <span className="text-[11px] font-mono text-muted-foreground">
+            {isEditing ? '✏️ EDITING MODE ACTIVE' : '🔒 READ ONLY (Click "Edit Matrix" to modify)'}
           </span>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left border-collapse">
+        {/* Clean, Formatted & Spacious Table */}
+        <div className="overflow-x-auto rounded-xl border border-border/80 shadow-2xs">
+          <table className="w-full text-xs text-left border-collapse min-w-[1100px]">
             <thead>
-              <tr className="bg-muted/60 text-muted-foreground font-bold text-[11px]">
-                <th className="border border-border p-2 text-center w-12">S.No</th>
-                <th className="border border-border p-2">OEM Name</th>
-                <th className="border border-border p-2 text-center">Process Initiated</th>
-                <th className="border border-border p-2 text-center">MAF Cert</th>
-                <th className="border border-border p-2 text-center">MII Cert</th>
-                <th className="border border-border p-2 text-center">No Malicious</th>
-                <th className="border border-border p-2">Additional Docs</th>
-                <th className="border border-border p-2">Follow Up Date</th>
-                <th className="border border-border p-2">Remarks</th>
-                <th className="border border-border p-2">Clarification Needed</th>
-                <th className="border border-border p-2">Clarification Provided</th>
-                <th className="border border-border p-2 text-center">Stage Status</th>
-                {isEditing && <th className="border border-border p-2 text-center w-12">Del</th>}
+              <tr className="bg-muted/70 text-muted-foreground font-bold text-[11px] border-b border-border">
+                <th className="p-3 text-center w-12 border-r border-border/60">S.No</th>
+                <th className="p-3 border-r border-border/60 min-w-[150px]">OEM Name</th>
+                <th className="p-3 text-center border-r border-border/60">Initiated</th>
+                <th className="p-3 text-center border-r border-border/60">MAF Cert</th>
+                <th className="p-3 text-center border-r border-border/60">MII Cert</th>
+                <th className="p-3 text-center border-r border-border/60">No Malicious</th>
+                <th className="p-3 border-r border-border/60 min-w-[130px]">Additional Docs</th>
+                <th className="p-3 border-r border-border/60 bg-purple-50/50 dark:bg-purple-950/20 text-purple-900 dark:text-purple-300 min-w-[180px]">
+                  <div className="flex items-center gap-1">
+                    <History className="size-3 text-purple-600" />
+                    <span>Follow-up History &amp; Logs</span>
+                  </div>
+                </th>
+                <th className="p-3 border-r border-border/60 min-w-[130px]">Remarks</th>
+                <th className="p-3 text-center border-r border-border/60">Stage Status</th>
+                {isEditing && <th className="p-3 text-center w-12">Del</th>}
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-border/60">
               {oems.length === 0 ? (
                 <tr>
-                  <td colSpan={isEditing ? 13 : 12} className="p-6 text-center text-muted-foreground italic border border-border">
-                    No OEM authorization rows recorded. {isEditing ? 'Add an OEM below.' : 'Click "Edit Matrix" above to add OEM entries.'}
+                  <td colSpan={isEditing ? 11 : 10} className="p-8 text-center text-muted-foreground italic">
+                    <Building2 className="size-8 text-muted-foreground/30 mx-auto mb-2" />
+                    No OEM authorization rows recorded. {isEditing ? 'Add an OEM below.' : 'Click "Edit Matrix" above to start tracking OEMs.'}
                   </td>
                 </tr>
               ) : (
                 oems.map((o, idx) => {
                   const st = getStageStatus(o)
+                  const fus = getOemFollowUps(o)
+                  const followUpCount = fus.length
+                  const latestFollowUpDate = fus.length > 0 ? fus[0].date : (o.followUp || '')
+
                   return (
-                    <tr key={o.id} className="hover:bg-muted/20 transition-colors">
+                    <tr key={o.id} className="hover:bg-muted/30 transition-colors">
                       {/* S.No */}
-                      <td className="border border-border p-2 text-center font-mono font-bold text-muted-foreground">{idx + 1}</td>
+                      <td className="p-3 text-center font-mono font-bold text-muted-foreground border-r border-border/60 bg-muted/10">{idx + 1}</td>
 
                       {/* OEM Name */}
-                      <td className="border border-border p-2 font-bold text-foreground">
+                      <td className="p-3 font-bold text-foreground border-r border-border/60">
                         {isEditing ? (
-                          <Input size="sm" value={o.name} onChange={e => updateOemField(o.id, 'name', e.target.value)} className="h-7 text-xs font-semibold" />
+                          <Input size="sm" value={o.name} onChange={e => updateOemField(o.id, 'name', e.target.value)} className="h-8 text-xs font-bold" />
                         ) : (
-                          o.name
+                          <span className="text-xs font-extrabold text-foreground">{o.name}</span>
                         )}
                       </td>
 
                       {/* Process Initiated */}
-                      <td className="border border-border p-2 text-center">
+                      <td className="p-3 text-center border-r border-border/60">
                         {isEditing ? (
-                          <select value={o.initiated} onChange={e => updateOemField(o.id, 'initiated', e.target.value)} className="h-7 text-xs border border-border rounded px-1 bg-background font-medium">
+                          <select value={o.initiated} onChange={e => updateOemField(o.id, 'initiated', e.target.value)} className="h-7 text-xs border border-border rounded-md px-1.5 bg-background font-semibold">
                             <option value="YES">YES</option>
                             <option value="NO">NO</option>
                           </select>
                         ) : (
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${o.initiated === 'YES' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-muted text-muted-foreground'}`}>
+                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold border ${o.initiated === 'YES' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-muted text-muted-foreground border-border'}`}>
                             {o.initiated}
                           </span>
                         )}
                       </td>
 
                       {/* MAF Cert */}
-                      <td className="border border-border p-2 text-center">
+                      <td className="p-3 text-center border-r border-border/60">
                         {isEditing ? (
-                          <select value={o.maf} onChange={e => updateOemField(o.id, 'maf', e.target.value)} className="h-7 text-xs border border-border rounded px-1 bg-background font-medium">
+                          <select value={o.maf} onChange={e => updateOemField(o.id, 'maf', e.target.value)} className="h-7 text-xs border border-border rounded-md px-1.5 bg-background font-semibold">
                             <option value="NOT RECEIVED">NOT RECEIVED</option>
                             <option value="RECEIVED">RECEIVED</option>
                           </select>
                         ) : (
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${o.maf === 'RECEIVED' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'}`}>
+                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold border ${o.maf === 'RECEIVED' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300'}`}>
                             {o.maf}
                           </span>
                         )}
                       </td>
 
                       {/* MII Cert */}
-                      <td className="border border-border p-2 text-center">
+                      <td className="p-3 text-center border-r border-border/60">
                         {isEditing ? (
-                          <select value={o.mii} onChange={e => updateOemField(o.id, 'mii', e.target.value)} className="h-7 text-xs border border-border rounded px-1 bg-background font-medium">
+                          <select value={o.mii} onChange={e => updateOemField(o.id, 'mii', e.target.value)} className="h-7 text-xs border border-border rounded-md px-1.5 bg-background font-semibold">
                             <option value="NOT RECEIVED">NOT RECEIVED</option>
                             <option value="RECEIVED">RECEIVED</option>
                           </select>
                         ) : (
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${o.mii === 'RECEIVED' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-muted text-muted-foreground'}`}>
+                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold border ${o.mii === 'RECEIVED' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-muted text-muted-foreground border-border'}`}>
                             {o.mii}
                           </span>
                         )}
                       </td>
 
                       {/* No Malicious Cert */}
-                      <td className="border border-border p-2 text-center">
+                      <td className="p-3 text-center border-r border-border/60">
                         {isEditing ? (
-                          <select value={o.noMalicious} onChange={e => updateOemField(o.id, 'noMalicious', e.target.value)} className="h-7 text-xs border border-border rounded px-1 bg-background font-medium">
+                          <select value={o.noMalicious} onChange={e => updateOemField(o.id, 'noMalicious', e.target.value)} className="h-7 text-xs border border-border rounded-md px-1.5 bg-background font-semibold">
                             <option value="NOT RECEIVED">NOT RECEIVED</option>
                             <option value="RECEIVED">RECEIVED</option>
                           </select>
                         ) : (
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${o.noMalicious === 'RECEIVED' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-muted text-muted-foreground'}`}>
+                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold border ${o.noMalicious === 'RECEIVED' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-muted text-muted-foreground border-border'}`}>
                             {o.noMalicious}
                           </span>
                         )}
                       </td>
 
                       {/* Additional Docs */}
-                      <td className="border border-border p-2">
+                      <td className="p-3 border-r border-border/60">
                         {isEditing ? (
                           <Input size="sm" value={o.additionalDocs} onChange={e => updateOemField(o.id, 'additionalDocs', e.target.value)} placeholder="e.g. OEM Compliance" className="h-7 text-xs" />
                         ) : (
-                          <span className="text-muted-foreground">{o.additionalDocs || '—'}</span>
+                          <span className="text-xs text-muted-foreground font-medium">{o.additionalDocs || '—'}</span>
                         )}
                       </td>
 
-                      {/* Follow Up Date */}
-                      <td className="border border-border p-2">
-                        {isEditing ? (
-                          <input type="date" value={o.followUp} onChange={e => updateOemField(o.id, 'followUp', e.target.value)} className="h-7 text-xs border border-border rounded px-1.5 bg-background font-mono" />
-                        ) : (
-                          <span className="font-mono text-muted-foreground">{o.followUp || '—'}</span>
-                        )}
+                      {/* Follow-up Tracking Cell (Multiple Follow-ups Supported) */}
+                      <td className="p-3 border-r border-border/60 bg-purple-50/20 dark:bg-purple-950/10">
+                        <div className="flex flex-col gap-1.5 items-start">
+                          <button
+                            type="button"
+                            onClick={() => setActiveFollowUpOem(o)}
+                            className="inline-flex items-center gap-1.5 text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-purple-100 dark:bg-purple-950/70 text-purple-900 dark:text-purple-200 border border-purple-300/80 dark:border-purple-800 hover:bg-purple-200 dark:hover:bg-purple-900 transition-all shadow-2xs group"
+                            title="Click to view full follow-up history & log new follow-up"
+                          >
+                            <History className="size-3 text-purple-600 dark:text-purple-400 group-hover:rotate-45 transition-transform" />
+                            <span>{followUpCount > 0 ? `${followUpCount} Follow-up${followUpCount > 1 ? 's' : ''}` : '+ Log Follow-up'}</span>
+                            <ChevronRight className="size-3 opacity-60" />
+                          </button>
+                          
+                          {latestFollowUpDate ? (
+                            <span className="text-[10px] font-mono text-purple-900 dark:text-purple-300 flex items-center gap-1 font-semibold pl-0.5">
+                              <Calendar className="size-3 text-purple-600" />
+                              Latest: <span>{latestFollowUpDate}</span>
+                            </span>
+                          ) : (
+                            <span className="text-[10px] italic text-muted-foreground pl-0.5">No follow-ups logged</span>
+                          )}
+                        </div>
                       </td>
 
                       {/* Remarks */}
-                      <td className="border border-border p-2">
+                      <td className="p-3 border-r border-border/60">
                         {isEditing ? (
                           <Input size="sm" value={o.remark} onChange={e => updateOemField(o.id, 'remark', e.target.value)} placeholder="Remark" className="h-7 text-xs" />
                         ) : (
-                          <span className="text-muted-foreground">{o.remark || '—'}</span>
-                        )}
-                      </td>
-
-                      {/* Clarification Required */}
-                      <td className="border border-border p-2">
-                        {isEditing ? (
-                          <Input size="sm" value={o.clarificationRequired} onChange={e => updateOemField(o.id, 'clarificationRequired', e.target.value)} placeholder="Clarification needed" className="h-7 text-xs" />
-                        ) : (
-                          <span className="text-muted-foreground">{o.clarificationRequired || '—'}</span>
-                        )}
-                      </td>
-
-                      {/* Clarification Provided */}
-                      <td className="border border-border p-2">
-                        {isEditing ? (
-                          <Input size="sm" value={o.clarificationProvided} onChange={e => updateOemField(o.id, 'clarificationProvided', e.target.value)} placeholder="Clarification given" className="h-7 text-xs" />
-                        ) : (
-                          <span className="text-muted-foreground">{o.clarificationProvided || '—'}</span>
+                          <span className="text-xs text-muted-foreground font-medium">{o.remark || '—'}</span>
                         )}
                       </td>
 
                       {/* Stage Status */}
-                      <td className="border border-border p-2 text-center">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border whitespace-nowrap ${st.cls}`}>{st.label}</span>
+                      <td className="p-3 text-center border-r border-border/60">
+                        <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold border whitespace-nowrap ${st.cls}`}>{st.label}</span>
                       </td>
 
                       {/* Action */}
                       {isEditing && (
-                        <td className="border border-border p-2 text-center">
-                          <button onClick={() => deleteOem(o.id)} className="text-destructive hover:bg-destructive/10 p-1 rounded transition-colors" title="Delete Row">
-                            <Trash2 className="size-3.5" />
+                        <td className="p-3 text-center">
+                          <button onClick={() => deleteOem(o.id)} className="text-destructive hover:bg-destructive/10 p-1.5 rounded-md transition-colors" title="Delete Row">
+                            <Trash2 className="size-4" />
                           </button>
                         </td>
                       )}
@@ -806,15 +1125,25 @@ export function Stage3Workspace({ bid, onRefresh }) {
         {isEditing && (
           <div className="pt-3 border-t border-border/60 flex flex-col sm:flex-row gap-2 items-end">
             <div className="flex-1 w-full">
-              <Label className="text-[11px] font-medium">Add New OEM Name</Label>
-              <Input value={newOemName} onChange={e => setNewOemName(e.target.value)} placeholder="e.g. Cisco Systems, Dell Enterprise, HP Inc." className="h-8 text-xs" onKeyDown={e => e.key === 'Enter' && addOem()} />
+              <Label className="text-[11px] font-semibold text-muted-foreground">Add New OEM Name</Label>
+              <Input value={newOemName} onChange={e => setNewOemName(e.target.value)} placeholder="e.g. Cisco Systems, Dell Enterprise, HP Inc." className="h-9 text-xs" onKeyDown={e => e.key === 'Enter' && addOem()} />
             </div>
-            <Button size="sm" onClick={addOem} className="h-8 text-xs gap-1.5 bg-purple-600 hover:bg-purple-700 text-white">
-              <Plus className="size-3.5" /> Add OEM Row
+            <Button size="sm" onClick={addOem} className="h-9 text-xs gap-1.5 bg-purple-600 hover:bg-purple-700 text-white font-semibold shadow-xs">
+              <Plus className="size-4" /> Add OEM Row
             </Button>
           </div>
         )}
       </div>
+
+      {/* OEM Follow-up Log History Modal */}
+      {activeFollowUpOem && (
+        <OEMFollowUpModal
+          oem={activeFollowUpOem}
+          bidId={bid.id}
+          onClose={() => setActiveFollowUpOem(null)}
+          onSaveFollowUps={handleSaveFollowUpsForOem}
+        />
+      )}
 
       {showModal && (
         <CompleteStageModal
@@ -1037,12 +1366,10 @@ export function Stage4Workspace({ bid, onRefresh }) {
           <td style="padding: 8px 10px; text-align: center; color: #334155; font-weight: 500;">${qty}</td>
           <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #475569;">${fmtMoney(basic)}</td>
           <td style="padding: 8px 10px; text-align: center; color: #4338ca; font-weight: 700;">${itMargin}%</td>
-          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #059669; font-weight: 600;">${fmtMoney(profitPerUnit)}</td>
           <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #334155;">${fmtMoney(unitPriceExclGst)}</td>
           <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #64748b;">${fmtMoney(unitGst)} <span style="font-size:10px;color:#94a3b8;">(${itGstPct}%)</span></td>
           <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #4f46e5;">${fmtMoney(globxUnit)}</td>
           <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #4f46e5; background-color: #f5f3ff;">${fmtMoney(globxTotal)}</td>
-          <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #059669; background-color: #ecfdf5;">${fmtMoney(profitTotal)}</td>
         </tr>
       `
     }).join('')
@@ -1062,14 +1389,12 @@ export function Stage4Workspace({ bid, onRefresh }) {
                 <th style="padding: 10px; text-align: center; border-right: 1px solid #e2e8f0;">S.No</th>
                 <th style="padding: 10px; border-right: 1px solid #e2e8f0;">Item Description</th>
                 <th style="padding: 10px; text-align: center; border-right: 1px solid #e2e8f0;">Qty</th>
-                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">Base Price (₹)</th>
+                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">Base Purchase Price</th>
                 <th style="padding: 10px; text-align: center; border-right: 1px solid #e2e8f0;">Margin %</th>
-                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">Profit / Unit (₹)</th>
-                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">Unit Price (Excl GST)</th>
+                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">GlobX Unit Price Excl GST</th>
                 <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">GST (₹)</th>
-                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">Unit Price w/ GST</th>
-                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0; background-color: #ede9fe; color: #3730a3;">GlobX Total (₹)</th>
-                <th style="padding: 10px; text-align: right; background-color: #d1fae5; color: #065f46;">Total Profit (₹)</th>
+                <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">GlobX Unit Price w/GST</th>
+                <th style="padding: 10px; text-align: right; background-color: #ede9fe; color: #3730a3;">GlobX Total (₹)</th>
               </tr>
             </thead>
             <tbody>
@@ -1079,9 +1404,8 @@ export function Stage4Workspace({ bid, onRefresh }) {
               <tr style="background-color: #f8fafc; font-weight: bold; border-top: 2px solid #cbd5e1;">
                 <td colspan="4" style="padding: 12px 10px; text-align: right; color: #334155; font-size: 12px; border-right: 1px solid #e2e8f0;">Grand Total Summary (Base Cost: ${fmtMoney(grandBasePurchase)}):</td>
                 <td style="padding: 12px 10px; text-align: center; color: #4338ca; font-size: 12px; border-right: 1px solid #e2e8f0;">${effectiveMargin}%</td>
-                <td colspan="4" style="padding: 12px 10px; text-align: right; color: #64748b; font-size: 11px; border-right: 1px solid #e2e8f0;">TOTAL OFFERED VALUE (INCL. GST)</td>
-                <td style="padding: 12px 10px; text-align: right; font-family: monospace; font-size: 13px; font-weight: 800; color: #4338ca; background-color: #ede9fe; border-right: 1px solid #e2e8f0;">${fmtMoney(grandGlobxTotal)}</td>
-                <td style="padding: 12px 10px; text-align: right; font-family: monospace; font-size: 13px; font-weight: 800; color: #047857; background-color: #d1fae5;">${fmtMoney(grandTotalProfit)}</td>
+                <td colspan="3" style="padding: 12px 10px; text-align: right; color: #64748b; font-size: 11px; border-right: 1px solid #e2e8f0;">TOTAL OFFERED VALUE (INCL. GST)</td>
+                <td style="padding: 12px 10px; text-align: right; font-family: monospace; font-size: 13px; font-weight: 800; color: #4338ca; background-color: #ede9fe;">${fmtMoney(grandGlobxTotal)}</td>
               </tr>
             </tfoot>
           </table>
@@ -1356,7 +1680,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
                 </h4>
               </div>
               <p className="text-[11px] text-muted-foreground">
-                Calculation Sequence: <strong>Base Price → Margin % (applied to Base) → Unit Price (Excl GST) → GST (18%) → Unit Price with GST → GlobX Total Price</strong>
+                Calculation Sequence: <strong>Base Purchase Price → Margin % (applied to Base) → GlobX Unit Price Excl GST → GST (18%) → GlobX Unit Price w/GST → GlobX Total Price</strong>
               </p>
             </div>
 
@@ -1431,14 +1755,12 @@ export function Stage4Workspace({ bid, onRefresh }) {
                   <th className="border border-border p-2 text-center">S.No</th>
                   <th className="border border-border p-2 text-left">Item Description</th>
                   <th className="border border-border p-2 text-center">Qty</th>
-                  <th className="border border-border p-2 text-right">Base Price (₹)</th>
+                  <th className="border border-border p-2 text-right">Base Purchase Price</th>
                   <th className="border border-border p-2 text-center">Margin %</th>
-                  <th className="border border-border p-2 text-right">Profit / Unit (₹)</th>
-                  <th className="border border-border p-2 text-right">Unit Price (Excl GST)</th>
+                  <th className="border border-border p-2 text-right">GlobX Unit Price Excl GST</th>
                   <th className="border border-border p-2 text-right">GST (₹)</th>
-                  <th className="border border-border p-2 text-right">Unit Price w/ GST</th>
+                  <th className="border border-border p-2 text-right">GlobX Unit Price w/GST</th>
                   <th className="border border-border p-2 text-right bg-indigo-50/80 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200">GlobX Total (₹)</th>
-                  <th className="border border-border p-2 text-right bg-emerald-50/80 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200">Total Profit (₹)</th>
                 </tr>
               </thead>
               <tbody>
@@ -1449,14 +1771,12 @@ export function Stage4Workspace({ bid, onRefresh }) {
                     <td className="border border-border p-2 text-center font-semibold">{row.qty}</td>
                     <td className="border border-border p-2 text-right font-mono text-muted-foreground">{fmtMoney(row.basicPrice)}</td>
                     <td className="border border-border p-2 text-center font-semibold text-indigo-600 dark:text-indigo-400">{row.itemMargin}%</td>
-                    <td className="border border-border p-2 text-right font-mono font-medium text-emerald-600 dark:text-emerald-400">{fmtMoney(row.profitPerUnit)}</td>
                     <td className="border border-border p-2 text-right font-mono text-foreground">{fmtMoney(row.unitPriceExclGst)}</td>
                     <td className="border border-border p-2 text-right font-mono text-muted-foreground">
                       {fmtMoney(row.unitGst)} <span className="text-[9px] text-muted-foreground/70">({row.itemGstRate}%)</span>
                     </td>
                     <td className="border border-border p-2 text-right font-mono font-bold text-indigo-600 dark:text-indigo-400">{fmtMoney(row.globxUnit)}</td>
                     <td className="border border-border p-2 text-right font-mono font-extrabold text-indigo-700 dark:text-indigo-300 bg-indigo-50/40 dark:bg-indigo-950/20">{fmtMoney(row.globxTotal)}</td>
-                    <td className="border border-border p-2 text-right font-mono font-extrabold text-emerald-700 dark:text-emerald-300 bg-emerald-50/40 dark:bg-emerald-950/20">{fmtMoney(row.profitTotal)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1465,12 +1785,9 @@ export function Stage4Workspace({ bid, onRefresh }) {
                   <td colSpan={3} className="border border-border p-2.5 text-right text-muted-foreground uppercase tracking-wider">Grand Total Summary:</td>
                   <td className="border border-border p-2.5 text-right font-mono font-bold text-foreground">{fmtMoney(l1Calculations.grandBaseCost)}</td>
                   <td className="border border-border p-2.5 text-center font-bold text-indigo-700 dark:text-indigo-300">{l1Calculations.effectiveMarginPct.toFixed(2)}%</td>
-                  <td className="border border-border p-2.5 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">—</td>
                   <td className="border border-border p-2.5 text-right font-mono font-bold text-foreground">{fmtMoney(l1Calculations.grandSellingExclGst)}</td>
                   <td className="border border-border p-2.5 text-right font-mono font-bold text-muted-foreground">{fmtMoney(l1Calculations.grandGstAmount)}</td>
-                  <td className="border border-border p-2.5 text-right font-mono text-muted-foreground">—</td>
                   <td className="border border-border p-2.5 text-right font-mono text-sm font-extrabold text-indigo-700 dark:text-indigo-300 bg-indigo-50/80 dark:bg-indigo-950/40">{fmtMoney(l1Calculations.grandGlobxTotal)}</td>
-                  <td className="border border-border p-2.5 text-right font-mono text-sm font-extrabold text-emerald-700 dark:text-emerald-300 bg-emerald-50/80 dark:bg-emerald-950/40">{fmtMoney(l1Calculations.grandTotalProfit)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -1648,6 +1965,22 @@ export function Stage4Workspace({ bid, onRefresh }) {
 export function Stage5Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
 
+  const handleNotifyAll = async () => {
+    try {
+      const { createAlert } = await import('../../services/alerts')
+      await Promise.all(['ADMIN','MANAGER','PRE_SALES'].map(role =>
+        createAlert({
+          target_role: role,
+          bid_id: bid.id,
+          type: 'ACTION_REQUIRED',
+          title: `All Bid Documents Ready — ${bid.title}`,
+          message: `Bid ${bid.gem_bid_no || bid.id}: All documents are compiled and ready. Internal approval is required before GeM submission.`,
+        })
+      ))
+      toast.success('Admin, Manager & Pre-Sales alerted!')
+    } catch { toast.error('Failed to send alert') }
+  }
+
   return (
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-purple-200 bg-purple-50/50 dark:bg-purple-950/20 dark:border-purple-900/50 flex items-center justify-between">
@@ -1655,14 +1988,19 @@ export function Stage5Workspace({ bid, onRefresh }) {
           <h3 className="text-sm font-semibold text-purple-900 dark:text-purple-300">Stage 5: Document Checklist Preparation</h3>
           <p className="text-xs text-purple-700 dark:text-purple-400">Ensure all mandatory bidder and OEM documents are compiled, verified, and tracked below.</p>
         </div>
-        <StageHeaderActions
-          bid={bid}
-          stageKey="DOCUMENT_CHECKLIST_PREPARATION"
-          onCompleteClick={() => setShowModal(true)}
-          onRefresh={onRefresh}
-          completeLabel="Complete Checklist & Advance"
-          completeClass="bg-purple-600 hover:bg-purple-700 text-white"
-        />
+        <div className="flex gap-2 items-center flex-wrap">
+          <Button size="sm" variant="outline" onClick={handleNotifyAll} className="gap-1.5 border-purple-300 text-purple-900 dark:text-purple-300 hover:bg-purple-100 text-xs">
+            <Bell className="size-3.5" /> Notify All Stakeholders
+          </Button>
+          <StageHeaderActions
+            bid={bid}
+            stageKey="DOCUMENT_CHECKLIST_PREPARATION"
+            onCompleteClick={() => setShowModal(true)}
+            onRefresh={onRefresh}
+            completeLabel="Complete Checklist & Advance"
+            completeClass="bg-purple-600 hover:bg-purple-700 text-white"
+          />
+        </div>
       </div>
 
       {/* Embedded Dynamic Interactive Checklist UI */}
@@ -1685,6 +2023,47 @@ export function Stage5Workspace({ bid, onRefresh }) {
   )
 }
 
+// Builds the same EMD detail HTML table used by both the manual "Alert Finance
+// Team" action here and the automatic on-creation alert on the backend, so the
+// in-app alert and email always render identically formatted.
+function buildEmdDetailsTableHtml(bid) {
+  const rows = [
+    ['EMD Amount', fmtMoney(bid.emd_amount)],
+    ['Payment Mode', bid.emd_exempted ? 'EXEMPTED' : (bid.emd_type || 'N/A')],
+  ]
+  if (!bid.emd_exempted && bid.emd_type === 'ONLINE') {
+    rows.push(
+      ['Bank Name', bid.emd_bank_name || 'N/A'],
+      ['Account Number', bid.emd_account_number || 'N/A'],
+      ['IFSC Code', bid.emd_ifsc_code || 'N/A'],
+    )
+    if (bid.emd_branch) rows.push(['Branch', bid.emd_branch])
+  } else if (!bid.emd_exempted && bid.emd_type === 'DD') {
+    rows.push(
+      ['Beneficiary', bid.emd_beneficiary || 'N/A'],
+      ['Payable At', bid.emd_payable_at || 'N/A'],
+    )
+  }
+
+  const rowsHtml = rows.map(([label, value]) => `
+    <tr style="border-bottom: 1px solid #e2e8f0;">
+      <td style="padding: 8px 12px; font-weight: 600; color: #475569; background-color: #f8fafc; width: 40%;">${label}</td>
+      <td style="padding: 8px 12px; color: #1e293b; font-family: monospace;">${value}</td>
+    </tr>
+  `).join('')
+
+  return `
+    <div style="margin-top: 14px; margin-bottom: 14px; border: 1px solid #fde68a; border-radius: 10px; overflow: hidden; background-color: #ffffff;">
+      <div style="background: linear-gradient(135deg, #d97706 0%, #b45309 100%); padding: 12px 16px; color: #ffffff; font-size: 13px; font-weight: 700;">
+        💰 EMD Payment Details — ${bid.title}
+      </div>
+      <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+  `
+}
+
 // ── Stage 6: EMD Processing ─────────────────────────────────────────────────
 export function Stage6Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
@@ -1692,21 +2071,25 @@ export function Stage6Workspace({ bid, onRefresh }) {
   const handleAlertFinance = async () => {
     try {
       const { createAlert } = await import('../../services/alerts')
+      const currentUser = tokenStorage.getUser()
+      const tableHtml = buildEmdDetailsTableHtml(bid)
+
       await createAlert({
         target_role: 'FINANCE',
         bid_id: bid.id,
+        created_by: currentUser?.id,
         type: 'ACTION_REQUIRED',
         title: `EMD Processing Required — ${bid.title}`,
-        message: `Bid ${bid.gem_bid_no || bid.id} requires EMD/Bank Guarantee processing. EMD Amount: ${fmtMoney(bid.emd_amount)}. EMD Exempted: ${bid.emd_exempted ? 'Yes' : 'No'}. Please process and confirm.`,
+        message: `<p style="margin: 0 0 8px 0;">Tender: <strong>${bid.title}</strong> (GeM Bid No: ${bid.gem_bid_no || 'N/A'}) requires EMD processing.</p>${tableHtml}`,
       })
       logStageMicroEvent(bid.id, {
         fromStage: 'EMD_PROCESSING',
         toStage: 'EMD_PROCESSING',
         eventType: 'ALERT',
-        transitionReason: `Alerted Finance Team for EMD/Bank Guarantee processing (EMD Amount: ${fmtMoney(bid.emd_amount)}, Exempted: ${bid.emd_exempted ? 'Yes' : 'No'})`,
+        transitionReason: `Alerted Finance Team for EMD processing (Amount: ${fmtMoney(bid.emd_amount)}, Mode: ${bid.emd_exempted ? 'EXEMPTED' : bid.emd_type})`,
         details: { emdAmount: bid.emd_amount, exempted: bid.emd_exempted }
       })
-      toast.success('Finance team alerted via in-app notification + email!')
+      toast.success('Finance team alerted via in-app notification + email (CC sent to you)!')
     } catch (e) {
       toast.error('Failed to send alert. Check your connection.')
     }
@@ -1716,8 +2099,8 @@ export function Stage6Workspace({ bid, onRefresh }) {
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/50 dark:bg-amber-950/20 dark:border-amber-900/50 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-300">Stage 6: EMD & Bank Guarantee Processing</h3>
-          <p className="text-xs text-amber-700 dark:text-amber-400">Manage EMD payment / exemption certificates and BG issue requests.</p>
+          <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-300">Stage 6: EMD Processing</h3>
+          <p className="text-xs text-amber-700 dark:text-amber-400">Manage EMD payment or exemption certificates. Bank Guarantee is tracked later, after Purchase Order receipt.</p>
         </div>
         <div className="flex gap-2 items-center flex-wrap">
           <Button size="sm" variant="outline" onClick={handleAlertFinance} className="gap-1.5 border-amber-300 text-amber-900 dark:text-amber-300 hover:bg-amber-100 text-xs">
@@ -1728,25 +2111,35 @@ export function Stage6Workspace({ bid, onRefresh }) {
             stageKey="EMD_PROCESSING"
             onCompleteClick={() => setShowModal(true)}
             onRefresh={onRefresh}
-            completeLabel="EMD / BG Ready & Advance"
+            completeLabel="EMD Ready & Advance"
             completeClass="bg-amber-600 hover:bg-amber-700 text-white"
           />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="p-4 rounded-xl border border-border bg-card space-y-2 text-xs">
-          <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">EMD Requirements</h4>
-          <div className="flex justify-between"><span className="text-muted-foreground">Status:</span><span className="font-semibold">{bid.emd_exempted ? 'EXEMPTED' : 'REQUIRED'}</span></div>
-          <div className="flex justify-between"><span className="text-muted-foreground">EMD Amount:</span><span className="font-bold font-mono">{fmtMoney(bid.emd_amount)}</span></div>
-          <div className="flex justify-between"><span className="text-muted-foreground">Payment Mode:</span><span className="font-medium">{bid.emd_type || 'Online'}</span></div>
-        </div>
+      <div className="p-4 rounded-xl border border-border bg-card space-y-2 text-xs max-w-md">
+        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">EMD Requirements</h4>
+        <div className="flex justify-between"><span className="text-muted-foreground">Status:</span><span className="font-semibold">{bid.emd_exempted ? 'EXEMPTED' : 'REQUIRED'}</span></div>
+        <div className="flex justify-between"><span className="text-muted-foreground">EMD Amount:</span><span className="font-bold font-mono">{fmtMoney(bid.emd_amount)}</span></div>
+        <div className="flex justify-between"><span className="text-muted-foreground">Payment Mode:</span><span className="font-medium">{bid.emd_exempted ? 'EXEMPTED' : (bid.emd_type || 'ONLINE')}</span></div>
 
-        <div className="p-4 rounded-xl border border-border bg-card space-y-2 text-xs">
-          <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Bank Guarantee Details</h4>
-          <div className="flex justify-between"><span className="text-muted-foreground">BG Required:</span><span className="font-semibold">{bid.bg_required ? 'YES' : 'NO'}</span></div>
-          {bid.bg_required && <div className="flex justify-between"><span className="text-muted-foreground">BG Rate:</span><span className="font-bold">{bid.bg_rate}%</span></div>}
-        </div>
+        {!bid.emd_exempted && bid.emd_type === 'ONLINE' && (
+          <div className="mt-3 pt-3 border-t border-border/60 space-y-1.5">
+            <span className="text-[11px] font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider block">Online Payment Details</span>
+            <div className="flex justify-between"><span className="text-muted-foreground">Bank Name:</span><span className="font-medium text-foreground">{bid.emd_bank_name || '—'}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Account Number:</span><span className="font-mono font-medium text-foreground">{bid.emd_account_number || '—'}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">IFSC Code:</span><span className="font-mono font-medium text-foreground">{bid.emd_ifsc_code || '—'}</span></div>
+            {bid.emd_branch && <div className="flex justify-between"><span className="text-muted-foreground">Branch:</span><span className="font-medium text-foreground">{bid.emd_branch}</span></div>}
+          </div>
+        )}
+
+        {!bid.emd_exempted && bid.emd_type === 'DD' && (
+          <div className="mt-3 pt-3 border-t border-border/60 space-y-1.5">
+            <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider block">Demand Draft (DD) Details</span>
+            <div className="flex justify-between"><span className="text-muted-foreground">Beneficiary:</span><span className="font-medium text-foreground">{bid.emd_beneficiary || '—'}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Payable At:</span><span className="font-medium text-foreground">{bid.emd_payable_at || '—'}</span></div>
+          </div>
+        )}
       </div>
 
       {showModal && (
@@ -1764,65 +2157,6 @@ export function Stage6Workspace({ bid, onRefresh }) {
   )
 }
 
-// ── Stage 7: Bid Documentation ──────────────────────────────────────────────
-export function Stage7Workspace({ bid, onRefresh }) {
-  const [showModal, setShowModal] = useState(false)
-
-  const handleNotifyAll = async () => {
-    try {
-      const { createAlert } = await import('../../services/alerts')
-      await Promise.all(['ADMIN','MANAGER','PRE_SALES'].map(role =>
-        createAlert({
-          target_role: role,
-          bid_id: bid.id,
-          type: 'ACTION_REQUIRED',
-          title: `All Bid Documents Ready — ${bid.title}`,
-          message: `Bid ${bid.gem_bid_no || bid.id}: All documents are compiled and ready. Internal approval is required before GeM submission.`,
-        })
-      ))
-      toast.success('Admin, Manager & Pre-Sales alerted!')
-    } catch { toast.error('Failed to send alert') }
-  }
-
-  return (
-    <div className="space-y-6">
-      <div className="p-4 rounded-xl border border-orange-200 bg-orange-50/50 dark:bg-orange-950/20 dark:border-orange-900/50 flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-semibold text-orange-900 dark:text-orange-300">Stage 7: Final Bid Documentation</h3>
-          <p className="text-xs text-orange-700 dark:text-orange-400">Assemble final bid PDF package, technical bid, and financial proposal.</p>
-        </div>
-        <div className="flex gap-2 items-center flex-wrap">
-          <Button size="sm" variant="outline" onClick={handleNotifyAll} className="gap-1.5 border-orange-300 text-orange-900 dark:text-orange-300 hover:bg-orange-100 text-xs">
-            <Bell className="size-3.5" /> Notify All Stakeholders
-          </Button>
-          <StageHeaderActions
-            bid={bid}
-            stageKey="BID_DOCUMENTATION"
-            onCompleteClick={() => setShowModal(true)}
-            onRefresh={onRefresh}
-            completeLabel="Ready for Internal Approval"
-            completeClass="bg-orange-600 hover:bg-orange-700 text-white"
-          />
-        </div>
-      </div>
-
-      {showModal && (
-        <CompleteStageModal
-          title="Send Bid for Internal Approval"
-          description="Marks Stage 7 (Bid Documentation) as complete. Notifies Managers, Admins, and Pre-Sales leads."
-          stageKey="BID_DOCUMENTATION"
-          bidId={bid.id}
-          bid={bid}
-          onClose={() => setShowModal(false)}
-          onComplete={async () => {
-            toast.success('Internal Approval request triggered!')
-            onRefresh()
-          }}
-        />
-      )}
-    </div>
-  )
-}
 
 // ── Stage 8: Internal Approval ──────────────────────────────────────────────
 export function Stage8Workspace({ bid, onRefresh }) {
@@ -1957,10 +2291,16 @@ export function Stage10Workspace({ bid, onRefresh }) {
     if (status === 'QUALIFIED') {
       confetti({ particleCount: 100, spread: 60 })
       // Stage 10 completion is handled atomically by CompleteStageModal
+      await updateBid(bid.id, { technical_result: 'QUALIFIED' })
     } else {
-      await recordBidOutcome(bid.id, {
-        bid_outcome: 'LOST',
-        outcome_reason: `Disqualified in Technical Eval: ${disqualifyReason}`,
+      // Setting technical_result to DISQUALIFIED triggers the backend's
+      // auto-disqualification rule: it forces bid_status/bid_outcome to LOST,
+      // writes stage history, and sets workflow_stage to the terminal LOST
+      // state directly — so Financial Evaluation and Award & Handover are
+      // correctly locked out instead of being left reachable.
+      await updateBid(bid.id, {
+        technical_result: 'DISQUALIFIED',
+        disqualification_reason: disqualifyReason,
       })
     }
     onRefresh()
@@ -1991,6 +2331,8 @@ export function Stage10Workspace({ bid, onRefresh }) {
           bid={bid}
           onClose={() => setShowModal(false)}
           onComplete={handleResult}
+          hideDefaultRemarks={status === 'DISQUALIFIED'}
+          remarksValue={status === 'DISQUALIFIED' ? disqualifyReason : undefined}
         >
           <div className="space-y-2">
             <Label className="text-xs font-medium">Evaluation Decision *</Label>
@@ -2029,6 +2371,13 @@ export function Stage11Workspace({ bid, onRefresh }) {
   // gem_submission_price is an alternate field. User can still edit if needed.
   const stage9Price = bid?.quoted_price || bid?.gem_submission_price || ''
   const [ourPrice, setOurPrice] = useState(stage9Price ? String(stage9Price) : '')
+
+  // Resync when the bid prop updates after mount (e.g. switching stage tabs
+  // without a full remount) — otherwise a real Stage 9 price can be masked by
+  // the stale one-time useState initializer above.
+  useEffect(() => {
+    if (stage9Price) setOurPrice(String(stage9Price))
+  }, [stage9Price])
 
   const l1PriceNum = Number(l1Price) || 0
   const ourPriceNum = Number(ourPrice) || 0
@@ -2225,28 +2574,81 @@ export function Stage11Workspace({ bid, onRefresh }) {
 }
 
 // ── Stage 12: Award & Handover ──────────────────────────────────────────────
+// Award & Delivery (WON path only — LOST/CANCELLED tenders render EmdReturnWorkspace
+// or a disabled panel instead, dispatched by DynamicStageWorkspace based on outcome).
+// Flow: PO Received first — everything else stays disabled until it's checked.
+// Once received, EMD Returned is always available; BG Submitted only appears
+// when the tender actually requires a Bank Guarantee.
 export function Stage12Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
   const [emdReturned, setEmdReturned] = useState(!!bid?.emd_returned)
   const [bgProceeded, setBgProceeded] = useState(!!bid?.bg_discharged)
-  // PO Received: true when po_received_status === 'PO Received'
   const [poReceived, setPoReceived] = useState(bid?.po_received_status === 'PO Received')
+  const [bgTargetDate, setBgTargetDate] = useState(bid?.bg_target_date ? bid.bg_target_date.slice(0, 10) : '')
 
-  // Determine if this is a WON or LOST scenario
-  // Lost is set when financial eval records LOST outcome, or bid_status is LOST
-  const isLostScenario = bid?.bid_status === 'LOST' || bid?.bid_outcome === 'LOST'
-  const isWonScenario = !isLostScenario
+  const bgRequired = !!bid?.bg_required
+  const emdExempted = !!bid?.emd_exempted
 
   useEffect(() => {
     setEmdReturned(!!bid?.emd_returned)
     setBgProceeded(!!bid?.bg_discharged)
     setPoReceived(bid?.po_received_status === 'PO Received')
-  }, [bid?.emd_returned, bid?.bg_discharged, bid?.po_received_status])
+    setBgTargetDate(bid?.bg_target_date ? bid.bg_target_date.slice(0, 10) : '')
+  }, [bid?.emd_returned, bid?.bg_discharged, bid?.po_received_status, bid?.bg_target_date])
+
+  const handlePoReceivedToggle = async (checked) => {
+    setPoReceived(checked)
+    try {
+      const res = await updateBid(bid.id, {
+        po_received_status: checked ? 'PO Received' : 'Pending',
+        po_received_date: checked ? new Date().toISOString() : undefined,
+      })
+      if (res.ok) {
+        logStageMicroEvent(bid.id, {
+          fromStage: 'AWARD_HANDOVER',
+          toStage: 'AWARD_HANDOVER',
+          eventType: 'FINANCE',
+          transitionReason: checked
+            ? 'Purchase Order (PO) confirmed as Received from Procuring Authority'
+            : 'PO Received status reverted to Pending',
+          details: { poReceived: checked }
+        })
+        toast.success(checked ? '✅ PO marked as Received' : 'PO status set to Pending')
+        onRefresh()
+      }
+    } catch {
+      toast.error('Network error')
+    }
+  }
+
+  const handleBgTargetDateChange = async (value) => {
+    setBgTargetDate(value)
+    if (!value) return
+    try {
+      const res = await updateBid(bid.id, { bg_target_date: new Date(value).toISOString() })
+      if (res.ok) {
+        logStageMicroEvent(bid.id, {
+          fromStage: 'AWARD_HANDOVER',
+          toStage: 'AWARD_HANDOVER',
+          eventType: 'FINANCE',
+          transitionReason: `Set target date for Bank Guarantee issuance: ${value}`,
+          details: { bgTargetDate: value }
+        })
+        toast.success('BG target date saved')
+        onRefresh()
+      }
+    } catch {
+      toast.error('Network error')
+    }
+  }
 
   const handleEmdToggle = async (checked) => {
     setEmdReturned(checked)
     try {
-      const res = await updateBid(bid.id, { emd_returned: checked })
+      const res = await updateBid(bid.id, {
+        emd_returned: checked,
+        emd_returned_date: checked ? new Date().toISOString() : undefined,
+      })
       if (res.ok) {
         logStageMicroEvent(bid.id, {
           fromStage: 'AWARD_HANDOVER',
@@ -2263,42 +2665,22 @@ export function Stage12Workspace({ bid, onRefresh }) {
     }
   }
 
-  const handlePoReceivedToggle = async (checked) => {
-    setPoReceived(checked)
-    const newStatus = checked ? 'PO Received' : 'Pending'
-    try {
-      const res = await updateBid(bid.id, { po_received_status: newStatus })
-      if (res.ok) {
-        logStageMicroEvent(bid.id, {
-          fromStage: 'AWARD_HANDOVER',
-          toStage: 'AWARD_HANDOVER',
-          eventType: 'FINANCE',
-          transitionReason: checked
-            ? 'Purchase Order (PO) confirmed as Received from Procuring Authority'
-            : 'PO Received status reverted to Pending',
-          details: { poReceived: checked, po_received_status: newStatus }
-        })
-        toast.success(checked ? '✅ PO marked as Received' : 'PO status set to Pending')
-        onRefresh()
-      }
-    } catch {
-      toast.error('Network error')
-    }
-  }
-
   const handleBgToggle = async (checked) => {
     setBgProceeded(checked)
     try {
-      const res = await updateBid(bid.id, { bg_discharged: checked })
+      const res = await updateBid(bid.id, {
+        bg_discharged: checked,
+        bg_discharged_date: checked ? new Date().toISOString() : undefined,
+      })
       if (res.ok) {
         logStageMicroEvent(bid.id, {
           fromStage: 'AWARD_HANDOVER',
           toStage: 'AWARD_HANDOVER',
           eventType: 'FINANCE',
-          transitionReason: checked ? 'Marked Performance Bank Guarantee (PBG) as Issued & Submitted' : 'Marked PBG as Pending Submission',
+          transitionReason: checked ? 'Marked Bank Guarantee (BG) as Issued & Submitted' : 'Marked BG as Pending Submission',
           details: { bgDischarged: checked }
         })
-        toast.success(checked ? 'PBG recorded as Issued & Submitted' : 'PBG marked pending')
+        toast.success(checked ? 'BG recorded as Issued & Submitted' : 'BG marked pending')
         onRefresh()
       }
     } catch {
@@ -2307,33 +2689,25 @@ export function Stage12Workspace({ bid, onRefresh }) {
   }
 
   const handleFinalClose = async (remarks) => {
-    if (isWonScenario) {
-      await recordBidOutcome(bid.id, {
-        bid_outcome: 'WON',
-        outcome_reason: `Award & Handover Completed. EMD Returned: ${emdReturned ? 'Yes' : 'No'}, PBG Submitted: ${bgProceeded ? 'Yes' : 'No'}, PO Received: ${poReceived ? 'Yes' : 'Pending'}. ${remarks}`,
-      })
-      confetti({ particleCount: 200, spread: 100 })
-    } else {
-      // LOST — just mark closure with EMD return
-      await updateBid(bid.id, {
-        emd_returned: emdReturned,
-      }).catch(() => {})
-      // Update outcome reason if not already set
-      await recordBidOutcome(bid.id, {
-        bid_outcome: 'LOST',
-        outcome_reason: `Bid closed as Lost. EMD Returned: ${emdReturned ? 'Yes' : 'No'}. ${remarks}`,
-      }).catch(() => {})
-    }
+    await recordBidOutcome(bid.id, {
+      bid_outcome: 'WON',
+      outcome_reason: `Award & Handover Completed. PO Received: ${poReceived ? 'Yes' : 'Pending'}${emdExempted ? ', EMD: Exempted' : `, EMD Returned: ${emdReturned ? 'Yes' : 'No'}`}${bgRequired ? `, BG Submitted: ${bgProceeded ? 'Yes' : 'No'}` : ''}. ${remarks}`,
+    })
+    confetti({ particleCount: 200, spread: 100 })
     onRefresh()
   }
 
   const handleCompleteClick = () => {
-    if (!emdReturned) {
-      toast.error('Mandatory: EMD Return must be confirmed before closing Stage 12.')
+    if (!poReceived) {
+      toast.error('Mandatory: Purchase Order (PO) must be marked Received first.')
       return
     }
-    if (isWonScenario && !bgProceeded) {
-      toast.error('Mandatory: Performance Bank Guarantee (PBG) must be confirmed for WON bids.')
+    if (!emdExempted && !emdReturned) {
+      toast.error('Mandatory: EMD Return must be confirmed before closing this stage.')
+      return
+    }
+    if (bgRequired && !bgProceeded) {
+      toast.error('Mandatory: Bank Guarantee (BG) must be confirmed for this tender.')
       return
     }
     setShowModal(true)
@@ -2341,85 +2715,199 @@ export function Stage12Workspace({ bid, onRefresh }) {
 
   return (
     <div className="space-y-6">
-      <div className={`p-4 rounded-xl border flex items-center justify-between ${
-        isWonScenario
-          ? 'border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/20 dark:border-emerald-900/50'
-          : 'border-red-200 bg-red-50/50 dark:bg-red-950/20 dark:border-red-900/50'
-      }`}>
+      <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/20 dark:border-emerald-900/50 flex items-center justify-between">
         <div>
-          <h3 className={`text-sm font-semibold ${isWonScenario ? 'text-emerald-900 dark:text-emerald-300' : 'text-red-900 dark:text-red-300'}`}>
-            Stage 12: {isWonScenario ? 'Contract Award & Operations Handover' : 'Bid Closure (Lost)'}
-          </h3>
-          <p className={`text-xs ${isWonScenario ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
-            {isWonScenario
-              ? 'Final post-win maintenance (EMD return tracking, Performance Bank Guarantee, operations handover).'
-              : 'Close out lost bid: confirm EMD return and record final closure remarks.'}
-          </p>
+          <h3 className="text-sm font-semibold text-emerald-900 dark:text-emerald-300">Stage 12: Contract Award &amp; Operations Handover</h3>
+          <p className="text-xs text-emerald-700 dark:text-emerald-400">Confirm Purchase Order receipt, then Bank Guarantee (if required) and EMD return.</p>
         </div>
         <StageHeaderActions
           bid={bid}
           stageKey="AWARD_HANDOVER"
           onCompleteClick={handleCompleteClick}
           onRefresh={onRefresh}
-          completeLabel={isWonScenario ? 'Close Bid as WON 🏆' : 'Close Bid as LOST ❌'}
-          completeClass={isWonScenario ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-red-600 hover:bg-red-700 text-white'}
+          completeLabel="Close Bid as WON 🏆"
+          completeClass="bg-emerald-600 hover:bg-emerald-700 text-white"
         />
       </div>
 
       <div className="p-4 rounded-xl border border-border bg-card space-y-3">
-        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Post-Bid Closure Checklist</h4>
+        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Award &amp; Delivery Checklist</h4>
         <div className="space-y-2 text-xs">
-          {/* EMD Return — shown for BOTH WON and LOST */}
-          <label className="flex items-center gap-2 cursor-pointer p-2.5 rounded-lg border border-border hover:bg-muted/20 transition-colors">
-            <input type="checkbox" checked={emdReturned} onChange={e => handleEmdToggle(e.target.checked)} className="rounded" />
-            <div>
-              <span className="font-medium">EMD Returned by Procuring Authority</span>
-              <p className="text-muted-foreground text-[10px]">Confirm EMD amount has been refunded (applicable for both WON and LOST)</p>
-            </div>
-          </label>
-          {/* PBG — shown ONLY for WON bids */}
-          {isWonScenario && (
-            <label className="flex items-center gap-2 cursor-pointer p-2.5 rounded-lg border border-border hover:bg-muted/20 transition-colors">
-              <input type="checkbox" checked={bgProceeded} onChange={e => handleBgToggle(e.target.checked)} className="rounded" />
-              <div>
-                <span className="font-medium">Performance Bank Guarantee (PBG) Issued &amp; Submitted</span>
-                <p className="text-muted-foreground text-[10px]">Confirm PBG has been submitted to the procuring authority (WON bids only)</p>
-              </div>
-            </label>
-          )}
-          {/* PO Received — shown ONLY for WON bids */}
-          {isWonScenario && (
-            <label className={`flex items-center gap-2 cursor-pointer p-2.5 rounded-lg border transition-colors ${
-              poReceived
-                ? 'border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 hover:bg-emerald-50 dark:hover:bg-emerald-950/30'
-                : 'border-amber-200 bg-amber-50/30 dark:bg-amber-950/10 hover:bg-amber-50/50'
-            }`}>
-              <input type="checkbox" checked={poReceived} onChange={e => handlePoReceivedToggle(e.target.checked)} className="rounded" />
-              <div className="flex-1">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium">Purchase Order (PO) Received</span>
-                  {poReceived ? (
-                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 border border-emerald-300 rounded px-1.5 py-0.5">✓ Received</span>
-                  ) : (
-                    <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5">⏳ Pending</span>
-                  )}
-                </div>
-                <p className="text-muted-foreground text-[10px] mt-0.5">Confirm Purchase Order has been formally received from the procuring authority (WON bids only)</p>
-              </div>
-            </label>
-          )}
+          {/* Step numbers adapt to which optional steps actually apply to this tender */}
+          {(() => {
+            let n = 1
+            const poStep = n
+            const bgDateStep = bgRequired ? ++n : null
+            const emdStep = !emdExempted ? ++n : null
+            const bgSubmitStep = bgRequired ? ++n : null
+            return (
+              <>
+                {/* Step: PO Received — always enabled, gates everything else */}
+                <label className={`flex items-center gap-2 cursor-pointer p-2.5 rounded-lg border transition-colors ${
+                  poReceived
+                    ? 'border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 hover:bg-emerald-50 dark:hover:bg-emerald-950/30'
+                    : 'border-amber-200 bg-amber-50/30 dark:bg-amber-950/10 hover:bg-amber-50/50'
+                }`}>
+                  <input type="checkbox" checked={poReceived} onChange={e => handlePoReceivedToggle(e.target.checked)} className="rounded" />
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">{poStep}. Purchase Order (PO) Received</span>
+                      {poReceived ? (
+                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 border border-emerald-300 rounded px-1.5 py-0.5">✓ Received</span>
+                      ) : (
+                        <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5">⏳ Pending</span>
+                      )}
+                    </div>
+                    <p className="text-muted-foreground text-[10px] mt-0.5">Confirm Purchase Order has been formally received from the procuring authority</p>
+                    {bid?.po_received_date && <p className="text-muted-foreground text-[10px] font-mono">Received: {new Date(bid.po_received_date).toLocaleDateString('en-IN')}</p>}
+                  </div>
+                </label>
+
+                {/* Step (conditional): BG target date — only once PO received and BG required */}
+                {poReceived && bgRequired && (
+                  <div className="flex items-center gap-2 p-2.5 rounded-lg border border-border bg-muted/10">
+                    <div className="flex-1">
+                      <Label className="text-xs font-medium">{bgDateStep}. Bank Guarantee — to be issued by</Label>
+                      <Input type="date" value={bgTargetDate} onChange={e => handleBgTargetDateChange(e.target.value)} className="h-8 text-xs mt-1 max-w-[180px]" />
+                    </div>
+                  </div>
+                )}
+
+                {/* Step (conditional): EMD Returned — only when EMD wasn't exempted; enabled once PO received */}
+                {!emdExempted && (
+                  <label className={`flex items-center gap-2 p-2.5 rounded-lg border transition-colors ${
+                    poReceived ? 'cursor-pointer border-border hover:bg-muted/20' : 'cursor-not-allowed border-border/50 opacity-50'
+                  }`}>
+                    <input type="checkbox" checked={emdReturned} disabled={!poReceived} onChange={e => handleEmdToggle(e.target.checked)} className="rounded" />
+                    <div>
+                      <span className="font-medium">{emdStep}. EMD Returned by Procuring Authority</span>
+                      <p className="text-muted-foreground text-[10px]">{poReceived ? 'Confirm EMD amount has been refunded' : 'Unlocks once PO is marked Received'}</p>
+                      {bid?.emd_returned_date && <p className="text-muted-foreground text-[10px] font-mono">Returned: {new Date(bid.emd_returned_date).toLocaleDateString('en-IN')}</p>}
+                    </div>
+                  </label>
+                )}
+
+                {/* Step (conditional): BG Submitted — enabled only once PO received, shown only if BG required */}
+                {bgRequired && (
+                  <label className={`flex items-center gap-2 p-2.5 rounded-lg border transition-colors ${
+                    poReceived ? 'cursor-pointer border-border hover:bg-muted/20' : 'cursor-not-allowed border-border/50 opacity-50'
+                  }`}>
+                    <input type="checkbox" checked={bgProceeded} disabled={!poReceived} onChange={e => handleBgToggle(e.target.checked)} className="rounded" />
+                    <div>
+                      <span className="font-medium">{bgSubmitStep}. Bank Guarantee (BG) Issued &amp; Submitted</span>
+                      <p className="text-muted-foreground text-[10px]">{poReceived ? 'Confirm BG has been submitted to the procuring authority' : 'Unlocks once PO is marked Received'}</p>
+                      {bid?.bg_discharged_date && <p className="text-muted-foreground text-[10px] font-mono">Submitted: {new Date(bid.bg_discharged_date).toLocaleDateString('en-IN')}</p>}
+                    </div>
+                  </label>
+                )}
+
+                {emdExempted && (
+                  <div className="flex items-center gap-2 p-2.5 rounded-lg border border-border/50 bg-muted/10 text-muted-foreground">
+                    <Ban className="size-3.5 shrink-0" />
+                    <span className="text-[11px]">EMD was exempted for this tender — no EMD return to track.</span>
+                  </div>
+                )}
+              </>
+            )
+          })()}
         </div>
       </div>
 
       {showModal && (
         <CompleteStageModal
-          title={isWonScenario ? 'Finalize Contract Award & Close Workspace' : 'Close Bid as Lost'}
-          description={isWonScenario ? 'Marks bid outcome as WON in analytics and completes tender lifecycle.' : 'Records final closure for lost bid. EMD return must be confirmed.'}
+          title="Finalize Contract Award & Close Workspace"
+          description="Marks bid outcome as WON in analytics and completes tender lifecycle."
           stageKey="AWARD_HANDOVER"
           bidId={bid.id}
           bid={bid}
           onClose={() => setShowModal(false)}
           onComplete={handleFinalClose}
+        />
+      )}
+    </div>
+  )
+}
+
+// EMD Return — the Award & Handover slot's content for a LOST/CANCELLED tender
+// that actually collected an EMD (not exempted). There's no award to hand over,
+// just the deposit to track back.
+export function EmdReturnWorkspace({ bid, onRefresh }) {
+  const [showModal, setShowModal] = useState(false)
+  const [emdReturned, setEmdReturned] = useState(!!bid?.emd_returned)
+
+  useEffect(() => {
+    setEmdReturned(!!bid?.emd_returned)
+  }, [bid?.emd_returned])
+
+  const handleEmdToggle = async (checked) => {
+    setEmdReturned(checked)
+    try {
+      const res = await updateBid(bid.id, {
+        emd_returned: checked,
+        emd_returned_date: checked ? new Date().toISOString() : undefined,
+      })
+      if (res.ok) {
+        logStageMicroEvent(bid.id, {
+          fromStage: 'AWARD_HANDOVER',
+          toStage: 'AWARD_HANDOVER',
+          eventType: 'FINANCE',
+          transitionReason: checked ? 'Marked EMD as Refunded / Returned by Procuring Authority' : 'Marked EMD Return as Pending',
+          details: { emdReturned: checked }
+        })
+        toast.success(checked ? 'EMD marked as Returned' : 'EMD marked as Pending Return')
+        onRefresh()
+      }
+    } catch {
+      toast.error('Network error')
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="p-4 rounded-xl border border-red-200 bg-red-50/50 dark:bg-red-950/20 dark:border-red-900/50 flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-red-900 dark:text-red-300">EMD Return</h3>
+          <p className="text-xs text-red-700 dark:text-red-400">
+            {bid?.bid_status === 'CANCELLED' ? 'This tender was cancelled.' : 'This tender was lost.'} Track the EMD deposit back to closure.
+          </p>
+        </div>
+        <StageHeaderActions
+          bid={bid}
+          stageKey="AWARD_HANDOVER"
+          onCompleteClick={() => {
+            if (!emdReturned) { toast.error('Mandatory: EMD Return must be confirmed before closing.'); return }
+            setShowModal(true)
+          }}
+          onRefresh={onRefresh}
+          completeLabel="Close Workspace"
+          completeClass="bg-red-600 hover:bg-red-700 text-white"
+        />
+      </div>
+
+      <div className="p-4 rounded-xl border border-border bg-card space-y-3 max-w-md">
+        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">EMD Closure</h4>
+        <label className="flex items-center gap-2 cursor-pointer p-2.5 rounded-lg border border-border hover:bg-muted/20 transition-colors text-xs">
+          <input type="checkbox" checked={emdReturned} onChange={e => handleEmdToggle(e.target.checked)} className="rounded" />
+          <div>
+            <span className="font-medium">EMD Returned by Procuring Authority</span>
+            <p className="text-muted-foreground text-[10px]">EMD Amount: {fmtMoney(bid?.emd_amount)}</p>
+            {bid?.emd_returned_date && <p className="text-muted-foreground text-[10px] font-mono">Returned: {new Date(bid.emd_returned_date).toLocaleDateString('en-IN')}</p>}
+          </div>
+        </label>
+      </div>
+
+      {showModal && (
+        <CompleteStageModal
+          title="Close EMD Return Workspace"
+          description="Records final closure with EMD return confirmed."
+          stageKey="AWARD_HANDOVER"
+          bidId={bid.id}
+          bid={bid}
+          onClose={() => setShowModal(false)}
+          onComplete={async (remarks) => {
+            await updateBid(bid.id, { emd_returned: emdReturned }).catch(() => {})
+            onRefresh()
+          }}
         />
       )}
     </div>
@@ -2436,6 +2924,32 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
 
   const stage = selectedStage || bid.workflow_stage
   const { isLocked, stageIdx } = checkStageState(bid, stage)
+
+  // A Technical Evaluation disqualification is terminal (workflow_stage becomes
+  // LOST) — Financial Evaluation was never legitimately reached, so it stays
+  // locked regardless of the generic terminal-stage completion logic above.
+  // Award & Handover's own outcome-aware rendering (WON / EMD Return / disabled)
+  // handles the disqualified case separately, so it's excluded here.
+  if (bid?.technical_result === 'DISQUALIFIED' && stage === 'FINANCIAL_EVALUATION') {
+    return (
+      <div className="p-8 rounded-xl border border-rose-200 bg-rose-50/50 dark:bg-rose-950/20 dark:border-rose-900/50 text-center space-y-4 max-w-2xl mx-auto my-6">
+        <div className="size-14 rounded-full bg-rose-100 dark:bg-rose-900/50 flex items-center justify-center mx-auto text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-800 shadow-sm">
+          <Lock className="size-7" />
+        </div>
+        <div className="space-y-1">
+          <h3 className="text-base font-bold text-foreground">Financial Evaluation is Locked</h3>
+          <p className="text-xs text-muted-foreground leading-relaxed max-w-md mx-auto">
+            This tender was disqualified in Technical Evaluation and did not proceed to Financial Evaluation.
+          </p>
+          {bid?.disqualification_reason && (
+            <p className="text-xs text-rose-700 dark:text-rose-400 font-medium max-w-md mx-auto">
+              Reason: {bid.disqualification_reason}
+            </p>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   if (isLocked) {
     const priorStageKey = WORKFLOW_STAGES_ORDERED[stageIdx - 1]
@@ -2464,17 +2978,16 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
   const isFullAccess = userRoles.some(r => fullAccessRoles.includes(r))
 
   if (!isFullAccess) {
-    // Stages 1, 2, 4, 7, 8, 12 for PRE_SALES
+    // Stages 1, 2, 4, 7 (Internal Approval), 11 (Award & Delivery) for PRE_SALES
     const preSalesStages = [
       'DISCOVERED',
       'ELIGIBILITY_ASSESSMENT',
       'PRICING_REQUEST',
-      'BID_DOCUMENTATION',
       'INTERNAL_APPROVAL',
       'AWARD_HANDOVER'
     ]
 
-    // Stages 1, 5, 6, 12 for FINANCE
+    // Stages 1, 5, 6, 11 for FINANCE
     const financeStages = [
       'DISCOVERED',
       'DOCUMENT_CHECKLIST_PREPARATION',
@@ -2527,9 +3040,22 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
     case 'DOCUMENT_CHECKLIST_PREPARATION':
       return <Stage5Workspace bid={bid} onRefresh={onRefresh} />
     case 'EMD_PROCESSING':
+      if (bid?.emd_exempted) {
+        return (
+          <div className="p-8 rounded-xl border border-border bg-muted/20 text-center space-y-3 max-w-2xl mx-auto my-6">
+            <div className="size-14 rounded-full bg-muted flex items-center justify-center mx-auto text-muted-foreground border border-border">
+              <Lock className="size-7" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-foreground">EMD Exempted</h3>
+              <p className="text-xs text-muted-foreground leading-relaxed max-w-md mx-auto">
+                This tender is exempted from EMD — there is nothing to process at this stage.
+              </p>
+            </div>
+          </div>
+        )
+      }
       return <Stage6Workspace bid={bid} onRefresh={onRefresh} />
-    case 'BID_DOCUMENTATION':
-      return <Stage7Workspace bid={bid} onRefresh={onRefresh} />
     case 'INTERNAL_APPROVAL':
       return <Stage8Workspace bid={bid} onRefresh={onRefresh} />
     case 'GEM_SUBMISSION':
@@ -2538,8 +3064,28 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
       return <Stage10Workspace bid={bid} onRefresh={onRefresh} />
     case 'FINANCIAL_EVALUATION':
       return <Stage11Workspace bid={bid} onRefresh={onRefresh} />
-    case 'AWARD_HANDOVER':
+    case 'AWARD_HANDOVER': {
+      const outcomeIsLostOrCancelled = ['LOST', 'CANCELLED'].includes(bid?.bid_status) || ['LOST', 'CANCELLED'].includes(bid?.bid_outcome)
+      if (outcomeIsLostOrCancelled) {
+        if (!bid?.emd_exempted) {
+          return <EmdReturnWorkspace bid={bid} onRefresh={onRefresh} />
+        }
+        return (
+          <div className="p-8 rounded-xl border border-border bg-muted/20 text-center space-y-3 max-w-2xl mx-auto my-6">
+            <div className="size-14 rounded-full bg-muted flex items-center justify-center mx-auto text-muted-foreground border border-border">
+              <Lock className="size-7" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-foreground">Tender Closed</h3>
+              <p className="text-xs text-muted-foreground leading-relaxed max-w-md mx-auto">
+                This tender was {bid?.bid_status === 'CANCELLED' || bid?.bid_outcome === 'CANCELLED' ? 'cancelled' : 'lost'} and EMD was exempted — there is nothing further to track for Award &amp; Handover.
+              </p>
+            </div>
+          </div>
+        )
+      }
       return <Stage12Workspace bid={bid} onRefresh={onRefresh} />
+    }
     default:
       return <Stage1Workspace bid={bid} onRefresh={onRefresh} />
   }

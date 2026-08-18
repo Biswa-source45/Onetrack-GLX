@@ -127,6 +127,33 @@ function getBidEndDate(bid) {
   return 'Not Specified'
 }
 
+// End Date carries a real time-of-day (submission deadlines matter down to the
+// hour) — unlike other sheet date columns, show it in full rather than truncating.
+function formatDateTime(dt, fallback = '—') {
+  if (!isValidDate(dt)) return fallback
+  return new Date(dt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+// Helper to safely format datetimes for <input type="datetime-local"> without
+// crashing on invalid/empty values, preserving time-of-day (unlike safeDateInputFormat).
+function safeDateTimeInputFormat(dt) {
+  if (!dt) return ''
+  try {
+    const d = new Date(dt)
+    if (isNaN(d.getTime())) return ''
+    const pad = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  } catch {
+    return ''
+  }
+}
+
+function getTechEvalResultVal(bid) {
+  if (bid.technical_result === 'QUALIFIED') return 'Qualified'
+  if (bid.technical_result === 'DISQUALIFIED') return 'Disqualified'
+  return 'Pending'
+}
+
 // Helper to safely format dates for <input type="date"> without crashing on invalid/empty values
 function safeDateInputFormat(dt) {
   if (!dt) return ''
@@ -341,7 +368,6 @@ async function exportToExcel() {
       'EMD',
       'EMD Exemption',
       'BG Rate (%)',
-      'Activity Type',
       'Target Month',
       'Start Date',
       'End Date',
@@ -349,7 +375,7 @@ async function exportToExcel() {
       'Tech Eval',
       'Submission Status',
       'Financial Evaluation Status',
-      'PO Received Status',
+      'PO Received',
       'Result',
       'Owner',
       'Remarks'
@@ -371,15 +397,14 @@ async function exportToExcel() {
         b.emd_amount !== null && b.emd_amount !== undefined ? String(b.emd_amount) : '',
         b.emd_exempted ? 'Yes' : 'No',
         b.bg_rate !== null && b.bg_rate !== undefined ? `${b.bg_rate}%` : '',
-        b.activity_type ?? '',
         b.target_month_date ? new Date(b.target_month_date).toLocaleDateString('en-IN') : '—',
         b.opening_date ? new Date(b.opening_date).toLocaleDateString('en-IN') : '—',
-        b.closing_date ? new Date(b.closing_date).toLocaleDateString('en-IN') : '—',
+        b.closing_date ? new Date(b.closing_date).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—',
         b.estimated_value !== null && b.estimated_value !== undefined ? String(b.estimated_value) : '',
-        b.has_tech_eval ? 'Yes' : 'No',
+        b.technical_result === 'QUALIFIED' ? 'Qualified' : b.technical_result === 'DISQUALIFIED' ? 'Disqualified' : 'Pending',
         b.submission_status ?? '',
         b.financial_evaluation_status ?? '',
-        b.po_received_status ?? '',
+        b.po_received_status === 'PO Received' ? 'Yes' : (['LOST', 'CANCELLED'].includes(b.bid_status) ? 'N/A' : 'No'),
         b.bid_result ?? '',
         b.bid_owner?.full_name ?? '',
         b.remarks ?? ''
@@ -413,12 +438,11 @@ const STAGE_OPTIONS = [
   { value: 'PRICING_REQUEST', label: '4. Pricing Request' },
   { value: 'DOCUMENT_CHECKLIST_PREPARATION', label: '5. Checklist Prep' },
   { value: 'EMD_PROCESSING', label: '6. EMD Processing' },
-  { value: 'BID_DOCUMENTATION', label: '7. Documentation' },
-  { value: 'INTERNAL_APPROVAL', label: '8. Internal Approval' },
-  { value: 'GEM_SUBMISSION', label: '9. GeM Submission' },
-  { value: 'TECHNICAL_EVALUATION', label: '10. Tech Eval' },
-  { value: 'FINANCIAL_EVALUATION', label: '11. Financial Eval' },
-  { value: 'AWARD_HANDOVER', label: '12. Award & Delivery' },
+  { value: 'INTERNAL_APPROVAL', label: '7. Internal Approval' },
+  { value: 'GEM_SUBMISSION', label: '8. GeM Submission' },
+  { value: 'TECHNICAL_EVALUATION', label: '9. Tech Eval' },
+  { value: 'FINANCIAL_EVALUATION', label: '10. Financial Eval' },
+  { value: 'AWARD_HANDOVER', label: '11. Award & Delivery' },
   { value: 'WON', label: 'Won' },
   { value: 'LOST', label: 'Lost' },
   { value: 'CANCELLED', label: 'Cancelled' },
@@ -802,6 +826,28 @@ export function TendersPage({ initialScope = 'all' }) {
   const handleImmediateChangeAndSave = async (bidId, field, value) => {
     handleFieldChangeLocal(bidId, field, value)
     await handleFieldSave(bidId, field, value)
+  }
+
+  // PO Received is a clear Yes/No fact (mirrors the Stage 12 checklist), not free
+  // text — writes both the status and the received date together, same as Stage 12.
+  const handlePoReceivedToggle = async (bidId, checked) => {
+    const newStatus = checked ? 'PO Received' : 'Pending'
+    handleFieldChangeLocal(bidId, 'po_received_status', newStatus)
+    try {
+      const res = await updateBid(bidId, {
+        po_received_status: newStatus,
+        po_received_date: checked ? new Date().toISOString() : undefined,
+      })
+      if (res.ok) {
+        toast.success(checked ? 'PO marked as Received' : 'PO status set to Pending')
+      } else {
+        toast.error(res.error?.message ?? 'Failed to update PO status')
+        loadBids()
+      }
+    } catch {
+      toast.error('Network error')
+      loadBids()
+    }
   }
 
   function handleSearchChange(e) {
@@ -1367,15 +1413,14 @@ export function TendersPage({ initialScope = 'all' }) {
                       <th className="p-3 border-r border-border min-w-[120px]">EMD</th>
                       <th className="p-3 border-r border-border min-w-[130px]">EMD Exemption</th>
                       <th className="p-3 border-r border-border min-w-[110px]">BG Rate (%)</th>
-                      <th className="p-3 border-r border-border min-w-[140px]">Activity Type</th>
                       <th className="p-3 border-r border-border min-w-[150px]">Target Month</th>
                       <th className="p-3 border-r border-border min-w-[150px]">Start Date</th>
-                      <th className="p-3 border-r border-border min-w-[150px]">End Date</th>
+                      <th className="p-3 border-r border-border min-w-[180px]">End Date</th>
                       <th className="p-3 border-r border-border min-w-[130px]">Estimated Value</th>
                       <th className="p-3 border-r border-border min-w-[120px]">Tech Eval</th>
                       <th className="p-3 border-r border-border min-w-[140px]">Submission Status</th>
                       <th className="p-3 border-r border-border min-w-[160px]">Fin Eval Status</th>
-                      <th className="p-3 border-r border-border min-w-[140px]">PO Recv Status</th>
+                      <th className="p-3 border-r border-border min-w-[140px]">PO Received</th>
                       <th className="p-3 border-r border-border min-w-[140px]">Result</th>
                       <th className="p-3 border-r border-border min-w-[130px]">Owner</th>
                       <th className="p-3 border-r border-border min-w-[200px]">Remarks</th>
@@ -1646,23 +1691,6 @@ export function TendersPage({ initialScope = 'all' }) {
                             )}
                           </td>
 
-                          {/* 13. Activity Type */}
-                          <td className="p-3 border-r border-border">
-                            {!isReadOnly ? (
-                              <input 
-                                type="text" 
-                                value={bid.activity_type || ''} 
-                                onChange={(e) => handleFieldChangeLocal(bid.id, 'activity_type', e.target.value)} 
-                                onBlur={(e) => handleFieldSave(bid.id, 'activity_type', e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
-                                className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                placeholder="Activity Type"
-                              />
-                            ) : (
-                              bid.activity_type ?? '—'
-                            )}
-                          </td>
-
                           {/* 14. Target Month Date */}
                           <td className="p-3 border-r border-border text-foreground font-medium">
                             {!isReadOnly ? (
@@ -1691,17 +1719,17 @@ export function TendersPage({ initialScope = 'all' }) {
                             )}
                           </td>
 
-                          {/* 16. Closing Date */}
+                          {/* 16. Closing Date (carries a real submission-deadline time) */}
                           <td className="p-3 border-r border-border text-muted-foreground">
                             {!isReadOnly ? (
-                              <input 
-                                type="date" 
-                                value={safeDateInputFormat(bid.closing_date)} 
+                              <input
+                                type="datetime-local"
+                                value={safeDateTimeInputFormat(bid.closing_date)}
                                 onChange={(e) => handleImmediateChangeAndSave(bid.id, 'closing_date', e.target.value)}
                                 className="bg-transparent border-none text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary p-0.5 rounded"
                               />
                             ) : (
-                              formatDate(bid.closing_date)
+                              formatDateTime(bid.closing_date)
                             )}
                           </td>
 
@@ -1722,25 +1750,20 @@ export function TendersPage({ initialScope = 'all' }) {
                             )}
                           </td>
 
-                          {/* 18. Tech Eval */}
+                          {/* 18. Tech Eval — the actual Technical Evaluation result, set only via the
+                               Stage 10 workspace (captures the disqualification reason and correctly
+                               closes the bid as LOST). Read-only here to avoid bypassing that. */}
                           <td className="p-3 border-r border-border">
-                            {!isReadOnly ? (
-                              <button
-                                onClick={() => handleImmediateChangeAndSave(bid.id, 'has_tech_eval', !bid.has_tech_eval)}
-                                className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${
-                                  bid.has_tech_eval 
-                                    ? 'bg-emerald-500 hover:bg-emerald-600 text-white' 
-                                    : 'bg-muted hover:bg-muted/80 text-muted-foreground border border-border'
-                                }`}
-                              >
-                                {bid.has_tech_eval ? 'Yes' : 'No'}
-                              </button>
+                            {bid.technical_result === 'QUALIFIED' ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                <Check className="size-3" /> Qualified
+                              </span>
+                            ) : bid.technical_result === 'DISQUALIFIED' ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                                <XCircle className="size-3" /> Disqualified
+                              </span>
                             ) : (
-                              bid.has_tech_eval ? (
-                                <span className="text-emerald-600 font-bold flex items-center gap-0.5"><Check className="size-3.5" /> Yes</span>
-                              ) : (
-                                <span className="text-muted-foreground">No</span>
-                              )
+                              <span className="text-muted-foreground text-[11px]">Pending</span>
                             )}
                           </td>
 
@@ -1778,20 +1801,25 @@ export function TendersPage({ initialScope = 'all' }) {
                             )}
                           </td>
 
-                          {/* 21. PO Received Status */}
+                          {/* 21. PO Received — a clear Yes/No fact, mirrors the Stage 12 checklist */}
                           <td className="p-3 border-r border-border">
                             {!isReadOnly ? (
-                              <input 
-                                type="text" 
-                                value={bid.po_received_status || ''} 
-                                onChange={(e) => handleFieldChangeLocal(bid.id, 'po_received_status', e.target.value)} 
-                                onBlur={(e) => handleFieldSave(bid.id, 'po_received_status', e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
-                                className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                placeholder={getPoRecvStatusVal(bid)}
-                              />
+                              <button
+                                onClick={() => handlePoReceivedToggle(bid.id, bid.po_received_status !== 'PO Received')}
+                                className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${
+                                  bid.po_received_status === 'PO Received'
+                                    ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
+                                    : 'bg-muted hover:bg-muted/80 text-muted-foreground border border-border'
+                                }`}
+                              >
+                                {bid.po_received_status === 'PO Received' ? 'Yes' : 'No'}
+                              </button>
                             ) : (
-                              <StatusTag text={getPoRecvStatusVal(bid)} />
+                              bid.po_received_status === 'PO Received' ? (
+                                <span className="text-emerald-600 font-bold flex items-center gap-0.5"><Check className="size-3.5" /> Yes</span>
+                              ) : (
+                                <span className="text-muted-foreground">{getPoRecvStatusVal(bid) === 'N/A' ? 'N/A' : 'No'}</span>
+                              )
                             )}
                           </td>
 

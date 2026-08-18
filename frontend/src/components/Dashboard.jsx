@@ -330,7 +330,7 @@ export function OverviewPanel() {
     if (b.emd_exempted || !b.emd_amount || Number(b.emd_amount) <= 0) return false
     if (b.emd_ready || b.emd_returned) return true
     const postEmdStages = [
-      'EMD_PROCESSING', 'BID_DOCUMENTATION', 'INTERNAL_APPROVAL',
+      'EMD_PROCESSING', 'INTERNAL_APPROVAL',
       'GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION',
       'AWARD_HANDOVER', 'WON', 'LOST'
     ]
@@ -348,11 +348,11 @@ export function OverviewPanel() {
   // Stage Funnel Analytics Data
   const stageGroups = [
     { label: 'Stages 1-4: Discovery & Pre-Qual', stages: ['DISCOVERED', 'ELIGIBILITY_ASSESSMENT', 'OEM_AUTHORIZATION_REQUEST', 'PRICING_REQUEST'], color: 'bg-violet-500', barGradient: 'from-violet-500 to-indigo-500' },
-    { label: 'Stages 5-8: Costing & Docs', stages: ['DOCUMENT_CHECKLIST_PREPARATION', 'EMD_PROCESSING', 'BID_DOCUMENTATION', 'INTERNAL_APPROVAL'], color: 'bg-blue-500', barGradient: 'from-blue-500 to-sky-500' },
-    { label: 'Stage 9: Portal Submission', stages: ['GEM_SUBMISSION'], color: 'bg-emerald-500', barGradient: 'from-emerald-500 to-teal-500' },
-    { label: 'Stage 10: Technical Eval', stages: ['TECHNICAL_EVALUATION'], color: 'bg-amber-500', barGradient: 'from-amber-500 to-yellow-500' },
-    { label: 'Stage 11: Financial Eval', stages: ['FINANCIAL_EVALUATION'], color: 'bg-indigo-500', barGradient: 'from-indigo-500 to-purple-500' },
-    { label: 'Stage 12: Award & Handover', stages: ['AWARD_HANDOVER'], color: 'bg-teal-500', barGradient: 'from-teal-500 to-emerald-600' },
+    { label: 'Stages 5-7: Costing & Docs', stages: ['DOCUMENT_CHECKLIST_PREPARATION', 'EMD_PROCESSING', 'INTERNAL_APPROVAL'], color: 'bg-blue-500', barGradient: 'from-blue-500 to-sky-500' },
+    { label: 'Stage 8: Portal Submission', stages: ['GEM_SUBMISSION'], color: 'bg-emerald-500', barGradient: 'from-emerald-500 to-teal-500' },
+    { label: 'Stage 9: Technical Eval', stages: ['TECHNICAL_EVALUATION'], color: 'bg-amber-500', barGradient: 'from-amber-500 to-yellow-500' },
+    { label: 'Stage 10: Financial Eval', stages: ['FINANCIAL_EVALUATION'], color: 'bg-indigo-500', barGradient: 'from-indigo-500 to-purple-500' },
+    { label: 'Stage 11: Award & Handover', stages: ['AWARD_HANDOVER'], color: 'bg-teal-500', barGradient: 'from-teal-500 to-emerald-600' },
   ]
 
   const stageFunnelData = stageGroups.map(grp => {

@@ -28,7 +28,6 @@ const PORTAL_SOURCES = ['GeM', 'CPPP', 'eProcure', 'Others']
 const BID_TYPES      = ['BID', 'BID_TO_RA']
 const EMD_TYPES      = ['ONLINE', 'DD']
 const SCOPE_TYPES    = ['Supply', 'Implementation', 'Support']
-const ACTIVITY_TYPES = ['Fresh', 'Renewal', 'Extension', 'Others']
 
 const BIDDER_SUGGESTIONS = [
   'Experience Certificate',
@@ -109,7 +108,14 @@ export function AddTenderPage() {
     technical_manager_id:        '',
     remarks:                     '',
     scope_type:                  'Supply',
-    activity_type:               'Fresh',
+    // EMD bank/online payment details
+    emd_bank_name:               '',
+    emd_account_number:          '',
+    emd_ifsc_code:               '',
+    emd_branch:                  '',
+    // EMD DD (Demand Draft) details
+    emd_beneficiary:             '',
+    emd_payable_at:              '',
   })
 
   // Dynamic checklists seed input list split for Bidder and OEM
@@ -179,6 +185,17 @@ export function AddTenderPage() {
     if (currentStep === 1) {
       if (!form.title.trim()) e.title = 'Tender title is required'
       if (!form.bid_type) e.bid_type = 'Bid type is required'
+      // EMD bank/DD mandatory fields
+      if (!form.emd_exempted) {
+        if (form.emd_type === 'ONLINE') {
+          if (!form.emd_bank_name.trim()) e.emd_bank_name = 'Bank name is required for Online EMD'
+          if (!form.emd_account_number.trim()) e.emd_account_number = 'Account number is required'
+          if (!form.emd_ifsc_code.trim()) e.emd_ifsc_code = 'IFSC code is required'
+        } else if (form.emd_type === 'DD') {
+          if (!form.emd_beneficiary.trim()) e.emd_beneficiary = 'Beneficiary is required for DD EMD'
+          if (!form.emd_payable_at.trim()) e.emd_payable_at = 'Payable at location is required'
+        }
+      }
     } else if (currentStep === 2) {
       if (!form.bid_owner_id && !currentUser?.id) e.bid_owner_id = 'Bid owner is required'
     }
@@ -463,25 +480,6 @@ export function AddTenderPage() {
                       </DropdownMenu>
                     </Field>
 
-                    {/* Activity Type */}
-                    <Field label="Activity Type">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="outline" size="sm" className="w-full h-9 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5">
-                            <span>{form.activity_type}</span>
-                            <ChevronDown className="size-3 text-muted-foreground ml-auto" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent className="w-[220px]">
-                          {ACTIVITY_TYPES.map((at) => (
-                            <DropdownMenuItem key={at} onSelect={() => set('activity_type', at)}>
-                              {at}
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </Field>
-
                     {/* Financial Fields */}
                     <Field label="Estimated Tender Value (₹)">
                       <Input type="number" value={form.estimated_value} onChange={(e) => set('estimated_value', e.target.value)}
@@ -511,23 +509,99 @@ export function AddTenderPage() {
                       </div>
                     </div>
 
+                    {/* EMD Mode */}
                     <Field label="EMD Mode">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild disabled={form.emd_exempted}>
                           <Button variant="outline" size="sm" className="w-full h-9 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5 disabled:opacity-50">
-                            <span>{form.emd_exempted ? 'EXEMPTED' : (form.emd_type === 'ONLINE' ? 'Online' : form.emd_type)}</span>
+                            <span>{form.emd_exempted ? 'EXEMPTED' : (form.emd_type === 'ONLINE' ? 'Online Payment' : form.emd_type)}</span>
                             <ChevronDown className="size-3 text-muted-foreground ml-auto" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent className="w-[180px]">
                           {EMD_TYPES.map((t) => (
                             <DropdownMenuItem key={t} onSelect={() => set('emd_type', t)}>
-                              {t === 'ONLINE' ? 'Online' : t}
+                              {t === 'ONLINE' ? 'Online Payment' : 'DD (Demand Draft)'}
                             </DropdownMenuItem>
                           ))}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </Field>
+
+                    {/* Dynamic EMD Detail Fields */}
+                    {!form.emd_exempted && form.emd_type === 'ONLINE' && (
+                      <>
+                        <div className="sm:col-span-2">
+                          <div className="flex items-center gap-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 mb-3">
+                            <svg className="size-4 text-blue-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
+                            <p className="text-xs font-medium text-blue-800 dark:text-blue-200">
+                              <strong>EMD via Online Payment</strong> — Provide the bank account where the EMD amount should be remitted. Finance team will be alerted with these details.
+                            </p>
+                          </div>
+                        </div>
+                        <Field label="Bank Name" error={errors.emd_bank_name} required>
+                          <Input
+                            value={form.emd_bank_name}
+                            onChange={(e) => set('emd_bank_name', e.target.value)}
+                            placeholder="e.g. State Bank of India"
+                            className={inputCls(errors.emd_bank_name)}
+                          />
+                        </Field>
+                        <Field label="Account Number" error={errors.emd_account_number} required>
+                          <Input
+                            value={form.emd_account_number}
+                            onChange={(e) => set('emd_account_number', e.target.value)}
+                            placeholder="e.g. 012345678901"
+                            className={inputCls(errors.emd_account_number)}
+                          />
+                        </Field>
+                        <Field label="IFSC Code" error={errors.emd_ifsc_code} required>
+                          <Input
+                            value={form.emd_ifsc_code}
+                            onChange={(e) => set('emd_ifsc_code', e.target.value.toUpperCase())}
+                            placeholder="e.g. SBIN0001234"
+                            className={inputCls(errors.emd_ifsc_code)}
+                          />
+                        </Field>
+                        <Field label="Branch (If Required)">
+                          <Input
+                            value={form.emd_branch}
+                            onChange={(e) => set('emd_branch', e.target.value)}
+                            placeholder="e.g. New Delhi Main Branch"
+                            className={inputCls()}
+                          />
+                        </Field>
+                      </>
+                    )}
+
+                    {!form.emd_exempted && form.emd_type === 'DD' && (
+                      <>
+                        <div className="sm:col-span-2">
+                          <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 mb-3">
+                            <svg className="size-4 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                            <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
+                              <strong>EMD via Demand Draft (DD)</strong> — Provide the DD beneficiary and payable location. Finance team will be alerted to prepare the DD accordingly.
+                            </p>
+                          </div>
+                        </div>
+                        <Field label="Beneficiary" error={errors.emd_beneficiary} required>
+                          <Input
+                            value={form.emd_beneficiary}
+                            onChange={(e) => set('emd_beneficiary', e.target.value)}
+                            placeholder="e.g. The Accounts Officer, NIC Delhi"
+                            className={inputCls(errors.emd_beneficiary)}
+                          />
+                        </Field>
+                        <Field label="Payable At" error={errors.emd_payable_at} required>
+                          <Input
+                            value={form.emd_payable_at}
+                            onChange={(e) => set('emd_payable_at', e.target.value)}
+                            placeholder="e.g. New Delhi"
+                            className={inputCls(errors.emd_payable_at)}
+                          />
+                        </Field>
+                      </>
+                    )}
 
                     {/* BG Required Toggle & Rate */}
                     <div className="space-y-1.5">

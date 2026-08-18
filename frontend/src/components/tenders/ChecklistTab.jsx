@@ -421,12 +421,12 @@ export function ChecklistTab({ bid, onRefresh }) {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Left: Bidder Tasks */}
+          {/* Left: Bidder Docs */}
           <div className="space-y-4">
             <div className="flex items-center justify-between border-b border-border/60 pb-2">
               <div className="flex items-center gap-2">
                 <Award className="size-4 text-primary" />
-                <h4 className="text-sm font-bold text-foreground uppercase tracking-wider">Bidder Tasks</h4>
+                <h4 className="text-sm font-bold text-foreground uppercase tracking-wider">Bidder Docs</h4>
               </div>
               <span className="text-xs bg-primary/10 text-primary px-2.5 py-0.5 rounded-full font-bold">
                 {bidderItems.filter(i => i.is_done).length} / {bidderItems.length}
@@ -439,7 +439,7 @@ export function ChecklistTab({ bid, onRefresh }) {
                 <Input
                   value={newBidderTitle}
                   onChange={e => setNewBidderTitle(e.target.value)}
-                  placeholder="Add custom Bidder task..."
+                  placeholder="Add custom Bidder doc..."
                   className="flex-1 h-9 text-xs bg-background"
                 />
                 <Button type="submit" size="sm" className="h-9 px-3">
@@ -455,18 +455,18 @@ export function ChecklistTab({ bid, onRefresh }) {
               </AnimatePresence>
               {bidderItems.length === 0 && (
                 <div className="text-center py-10 border border-dashed border-border rounded-xl bg-muted/5">
-                  <p className="text-xs text-muted-foreground">No Bidder tasks defined.</p>
+                  <p className="text-xs text-muted-foreground">No Bidder docs defined.</p>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Right: OEM Tasks */}
+          {/* Right: OEM Docs */}
           <div className="space-y-4">
             <div className="flex items-center justify-between border-b border-border/60 pb-2">
               <div className="flex items-center gap-2">
                 <Building2 className="size-4 text-violet-500" />
-                <h4 className="text-sm font-bold text-foreground uppercase tracking-wider">OEM Tasks</h4>
+                <h4 className="text-sm font-bold text-foreground uppercase tracking-wider">OEM Docs</h4>
               </div>
               <span className="text-xs bg-violet-100 text-violet-700 px-2.5 py-0.5 rounded-full font-bold">
                 {oemItems.filter(i => i.is_done).length} / {oemItems.length}
@@ -479,7 +479,7 @@ export function ChecklistTab({ bid, onRefresh }) {
                 <Input
                   value={newOemTitle}
                   onChange={e => setNewOemTitle(e.target.value)}
-                  placeholder="Add custom OEM task..."
+                  placeholder="Add custom OEM doc..."
                   className="flex-1 h-9 text-xs bg-background"
                 />
                 <Button type="submit" size="sm" className="h-9 px-3">
@@ -495,7 +495,7 @@ export function ChecklistTab({ bid, onRefresh }) {
               </AnimatePresence>
               {oemItems.length === 0 && (
                 <div className="text-center py-10 border border-dashed border-border rounded-xl bg-muted/5">
-                  <p className="text-xs text-muted-foreground">No OEM tasks defined.</p>
+                  <p className="text-xs text-muted-foreground">No OEM docs defined.</p>
                 </div>
               )}
             </div>

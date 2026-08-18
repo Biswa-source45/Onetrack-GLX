@@ -41,6 +41,15 @@ func (s *alertService) CreateAlert(ctx context.Context, alert *domain.Alert) err
 
 func (s *alertService) dispatchAlertEmails(ctx context.Context, alert *domain.Alert) {
 	recipients := []string{}
+	ccRecipients := []string{}
+
+	// Fetch sender user to add to CC if created_by is populated
+	if s.userRepo != nil && alert.CreatedBy != nil && *alert.CreatedBy != "" {
+		sender, err := s.userRepo.GetByID(ctx, *alert.CreatedBy)
+		if err == nil && sender != nil && sender.Email != nil && *sender.Email != "" {
+			ccRecipients = append(ccRecipients, *sender.Email)
+		}
+	}
 
 	if s.userRepo != nil {
 		if alert.UserID != nil && *alert.UserID != "" {
@@ -79,9 +88,9 @@ func (s *alertService) dispatchAlertEmails(ctx context.Context, alert *domain.Al
 	}
 
 	// Log attempt
-	log.Printf("[AlertService] Dispatching alert '%s' to %d recipients (Role: %s)", alert.Title, len(recipients), alert.TargetRole)
+	log.Printf("[AlertService] Dispatching alert '%s' to %d TO recipients, %d CC recipients (Role: %s)", alert.Title, len(recipients), len(ccRecipients), alert.TargetRole)
 
-	if len(recipients) > 0 {
+	if len(recipients) > 0 || len(ccRecipients) > 0 {
 		roleDisplay := alert.TargetRole
 		if roleDisplay == "" || roleDisplay == "ALL" {
 			roleDisplay = "All Department Personnel"
@@ -109,7 +118,7 @@ func (s *alertService) dispatchAlertEmails(ctx context.Context, alert *domain.Al
 			</div>
 		`, alert.Title, formattedMessage, roleDisplay)
 
-		_ = s.emailSvc.SendEmail(recipients, fmt.Sprintf("[OneTrack Alert] %s", alert.Title), htmlBody)
+		_ = s.emailSvc.SendEmailWithCC(recipients, ccRecipients, fmt.Sprintf("[OneTrack Alert] %s", alert.Title), htmlBody)
 	}
 }
 

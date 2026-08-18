@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/onetrack/backend/internal/bid/domain"
 	"github.com/onetrack/backend/internal/platform/response"
 )
@@ -28,6 +30,10 @@ func (h *BidHandler) CreateBid(c *gin.Context) {
 	actorID := c.GetString("user_id")
 	bid, err := h.svc.CreateBid(c.Request.Context(), &req, actorID)
 	if err != nil {
+		if errors.Is(err, domain.ErrValidation) {
+			response.BadRequest(c, err.Error(), nil)
+			return
+		}
 		response.InternalError(c, err.Error())
 		return
 	}
@@ -107,7 +113,15 @@ func (h *BidHandler) UpdateBid(c *gin.Context) {
 	}
 	actorID := c.GetString("user_id")
 	if err := h.svc.UpdateBid(c.Request.Context(), id, &req, actorID); err != nil {
-		response.NotFound(c, "Bid not found")
+		if errors.Is(err, domain.ErrValidation) {
+			response.BadRequest(c, err.Error(), nil)
+			return
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			response.NotFound(c, "Bid not found")
+			return
+		}
+		response.InternalError(c, err.Error())
 		return
 	}
 	response.Success(c, http.StatusOK, "Bid updated successfully", nil)

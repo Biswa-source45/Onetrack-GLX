@@ -39,7 +39,115 @@ func getRoleForStage(stage string) string {
 	}
 }
 
+func strOrNA(s *string) string {
+	if s == nil || *s == "" {
+		return "N/A"
+	}
+	return *s
+}
+
+// buildEmdDetailsTableHTML renders EMD bank/DD payment details as an HTML table.
+// The alert email pipeline (dispatchAlertEmails) injects Message verbatim when
+// it detects a <table>, so this is the same pattern the Stage 4 pricing-approval
+// alert already uses — kept in sync with the frontend's buildEmdDetailsTableHtml
+// so the automatic (on-creation) and manual (Stage 6 button) alerts look identical.
+func buildEmdDetailsTableHTML(title, gemBidNo, emdType string, emdAmount *float64, bankName, accountNumber, ifscCode, branch, beneficiary, payableAt *string) string {
+	amtStr := "N/A"
+	if emdAmount != nil {
+		amtStr = fmt.Sprintf("₹%.2f", *emdAmount)
+	}
+
+	type row struct{ label, value string }
+	rows := []row{
+		{"EMD Amount", amtStr},
+		{"Payment Mode", emdType},
+	}
+	if emdType == "ONLINE" {
+		rows = append(rows,
+			row{"Bank Name", strOrNA(bankName)},
+			row{"Account Number", strOrNA(accountNumber)},
+			row{"IFSC Code", strOrNA(ifscCode)},
+		)
+		if branch != nil && *branch != "" {
+			rows = append(rows, row{"Branch", *branch})
+		}
+	} else if emdType == "DD" {
+		rows = append(rows,
+			row{"Beneficiary", strOrNA(beneficiary)},
+			row{"Payable At", strOrNA(payableAt)},
+		)
+	}
+
+	var rowsHTML strings.Builder
+	for _, r := range rows {
+		rowsHTML.WriteString(fmt.Sprintf(`
+			<tr style="border-bottom: 1px solid #e2e8f0;">
+				<td style="padding: 8px 12px; font-weight: 600; color: #475569; background-color: #f8fafc; width: 40%%;">%s</td>
+				<td style="padding: 8px 12px; color: #1e293b; font-family: monospace;">%s</td>
+			</tr>`, r.label, r.value))
+	}
+
+	return fmt.Sprintf(`
+		<p style="margin: 0 0 8px 0;">Tender: <strong>%s</strong> (GeM Bid No: %s) requires EMD processing.</p>
+		<div style="margin-top: 14px; margin-bottom: 14px; border: 1px solid #fde68a; border-radius: 10px; overflow: hidden; background-color: #ffffff;">
+			<div style="background: linear-gradient(135deg, #d97706 0%%, #b45309 100%%); padding: 12px 16px; color: #ffffff; font-size: 13px; font-weight: 700;">
+				💰 EMD Payment Details — %s
+			</div>
+			<table style="width: 100%%; border-collapse: collapse; font-size: 12px; text-align: left; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+				<tbody>%s</tbody>
+			</table>
+		</div>
+	`, title, gemBidNo, title, rowsHTML.String())
+}
+
+// validateEMDDetails enforces that the EMD bank/DD detail fields required for a
+// given payment mode are actually present, using the merged (new-or-existing)
+// values so it works for both full creates and partial updates.
+func validateEMDDetails(exempted bool, emdType string, bankName, accountNumber, ifscCode, beneficiary, payableAt *string) error {
+	if exempted {
+		return nil
+	}
+	nonEmpty := func(s *string) bool { return s != nil && strings.TrimSpace(*s) != "" }
+	switch emdType {
+	case "ONLINE":
+		var missing []string
+		if !nonEmpty(bankName) {
+			missing = append(missing, "emd_bank_name")
+		}
+		if !nonEmpty(accountNumber) {
+			missing = append(missing, "emd_account_number")
+		}
+		if !nonEmpty(ifscCode) {
+			missing = append(missing, "emd_ifsc_code")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("%w: %s required for Online EMD", domain.ErrValidation, strings.Join(missing, ", "))
+		}
+	case "DD":
+		var missing []string
+		if !nonEmpty(beneficiary) {
+			missing = append(missing, "emd_beneficiary")
+		}
+		if !nonEmpty(payableAt) {
+			missing = append(missing, "emd_payable_at")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("%w: %s required for DD EMD", domain.ErrValidation, strings.Join(missing, ", "))
+		}
+	}
+	return nil
+}
+
 func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest, createdBy string) (*domain.BidResponse, error) {
+	emdExempted := req.EMDExempted != nil && *req.EMDExempted
+	emdType := ""
+	if req.EMDType != nil {
+		emdType = *req.EMDType
+	}
+	if err := validateEMDDetails(emdExempted, emdType, req.EMDBankName, req.EMDAccountNumber, req.EMDIFSCCode, req.EMDBeneficiary, req.EMDPayableAt); err != nil {
+		return nil, err
+	}
+
 	params := &domain.CreateBidParams{
 		BidNo:              req.BidNo,
 		GemBidNo:           req.GemBidNo,
@@ -118,6 +226,13 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 	params.FinancialEvaluationStatus = req.FinancialEvaluationStatus
 	params.POReceivedStatus = req.POReceivedStatus
 	params.BidResult = req.BidResult
+	// EMD bank / DD detail fields
+	params.EMDBankName = req.EMDBankName
+	params.EMDAccountNumber = req.EMDAccountNumber
+	params.EMDIFSCCode = req.EMDIFSCCode
+	params.EMDBranch = req.EMDBranch
+	params.EMDBeneficiary = req.EMDBeneficiary
+	params.EMDPayableAt = req.EMDPayableAt
 
 	id, err := s.repo.Create(ctx, params)
 	if err != nil {
@@ -152,10 +267,30 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
 			TargetRole: "PRE_SALES",
 			BidID:      &bidIdCopy,
+			CreatedBy:  &createdBy,
 			Type:       "TENDER_CREATED",
 			Title:      fmt.Sprintf("New Tender Identified: %s", req.Title),
 			Message:    fmt.Sprintf("Tender '%s' (GeM Bid No: %s) has been created and assigned for Stage 2 (Eligibility Assessment).", req.Title, gemBidNoStr),
 		})
+
+		// Finance team alert — only when EMD mode is ONLINE or DD (not EXEMPTED)
+		emdType := ""
+		if req.EMDType != nil {
+			emdType = *req.EMDType
+		}
+		if emdType == "ONLINE" || emdType == "DD" {
+			message := buildEmdDetailsTableHTML(req.Title, gemBidNoStr, emdType, req.EMDAmount,
+				req.EMDBankName, req.EMDAccountNumber, req.EMDIFSCCode, req.EMDBranch,
+				req.EMDBeneficiary, req.EMDPayableAt)
+			_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+				TargetRole: "FINANCE",
+				BidID:      &bidIdCopy,
+				CreatedBy:  &createdBy,
+				Type:       "EMD_PROCESSING_REQUIRED",
+				Title:      fmt.Sprintf("EMD Processing Required: %s", req.Title),
+				Message:    message,
+			})
+		}
 	}
 
 	// Seed Bidder doc checklists (group=BIDDER)
@@ -386,6 +521,43 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 		actorID = "SYSTEM"
 	}
 
+	// Validate EMD detail fields against the merged (request-or-existing) state,
+	// since this is a partial update and a field omitted from req may already be set.
+	mergedEMDExempted := bid.EMDExempted
+	if req.EMDExempted != nil {
+		mergedEMDExempted = *req.EMDExempted
+	}
+	mergedEMDType := ""
+	if bid.EMDType != nil {
+		mergedEMDType = *bid.EMDType
+	}
+	if req.EMDType != nil {
+		mergedEMDType = *req.EMDType
+	}
+	mergedBankName := bid.EMDBankName
+	if req.EMDBankName != nil {
+		mergedBankName = req.EMDBankName
+	}
+	mergedAccountNumber := bid.EMDAccountNumber
+	if req.EMDAccountNumber != nil {
+		mergedAccountNumber = req.EMDAccountNumber
+	}
+	mergedIFSCCode := bid.EMDIFSCCode
+	if req.EMDIFSCCode != nil {
+		mergedIFSCCode = req.EMDIFSCCode
+	}
+	mergedBeneficiary := bid.EMDBeneficiary
+	if req.EMDBeneficiary != nil {
+		mergedBeneficiary = req.EMDBeneficiary
+	}
+	mergedPayableAt := bid.EMDPayableAt
+	if req.EMDPayableAt != nil {
+		mergedPayableAt = req.EMDPayableAt
+	}
+	if err := validateEMDDetails(mergedEMDExempted, mergedEMDType, mergedBankName, mergedAccountNumber, mergedIFSCCode, mergedBeneficiary, mergedPayableAt); err != nil {
+		return err
+	}
+
 	// Build human-readable audit change summaries for field changes
 	var changes []string
 
@@ -591,6 +763,7 @@ func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain
 		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
 			TargetRole: targetRole,
 			BidID:      &bidIdCopy,
+			CreatedBy:  &actorID,
 			Type:       fmt.Sprintf("STAGE_TRANSITION_%s", req.TargetStage),
 			Title:      fmt.Sprintf("Tender Advanced: %s", req.TargetStage),
 			Message:    fmt.Sprintf("Tender '%s' stage transitioned to %s. Remarks: %s", bid.Title, req.TargetStage, reasonText),
@@ -760,11 +933,17 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, techM
 		ActivityType:     bid.ActivityType,
 		ExcelBidStatus:   bid.ExcelBidStatus,
 		SubmissionStatus: bid.SubmissionStatus,
+		FinancialEvaluationStatus: bid.FinancialEvaluationStatus,
+		POReceivedStatus:          bid.POReceivedStatus,
 		BidResult:        bid.BidResult,
 		FinanceAlerted:         bid.FinanceAlerted,
 		EMDReady:               bid.EMDReady,
 		EMDReturned:            bid.EMDReturned,
+		EMDReturnedDate:        bid.EMDReturnedDate,
 		BGDischarged:           bid.BGDischarged,
+		BGDischargedDate:       bid.BGDischargedDate,
+		BGTargetDate:           bid.BGTargetDate,
+		POReceivedDate:         bid.POReceivedDate,
 		SubmissionDone:         bid.SubmissionDone,
 		GemSubmissionPrice:     bid.GemSubmissionPrice,
 		FinalPrice:             bid.FinalPrice,
@@ -781,6 +960,12 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, techM
 		StageReviews:           reviews,
 		PricingWorkspace:       pricingWorkspace,
 		OEMWorkspace:           oemWorkspace,
+		EMDBankName:            bid.EMDBankName,
+		EMDAccountNumber:       bid.EMDAccountNumber,
+		EMDIFSCCode:            bid.EMDIFSCCode,
+		EMDBranch:              bid.EMDBranch,
+		EMDBeneficiary:         bid.EMDBeneficiary,
+		EMDPayableAt:           bid.EMDPayableAt,
 		CreatedAt:        bid.CreatedAt,
 		UpdatedAt:        bid.UpdatedAt,
 		ArchivedAt:       bid.ArchivedAt,

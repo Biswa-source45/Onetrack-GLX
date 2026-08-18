@@ -30,6 +30,8 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 			portal_source, creation_mode, workflow_stage, bid_status,
 			bid_owner_id, technical_manager_id, created_by,
 			estimated_value, emd_amount, emd_type, emd_exempted,
+			emd_bank_name, emd_account_number, emd_ifsc_code, emd_branch,
+			emd_beneficiary, emd_payable_at,
 			bg_required, bg_rate, high_level_scope,
 			start_date, end_date, opening_date, closing_date, duration_months, authority,
 			category, bid_type, gem_bid_type,
@@ -42,12 +44,14 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 			$6, $7, $8, $9,
 			$10, $11, $12,
 			$13, $14, $15, $16,
-			$17, $18, $19,
-			$20, $21, $22, $23, $24, $25,
-			$26, $27, $28,
-			$29, $30,
-			$31, $32, $33,
-			$34, $35, $36, $37, $38, $39, $40, '{"DISCOVERED": true}'::jsonb
+			$17, $18, $19, $20,
+			$21, $22,
+			$23, $24, $25,
+			$26, $27, $28, $29, $30, $31,
+			$32, $33, $34,
+			$35, $36,
+			$37, $38, $39,
+			$40, $41, $42, $43, $44, $45, $46, '{"DISCOVERED": true}'::jsonb
 		) RETURNING id
 	`
 	var id string
@@ -56,6 +60,8 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 		params.PortalSource, params.CreationMode, domain.StageDiscovered, domain.BidStatusActive,
 		params.BidOwnerID, params.TechnicalManagerID, params.CreatedBy,
 		params.EstimatedValue, params.EMDAmount, params.EMDType, params.EMDExempted,
+		params.EMDBankName, params.EMDAccountNumber, params.EMDIFSCCode, params.EMDBranch,
+		params.EMDBeneficiary, params.EMDPayableAt,
 		params.BGRequired, params.BGRate, params.HighLevelScope,
 		startDate, endDate, startDate, endDate, params.DurationMonths, params.Authority,
 		params.Category, params.BidType, params.GemBidType,
@@ -93,7 +99,10 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 		       l1_company_name, price_difference, price_difference_pct,
 		       eligibility_remarks, emd_remarks,
 		       COALESCE(stage_completions, '{}'::jsonb), COALESCE(stage_remarks, '{}'::jsonb), COALESCE(stage_reviews, '{}'::jsonb),
-		       pricing_workspace, oem_workspace
+		       pricing_workspace, oem_workspace,
+		       emd_bank_name, emd_account_number, emd_ifsc_code, emd_branch,
+		       emd_beneficiary, emd_payable_at,
+		       po_received_date, bg_target_date, bg_discharged_date, emd_returned_date
 		FROM bid.bid_workspaces
 		WHERE id = $1
 	`
@@ -268,7 +277,10 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		       b.l1_company_name, b.price_difference, b.price_difference_pct,
 		       b.eligibility_remarks, b.emd_remarks,
 		       COALESCE(b.stage_completions, '{}'::jsonb), COALESCE(b.stage_remarks, '{}'::jsonb), COALESCE(b.stage_reviews, '{}'::jsonb),
-		       b.pricing_workspace, b.oem_workspace
+		       b.pricing_workspace, b.oem_workspace,
+		       b.emd_bank_name, b.emd_account_number, b.emd_ifsc_code, b.emd_branch,
+		       b.emd_beneficiary, b.emd_payable_at,
+		       b.po_received_date, b.bg_target_date, b.bg_discharged_date, b.emd_returned_date
 		FROM bid.bid_workspaces b
 		LEFT JOIN auth.users u ON b.bid_owner_id = u.id
 		%s
@@ -346,6 +358,25 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	if req.EMDExempted != nil {
 		addSet("emd_exempted", *req.EMDExempted)
 	}
+	// EMD bank / DD detail fields
+	if req.EMDBankName != nil {
+		addSet("emd_bank_name", *req.EMDBankName)
+	}
+	if req.EMDAccountNumber != nil {
+		addSet("emd_account_number", *req.EMDAccountNumber)
+	}
+	if req.EMDIFSCCode != nil {
+		addSet("emd_ifsc_code", *req.EMDIFSCCode)
+	}
+	if req.EMDBranch != nil {
+		addSet("emd_branch", *req.EMDBranch)
+	}
+	if req.EMDBeneficiary != nil {
+		addSet("emd_beneficiary", *req.EMDBeneficiary)
+	}
+	if req.EMDPayableAt != nil {
+		addSet("emd_payable_at", *req.EMDPayableAt)
+	}
 	if req.BGRequired != nil {
 		addSet("bg_required", *req.BGRequired)
 	}
@@ -393,14 +424,37 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	if req.EMDReturned != nil {
 		addSet("emd_returned", *req.EMDReturned)
 	}
+	if req.EMDReturnedDate != nil {
+		if t, err := time.Parse(time.RFC3339, *req.EMDReturnedDate); err == nil {
+			addSet("emd_returned_date", t)
+		}
+	}
 	if req.BGDischarged != nil {
 		addSet("bg_discharged", *req.BGDischarged)
+	}
+	if req.BGDischargedDate != nil {
+		if t, err := time.Parse(time.RFC3339, *req.BGDischargedDate); err == nil {
+			addSet("bg_discharged_date", t)
+		}
+	}
+	if req.BGTargetDate != nil {
+		if t, err := time.Parse(time.RFC3339, *req.BGTargetDate); err == nil {
+			addSet("bg_target_date", t)
+		}
+	}
+	if req.POReceivedDate != nil {
+		if t, err := time.Parse(time.RFC3339, *req.POReceivedDate); err == nil {
+			addSet("po_received_date", t)
+		}
 	}
 	if req.SubmissionDone != nil {
 		addSet("submission_done", *req.SubmissionDone)
 	}
 	if req.GemSubmissionPrice != nil {
 		addSet("gem_submission_price", *req.GemSubmissionPrice)
+	}
+	if req.QuotedPrice != nil {
+		addSet("quoted_price", *req.QuotedPrice)
 	}
 	if req.FinalPrice != nil {
 		addSet("final_price", *req.FinalPrice)
@@ -440,9 +494,6 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	}
 	if req.ScopeType != nil {
 		addSet("scope_type", *req.ScopeType)
-	}
-	if req.BGRate != nil {
-		addSet("bg_rate", *req.BGRate)
 	}
 	if req.ActivityType != nil {
 		addSet("activity_type", *req.ActivityType)
@@ -813,10 +864,17 @@ func (r *postgresBidRepo) ToggleChecklist(ctx context.Context, checklistID strin
 
 func (r *postgresBidRepo) GetUserSummary(ctx context.Context, userID string) (*domain.UserSummary, error) {
 	var u domain.UserSummary
-	err := r.pool.QueryRow(ctx,
-		"SELECT id, COALESCE(full_name, username), username, COALESCE(role, 'USER') FROM auth.users WHERE id = $1",
-		userID,
-	).Scan(&u.ID, &u.FullName, &u.Username, &u.Role)
+	err := r.pool.QueryRow(ctx, `
+		SELECT u.id, COALESCE(u.full_name, u.username), u.username,
+		       COALESCE((
+		           SELECT r.name FROM auth.user_roles ur
+		           JOIN auth.roles r ON r.id = ur.role_id
+		           WHERE ur.user_id = u.id
+		           ORDER BY ur.is_primary DESC, ur.role_order ASC
+		           LIMIT 1
+		       ), 'USER')
+		FROM auth.users u WHERE u.id = $1
+	`, userID).Scan(&u.ID, &u.FullName, &u.Username, &u.Role)
 	if err != nil {
 		return nil, err
 	}
@@ -830,7 +888,14 @@ func (r *postgresBidRepo) GetGlobalAuditLogs(ctx context.Context, limit int) ([]
 	rows, err := r.pool.Query(ctx, `
 		SELECT h.id, h.bid_id, COALESCE(b.title, 'Deleted Bid'), h.from_stage, h.to_stage,
 		       h.transition_reason, h.transitioned_by, h.created_at,
-		       COALESCE(u.full_name, u.username, 'System User'), COALESCE(u.username, 'system'), COALESCE(u.role, 'USER')
+		       COALESCE(u.full_name, u.username, 'System User'), COALESCE(u.username, 'system'),
+		       COALESCE((
+		           SELECT r.name FROM auth.user_roles ur
+		           JOIN auth.roles r ON r.id = ur.role_id
+		           WHERE ur.user_id = u.id
+		           ORDER BY ur.is_primary DESC, ur.role_order ASC
+		           LIMIT 1
+		       ), 'USER')
 		FROM bid.bid_stage_history h
 		LEFT JOIN bid.bid_workspaces b ON b.id = h.bid_id
 		LEFT JOIN auth.users u ON u.id = h.transitioned_by
@@ -904,6 +969,9 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 		&b.EligibilityRemarks, &b.EMDRemarks,
 		&b.StageCompletions, &b.StageRemarks, &b.StageReviews,
 		&b.PricingWorkspace, &b.OEMWorkspace,
+		&b.EMDBankName, &b.EMDAccountNumber, &b.EMDIFSCCode, &b.EMDBranch,
+		&b.EMDBeneficiary, &b.EMDPayableAt,
+		&b.POReceivedDate, &b.BGTargetDate, &b.BGDischargedDate, &b.EMDReturnedDate,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan bid: %w", err)
