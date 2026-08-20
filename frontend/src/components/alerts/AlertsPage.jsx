@@ -1,15 +1,19 @@
 import React, { useState, useEffect } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { useOutletContext, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Bell, CheckCheck, FileText, AlertCircle, Info, ShieldAlert, CheckCircle2 } from 'lucide-react'
+import { Bell, CheckCheck, FileText, AlertCircle, Info, ShieldAlert, CheckCircle2, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { getAlerts, markAlertRead, markAllAlertsRead } from '../../services/alerts'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { getAlerts, markAlertRead, markAllAlertsRead, deleteAlert } from '../../services/alerts'
 
 export function AlertsPage() {
+  const navigate = useNavigate()
   const [alerts, setAlerts] = useState([])
   const [loading, setLoading] = useState(true)
+  const [alertToDelete, setAlertToDelete] = useState(null)
+  const [deleting, setDeleting] = useState(false)
   const { refreshAlertsCount } = useOutletContext() || {}
 
   const fetchAlerts = async () => {
@@ -54,6 +58,31 @@ export function AlertsPage() {
     } catch {
       toast.error('Failed to mark all as read')
     }
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!alertToDelete) return
+    setDeleting(true)
+    try {
+      const res = await deleteAlert(alertToDelete.id)
+      if (res.ok) {
+        setAlerts((prev) => prev.filter((a) => a.id !== alertToDelete.id))
+        refreshAlertsCount?.()
+        toast.success('Alert deleted')
+      } else {
+        toast.error(res.error?.message || 'Failed to delete alert')
+      }
+    } catch {
+      toast.error('Network error')
+    } finally {
+      setDeleting(false)
+      setAlertToDelete(null)
+    }
+  }
+
+  const handleAlertClick = (alert) => {
+    if (!alert.is_read) handleMarkRead(alert.id)
+    if (alert.bid_id) navigate(`/dashboard/tenders/${alert.bid_id}`)
   }
 
   const unreadCount = alerts.filter((a) => !a.is_read).length
@@ -118,7 +147,8 @@ export function AlertsPage() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.03 }}
-              className={`rounded-xl border p-4 transition-all ${
+              onClick={() => handleAlertClick(alert)}
+              className={`rounded-xl border p-4 transition-all ${alert.bid_id ? 'cursor-pointer hover:border-primary/40' : ''} ${
                 !alert.is_read
                   ? 'bg-card border-primary/30 shadow-xs ring-1 ring-primary/10'
                   : 'bg-card/50 border-border opacity-80'
@@ -153,21 +183,54 @@ export function AlertsPage() {
                   </div>
                 </div>
 
-                {!alert.is_read && (
+                <div className="flex items-center gap-1 shrink-0">
+                  {!alert.is_read && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => { e.stopPropagation(); handleMarkRead(alert.id) }}
+                      className="text-xs"
+                    >
+                      Dismiss
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleMarkRead(alert.id)}
-                    className="text-xs shrink-0"
+                    onClick={(e) => { e.stopPropagation(); setAlertToDelete(alert) }}
+                    className="text-xs text-muted-foreground hover:text-destructive"
+                    title="Delete alert"
                   >
-                    Dismiss
+                    <Trash2 className="size-3.5" />
                   </Button>
-                )}
+                </div>
               </div>
             </motion.div>
           ))}
         </div>
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!alertToDelete} onOpenChange={(open) => !open && setAlertToDelete(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-rose-600 dark:text-rose-400 flex items-center gap-2 text-base font-bold">
+              <Trash2 className="size-5" /> Delete Alert
+            </DialogTitle>
+            <DialogDescription className="pt-2 text-foreground/80 text-xs leading-relaxed">
+              Are you sure you want to delete <strong className="text-foreground font-semibold">"{alertToDelete?.title}"</strong>? This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0 pt-4">
+            <Button variant="outline" size="sm" onClick={() => setAlertToDelete(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" size="sm" onClick={handleConfirmDelete} disabled={deleting}>
+              {deleting ? 'Deleting...' : 'Yes, Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

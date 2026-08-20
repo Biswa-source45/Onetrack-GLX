@@ -102,7 +102,8 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 		       pricing_workspace, oem_workspace,
 		       emd_bank_name, emd_account_number, emd_ifsc_code, emd_branch,
 		       emd_beneficiary, emd_payable_at,
-		       po_received_date, bg_target_date, bg_discharged_date, emd_returned_date
+		       po_received_date, bg_target_date, bg_discharged_date, emd_returned_date,
+		       emd_ready_date, delivery_complete, delivery_complete_date
 		FROM bid.bid_workspaces
 		WHERE id = $1
 	`
@@ -280,7 +281,8 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		       b.pricing_workspace, b.oem_workspace,
 		       b.emd_bank_name, b.emd_account_number, b.emd_ifsc_code, b.emd_branch,
 		       b.emd_beneficiary, b.emd_payable_at,
-		       b.po_received_date, b.bg_target_date, b.bg_discharged_date, b.emd_returned_date
+		       b.po_received_date, b.bg_target_date, b.bg_discharged_date, b.emd_returned_date,
+		       b.emd_ready_date, b.delivery_complete, b.delivery_complete_date
 		FROM bid.bid_workspaces b
 		LEFT JOIN auth.users u ON b.bid_owner_id = u.id
 		%s
@@ -421,10 +423,21 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	if req.EMDReady != nil {
 		addSet("emd_ready", *req.EMDReady)
 	}
+	if req.EMDReadyDate != nil {
+		if t, err := time.Parse(time.RFC3339, *req.EMDReadyDate); err == nil {
+			addSet("emd_ready_date", t)
+		}
+	}
 	if req.EMDReturned != nil {
 		addSet("emd_returned", *req.EMDReturned)
 	}
-	if req.EMDReturnedDate != nil {
+	// A boolean explicitly flipped to false clears its companion date server-side —
+	// JSON can't distinguish "clear this" from "don't touch this" for a *time.Time
+	// via null vs. omitted (both unmarshal to a nil pointer), so we derive clearing
+	// from the unambiguous boolean instead of relying on the client sending a date.
+	if req.EMDReturned != nil && !*req.EMDReturned {
+		addSet("emd_returned_date", nil)
+	} else if req.EMDReturnedDate != nil {
 		if t, err := time.Parse(time.RFC3339, *req.EMDReturnedDate); err == nil {
 			addSet("emd_returned_date", t)
 		}
@@ -432,7 +445,9 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	if req.BGDischarged != nil {
 		addSet("bg_discharged", *req.BGDischarged)
 	}
-	if req.BGDischargedDate != nil {
+	if req.BGDischarged != nil && !*req.BGDischarged {
+		addSet("bg_discharged_date", nil)
+	} else if req.BGDischargedDate != nil {
 		if t, err := time.Parse(time.RFC3339, *req.BGDischargedDate); err == nil {
 			addSet("bg_discharged_date", t)
 		}
@@ -442,9 +457,21 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 			addSet("bg_target_date", t)
 		}
 	}
-	if req.POReceivedDate != nil {
+	if req.POReceivedStatus != nil && *req.POReceivedStatus != "PO Received" {
+		addSet("po_received_date", nil)
+	} else if req.POReceivedDate != nil {
 		if t, err := time.Parse(time.RFC3339, *req.POReceivedDate); err == nil {
 			addSet("po_received_date", t)
+		}
+	}
+	if req.DeliveryComplete != nil {
+		addSet("delivery_complete", *req.DeliveryComplete)
+	}
+	if req.DeliveryComplete != nil && !*req.DeliveryComplete {
+		addSet("delivery_complete_date", nil)
+	} else if req.DeliveryCompleteDate != nil {
+		if t, err := time.Parse(time.RFC3339, *req.DeliveryCompleteDate); err == nil {
+			addSet("delivery_complete_date", t)
 		}
 	}
 	if req.SubmissionDone != nil {
@@ -585,12 +612,11 @@ func (r *postgresBidRepo) UpdateOutcome(ctx context.Context, id string, req *dom
 	sets := []string{
 		"bid_outcome = $1",
 		"bid_status = $2",
-		"workflow_stage = $3",
-		"competitor_info = $4",
+		"competitor_info = $3",
 		"updated_at = NOW()",
 	}
-	args := []interface{}{req.BidOutcome, req.BidOutcome, req.BidOutcome, competitorJSON}
-	idx := 5
+	args := []interface{}{req.BidOutcome, req.BidOutcome, competitorJSON}
+	idx := 4
 
 	addSet := func(col string, val interface{}) {
 		sets = append(sets, fmt.Sprintf("%s = $%d", col, idx))
@@ -707,16 +733,16 @@ func (r *postgresBidRepo) GetMembers(ctx context.Context, bidID string) ([]domai
 
 func (r *postgresBidRepo) AddStageHistory(ctx context.Context, h *domain.BidStageHistory) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO bid.bid_stage_history (bid_id, from_stage, to_stage, transition_reason, transitioned_by)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		h.BidID, h.FromStage, h.ToStage, h.TransitionReason, h.TransitionedBy,
+		`INSERT INTO bid.bid_stage_history (bid_id, from_stage, to_stage, transition_reason, transitioned_by, event_type, details)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		h.BidID, h.FromStage, h.ToStage, h.TransitionReason, h.TransitionedBy, h.EventType, h.Details,
 	)
 	return err
 }
 
 func (r *postgresBidRepo) GetStageHistory(ctx context.Context, bidID string) ([]domain.BidStageHistory, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, bid_id, from_stage, to_stage, transition_reason, transitioned_by, created_at
+		SELECT id, bid_id, from_stage, to_stage, transition_reason, transitioned_by, event_type, details, created_at
 		FROM bid.bid_stage_history
 		WHERE bid_id = $1
 		ORDER BY created_at ASC
@@ -729,7 +755,7 @@ func (r *postgresBidRepo) GetStageHistory(ctx context.Context, bidID string) ([]
 	var history []domain.BidStageHistory
 	for rows.Next() {
 		var h domain.BidStageHistory
-		if err := rows.Scan(&h.ID, &h.BidID, &h.FromStage, &h.ToStage, &h.TransitionReason, &h.TransitionedBy, &h.CreatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.BidID, &h.FromStage, &h.ToStage, &h.TransitionReason, &h.TransitionedBy, &h.EventType, &h.Details, &h.CreatedAt); err != nil {
 			return nil, err
 		}
 		history = append(history, h)
@@ -972,6 +998,7 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 		&b.EMDBankName, &b.EMDAccountNumber, &b.EMDIFSCCode, &b.EMDBranch,
 		&b.EMDBeneficiary, &b.EMDPayableAt,
 		&b.POReceivedDate, &b.BGTargetDate, &b.BGDischargedDate, &b.EMDReturnedDate,
+		&b.EMDReadyDate, &b.DeliveryComplete, &b.DeliveryCompleteDate,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan bid: %w", err)

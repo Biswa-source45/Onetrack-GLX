@@ -68,3 +68,19 @@ func (r *postgresAlertRepo) MarkAllAsRead(ctx context.Context, userID string, us
 	_, err := r.pool.Exec(ctx, query, userID, userRole)
 	return err
 }
+
+// DeleteAlert removes an alert, but only if it was actually visible to this
+// user (their own targeted alert, or a role/ALL broadcast they'd see) — the
+// same scoping rule GetUserAlerts uses — so one user can't delete another's
+// private alert just by guessing an ID.
+func (r *postgresAlertRepo) DeleteAlert(ctx context.Context, alertID string, userID string, userRole string) error {
+	query := `DELETE FROM public.alerts WHERE id = $1 AND (user_id = $2 OR target_role = $3 OR target_role = 'ALL')`
+	tag, err := r.pool.Exec(ctx, query, alertID, userID, userRole)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("alert not found or not permitted")
+	}
+	return nil
+}

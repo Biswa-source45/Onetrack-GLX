@@ -23,6 +23,7 @@ type AlertRepository interface {
 	GetUserAlerts(ctx context.Context, userID string, userRole string) ([]Alert, error)
 	MarkAsRead(ctx context.Context, alertID string, userID string) error
 	MarkAllAsRead(ctx context.Context, userID string, userRole string) error
+	DeleteAlert(ctx context.Context, alertID string, userID string, userRole string) error
 }
 
 type AlertService interface {
@@ -30,4 +31,5 @@ type AlertService interface {
 	GetUserAlerts(ctx context.Context, userID string, userRole string) ([]Alert, error)
 	MarkAsRead(ctx context.Context, alertID string, userID string) error
 	MarkAllAsRead(ctx context.Context, userID string, userRole string) error
+	DeleteAlert(ctx context.Context, alertID string, userID string, userRole string) error
 }

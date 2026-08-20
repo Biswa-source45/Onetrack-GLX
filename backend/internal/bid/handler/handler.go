@@ -174,6 +174,23 @@ func (h *BidHandler) GetStageHistory(c *gin.Context) {
 	response.Success(c, http.StatusOK, "Stage history retrieved", history)
 }
 
+func (h *BidHandler) AddMicroEvent(c *gin.Context) {
+	bidID := c.Param("id")
+	var req domain.AddMicroEventRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error(), nil)
+		return
+	}
+
+	actorID := c.GetString("user_id")
+	event, err := h.svc.AddMicroEvent(c.Request.Context(), bidID, &req, actorID)
+	if err != nil {
+		response.NotFound(c, "Bid not found")
+		return
+	}
+	response.Success(c, http.StatusCreated, "Event logged", event)
+}
+
 func (h *BidHandler) AddMember(c *gin.Context) {
 	bidID := c.Param("id")
 	var req domain.AddMemberRequest

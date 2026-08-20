@@ -25,6 +25,7 @@ func RegisterAlertRoutes(rg *gin.RouterGroup, h *AlertHandler, authMiddleware *m
 		alertsGroup.POST("", h.CreateAlert)
 		alertsGroup.PUT("/:id/read", h.MarkAsRead)
 		alertsGroup.PUT("/read-all", h.MarkAllAsRead)
+		alertsGroup.DELETE("/:id", h.DeleteAlert)
 	}
 }
 
@@ -107,6 +108,24 @@ func (h *AlertHandler) MarkAsRead(c *gin.Context) {
 	}
 
 	response.Success(c, http.StatusOK, "Alert marked as read", nil)
+}
+
+func (h *AlertHandler) DeleteAlert(c *gin.Context) {
+	alertID := c.Param("id")
+	userID := c.GetString("user_id")
+	rolesVal, _ := c.Get("roles")
+
+	roleStr := "OPERATOR"
+	if roles, ok := rolesVal.([]string); ok && len(roles) > 0 {
+		roleStr = roles[0]
+	}
+
+	if err := h.svc.DeleteAlert(c.Request.Context(), alertID, userID, roleStr); err != nil {
+		response.NotFound(c, "Alert not found")
+		return
+	}
+
+	response.Success(c, http.StatusOK, "Alert deleted", nil)
 }
 
 func (h *AlertHandler) MarkAllAsRead(c *gin.Context) {

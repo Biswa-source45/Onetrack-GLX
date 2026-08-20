@@ -26,7 +26,7 @@ func NewBidService(repo domain.BidRepository, alertSvc alertDomain.AlertService)
 
 func getRoleForStage(stage string) string {
 	switch stage {
-	case domain.StageDiscovered, domain.StageEligibilityAssessment, domain.StageOEMAuthorizationRequest, domain.StagePricingRequest:
+	case domain.StageDiscovered, domain.StageOEMAuthorizationRequest, domain.StagePricingRequest:
 		return "PRE_SALES"
 	case domain.StageDocumentChecklistPrep, domain.StageTechnicalEvaluation:
 		return "TECHNICAL"
@@ -39,66 +39,6 @@ func getRoleForStage(stage string) string {
 	}
 }
 
-func strOrNA(s *string) string {
-	if s == nil || *s == "" {
-		return "N/A"
-	}
-	return *s
-}
-
-// buildEmdDetailsTableHTML renders EMD bank/DD payment details as an HTML table.
-// The alert email pipeline (dispatchAlertEmails) injects Message verbatim when
-// it detects a <table>, so this is the same pattern the Stage 4 pricing-approval
-// alert already uses — kept in sync with the frontend's buildEmdDetailsTableHtml
-// so the automatic (on-creation) and manual (Stage 6 button) alerts look identical.
-func buildEmdDetailsTableHTML(title, gemBidNo, emdType string, emdAmount *float64, bankName, accountNumber, ifscCode, branch, beneficiary, payableAt *string) string {
-	amtStr := "N/A"
-	if emdAmount != nil {
-		amtStr = fmt.Sprintf("₹%.2f", *emdAmount)
-	}
-
-	type row struct{ label, value string }
-	rows := []row{
-		{"EMD Amount", amtStr},
-		{"Payment Mode", emdType},
-	}
-	if emdType == "ONLINE" {
-		rows = append(rows,
-			row{"Bank Name", strOrNA(bankName)},
-			row{"Account Number", strOrNA(accountNumber)},
-			row{"IFSC Code", strOrNA(ifscCode)},
-		)
-		if branch != nil && *branch != "" {
-			rows = append(rows, row{"Branch", *branch})
-		}
-	} else if emdType == "DD" {
-		rows = append(rows,
-			row{"Beneficiary", strOrNA(beneficiary)},
-			row{"Payable At", strOrNA(payableAt)},
-		)
-	}
-
-	var rowsHTML strings.Builder
-	for _, r := range rows {
-		rowsHTML.WriteString(fmt.Sprintf(`
-			<tr style="border-bottom: 1px solid #e2e8f0;">
-				<td style="padding: 8px 12px; font-weight: 600; color: #475569; background-color: #f8fafc; width: 40%%;">%s</td>
-				<td style="padding: 8px 12px; color: #1e293b; font-family: monospace;">%s</td>
-			</tr>`, r.label, r.value))
-	}
-
-	return fmt.Sprintf(`
-		<p style="margin: 0 0 8px 0;">Tender: <strong>%s</strong> (GeM Bid No: %s) requires EMD processing.</p>
-		<div style="margin-top: 14px; margin-bottom: 14px; border: 1px solid #fde68a; border-radius: 10px; overflow: hidden; background-color: #ffffff;">
-			<div style="background: linear-gradient(135deg, #d97706 0%%, #b45309 100%%); padding: 12px 16px; color: #ffffff; font-size: 13px; font-weight: 700;">
-				💰 EMD Payment Details — %s
-			</div>
-			<table style="width: 100%%; border-collapse: collapse; font-size: 12px; text-align: left; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-				<tbody>%s</tbody>
-			</table>
-		</div>
-	`, title, gemBidNo, title, rowsHTML.String())
-}
 
 // validateEMDDetails enforces that the EMD bank/DD detail fields required for a
 // given payment mode are actually present, using the merged (new-or-existing)
@@ -273,24 +213,11 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 			Message:    fmt.Sprintf("Tender '%s' (GeM Bid No: %s) has been created and assigned for Stage 2 (Eligibility Assessment).", req.Title, gemBidNoStr),
 		})
 
-		// Finance team alert — only when EMD mode is ONLINE or DD (not EXEMPTED)
-		emdType := ""
-		if req.EMDType != nil {
-			emdType = *req.EMDType
-		}
-		if emdType == "ONLINE" || emdType == "DD" {
-			message := buildEmdDetailsTableHTML(req.Title, gemBidNoStr, emdType, req.EMDAmount,
-				req.EMDBankName, req.EMDAccountNumber, req.EMDIFSCCode, req.EMDBranch,
-				req.EMDBeneficiary, req.EMDPayableAt)
-			_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
-				TargetRole: "FINANCE",
-				BidID:      &bidIdCopy,
-				CreatedBy:  &createdBy,
-				Type:       "EMD_PROCESSING_REQUIRED",
-				Title:      fmt.Sprintf("EMD Processing Required: %s", req.Title),
-				Message:    message,
-			})
-		}
+		// EMD processing alert is NOT sent automatically here — it must be
+		// manually triggered by an authorized user (Bid Executive/Manager/Admin)
+		// from Stage 6's "Alert Finance Team" action once EMD is actually ready
+		// to be processed. Finance is intentionally excluded from triggering
+		// their own alert (see Stage6Workspace's canTriggerEmdAlert gate).
 	}
 
 	// Seed Bidder doc checklists (group=BIDDER)
@@ -796,10 +723,53 @@ func (s *bidService) GetStageHistory(ctx context.Context, id string) ([]domain.S
 			ToStage:          h.ToStage,
 			TransitionReason: h.TransitionReason,
 			TransitionedBy:   *actor,
+			EventType:        h.EventType,
+			Details:          h.Details,
 			CreatedAt:        h.CreatedAt,
 		})
 	}
 	return result, nil
+}
+
+// AddMicroEvent persists a granular audit event (pricing change, alert sent,
+// OEM/checklist edit, EMD confirmation, etc.) to the shared stage-history
+// table so every user sees it — not just the browser that performed it.
+func (s *bidService) AddMicroEvent(ctx context.Context, bidID string, req *domain.AddMicroEventRequest, actorID string) (*domain.StageHistoryResponse, error) {
+	if _, err := s.repo.GetByID(ctx, bidID); err != nil {
+		return nil, err
+	}
+
+	toStage := req.ToStage
+	if toStage == "" {
+		toStage = "MICRO_EVENT"
+	}
+	eventType := req.EventType
+	h := &domain.BidStageHistory{
+		BidID:            bidID,
+		FromStage:        req.FromStage,
+		ToStage:          toStage,
+		TransitionReason: req.TransitionReason,
+		TransitionedBy:   actorID,
+		EventType:        &eventType,
+		Details:          req.Details,
+	}
+	if err := s.repo.AddStageHistory(ctx, h); err != nil {
+		return nil, err
+	}
+
+	actor, _ := s.repo.GetUserSummary(ctx, actorID)
+	if actor == nil {
+		actor = &domain.UserSummary{ID: actorID}
+	}
+	return &domain.StageHistoryResponse{
+		FromStage:        h.FromStage,
+		ToStage:          h.ToStage,
+		TransitionReason: h.TransitionReason,
+		TransitionedBy:   *actor,
+		EventType:        h.EventType,
+		Details:          h.Details,
+		CreatedAt:        time.Now(),
+	}, nil
 }
 
 func (s *bidService) AddMember(ctx context.Context, bidID string, req *domain.AddMemberRequest, actorID string) error {
@@ -938,12 +908,15 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, techM
 		BidResult:        bid.BidResult,
 		FinanceAlerted:         bid.FinanceAlerted,
 		EMDReady:               bid.EMDReady,
+		EMDReadyDate:           bid.EMDReadyDate,
 		EMDReturned:            bid.EMDReturned,
 		EMDReturnedDate:        bid.EMDReturnedDate,
 		BGDischarged:           bid.BGDischarged,
 		BGDischargedDate:       bid.BGDischargedDate,
 		BGTargetDate:           bid.BGTargetDate,
 		POReceivedDate:         bid.POReceivedDate,
+		DeliveryComplete:       bid.DeliveryComplete,
+		DeliveryCompleteDate:   bid.DeliveryCompleteDate,
 		SubmissionDone:         bid.SubmissionDone,
 		GemSubmissionPrice:     bid.GemSubmissionPrice,
 		FinalPrice:             bid.FinalPrice,
@@ -1018,10 +991,16 @@ func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary) domai
 		SubmissionStatus:          bid.SubmissionStatus,
 		FinancialEvaluationStatus: bid.FinancialEvaluationStatus,
 		POReceivedStatus:          bid.POReceivedStatus,
+		POReceivedDate:            bid.POReceivedDate,
 		EMDExempted:               bid.EMDExempted,
 		SubmissionDone:            bid.SubmissionDone,
 		EMDReady:                  bid.EMDReady,
+		EMDReadyDate:              bid.EMDReadyDate,
 		EMDReturned:               bid.EMDReturned,
+		BGDischargedDate:          bid.BGDischargedDate,
+		DeliveryComplete:          bid.DeliveryComplete,
+		DeliveryCompleteDate:      bid.DeliveryCompleteDate,
+		QuotedPrice:               bid.QuotedPrice,
 		FinalBidValue:             bid.FinalBidValue,
 		TechnicalResult:           bid.TechnicalResult,
 		FinancialResult:           bid.FinancialResult,

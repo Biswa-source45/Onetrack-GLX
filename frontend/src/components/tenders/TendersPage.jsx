@@ -360,7 +360,6 @@ async function exportToExcel() {
       'Status',
       'Workflow Stage',
       'Category',
-      'Team',
       'Bid ID',
       'Platform',
       'Department',
@@ -372,10 +371,15 @@ async function exportToExcel() {
       'Start Date',
       'End Date',
       'Estimated Value',
+      'GlobX Total (Bid Submit Price)',
       'Tech Eval',
       'Submission Status',
       'Financial Evaluation Status',
       'PO Received',
+      'PO Received Date',
+      'EMD Ready Date',
+      'BG Issued Date',
+      'Delivery/Work Complete Date',
       'Result',
       'Owner',
       'Remarks'
@@ -389,7 +393,6 @@ async function exportToExcel() {
         b.bid_status ?? '',
         STAGE_LABELS[b.workflow_stage] ?? b.workflow_stage ?? '',
         b.category ?? '',
-        b.team ?? '',
         b.gem_bid_no ?? '',
         b.portal_source ?? '',
         b.department_name ?? '',
@@ -401,10 +404,15 @@ async function exportToExcel() {
         b.opening_date ? new Date(b.opening_date).toLocaleDateString('en-IN') : '—',
         b.closing_date ? new Date(b.closing_date).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—',
         b.estimated_value !== null && b.estimated_value !== undefined ? String(b.estimated_value) : '',
+        b.quoted_price !== null && b.quoted_price !== undefined ? String(b.quoted_price) : '',
         b.technical_result === 'QUALIFIED' ? 'Qualified' : b.technical_result === 'DISQUALIFIED' ? 'Disqualified' : 'Pending',
         b.submission_status ?? '',
         b.financial_evaluation_status ?? '',
         b.po_received_status === 'PO Received' ? 'Yes' : (['LOST', 'CANCELLED'].includes(b.bid_status) ? 'N/A' : 'No'),
+        formatDate(b.po_received_date),
+        formatDate(b.emd_ready_date),
+        formatDate(b.bg_discharged_date),
+        formatDate(b.delivery_complete_date),
         b.bid_result ?? '',
         b.bid_owner?.full_name ?? '',
         b.remarks ?? ''
@@ -433,16 +441,15 @@ async function exportToExcel() {
 const STAGE_OPTIONS = [
   { value: '', label: 'All Stages' },
   { value: 'DISCOVERED', label: '1. Search & ID' },
-  { value: 'ELIGIBILITY_ASSESSMENT', label: '2. Eligibility' },
-  { value: 'OEM_AUTHORIZATION_REQUEST', label: '3. OEM Auth' },
-  { value: 'PRICING_REQUEST', label: '4. Pricing Request' },
-  { value: 'DOCUMENT_CHECKLIST_PREPARATION', label: '5. Checklist Prep' },
-  { value: 'EMD_PROCESSING', label: '6. EMD Processing' },
-  { value: 'INTERNAL_APPROVAL', label: '7. Internal Approval' },
-  { value: 'GEM_SUBMISSION', label: '8. GeM Submission' },
-  { value: 'TECHNICAL_EVALUATION', label: '9. Tech Eval' },
-  { value: 'FINANCIAL_EVALUATION', label: '10. Financial Eval' },
-  { value: 'AWARD_HANDOVER', label: '11. Award & Delivery' },
+  { value: 'OEM_AUTHORIZATION_REQUEST', label: '2. OEM Auth' },
+  { value: 'PRICING_REQUEST', label: '3. Pricing Request' },
+  { value: 'DOCUMENT_CHECKLIST_PREPARATION', label: '4. Checklist Prep' },
+  { value: 'EMD_PROCESSING', label: '5. EMD Processing' },
+  { value: 'INTERNAL_APPROVAL', label: '6. Internal Approval' },
+  { value: 'GEM_SUBMISSION', label: '7. GeM Submission' },
+  { value: 'TECHNICAL_EVALUATION', label: '8. Tech Eval' },
+  { value: 'FINANCIAL_EVALUATION', label: '9. Financial Eval' },
+  { value: 'AWARD_HANDOVER', label: '10. Award & Delivery' },
   { value: 'WON', label: 'Won' },
   { value: 'LOST', label: 'Lost' },
   { value: 'CANCELLED', label: 'Cancelled' },
@@ -1405,7 +1412,6 @@ export function TendersPage({ initialScope = 'all' }) {
                       <th className="p-3 border-r border-border min-w-[120px]">Status</th>
                       <th className="p-3 border-r border-border min-w-[180px]">Workflow Stage</th>
                       <th className="p-3 border-r border-border min-w-[120px]">Category</th>
-                      <th className="p-3 border-r border-border min-w-[140px]">Team</th>
                       <th className="p-3 border-r border-border min-w-[140px]">Bid ID</th>
                       <th className="p-3 border-r border-border min-w-[135px]">Platform</th>
                       <th className="p-3 border-r border-border min-w-[180px]">Department</th>
@@ -1417,10 +1423,15 @@ export function TendersPage({ initialScope = 'all' }) {
                       <th className="p-3 border-r border-border min-w-[150px]">Start Date</th>
                       <th className="p-3 border-r border-border min-w-[180px]">End Date</th>
                       <th className="p-3 border-r border-border min-w-[130px]">Estimated Value</th>
+                      <th className="p-3 border-r border-border min-w-[140px]">GlobX Total</th>
                       <th className="p-3 border-r border-border min-w-[120px]">Tech Eval</th>
                       <th className="p-3 border-r border-border min-w-[140px]">Submission Status</th>
                       <th className="p-3 border-r border-border min-w-[160px]">Fin Eval Status</th>
                       <th className="p-3 border-r border-border min-w-[140px]">PO Received</th>
+                      <th className="p-3 border-r border-border min-w-[140px]">PO Received Date</th>
+                      <th className="p-3 border-r border-border min-w-[140px]">EMD Ready Date</th>
+                      <th className="p-3 border-r border-border min-w-[140px]">BG Issued Date</th>
+                      <th className="p-3 border-r border-border min-w-[150px]">Delivery/Work Complete Date</th>
                       <th className="p-3 border-r border-border min-w-[140px]">Result</th>
                       <th className="p-3 border-r border-border min-w-[130px]">Owner</th>
                       <th className="p-3 border-r border-border min-w-[200px]">Remarks</th>
@@ -1535,23 +1546,6 @@ export function TendersPage({ initialScope = 'all' }) {
                               />
                             ) : (
                               bid.category ?? '—'
-                            )}
-                          </td>
-
-                          {/* 5. Team */}
-                          <td className="p-3 border-r border-border">
-                            {!isReadOnly ? (
-                              <input 
-                                type="text" 
-                                value={bid.team || ''} 
-                                onChange={(e) => handleFieldChangeLocal(bid.id, 'team', e.target.value)} 
-                                onBlur={(e) => handleFieldSave(bid.id, 'team', e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
-                                className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                placeholder="Team"
-                              />
-                            ) : (
-                              bid.team ?? '—'
                             )}
                           </td>
 
@@ -1750,6 +1744,12 @@ export function TendersPage({ initialScope = 'all' }) {
                             )}
                           </td>
 
+                          {/* GlobX Total — the final submitted bid price (Stage 7 / GeM Submission),
+                               sourced automatically from the approved Pricing Request total. Read-only. */}
+                          <td className="p-3 border-r border-border font-mono font-semibold text-foreground">
+                            {bid.quoted_price !== null && bid.quoted_price !== undefined ? formatCurrency(bid.quoted_price) : '—'}
+                          </td>
+
                           {/* 18. Tech Eval — the actual Technical Evaluation result, set only via the
                                Stage 10 workspace (captures the disqualification reason and correctly
                                closes the bid as LOST). Read-only here to avoid bypassing that. */}
@@ -1822,6 +1822,13 @@ export function TendersPage({ initialScope = 'all' }) {
                               )
                             )}
                           </td>
+
+                          {/* PO Received / EMD Ready / BG Issued / Delivery Complete dates —
+                               all read-only, set from their respective stage workspace actions. */}
+                          <td className="p-3 border-r border-border text-muted-foreground">{formatDate(bid.po_received_date)}</td>
+                          <td className="p-3 border-r border-border text-muted-foreground">{formatDate(bid.emd_ready_date)}</td>
+                          <td className="p-3 border-r border-border text-muted-foreground">{formatDate(bid.bg_discharged_date)}</td>
+                          <td className="p-3 border-r border-border text-muted-foreground">{formatDate(bid.delivery_complete_date)}</td>
 
                           {/* 22. Bid Result */}
                           <td className="p-3 border-r border-border">

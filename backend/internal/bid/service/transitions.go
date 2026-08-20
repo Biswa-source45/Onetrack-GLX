@@ -8,8 +8,7 @@ import "github.com/onetrack/backend/internal/bid/domain"
 // Both modes share all stages from QUALIFICATION_REVIEW onward.
 var allowedTransitions = map[string]map[string][]string{
 	domain.CreationModeManual: {
-		domain.StageDiscovered:              {domain.StageEligibilityAssessment, domain.StageOEMAuthorizationRequest, domain.StageCancelled},
-		domain.StageEligibilityAssessment:   {domain.StageOEMAuthorizationRequest, domain.StagePricingRequest, domain.StageCancelled},
+		domain.StageDiscovered:              {domain.StageOEMAuthorizationRequest, domain.StageCancelled},
 		domain.StageOEMAuthorizationRequest: {domain.StagePricingRequest, domain.StageDocumentChecklistPrep, domain.StageCancelled},
 		domain.StagePricingRequest:          {domain.StageDocumentChecklistPrep, domain.StageEMDProcessing, domain.StageCancelled},
 		domain.StageDocumentChecklistPrep:   {domain.StageEMDProcessing, domain.StageInternalApproval, domain.StageCancelled},
@@ -21,8 +20,7 @@ var allowedTransitions = map[string]map[string][]string{
 		domain.StageAwardHandover:           {},
 	},
 	domain.CreationModeIntelligence: {
-		domain.StageDiscovered:              {domain.StageEligibilityAssessment, domain.StageCancelled},
-		domain.StageEligibilityAssessment:   {domain.StageOEMAuthorizationRequest, domain.StagePricingRequest, domain.StageCancelled},
+		domain.StageDiscovered:              {domain.StageOEMAuthorizationRequest, domain.StageCancelled},
 		domain.StageOEMAuthorizationRequest: {domain.StagePricingRequest, domain.StageDocumentChecklistPrep, domain.StageCancelled},
 		domain.StagePricingRequest:          {domain.StageDocumentChecklistPrep, domain.StageEMDProcessing, domain.StageCancelled},
 		domain.StageDocumentChecklistPrep:   {domain.StageEMDProcessing, domain.StageInternalApproval, domain.StageCancelled},

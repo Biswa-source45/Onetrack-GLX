@@ -133,3 +133,7 @@ func (s *alertService) MarkAsRead(ctx context.Context, alertID string, userID st
 func (s *alertService) MarkAllAsRead(ctx context.Context, userID string, userRole string) error {
 	return s.repo.MarkAllAsRead(ctx, userID, userRole)
 }
+
+func (s *alertService) DeleteAlert(ctx context.Context, alertID string, userID string, userRole string) error {
+	return s.repo.DeleteAlert(ctx, alertID, userID, userRole)
+}

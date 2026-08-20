@@ -347,12 +347,12 @@ export function OverviewPanel() {
 
   // Stage Funnel Analytics Data
   const stageGroups = [
-    { label: 'Stages 1-4: Discovery & Pre-Qual', stages: ['DISCOVERED', 'ELIGIBILITY_ASSESSMENT', 'OEM_AUTHORIZATION_REQUEST', 'PRICING_REQUEST'], color: 'bg-violet-500', barGradient: 'from-violet-500 to-indigo-500' },
-    { label: 'Stages 5-7: Costing & Docs', stages: ['DOCUMENT_CHECKLIST_PREPARATION', 'EMD_PROCESSING', 'INTERNAL_APPROVAL'], color: 'bg-blue-500', barGradient: 'from-blue-500 to-sky-500' },
-    { label: 'Stage 8: Portal Submission', stages: ['GEM_SUBMISSION'], color: 'bg-emerald-500', barGradient: 'from-emerald-500 to-teal-500' },
-    { label: 'Stage 9: Technical Eval', stages: ['TECHNICAL_EVALUATION'], color: 'bg-amber-500', barGradient: 'from-amber-500 to-yellow-500' },
-    { label: 'Stage 10: Financial Eval', stages: ['FINANCIAL_EVALUATION'], color: 'bg-indigo-500', barGradient: 'from-indigo-500 to-purple-500' },
-    { label: 'Stage 11: Award & Handover', stages: ['AWARD_HANDOVER'], color: 'bg-teal-500', barGradient: 'from-teal-500 to-emerald-600' },
+    { label: 'Stages 1-3: Discovery & Pre-Qual', stages: ['DISCOVERED', 'OEM_AUTHORIZATION_REQUEST', 'PRICING_REQUEST'], color: 'bg-violet-500', barGradient: 'from-violet-500 to-indigo-500' },
+    { label: 'Stages 4-6: Costing & Docs', stages: ['DOCUMENT_CHECKLIST_PREPARATION', 'EMD_PROCESSING', 'INTERNAL_APPROVAL'], color: 'bg-blue-500', barGradient: 'from-blue-500 to-sky-500' },
+    { label: 'Stage 7: Portal Submission', stages: ['GEM_SUBMISSION'], color: 'bg-emerald-500', barGradient: 'from-emerald-500 to-teal-500' },
+    { label: 'Stage 8: Technical Eval', stages: ['TECHNICAL_EVALUATION'], color: 'bg-amber-500', barGradient: 'from-amber-500 to-yellow-500' },
+    { label: 'Stage 9: Financial Eval', stages: ['FINANCIAL_EVALUATION'], color: 'bg-indigo-500', barGradient: 'from-indigo-500 to-purple-500' },
+    { label: 'Stage 10: Award & Handover', stages: ['AWARD_HANDOVER'], color: 'bg-teal-500', barGradient: 'from-teal-500 to-emerald-600' },
   ]
 
   const stageFunnelData = stageGroups.map(grp => {

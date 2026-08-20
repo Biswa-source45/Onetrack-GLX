@@ -1,0 +1,3 @@
+ALTER TABLE bid.bid_stage_history
+    ADD COLUMN IF NOT EXISTS event_type VARCHAR(30) DEFAULT 'STAGE_CHANGE',
+    ADD COLUMN IF NOT EXISTS details    JSONB        DEFAULT NULL;

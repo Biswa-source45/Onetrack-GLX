@@ -82,6 +82,18 @@ export async function getBidStageHistory(id) {
   return { ok: res.ok, status: res.status, ...data }
 }
 
+// ── Log a granular audit micro-event (pricing/OEM/checklist/alert changes) ──
+// Persisted server-side so every user sees it, not just the browser that
+// performed the action. Payload: { from_stage, to_stage, event_type, transition_reason, details }
+export async function addBidMicroEvent(id, payload) {
+  const res = await apiFetch(`${BASE}/bids/${id}/history`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, ...data }
+}
+
 // ── Get Global Audit History (Database-backed) ─────────────────────────────
 export async function getGlobalAuditHistory(limit = 100) {
   const res = await apiFetch(`${BASE}/bids/audit-history?limit=${limit}`)
@@ -154,8 +166,7 @@ export async function permanentDeleteBid(id) {
 
 /** Allowed stage transitions (mirrors backend state machine) */
 export const STAGE_TRANSITIONS = {
-  DISCOVERED:                     ['ELIGIBILITY_ASSESSMENT', 'OEM_AUTHORIZATION_REQUEST', 'CANCELLED'],
-  ELIGIBILITY_ASSESSMENT:         ['OEM_AUTHORIZATION_REQUEST', 'PRICING_REQUEST', 'CANCELLED'],
+  DISCOVERED:                     ['OEM_AUTHORIZATION_REQUEST', 'CANCELLED'],
   OEM_AUTHORIZATION_REQUEST:       ['PRICING_REQUEST', 'DOCUMENT_CHECKLIST_PREPARATION', 'CANCELLED'],
   PRICING_REQUEST:                ['DOCUMENT_CHECKLIST_PREPARATION', 'EMD_PROCESSING', 'CANCELLED'],
   DOCUMENT_CHECKLIST_PREPARATION: ['EMD_PROCESSING', 'INTERNAL_APPROVAL', 'CANCELLED'],
@@ -173,16 +184,15 @@ export const STAGE_TRANSITIONS = {
 /** Stage display labels */
 export const STAGE_LABELS = {
   DISCOVERED:                     '1. Search & ID',
-  ELIGIBILITY_ASSESSMENT:         '2. Eligibility',
-  OEM_AUTHORIZATION_REQUEST:       '3. OEM Auth',
-  PRICING_REQUEST:                '4. Pricing Request',
-  DOCUMENT_CHECKLIST_PREPARATION: '5. Checklist Prep',
-  EMD_PROCESSING:                 '6. EMD Processing',
-  INTERNAL_APPROVAL:              '7. Internal Approval',
-  GEM_SUBMISSION:                 '8. GeM Submission',
-  TECHNICAL_EVALUATION:           '9. Tech Eval',
-  FINANCIAL_EVALUATION:          '10. Financial Eval',
-  AWARD_HANDOVER:                 '11. Award & Delivery',
+  OEM_AUTHORIZATION_REQUEST:       '2. OEM Auth',
+  PRICING_REQUEST:                '3. Pricing Request',
+  DOCUMENT_CHECKLIST_PREPARATION: '4. Checklist Prep',
+  EMD_PROCESSING:                 '5. EMD Processing',
+  INTERNAL_APPROVAL:              '6. Internal Approval',
+  GEM_SUBMISSION:                 '7. GeM Submission',
+  TECHNICAL_EVALUATION:           '8. Tech Eval',
+  FINANCIAL_EVALUATION:          '9. Financial Eval',
+  AWARD_HANDOVER:                 '10. Award & Delivery',
   WON:                            'Won',
   LOST:                           'Lost',
   CANCELLED:                      'Cancelled',
@@ -192,7 +202,6 @@ export const STAGE_LABELS = {
 /** Stage color map for badges */
 export const STAGE_COLORS = {
   DISCOVERED:                     'bg-slate-100 text-slate-700 border-slate-200',
-  ELIGIBILITY_ASSESSMENT:         'bg-blue-50 text-blue-700 border-blue-200',
   OEM_AUTHORIZATION_REQUEST:       'bg-indigo-50 text-indigo-700 border-indigo-200',
   PRICING_REQUEST:                'bg-violet-50 text-violet-700 border-violet-200',
   DOCUMENT_CHECKLIST_PREPARATION: 'bg-purple-50 text-purple-700 border-purple-200',
@@ -221,7 +230,6 @@ export const STATUS_COLORS = {
 /** All workflow stages in order for the stepper */
 export const WORKFLOW_STAGES_ORDERED = [
   'DISCOVERED',
-  'ELIGIBILITY_ASSESSMENT',
   'OEM_AUTHORIZATION_REQUEST',
   'PRICING_REQUEST',
   'DOCUMENT_CHECKLIST_PREPARATION',

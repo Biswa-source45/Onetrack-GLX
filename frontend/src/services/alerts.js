@@ -24,6 +24,14 @@ export async function markAllAlertsRead() {
   return { ok: res.ok, status: res.status, ...data }
 }
 
+export async function deleteAlert(id) {
+  const res = await apiFetch(`${BASE}/alerts/${id}`, {
+    method: 'DELETE',
+  })
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, ...data }
+}
+
 /**
  * Create an in-app alert for a role or specific user.
  * @param {Object} payload - { target_role, user_id, bid_id, type, title, message }

@@ -20,6 +20,7 @@ func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, authMiddlew
 		// Lifecycle
 		bids.POST("/:id/transition", authMiddleware.RequirePermission("bid.edit"), handler.TransitionStage)
 		bids.GET("/:id/stage-history", authMiddleware.RequirePermission("bid.view"), handler.GetStageHistory)
+		bids.POST("/:id/history", authMiddleware.RequirePermission("bid.edit"), handler.AddMicroEvent)
 		bids.GET("/audit-history", authMiddleware.RequirePermission("bid.view"), handler.GetGlobalAuditLogs)
 		bids.GET("/performance-matrix", authMiddleware.RequirePermission("bid.view"), handler.GetTenderPerformanceMatrix)
 

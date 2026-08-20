@@ -21,11 +21,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { transitionBidStage, recordBidOutcome, updateBid } from '../../services/bids'
+import { transitionBidStage, recordBidOutcome, updateBid, getBidStageHistory } from '../../services/bids'
 import { usePermissions } from '../../hooks/usePermissions'
 import { tokenStorage } from '../../services/auth'
 import { ChecklistTab } from './ChecklistTab'
 import { logStageMicroEvent } from '../../services/auditLogger'
+import { useBidStore } from '../../store/useBidStore'
 
 function fmtMoney(v) {
   if (!v && v !== 0) return '—'
@@ -86,9 +87,6 @@ function CompleteStageModal({ title, description, stageKey, bidId, bid, onComple
           stage_remarks: currentRemarks,
           stage_reviews: currentReviews,
           workflow_stage: nextStage,
-        }
-        if (stageKey === 'EMD_PROCESSING') {
-          patchData.emd_ready = true
         }
         const res = await updateBid(bidId, patchData)
         if (!res.ok) {
@@ -170,7 +168,6 @@ function CompleteStageModal({ title, description, stageKey, bidId, bid, onComple
 
 export const WORKFLOW_STAGES_ORDERED = [
   'DISCOVERED',
-  'ELIGIBILITY_ASSESSMENT',
   'OEM_AUTHORIZATION_REQUEST',
   'PRICING_REQUEST',
   'DOCUMENT_CHECKLIST_PREPARATION',
@@ -218,10 +215,10 @@ export function checkStageState(bid, stageKey) {
   const isCurrent = stageIdx === currentIdx && !isTerminal && !isEmdExempt
 
   // Stage Locking:
-  // Stages 1 through 7 (indices 0 through 6) are NEVER locked.
-  // Stage locking applies ONLY from GeM Portal Submission onwards (stageIdx >= 7).
+  // Stages 1 through 6 (indices 0 through 5) are NEVER locked.
+  // Stage locking applies ONLY from GeM Portal Submission onwards (stageIdx >= 6).
   let isLocked = false
-  if (stageIdx >= 7 && !isTerminal) {
+  if (stageIdx >= 6 && !isTerminal) {
     for (let i = 0; i < stageIdx; i++) {
       const priorKey = WORKFLOW_STAGES_ORDERED[i]
       const priorDone = completions[priorKey] === true || priorKey === 'DISCOVERED' || (priorKey === 'EMD_PROCESSING' && !!bid?.emd_exempted)
@@ -318,7 +315,7 @@ export function ReVerificationModal({ title, stageKey, bidId, bid, onClose, onCo
   )
 }
 
-export function StageHeaderActions({ bid, stageKey, onCompleteClick, onRefresh, completeLabel = "Complete & Advance", completeClass = "" }) {
+export function StageHeaderActions({ bid, stageKey, onCompleteClick, onRefresh, completeLabel = "Complete & Advance", completeClass = "", disabled = false, disabledTooltip = "" }) {
   const [showReVerify, setShowReVerify] = useState(false)
   const { isCompleted } = checkStageState(bid, stageKey)
   const remarks = bid?.stage_remarks || {}
@@ -351,9 +348,11 @@ export function StageHeaderActions({ bid, stageKey, onCompleteClick, onRefresh, 
           </Button>
         </>
       ) : (
-        <Button size="sm" onClick={onCompleteClick} className={`gap-2 shadow-sm text-xs ${completeClass}`}>
-          <CheckCircle2 className="size-4" /> {completeLabel}
-        </Button>
+        <span title={disabled ? disabledTooltip : undefined}>
+          <Button size="sm" onClick={onCompleteClick} disabled={disabled} className={`gap-2 shadow-sm text-xs ${disabled ? 'opacity-50 cursor-not-allowed' : completeClass}`}>
+            <CheckCircle2 className="size-4" /> {completeLabel}
+          </Button>
+        </span>
       )}
 
       {showReVerify && (
@@ -441,63 +440,6 @@ export function Stage1Workspace({ bid, onRefresh }) {
 }
 
 // ── Stage 2: Eligibility Assessment ─────────────────────────────────────────
-export function Stage2Workspace({ bid, onRefresh }) {
-  const [showModal, setShowModal] = useState(false)
-
-  return (
-    <div className="space-y-6">
-      <div className="p-4 rounded-xl border border-indigo-200 bg-indigo-50/50 dark:bg-indigo-950/20 dark:border-indigo-900/50 flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-semibold text-indigo-900 dark:text-indigo-300">Stage 2: Eligibility Assessment</h3>
-          <p className="text-xs text-indigo-700 dark:text-indigo-400">Pre-sales team reviews technical criteria, turnover, and experience eligibility.</p>
-        </div>
-        <StageHeaderActions
-          bid={bid}
-          stageKey="ELIGIBILITY_ASSESSMENT"
-          onCompleteClick={() => setShowModal(true)}
-          onRefresh={onRefresh}
-          completeLabel="Mark as Eligible & Advance"
-          completeClass="bg-indigo-600 hover:bg-indigo-700 text-white"
-        />
-      </div>
-
-      <div className="p-4 rounded-xl border border-border bg-card space-y-4">
-        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Pre-Sales Evaluation Checklist</h4>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-          <div className="p-3 rounded-lg border border-border bg-muted/20 flex items-center gap-2">
-            <CheckCircle2 className="size-4 text-emerald-500" />
-            <span>Turnover & Financial Standing Verification</span>
-          </div>
-          <div className="p-3 rounded-lg border border-border bg-muted/20 flex items-center gap-2">
-            <CheckCircle2 className="size-4 text-emerald-500" />
-            <span>Past Experience / Similar Work Order Check</span>
-          </div>
-          <div className="p-3 rounded-lg border border-border bg-muted/20 flex items-center gap-2">
-            <CheckCircle2 className="size-4 text-emerald-500" />
-            <span>GeM OEM Reseller / Authorization Feasibility</span>
-          </div>
-          <div className="p-3 rounded-lg border border-border bg-muted/20 flex items-center gap-2">
-            <CheckCircle2 className="size-4 text-emerald-500" />
-            <span>Blacklist & Anti-Corruption Declaration Check</span>
-          </div>
-        </div>
-      </div>
-
-      {showModal && (
-        <CompleteStageModal
-          title="Mark Tender as Eligible"
-          description="Marks Stage 2 (Eligibility Assessment) as complete. Stage 3 OEM Authorization can now be worked on independently."
-          stageKey="ELIGIBILITY_ASSESSMENT"
-          bidId={bid.id}
-          bid={bid}
-          onClose={() => setShowModal(false)}
-          onComplete={onRefresh}
-        />
-      )}
-    </div>
-  )
-}
-
 // ── Helper to extract follow-up array safely ──────────────────────────────────
 function getOemFollowUps(oem) {
   if (!oem) return []
@@ -863,7 +805,7 @@ export function Stage3Workspace({ bid, onRefresh }) {
               <ShieldCheck className="size-4.5" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-purple-950 dark:text-purple-200">Stage 3: OEM Authorization Matrix</h3>
+              <h3 className="text-sm font-bold text-purple-950 dark:text-purple-200">Stage 2: OEM Authorization Matrix</h3>
               <p className="text-xs text-purple-700 dark:text-purple-400 mt-0.5">Track MAF, MII, certificates, multiple follow-up logs, and OEM clarifications.</p>
             </div>
           </div>
@@ -879,14 +821,6 @@ export function Stage3Workspace({ bid, onRefresh }) {
               <Edit2 className="size-3.5" /> Edit Matrix
             </Button>
           )}
-          <StageHeaderActions
-            bid={bid}
-            stageKey="OEM_AUTHORIZATION_REQUEST"
-            onCompleteClick={() => setShowModal(true)}
-            onRefresh={onRefresh}
-            completeLabel="Complete & Advance"
-            completeClass="bg-purple-600 hover:bg-purple-700 text-white shadow-sm font-semibold"
-          />
         </div>
       </div>
 
@@ -1135,6 +1069,18 @@ export function Stage3Workspace({ bid, onRefresh }) {
         )}
       </div>
 
+      {/* Stage completion action — kept separate from Edit/Save Matrix above to avoid confusion */}
+      <div className="flex justify-end">
+        <StageHeaderActions
+          bid={bid}
+          stageKey="OEM_AUTHORIZATION_REQUEST"
+          onCompleteClick={() => setShowModal(true)}
+          onRefresh={onRefresh}
+          completeLabel="Complete & Advance"
+          completeClass="bg-purple-600 hover:bg-purple-700 text-white shadow-sm font-semibold"
+        />
+      </div>
+
       {/* OEM Follow-up Log History Modal */}
       {activeFollowUpOem && (
         <OEMFollowUpModal
@@ -1160,11 +1106,79 @@ export function Stage3Workspace({ bid, onRefresh }) {
   )
 }
 
+// Shared L1-quote-plus-GST calculation, used by both Stage 4 (Pricing Request,
+// where it's the live working calculation) and Stage 9 (GeM Submission, where
+// it's a fallback for pricing sheets that were never sent through approval).
+// Calculation sequence: Base Purchase Price -> Margin % (applied to Base) ->
+// GlobX Unit Price Excl GST -> GST -> GlobX Unit Price w/GST -> GlobX Total.
+function computeL1PricingSummary(pricingData, fallbackMarginPct = 2.45) {
+  const marginPct = pricingData?.marginPct ?? fallbackMarginPct
+  const allQuotes = pricingData?.quotes || []
+  const l1Quote = allQuotes.length > 0 ? allQuotes.reduce((best, q) => {
+    const tot = q.items.reduce((s, i) => s + (Number(i.basicPrice) || 0) * (Number(i.qty) || 1), 0)
+    const bTot = best.items.reduce((s, i) => s + (Number(i.basicPrice) || 0) * (Number(i.qty) || 1), 0)
+    return tot < bTot ? q : best
+  }, allQuotes[0]) : null
+
+  if (!l1Quote || !l1Quote.items || l1Quote.items.length === 0) {
+    return { l1Quote, l1Calculations: null }
+  }
+
+  let grandBaseCost = 0
+  let grandSellingExclGst = 0
+  let grandGstAmount = 0
+  let grandGlobxTotal = 0
+  let grandTotalProfit = 0
+
+  const items = l1Quote.items.map((it, idx) => {
+    const qty = Number(it.qty) || 1
+    const basicPrice = Number(it.basicPrice) || 0
+    const itemMargin = it.marginPct != null && it.marginPct !== '' ? Number(it.marginPct) : marginPct
+    const itemGstRate = it.gstPct != null && it.gstPct !== '' ? Number(it.gstPct) : 18
+
+    const profitPerUnit = basicPrice * (itemMargin / 100)
+    const unitPriceExclGst = basicPrice + profitPerUnit
+    const unitGst = unitPriceExclGst * (itemGstRate / 100)
+    const globxUnit = unitPriceExclGst + unitGst
+
+    const totalBase = basicPrice * qty
+    const totalSellingExclGst = unitPriceExclGst * qty
+    const totalGst = unitGst * qty
+    const globxTotal = globxUnit * qty
+    const profitTotal = profitPerUnit * qty
+
+    grandBaseCost += totalBase
+    grandSellingExclGst += totalSellingExclGst
+    grandGstAmount += totalGst
+    grandGlobxTotal += globxTotal
+    grandTotalProfit += profitTotal
+
+    return {
+      sNo: idx + 1, desc: it.desc, qty, basicPrice, itemMargin,
+      profitPerUnit, unitPriceExclGst, itemGstRate, unitGst, globxUnit,
+      totalBase, totalSellingExclGst, totalGst, globxTotal, profitTotal,
+    }
+  })
+
+  const effectiveMarginPct = grandBaseCost > 0 ? (grandTotalProfit / grandBaseCost) * 100 : marginPct
+
+  return {
+    l1Quote,
+    l1Calculations: {
+      items, grandBaseCost, grandSellingExclGst, grandGstAmount,
+      grandGlobxTotal, grandTotalProfit, effectiveMarginPct,
+    },
+  }
+}
+
 // ── Stage 4: Pricing Request ────────────────────────────────────────────────
 export function Stage4Workspace({ bid, onRefresh }) {
-  const { hasRole } = usePermissions()
+  const { hasRole, user: currentUser, isAdmin } = usePermissions()
   // Presales can only VIEW Stage 4, not edit it
-  const isReadOnly = hasRole('PRESALES')
+  const isReadOnly = hasRole('PRE_SALES')
+
+  const { users, loadUsers } = useBidStore()
+  useEffect(() => { loadUsers() }, [loadUsers])
 
   const key4 = `onetrack_pricing_${bid.id}`
 
@@ -1175,7 +1189,13 @@ export function Stage4Workspace({ bid, onRefresh }) {
       distNames: [],
       quotes: [], // [{id,distName,items:[{desc,qty,basicPrice}]}]
       selectedDist: '',
-      approvalRecipients: [],
+      // Single-approver pricing sign-off (replaces the old role-broadcast)
+      approverId: '',
+      approverName: '',
+      approvalRequestedAt: '',
+      approvalStatus: '', // '' | 'PENDING' | 'APPROVED'
+      approvedAt: '',
+      reminders: [], // [{ sentAt, sentBy }]
       marginPct: 2.45,
     }
     // Prefer server-stored data (visible to all users)
@@ -1200,6 +1220,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
   const [showEditQuoteDlg, setShowEditQuoteDlg] = useState(false)
   const [editingQuoteId, setEditingQuoteId] = useState(null)
   const [showApprovalDlg, setShowApprovalDlg] = useState(false)
+  const [approverSelId, setApproverSelId] = useState('')
   const [quoteToDelete, setQuoteToDelete] = useState(null)
   const [newDistNameInput, setNewDistNameInput] = useState('')
   const [initDistNames, setInitDistNames] = useState('')
@@ -1394,7 +1415,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
                 <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">GlobX Unit Price Excl GST</th>
                 <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">GST (₹)</th>
                 <th style="padding: 10px; text-align: right; border-right: 1px solid #e2e8f0;">GlobX Unit Price w/GST</th>
-                <th style="padding: 10px; text-align: right; background-color: #ede9fe; color: #3730a3;">GlobX Total (₹)</th>
+                <th style="padding: 10px; text-align: right; background-color: #ede9fe; color: #3730a3;">GlobX Total (incl. GST) (₹)</th>
               </tr>
             </thead>
             <tbody>
@@ -1415,119 +1436,124 @@ export function Stage4Workspace({ bid, onRefresh }) {
   }
 
   const handleSendApproval = () => {
-    if (!pricingData.approvalRecipients.length) { toast.error('Select at least one recipient'); return }
+    if (!approverSelId) { toast.error('Select the person to send this pricing sheet for approval'); return }
+    const approver = users.find(u => u.id === approverSelId)
     const tableHtml = buildPricingTableHtml(l1Quote, marginPct)
+    const nowISO = new Date().toISOString()
     import('../../services/alerts').then(({ createAlert }) => {
-      pricingData.approvalRecipients.forEach(role => {
-        createAlert({ target_role: role.toUpperCase(), bid_id: bid.id, type: 'ACTION_REQUIRED',
-          title: `Pricing Approval Required — ${bid.title}`,
-          message: `<p style="margin: 0 0 12px 0;">Bid #${bid.gem_bid_no || bid.id}: Commercial pricing calculation from L1 distributor (<strong>${l1Quote?.distName || 'N/A'}</strong>) is ready for management & finance review.</p>${tableHtml}<p style="margin: 12px 0 0 0;">Please review, approve, or request a margin adjustment.</p>`
-        })
+      createAlert({ user_id: approverSelId, bid_id: bid.id, type: 'ACTION_REQUIRED', created_by: currentUser?.id,
+        title: `Pricing Approval Required — ${bid.title}`,
+        message: `<p style="margin: 0 0 12px 0;">Bid #${bid.gem_bid_no || bid.id}: Commercial pricing calculation from L1 distributor (<strong>${l1Quote?.distName || 'N/A'}</strong>) is ready for your review and approval.</p>${tableHtml}<p style="margin: 12px 0 0 0;">Please review and approve from the tender's Pricing Request stage.</p>`
       })
     })
-    save({ phase: 'APPROVAL' })
+    save({
+      phase: 'APPROVAL',
+      approverId: approverSelId,
+      approverName: approver?.full_name || approver?.username || 'Unknown',
+      approvalRequestedAt: nowISO,
+      approvalStatus: 'PENDING',
+      approvedAt: '',
+      reminders: [],
+      // Snapshot of the values at request time, so the approval email can
+      // flag it if the approver adjusts margin/pricing before accepting.
+      requestedById: currentUser?.id || '',
+      requestedByName: currentUser?.full_name || currentUser?.username || 'Unknown',
+      requestedMarginPct: marginPct,
+      requestedGrandTotal: l1Calculations?.grandGlobxTotal ?? null,
+    })
     logStageMicroEvent(bid.id, {
       fromStage: 'PRICING_REQUEST',
       toStage: 'PRICING_REQUEST',
       eventType: 'ALERT',
-      transitionReason: `Dispatched pricing approval notification with formatted commercial table to: ${pricingData.approvalRecipients.join(', ')} (Margin: ${marginPct}%, L1 Distributor: ${l1Quote?.distName || 'N/A'})`,
-      details: { recipients: pricingData.approvalRecipients, marginPct, l1Distributor: l1Quote?.distName }
+      transitionReason: `Sent pricing approval request to ${approver?.full_name || approver?.username || approverSelId} (Margin: ${marginPct}%, L1 Distributor: ${l1Quote?.distName || 'N/A'})`,
+      details: { approverId: approverSelId, marginPct, l1Distributor: l1Quote?.distName }
     })
     setShowApprovalDlg(false)
-    toast.success('Approval request with formatted pricing table sent to selected recipients!')
+    toast.success(`Approval request with formatted pricing table sent to ${approver?.full_name || 'the selected approver'}!`)
   }
 
-  const toggleRecipient = (r) => {
-    const list = pricingData.approvalRecipients.includes(r)
-      ? pricingData.approvalRecipients.filter(x => x !== r)
-      : [...pricingData.approvalRecipients, r]
-    save({ approvalRecipients: list })
+  const handleSendReminder = () => {
+    if (!pricingData.approverId) return
+    const tableHtml = buildPricingTableHtml(l1Quote, marginPct)
+    const nowISO = new Date().toISOString()
+    import('../../services/alerts').then(({ createAlert }) => {
+      createAlert({ user_id: pricingData.approverId, bid_id: bid.id, type: 'ACTION_REQUIRED', created_by: currentUser?.id,
+        title: `Reminder: Pricing Approval Pending — ${bid.title}`,
+        message: `<p style="margin: 0 0 12px 0;"><strong>Reminder</strong> — Bid #${bid.gem_bid_no || bid.id}: this commercial pricing calculation is still awaiting your approval.</p>${tableHtml}`
+      })
+    })
+    const reminders = [...(pricingData.reminders || []), { sentAt: nowISO, sentBy: currentUser?.full_name || currentUser?.username || 'Unknown' }]
+    save({ reminders })
+    logStageMicroEvent(bid.id, {
+      fromStage: 'PRICING_REQUEST',
+      toStage: 'PRICING_REQUEST',
+      eventType: 'ALERT',
+      transitionReason: `Sent a pricing approval reminder to ${pricingData.approverName || pricingData.approverId}`,
+      details: { reminderCount: reminders.length }
+    })
+    toast.success('Reminder sent!')
   }
 
-  // Find L1 (lowest total basic cost across all quotes)
-  const allQuotes = pricingData.quotes
-  const l1Quote = allQuotes.length > 0 ? allQuotes.reduce((best, q) => {
-    const tot = q.items.reduce((s, i) => s + (Number(i.basicPrice) || 0) * (Number(i.qty) || 1), 0)
-    const bTot = best.items.reduce((s, i) => s + (Number(i.basicPrice) || 0) * (Number(i.qty) || 1), 0)
-    return tot < bTot ? q : best
-  }, allQuotes[0]) : null
+  const canApprovePricing = !!currentUser?.id && (currentUser.id === pricingData.approverId || isAdmin)
 
-  // Calculate pricing breakdown based on: Base Price -> Margin (of Base) -> Unit Price w/ GST -> GlobX Total -> Profit
-  const l1Calculations = useMemo(() => {
-    if (!l1Quote || !l1Quote.items || l1Quote.items.length === 0) return null
+  const handleApprovePricing = () => {
+    const nowISO = new Date().toISOString()
+    const finalMargin = marginPct
+    const finalTotal = l1Calculations?.grandGlobxTotal ?? null
+    const reqMargin = pricingData.requestedMarginPct
+    const reqTotal = pricingData.requestedGrandTotal
+    const marginChanged = reqMargin != null && Math.abs(Number(reqMargin) - Number(finalMargin)) > 0.001
+    const totalChanged = reqTotal != null && finalTotal != null && Math.abs(Number(reqTotal) - Number(finalTotal)) > 0.01
+    const valuesChanged = marginChanged || totalChanged
+    const changeNote = valuesChanged
+      ? ` Values were adjusted before approval — Margin: ${reqMargin}% → ${finalMargin}%, GlobX Total (incl. GST): ${fmtMoney(reqTotal)} → ${fmtMoney(finalTotal)}.`
+      : ''
 
-    let grandBaseCost = 0
-    let grandSellingExclGst = 0
-    let grandGstAmount = 0
-    let grandGlobxTotal = 0
-    let grandTotalProfit = 0
+    save({ approvalStatus: 'APPROVED', approvedAt: nowISO, approvedGrandTotal: finalTotal })
 
-    const items = l1Quote.items.map((it, idx) => {
-      const qty = Number(it.qty) || 1
-      const basicPrice = Number(it.basicPrice) || 0
-      const itemMargin = it.marginPct != null && it.marginPct !== '' ? Number(it.marginPct) : marginPct
-      const itemGstRate = it.gstPct != null && it.gstPct !== '' ? Number(it.gstPct) : 18
-
-      // 1. Margin / Profit Per Unit from Base Price
-      const profitPerUnit = basicPrice * (itemMargin / 100)
-      // 2. Unit Selling Price (Excl. GST) = Base Price + Margin
-      const unitPriceExclGst = basicPrice + profitPerUnit
-      // 3. GST Amount Per Unit = Unit Price (Excl GST) * (GST Rate / 100)
-      const unitGst = unitPriceExclGst * (itemGstRate / 100)
-      // 4. GlobX Unit Price With GST = Unit Price (Excl GST) + GST Amount
-      const globxUnit = unitPriceExclGst + unitGst
-
-      // Totals for this item
-      const totalBase = basicPrice * qty
-      const totalSellingExclGst = unitPriceExclGst * qty
-      const totalGst = unitGst * qty
-      const globxTotal = globxUnit * qty
-      const profitTotal = profitPerUnit * qty
-
-      grandBaseCost += totalBase
-      grandSellingExclGst += totalSellingExclGst
-      grandGstAmount += totalGst
-      grandGlobxTotal += globxTotal
-      grandTotalProfit += profitTotal
-
-      return {
-        sNo: idx + 1,
-        desc: it.desc,
-        qty,
-        basicPrice,
-        itemMargin,
-        profitPerUnit,
-        unitPriceExclGst,
-        itemGstRate,
-        unitGst,
-        globxUnit,
-        totalBase,
-        totalSellingExclGst,
-        totalGst,
-        globxTotal,
-        profitTotal,
-      }
+    // Notify the tender owner (and the original requester, if different) that
+    // pricing has been approved — this was previously silent; only the
+    // "request sent" email existed before.
+    const tableHtml = buildPricingTableHtml(l1Quote, finalMargin)
+    const changeBannerHtml = valuesChanged
+      ? `<div style="margin:0 0 12px 0;padding:10px 14px;border-radius:8px;background:#fef3c7;border:1px solid #fbbf24;color:#92400e;font-size:12px;font-weight:600;">⚠ Values were adjusted before approval — Margin: ${reqMargin}% → ${finalMargin}%, GlobX Total (incl. GST): ${fmtMoney(reqTotal)} → ${fmtMoney(finalTotal)}</div>`
+      : ''
+    const recipientIds = new Set()
+    if (bid.bid_owner?.id) recipientIds.add(bid.bid_owner.id)
+    if (pricingData.requestedById) recipientIds.add(pricingData.requestedById)
+    import('../../services/alerts').then(({ createAlert }) => {
+      recipientIds.forEach((uid) => {
+        createAlert({ user_id: uid, bid_id: bid.id, type: 'APPROVAL', created_by: currentUser?.id,
+          title: `Pricing Approved — ${bid.title}`,
+          message: `<p style="margin: 0 0 12px 0;">Bid #${bid.gem_bid_no || bid.id}: the commercial pricing sheet has been <strong>approved</strong> by ${currentUser?.full_name || currentUser?.username || 'the approver'}.</p>${changeBannerHtml}${tableHtml}`
+        })
+      })
     })
 
-    const effectiveMarginPct = grandBaseCost > 0 ? (grandTotalProfit / grandBaseCost) * 100 : marginPct
+    logStageMicroEvent(bid.id, {
+      fromStage: 'PRICING_REQUEST',
+      toStage: 'PRICING_REQUEST',
+      eventType: 'PRICING',
+      transitionReason: `Pricing approved by ${currentUser?.full_name || currentUser?.username || 'Unknown'}${finalTotal != null ? ` — GlobX Total (incl. GST): ${fmtMoney(finalTotal)}` : ''}.${changeNote}`,
+      details: { approvedBy: currentUser?.id, approvedGrandTotal: finalTotal, requestedMarginPct: reqMargin, finalMarginPct: finalMargin, requestedGrandTotal: reqTotal, valuesChanged }
+    })
+    toast.success(valuesChanged ? 'Pricing approved — owner notified of the adjusted values!' : 'Pricing approved — owner notified!')
+    onRefresh()
+  }
 
-    return {
-      items,
-      grandBaseCost,
-      grandSellingExclGst,
-      grandGstAmount,
-      grandGlobxTotal,
-      grandTotalProfit,
-      effectiveMarginPct,
-    }
-  }, [l1Quote, marginPct])
+  // Find L1 (lowest total basic cost across all quotes) and the calculation breakdown
+  const allQuotes = pricingData.quotes
+  const { l1Quote, l1Calculations } = useMemo(
+    () => computeL1PricingSummary(pricingData, 2.45),
+    [pricingData]
+  )
 
   return (
     <div className="space-y-5">
       <div className="p-4 rounded-xl border border-violet-200 bg-violet-50/50 dark:bg-violet-950/20 dark:border-violet-900/50">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div>
-            <h3 className="text-sm font-semibold text-violet-900 dark:text-violet-300">Stage 4: Pricing Request & Commercial Calculation</h3>
+            <h3 className="text-sm font-semibold text-violet-900 dark:text-violet-300">Stage 3: Pricing Request & Commercial Calculation</h3>
             <p className="text-xs text-violet-700 dark:text-violet-400">Send pricing request → Collect distributor quotes → Calculate GlobX pricing → Send for approval</p>
           </div>
           <div className="flex gap-2 flex-wrap items-center">
@@ -1551,9 +1577,19 @@ export function Stage4Workspace({ bid, onRefresh }) {
                 <Plus className="size-3.5" /> Add Distributor Quote
               </Button>
             )}
-            {!isReadOnly && (pricingData.phase === 'QUOTING' || pricingData.phase === 'APPROVAL') && l1Quote && (
-              <Button size="sm" variant="outline" onClick={() => setShowApprovalDlg(true)} className={`gap-1.5 text-xs ${pricingData.phase === 'APPROVAL' ? 'border-orange-300 text-orange-800 hover:bg-orange-100' : 'border-amber-300 text-amber-800 dark:text-amber-300 hover:bg-amber-100'}`}>
+            {!isReadOnly && (pricingData.phase === 'QUOTING' || pricingData.phase === 'APPROVAL') && l1Quote && pricingData.approvalStatus !== 'APPROVED' && (
+              <Button size="sm" variant="outline" onClick={() => { setApproverSelId(pricingData.approverId || ''); setShowApprovalDlg(true) }} className={`gap-1.5 text-xs ${pricingData.phase === 'APPROVAL' ? 'border-orange-300 text-orange-800 hover:bg-orange-100' : 'border-amber-300 text-amber-800 dark:text-amber-300 hover:bg-amber-100'}`}>
                 <Send className="size-3.5" /> {pricingData.phase === 'APPROVAL' ? 'Resend Approval Request' : 'Send for Approval'}
+              </Button>
+            )}
+            {pricingData.approvalStatus === 'PENDING' && !isReadOnly && (
+              <Button size="sm" variant="outline" onClick={handleSendReminder} className="gap-1.5 text-xs border-amber-300 text-amber-800 dark:text-amber-300 hover:bg-amber-100">
+                <Bell className="size-3.5" /> Send Reminder
+              </Button>
+            )}
+            {pricingData.approvalStatus === 'PENDING' && canApprovePricing && (
+              <Button size="sm" onClick={handleApprovePricing} className="gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm font-semibold">
+                <CheckCircle2 className="size-3.5" /> Approve Pricing
               </Button>
             )}
             {isReadOnly && pricingData.phase !== 'INIT' && (
@@ -1568,9 +1604,30 @@ export function Stage4Workspace({ bid, onRefresh }) {
               onRefresh={onRefresh}
               completeLabel="Save Commercial & Advance"
               completeClass="bg-violet-600 hover:bg-violet-700 text-white"
+              disabled={pricingData.phase === 'APPROVAL' && pricingData.approvalStatus !== 'APPROVED'}
+              disabledTooltip="Pricing approval not done"
             />
           </div>
         </div>
+
+        {pricingData.approverId && (
+          <div className="mt-2 flex items-center gap-2 flex-wrap text-[11px]">
+            {pricingData.approvalStatus === 'APPROVED' ? (
+              <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-semibold border border-emerald-300 dark:border-emerald-800">
+                ✓ Approved by {pricingData.approverName} on {fmtDate(pricingData.approvedAt)}
+              </span>
+            ) : (
+              <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-semibold border border-amber-300 dark:border-amber-800">
+                ⏳ Pending approval from {pricingData.approverName}
+              </span>
+            )}
+            {pricingData.reminders?.length > 0 && (
+              <span className="text-muted-foreground">
+                Reminded {pricingData.reminders.length}× — last: {fmtDate(pricingData.reminders[pricingData.reminders.length - 1].sentAt)}
+              </span>
+            )}
+          </div>
+        )}
         <div className="mt-2 flex gap-2 flex-wrap">
           {['INIT','AWAITING','QUOTING','APPROVAL'].map((ph, i) => (
             <span key={ph} className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${pricingData.phase === ph ? 'bg-violet-600 text-white' : 'bg-muted text-muted-foreground'}`}>
@@ -1718,35 +1775,6 @@ export function Stage4Workspace({ bid, onRefresh }) {
             </div>
           </div>
 
-          {/* Quick Metrics Summary Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            <div className="p-3 rounded-lg border border-border bg-muted/20">
-              <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Base Purchase Cost</div>
-              <div className="text-sm font-bold font-mono text-foreground mt-0.5">{fmtMoney(l1Calculations.grandBaseCost)}</div>
-              <div className="text-[10px] text-muted-foreground mt-0.5">L1: {l1Quote.distName}</div>
-            </div>
-            <div className="p-3 rounded-lg border border-border bg-muted/20">
-              <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Selling (Excl. GST)</div>
-              <div className="text-sm font-bold font-mono text-foreground mt-0.5">{fmtMoney(l1Calculations.grandSellingExclGst)}</div>
-              <div className="text-[10px] text-muted-foreground mt-0.5">Base + Profit Margin</div>
-            </div>
-            <div className="p-3 rounded-lg border border-border bg-muted/20">
-              <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">GST Tax Component</div>
-              <div className="text-sm font-bold font-mono text-foreground mt-0.5">{fmtMoney(l1Calculations.grandGstAmount)}</div>
-              <div className="text-[10px] text-muted-foreground mt-0.5">Standard 18% Output</div>
-            </div>
-            <div className="p-3 rounded-lg border border-indigo-300 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/30">
-              <div className="text-[10px] font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">GlobX Total (w/ GST)</div>
-              <div className="text-base font-extrabold font-mono text-indigo-700 dark:text-indigo-300 mt-0.5">{fmtMoney(l1Calculations.grandGlobxTotal)}</div>
-              <div className="text-[10px] font-semibold text-indigo-600/80 dark:text-indigo-400 mt-0.5">Final Quoted Bid Value</div>
-            </div>
-            <div className="p-3 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/30">
-              <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider">Net Profit</div>
-              <div className="text-base font-extrabold font-mono text-emerald-700 dark:text-emerald-300 mt-0.5">{fmtMoney(l1Calculations.grandTotalProfit)}</div>
-              <div className="text-[10px] font-semibold text-emerald-600/80 dark:text-emerald-400 mt-0.5">{l1Calculations.effectiveMarginPct.toFixed(2)}% of Base Cost</div>
-            </div>
-          </div>
-
           {/* Interactive Pricing Calculation Table */}
           <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-[11px] border-collapse">
@@ -1760,7 +1788,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
                   <th className="border border-border p-2 text-right">GlobX Unit Price Excl GST</th>
                   <th className="border border-border p-2 text-right">GST (₹)</th>
                   <th className="border border-border p-2 text-right">GlobX Unit Price w/GST</th>
-                  <th className="border border-border p-2 text-right bg-indigo-50/80 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200">GlobX Total (₹)</th>
+                  <th className="border border-border p-2 text-right bg-indigo-50/80 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200">GlobX Total (incl. GST) (₹)</th>
                 </tr>
               </thead>
               <tbody>
@@ -1785,12 +1813,40 @@ export function Stage4Workspace({ bid, onRefresh }) {
                   <td colSpan={3} className="border border-border p-2.5 text-right text-muted-foreground uppercase tracking-wider">Grand Total Summary:</td>
                   <td className="border border-border p-2.5 text-right font-mono font-bold text-foreground">{fmtMoney(l1Calculations.grandBaseCost)}</td>
                   <td className="border border-border p-2.5 text-center font-bold text-indigo-700 dark:text-indigo-300">{l1Calculations.effectiveMarginPct.toFixed(2)}%</td>
-                  <td className="border border-border p-2.5 text-right font-mono font-bold text-foreground">{fmtMoney(l1Calculations.grandSellingExclGst)}</td>
-                  <td className="border border-border p-2.5 text-right font-mono font-bold text-muted-foreground">{fmtMoney(l1Calculations.grandGstAmount)}</td>
+                  <td colSpan={3} className="border border-border p-2.5 text-right text-muted-foreground uppercase tracking-wider">Total Offered Value (Incl. GST):</td>
                   <td className="border border-border p-2.5 text-right font-mono text-sm font-extrabold text-indigo-700 dark:text-indigo-300 bg-indigo-50/80 dark:bg-indigo-950/40">{fmtMoney(l1Calculations.grandGlobxTotal)}</td>
                 </tr>
               </tfoot>
             </table>
+          </div>
+
+          {/* Quick Metrics Summary Cards — shown below the table so the row-by-row breakdown reads first */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div className="p-3 rounded-lg border border-border bg-muted/20">
+              <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Base Purchase Cost</div>
+              <div className="text-sm font-bold font-mono text-foreground mt-0.5">{fmtMoney(l1Calculations.grandBaseCost)}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">L1: {l1Quote.distName}</div>
+            </div>
+            <div className="p-3 rounded-lg border border-border bg-muted/20">
+              <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Selling (Excl. GST)</div>
+              <div className="text-sm font-bold font-mono text-foreground mt-0.5">{fmtMoney(l1Calculations.grandSellingExclGst)}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">Base + Profit Margin</div>
+            </div>
+            <div className="p-3 rounded-lg border border-border bg-muted/20">
+              <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">GST Tax Component</div>
+              <div className="text-sm font-bold font-mono text-foreground mt-0.5">{fmtMoney(l1Calculations.grandGstAmount)}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">Standard 18% Output</div>
+            </div>
+            <div className="p-3 rounded-lg border border-indigo-300 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/30">
+              <div className="text-[10px] font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">GlobX Total (incl. GST)</div>
+              <div className="text-base font-extrabold font-mono text-indigo-700 dark:text-indigo-300 mt-0.5">{fmtMoney(l1Calculations.grandGlobxTotal)}</div>
+              <div className="text-[10px] font-semibold text-indigo-600/80 dark:text-indigo-400 mt-0.5">Final Quoted Bid Value</div>
+            </div>
+            <div className="p-3 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/30">
+              <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider">Net Profit</div>
+              <div className="text-base font-extrabold font-mono text-emerald-700 dark:text-emerald-300 mt-0.5">{fmtMoney(l1Calculations.grandTotalProfit)}</div>
+              <div className="text-[10px] font-semibold text-emerald-600/80 dark:text-emerald-400 mt-0.5">{l1Calculations.effectiveMarginPct.toFixed(2)}% of Base Cost</div>
+            </div>
           </div>
         </div>
       )}
@@ -1889,18 +1945,17 @@ export function Stage4Workspace({ bid, onRefresh }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
           <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-sm bg-card border border-border rounded-xl p-6 space-y-4">
             <h3 className="text-sm font-semibold">Send Pricing for Approval</h3>
-            <p className="text-xs text-muted-foreground">Select recipients who will receive an in-app alert + email with the pricing table.</p>
-            <div className="space-y-2 text-xs">
-              {['ADMIN','MANAGER','PRE_SALES'].map(r => (
-                <label key={r} className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={pricingData.approvalRecipients.includes(r)} onChange={() => toggleRecipient(r)} className="rounded" />
-                  <span className="font-medium">{r.replace('_', ' ')}</span>
-                </label>
-              ))}
+            <p className="text-xs text-muted-foreground">Choose one person to review and approve this pricing sheet — they'll get an in-app alert and email with the pricing table.</p>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Send to</Label>
+              <select value={approverSelId} onChange={e => setApproverSelId(e.target.value)} className="w-full text-xs border border-border rounded px-2 py-1.5 bg-background">
+                <option value="">-- Select approver --</option>
+                {users.map(u => <option key={u.id} value={u.id}>{u.full_name} (@{u.username})</option>)}
+              </select>
             </div>
             <div className="flex gap-2 justify-end">
               <Button size="sm" variant="outline" onClick={() => setShowApprovalDlg(false)}>Cancel</Button>
-              <Button size="sm" onClick={handleSendApproval}>Send Alert & Email</Button>
+              <Button size="sm" onClick={handleSendApproval}>Send Alert &amp; Email</Button>
             </div>
           </motion.div>
         </div>
@@ -1985,7 +2040,7 @@ export function Stage5Workspace({ bid, onRefresh }) {
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-purple-200 bg-purple-50/50 dark:bg-purple-950/20 dark:border-purple-900/50 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-purple-900 dark:text-purple-300">Stage 5: Document Checklist Preparation</h3>
+          <h3 className="text-sm font-semibold text-purple-900 dark:text-purple-300">Stage 4: Document Checklist Preparation</h3>
           <p className="text-xs text-purple-700 dark:text-purple-400">Ensure all mandatory bidder and OEM documents are compiled, verified, and tracked below.</p>
         </div>
         <div className="flex gap-2 items-center flex-wrap">
@@ -2010,7 +2065,7 @@ export function Stage5Workspace({ bid, onRefresh }) {
 
       {showModal && (
         <CompleteStageModal
-          title="Complete Stage 5: Checklist Prep"
+          title="Complete Stage 4: Checklist Prep"
           description="Marks Stage 5 as complete. EMD Processing can now proceed independently."
           stageKey="DOCUMENT_CHECKLIST_PREPARATION"
           bidId={bid.id}
@@ -2067,6 +2122,73 @@ function buildEmdDetailsTableHtml(bid) {
 // ── Stage 6: EMD Processing ─────────────────────────────────────────────────
 export function Stage6Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
+  const { hasRole, isAdmin } = usePermissions()
+  const isFinance = hasRole('FINANCE')
+  // EMD alerts must be triggered by someone other than Finance — Bid Executive,
+  // Manager, or Admin — so Finance can't self-trigger its own processing request.
+  const canTriggerEmdAlert = isAdmin || hasRole('MANAGER') || hasRole('BID_EXECUTIVE')
+
+  // Who last triggered the "Alert Finance Team" EMD request — resolved from the
+  // shared (DB-backed) stage history so we know who to notify back once Finance
+  // confirms it's ready. Falls back to the tender owner if nobody explicitly
+  // triggered an alert (e.g. EMD was marked ready without ever alerting Finance).
+  const [emdTriggeredBy, setEmdTriggeredBy] = useState(null)
+  useEffect(() => {
+    let cancelled = false
+    getBidStageHistory(bid.id).then((res) => {
+      if (cancelled || !res.ok) return
+      const entries = (res.data || []).filter(
+        (h) => h.to_stage === 'EMD_PROCESSING' && h.event_type === 'ALERT'
+      )
+      const last = entries[entries.length - 1]
+      if (last?.transitioned_by?.id) {
+        setEmdTriggeredBy({
+          id: last.transitioned_by.id,
+          name: last.transitioned_by.full_name || last.transitioned_by.username || 'the requester',
+        })
+      }
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [bid.id])
+
+  const handleMarkEmdReady = async () => {
+    try {
+      const res = await updateBid(bid.id, { emd_ready: true, emd_ready_date: new Date().toISOString() })
+      if (res.ok) {
+        logStageMicroEvent(bid.id, {
+          fromStage: 'EMD_PROCESSING',
+          toStage: 'EMD_PROCESSING',
+          eventType: 'FINANCE',
+          transitionReason: 'Finance confirmed EMD is ready',
+        })
+
+        // Notify whoever triggered the EMD request (falls back to the tender
+        // owner) that EMD is now ready, with the full payment/exemption details.
+        const notifyId = emdTriggeredBy?.id || bid.bid_owner?.id
+        if (notifyId) {
+          const currentUser = tokenStorage.getUser()
+          const tableHtml = buildEmdDetailsTableHtml(bid)
+          import('../../services/alerts').then(({ createAlert }) => {
+            createAlert({
+              user_id: notifyId,
+              bid_id: bid.id,
+              type: 'EMD',
+              created_by: currentUser?.id,
+              title: `EMD Ready — ${bid.title}`,
+              message: `<p style="margin: 0 0 8px 0;">EMD for tender <strong>${bid.title}</strong> (GeM Bid No: ${bid.gem_bid_no || 'N/A'}) has been confirmed <strong>ready</strong> by Finance (${currentUser?.full_name || currentUser?.username || 'Finance'}).</p>${tableHtml}`,
+            })
+          })
+        }
+
+        toast.success('EMD marked as Ready! Requester notified.')
+        onRefresh()
+      } else {
+        toast.error(res.error?.message || 'Failed to mark EMD ready')
+      }
+    } catch {
+      toast.error('Network error')
+    }
+  }
 
   const handleAlertFinance = async () => {
     try {
@@ -2099,13 +2221,24 @@ export function Stage6Workspace({ bid, onRefresh }) {
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/50 dark:bg-amber-950/20 dark:border-amber-900/50 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-300">Stage 6: EMD Processing</h3>
+          <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-300">Stage 5: EMD Processing</h3>
           <p className="text-xs text-amber-700 dark:text-amber-400">Manage EMD payment or exemption certificates. Bank Guarantee is tracked later, after Purchase Order receipt.</p>
         </div>
         <div className="flex gap-2 items-center flex-wrap">
-          <Button size="sm" variant="outline" onClick={handleAlertFinance} className="gap-1.5 border-amber-300 text-amber-900 dark:text-amber-300 hover:bg-amber-100 text-xs">
-            <Bell className="size-3.5" /> Alert Finance Team
-          </Button>
+          {canTriggerEmdAlert ? (
+            <Button size="sm" variant="outline" onClick={handleAlertFinance} className="gap-1.5 border-amber-300 text-amber-900 dark:text-amber-300 hover:bg-amber-100 text-xs">
+              <Bell className="size-3.5" /> Alert Finance Team
+            </Button>
+          ) : isFinance ? (
+            <span className="text-[10px] font-semibold text-amber-600 italic px-2 py-1 rounded bg-amber-50 border border-amber-200 dark:bg-amber-950/40 dark:border-amber-800" title="Finance cannot self-trigger the EMD alert — ask a Bid Executive, Manager, or Admin to initiate it.">
+              🔒 EMD alert must be triggered by a Bid Executive/Manager/Admin
+            </span>
+          ) : null}
+          {isFinance && !bid.emd_ready && (
+            <Button size="sm" onClick={handleMarkEmdReady} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold">
+              <CheckCircle2 className="size-3.5" /> Mark EMD Ready
+            </Button>
+          )}
           <StageHeaderActions
             bid={bid}
             stageKey="EMD_PROCESSING"
@@ -2113,9 +2246,21 @@ export function Stage6Workspace({ bid, onRefresh }) {
             onRefresh={onRefresh}
             completeLabel="EMD Ready & Advance"
             completeClass="bg-amber-600 hover:bg-amber-700 text-white"
+            disabled={!bid.emd_ready}
+            disabledTooltip="Awaiting EMD Ready confirmation from Finance"
           />
         </div>
       </div>
+
+      {bid.emd_ready ? (
+        <div className="px-3.5 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 text-xs font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5 max-w-md">
+          <CheckCircle2 className="size-3.5" /> EMD Ready — confirmed{bid.emd_ready_date ? ` on ${fmtDate(bid.emd_ready_date)}` : ''}
+        </div>
+      ) : (
+        <div className="px-3.5 py-2 rounded-lg bg-muted/40 border border-border text-xs font-medium text-muted-foreground flex items-center gap-1.5 max-w-md">
+          <Hourglass className="size-3.5" /> {isFinance ? 'Click "Mark EMD Ready" once EMD is processed' : 'Awaiting confirmation from the Finance team'}
+        </div>
+      )}
 
       <div className="p-4 rounded-xl border border-border bg-card space-y-2 text-xs max-w-md">
         <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">EMD Requirements</h4>
@@ -2145,7 +2290,7 @@ export function Stage6Workspace({ bid, onRefresh }) {
       {showModal && (
         <CompleteStageModal
           title="Complete EMD Processing"
-          description="Confirm EMD DD / Online Receipt / Exemption document is attached. Marks Stage 6 as complete."
+          description="Confirm EMD DD / Online Receipt / Exemption document is attached. Marks Stage 5 as complete."
           stageKey="EMD_PROCESSING"
           bidId={bid.id}
           bid={bid}
@@ -2166,7 +2311,7 @@ export function Stage8Workspace({ bid, onRefresh }) {
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-yellow-200 bg-yellow-50/50 dark:bg-yellow-950/20 dark:border-yellow-900/50 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-yellow-900 dark:text-yellow-300">Stage 8: Internal Sign-off & Approval</h3>
+          <h3 className="text-sm font-semibold text-yellow-900 dark:text-yellow-300">Stage 6: Internal Sign-off & Approval</h3>
           <p className="text-xs text-yellow-700 dark:text-yellow-400">Manager and Executive management review bid package before GeM submission.</p>
         </div>
         <StageHeaderActions
@@ -2182,7 +2327,7 @@ export function Stage8Workspace({ bid, onRefresh }) {
       {showModal && (
         <CompleteStageModal
           title="Approve Bid Submission"
-          description="Marks Stage 8 (Internal Approval) as complete. This will unlock Stage 9: GeM Submission."
+          description="Marks Stage 6 (Internal Approval) as complete. This will unlock Stage 7: GeM Submission."
           stageKey="INTERNAL_APPROVAL"
           bidId={bid.id}
           bid={bid}
@@ -2197,11 +2342,25 @@ export function Stage8Workspace({ bid, onRefresh }) {
 // ── Stage 9: Tender Submission (GeM Portal) ─────────────────────────────────
 export function Stage9Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
-  const [finalPrice, setFinalPrice] = useState('')
   const { isLocked } = checkStageState(bid, 'GEM_SUBMISSION')
 
+  // Final submitted price is no longer hand-typed — it's sourced from Stage 3's
+  // (Pricing Request) approved GlobX Total (incl. GST). If pricing was never
+  // sent through approval, fall back to a live recalculation so the stage
+  // isn't blocked, but flag it clearly since it isn't a locked-in figure yet.
+  const pricingWorkspace = bid?.pricing_workspace && typeof bid.pricing_workspace === 'object' ? bid.pricing_workspace : null
+  let finalPriceNum = pricingWorkspace?.approvedGrandTotal ?? null
+  let priceSource = finalPriceNum != null ? 'approved' : 'none'
+  if (finalPriceNum == null && pricingWorkspace) {
+    const { l1Calculations } = computeL1PricingSummary(pricingWorkspace)
+    if (l1Calculations) {
+      finalPriceNum = l1Calculations.grandGlobxTotal
+      priceSource = 'live'
+    }
+  }
+
   const handleConfettiSubmit = async (remarks) => {
-    let priceNum = finalPrice ? Number(finalPrice) : (bid?.quoted_price ? Number(bid.quoted_price) : null)
+    let priceNum = finalPriceNum != null ? Number(finalPriceNum) : (bid?.quoted_price ? Number(bid.quoted_price) : null)
     try {
       // Save the final quoted price submitted on GeM to the bid record
       if (priceNum) {
@@ -2230,7 +2389,7 @@ export function Stage9Workspace({ bid, onRefresh }) {
         <div className="p-6 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50/50 dark:bg-amber-950/20 text-center">
           <Hourglass className="size-10 mx-auto text-amber-500 mb-3" />
           <h3 className="text-base font-bold text-amber-900 dark:text-amber-300">Stage Locked — Awaiting Internal Approval</h3>
-          <p className="text-xs text-amber-700 dark:text-amber-400 mt-1 max-w-sm mx-auto">GeM Submission is locked until Stage 8 (Internal Sign-off) is fully approved. Please complete internal approval first.</p>
+          <p className="text-xs text-amber-700 dark:text-amber-400 mt-1 max-w-sm mx-auto">GeM Submission is locked until Stage 6 (Internal Sign-off) is fully approved. Please complete internal approval first.</p>
           <span className="mt-3 inline-block px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-[11px] font-semibold border border-amber-300">Current Stage: {bid.workflow_stage?.replace(/_/g,' ')}</span>
         </div>
       </div>
@@ -2241,7 +2400,7 @@ export function Stage9Workspace({ bid, onRefresh }) {
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-lime-200 bg-lime-50/50 dark:bg-lime-950/20 dark:border-lime-900/50 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-lime-900 dark:text-lime-300">Stage 9: Tender Submission — GeM Portal</h3>
+          <h3 className="text-sm font-semibold text-lime-900 dark:text-lime-300">Stage 7: Tender Submission — GeM Portal</h3>
           <p className="text-xs text-lime-700 dark:text-lime-400">Record GeM Portal submission confirmation and final offered bid price.</p>
         </div>
         <StageHeaderActions
@@ -2257,7 +2416,7 @@ export function Stage9Workspace({ bid, onRefresh }) {
       {showModal && (
         <CompleteStageModal
           title="Record GeM Submission"
-          description="Marks Stage 9 (GeM Submission) as complete. Enter final bid price submitted on GeM portal."
+          description="Marks Stage 7 (GeM Submission) as complete. Enter final bid price submitted on GeM portal."
           stageKey="GEM_SUBMISSION"
           bidId={bid.id}
           bid={bid}
@@ -2265,15 +2424,23 @@ export function Stage9Workspace({ bid, onRefresh }) {
           onComplete={handleConfettiSubmit}
         >
           <div className="space-y-1.5">
-            <Label className="text-xs font-medium">Final Submitted Bid Price (₹) *</Label>
-            <Input
-              type="number"
-              value={finalPrice}
-              onChange={(e) => setFinalPrice(e.target.value)}
-              placeholder="e.g. 1450000"
-              required
-            />
-            <p className="text-[10px] text-muted-foreground">This is the exact price submitted on the GeM portal. It will be saved as your official quoted price for all further comparisons.</p>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs font-medium">Final Submitted Bid Price (₹)</Label>
+              {priceSource === 'approved' && (
+                <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 dark:bg-emerald-950/30 dark:text-emerald-400">
+                  ✓ From Stage 3's approved pricing
+                </span>
+              )}
+              {priceSource === 'live' && (
+                <span className="text-[10px] font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 dark:bg-amber-950/30 dark:text-amber-400">
+                  ⚠ Not yet approved — live calculation
+                </span>
+              )}
+            </div>
+            <div className="h-9 px-3 border border-input rounded-md bg-muted/30 flex items-center text-sm font-mono font-bold text-foreground">
+              {finalPriceNum != null ? fmtMoney(finalPriceNum) : 'Not set — complete Stage 3 (Pricing Request) first'}
+            </div>
+            <p className="text-[10px] text-muted-foreground">This value comes from the Pricing Request stage's GlobX Total (incl. GST) — it is not editable here. It will be saved as your official quoted price for all further comparisons.</p>
           </div>
         </CompleteStageModal>
       )}
@@ -2310,7 +2477,7 @@ export function Stage10Workspace({ bid, onRefresh }) {
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-teal-200 bg-teal-50/50 dark:bg-teal-950/20 dark:border-teal-900/50 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-teal-900 dark:text-teal-300">Stage 10: Technical Evaluation</h3>
+          <h3 className="text-sm font-semibold text-teal-900 dark:text-teal-300">Stage 8: Technical Evaluation</h3>
           <p className="text-xs text-teal-700 dark:text-teal-400">Record official technical qualification status from procuring authority.</p>
         </div>
         <StageHeaderActions
@@ -2463,7 +2630,7 @@ export function Stage11Workspace({ bid, onRefresh }) {
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-cyan-200 bg-cyan-50/50 dark:bg-cyan-950/20 dark:border-cyan-900/50 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-cyan-900 dark:text-cyan-300">Stage 11: Financial Evaluation &amp; L1 Determination</h3>
+          <h3 className="text-sm font-semibold text-cyan-900 dark:text-cyan-300">Stage 9: Financial Evaluation &amp; L1 Determination</h3>
           <p className="text-xs text-cyan-700 dark:text-cyan-400">Record financial bid opening outcome (L1 / Won / Lost).</p>
         </div>
         <StageHeaderActions
@@ -2519,37 +2686,43 @@ export function Stage11Workspace({ bid, onRefresh }) {
               </label>
             </div>
           </div>
-          {/* Our GeM Submitted Price — pre-filled from Stage 9, always editable */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs font-medium">Our GeM Submitted Price (₹) *</Label>
-              {stage9Price ? (
-                <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 dark:bg-emerald-950/30 dark:text-emerald-400">
-                  ✓ Auto-filled from Stage 9
-                </span>
-              ) : (
-                <span className="text-[10px] text-amber-600 italic">Stage 9 price not set — enter manually</span>
+          {/* Our GeM Submitted Price — pre-filled from Stage 7, always editable. Our Rank sits
+              beside it (not beside L1 Company) since Rank qualifies our own price, not L1's. */}
+          <div className={`grid gap-3 ${outcome === 'LOST' ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-medium">Our GeM Submitted Price (₹) *</Label>
+                {stage9Price ? (
+                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 dark:bg-emerald-950/30 dark:text-emerald-400">
+                    ✓ Auto-filled from Stage 7
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-amber-600 italic">Stage 7 price not set — enter manually</span>
+                )}
+              </div>
+              <Input
+                type="number"
+                value={ourPrice}
+                onChange={e => setOurPrice(e.target.value)}
+                placeholder="Enter the exact price submitted on GeM portal"
+                className={`h-8 text-xs font-mono ${stage9Price && !ourPrice ? 'border-amber-300' : ''}`}
+              />
+              {ourPriceNum > 0 && (
+                <p className="text-[10px] text-muted-foreground">
+                  ≈ {fmtMoney(ourPriceNum)} — this is the price GlobX submitted on GeM Portal
+                </p>
               )}
             </div>
-            <Input
-              type="number"
-              value={ourPrice}
-              onChange={e => setOurPrice(e.target.value)}
-              placeholder="Enter the exact price submitted on GeM portal"
-              className={`h-8 text-xs font-mono ${stage9Price && !ourPrice ? 'border-amber-300' : ''}`}
-            />
-            {ourPriceNum > 0 && (
-              <p className="text-[10px] text-muted-foreground">
-                ≈ {fmtMoney(ourPriceNum)} — this is the price GlobX submitted on GeM Portal
-              </p>
+            {outcome === 'LOST' && (
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Our Rank (e.g. L2, L3)</Label>
+                <Input size="sm" value={ourRank} onChange={e => setOurRank(e.target.value)} placeholder="e.g. L2" className="h-8 text-xs"/>
+              </div>
             )}
           </div>
           {outcome === 'LOST' && (
             <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1"><Label className="text-xs">L1 Company Name</Label><Input size="sm" value={l1Name} onChange={e => setL1Name(e.target.value)} placeholder="Winning bidder name" className="h-8 text-xs"/></div>
-                <div className="space-y-1"><Label className="text-xs">Our Rank (e.g. L2, L3)</Label><Input size="sm" value={ourRank} onChange={e => setOurRank(e.target.value)} placeholder="e.g. L2" className="h-8 text-xs"/></div>
-              </div>
+              <div className="space-y-1"><Label className="text-xs">L1 Company Name</Label><Input size="sm" value={l1Name} onChange={e => setL1Name(e.target.value)} placeholder="Winning bidder name" className="h-8 text-xs"/></div>
               <div className="space-y-1"><Label className="text-xs">L1 Price (₹)</Label><Input type="number" size="sm" value={l1Price} onChange={e => setL1Price(e.target.value)} placeholder="Winning price" className="h-8 text-xs"/></div>
               {/* Auto price-diff calculation */}
               {l1PriceNum > 0 && ourPriceNum > 0 && (
@@ -2584,6 +2757,7 @@ export function Stage12Workspace({ bid, onRefresh }) {
   const [emdReturned, setEmdReturned] = useState(!!bid?.emd_returned)
   const [bgProceeded, setBgProceeded] = useState(!!bid?.bg_discharged)
   const [poReceived, setPoReceived] = useState(bid?.po_received_status === 'PO Received')
+  const [deliveryComplete, setDeliveryComplete] = useState(!!bid?.delivery_complete)
   const [bgTargetDate, setBgTargetDate] = useState(bid?.bg_target_date ? bid.bg_target_date.slice(0, 10) : '')
 
   const bgRequired = !!bid?.bg_required
@@ -2593,15 +2767,16 @@ export function Stage12Workspace({ bid, onRefresh }) {
     setEmdReturned(!!bid?.emd_returned)
     setBgProceeded(!!bid?.bg_discharged)
     setPoReceived(bid?.po_received_status === 'PO Received')
+    setDeliveryComplete(!!bid?.delivery_complete)
     setBgTargetDate(bid?.bg_target_date ? bid.bg_target_date.slice(0, 10) : '')
-  }, [bid?.emd_returned, bid?.bg_discharged, bid?.po_received_status, bid?.bg_target_date])
+  }, [bid?.emd_returned, bid?.bg_discharged, bid?.po_received_status, bid?.delivery_complete, bid?.bg_target_date])
 
   const handlePoReceivedToggle = async (checked) => {
     setPoReceived(checked)
     try {
       const res = await updateBid(bid.id, {
         po_received_status: checked ? 'PO Received' : 'Pending',
-        po_received_date: checked ? new Date().toISOString() : undefined,
+        po_received_date: checked ? new Date().toISOString() : null,
       })
       if (res.ok) {
         logStageMicroEvent(bid.id, {
@@ -2647,7 +2822,7 @@ export function Stage12Workspace({ bid, onRefresh }) {
     try {
       const res = await updateBid(bid.id, {
         emd_returned: checked,
-        emd_returned_date: checked ? new Date().toISOString() : undefined,
+        emd_returned_date: checked ? new Date().toISOString() : null,
       })
       if (res.ok) {
         logStageMicroEvent(bid.id, {
@@ -2670,17 +2845,40 @@ export function Stage12Workspace({ bid, onRefresh }) {
     try {
       const res = await updateBid(bid.id, {
         bg_discharged: checked,
-        bg_discharged_date: checked ? new Date().toISOString() : undefined,
+        bg_discharged_date: checked ? new Date().toISOString() : null,
       })
       if (res.ok) {
         logStageMicroEvent(bid.id, {
           fromStage: 'AWARD_HANDOVER',
           toStage: 'AWARD_HANDOVER',
           eventType: 'FINANCE',
-          transitionReason: checked ? 'Marked Bank Guarantee (BG) as Issued & Submitted' : 'Marked BG as Pending Submission',
+          transitionReason: checked ? 'Marked Bank Guarantee (BG) as Issued' : 'Marked BG as Pending Issuance',
           details: { bgDischarged: checked }
         })
-        toast.success(checked ? 'BG recorded as Issued & Submitted' : 'BG marked pending')
+        toast.success(checked ? 'BG recorded as Issued' : 'BG marked pending')
+        onRefresh()
+      }
+    } catch {
+      toast.error('Network error')
+    }
+  }
+
+  const handleDeliveryToggle = async (checked) => {
+    setDeliveryComplete(checked)
+    try {
+      const res = await updateBid(bid.id, {
+        delivery_complete: checked,
+        delivery_complete_date: checked ? new Date().toISOString() : null,
+      })
+      if (res.ok) {
+        logStageMicroEvent(bid.id, {
+          fromStage: 'AWARD_HANDOVER',
+          toStage: 'AWARD_HANDOVER',
+          eventType: 'FINANCE',
+          transitionReason: checked ? 'Marked Delivery / Work as Complete' : 'Delivery / Work Complete reverted to pending',
+          details: { deliveryComplete: checked }
+        })
+        toast.success(checked ? 'Delivery / Work marked Complete' : 'Delivery / Work marked pending')
         onRefresh()
       }
     } catch {
@@ -2691,7 +2889,7 @@ export function Stage12Workspace({ bid, onRefresh }) {
   const handleFinalClose = async (remarks) => {
     await recordBidOutcome(bid.id, {
       bid_outcome: 'WON',
-      outcome_reason: `Award & Handover Completed. PO Received: ${poReceived ? 'Yes' : 'Pending'}${emdExempted ? ', EMD: Exempted' : `, EMD Returned: ${emdReturned ? 'Yes' : 'No'}`}${bgRequired ? `, BG Submitted: ${bgProceeded ? 'Yes' : 'No'}` : ''}. ${remarks}`,
+      outcome_reason: `Award & Handover Completed. PO Received: ${poReceived ? 'Yes' : 'Pending'}${bgRequired ? `, BG Issued: ${bgProceeded ? 'Yes' : 'No'}` : ''}, Delivery/Work Complete: ${deliveryComplete ? 'Yes' : 'No'}${emdExempted ? ', EMD: Exempted' : `, EMD Returned: ${emdReturned ? 'Yes' : 'No'}`}. ${remarks}`,
     })
     confetti({ particleCount: 200, spread: 100 })
     onRefresh()
@@ -2702,12 +2900,16 @@ export function Stage12Workspace({ bid, onRefresh }) {
       toast.error('Mandatory: Purchase Order (PO) must be marked Received first.')
       return
     }
-    if (!emdExempted && !emdReturned) {
-      toast.error('Mandatory: EMD Return must be confirmed before closing this stage.')
-      return
-    }
     if (bgRequired && !bgProceeded) {
       toast.error('Mandatory: Bank Guarantee (BG) must be confirmed for this tender.')
+      return
+    }
+    if (!deliveryComplete) {
+      toast.error('Mandatory: Delivery / Work Complete must be confirmed before closing this stage.')
+      return
+    }
+    if (!emdExempted && !emdReturned) {
+      toast.error('Mandatory: EMD Return must be confirmed before closing this stage.')
       return
     }
     setShowModal(true)
@@ -2717,8 +2919,8 @@ export function Stage12Workspace({ bid, onRefresh }) {
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/20 dark:border-emerald-900/50 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-emerald-900 dark:text-emerald-300">Stage 12: Contract Award &amp; Operations Handover</h3>
-          <p className="text-xs text-emerald-700 dark:text-emerald-400">Confirm Purchase Order receipt, then Bank Guarantee (if required) and EMD return.</p>
+          <h3 className="text-sm font-semibold text-emerald-900 dark:text-emerald-300">Stage 10: Contract Award &amp; Operations Handover</h3>
+          <p className="text-xs text-emerald-700 dark:text-emerald-400">Confirm Purchase Order receipt, then Bank Guarantee (if required), Delivery/Work Complete, and EMD return — in that order.</p>
         </div>
         <StageHeaderActions
           bid={bid}
@@ -2733,16 +2935,18 @@ export function Stage12Workspace({ bid, onRefresh }) {
       <div className="p-4 rounded-xl border border-border bg-card space-y-3">
         <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Award &amp; Delivery Checklist</h4>
         <div className="space-y-2 text-xs">
-          {/* Step numbers adapt to which optional steps actually apply to this tender */}
+          {/* Order: PO Received -> Bank Guarantee Issued (if required) -> Delivery/Work
+              Complete -> EMD Returned (last). Step numbers adapt to which optional
+              steps actually apply to this tender. */}
           {(() => {
             let n = 1
             const poStep = n
-            const bgDateStep = bgRequired ? ++n : null
+            const bgStep = bgRequired ? ++n : null
+            const deliveryStep = ++n
             const emdStep = !emdExempted ? ++n : null
-            const bgSubmitStep = bgRequired ? ++n : null
             return (
               <>
-                {/* Step: PO Received — always enabled, gates everything else */}
+                {/* Step 1: PO Received — always enabled, gates everything else */}
                 <label className={`flex items-center gap-2 cursor-pointer p-2.5 rounded-lg border transition-colors ${
                   poReceived
                     ? 'border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 hover:bg-emerald-50 dark:hover:bg-emerald-950/30'
@@ -2763,43 +2967,59 @@ export function Stage12Workspace({ bid, onRefresh }) {
                   </div>
                 </label>
 
-                {/* Step (conditional): BG target date — only once PO received and BG required */}
-                {poReceived && bgRequired && (
-                  <div className="flex items-center gap-2 p-2.5 rounded-lg border border-border bg-muted/10">
-                    <div className="flex-1">
-                      <Label className="text-xs font-medium">{bgDateStep}. Bank Guarantee — to be issued by</Label>
-                      <Input type="date" value={bgTargetDate} onChange={e => handleBgTargetDateChange(e.target.value)} className="h-8 text-xs mt-1 max-w-[180px]" />
-                    </div>
-                  </div>
-                )}
-
-                {/* Step (conditional): EMD Returned — only when EMD wasn't exempted; enabled once PO received */}
-                {!emdExempted && (
-                  <label className={`flex items-center gap-2 p-2.5 rounded-lg border transition-colors ${
-                    poReceived ? 'cursor-pointer border-border hover:bg-muted/20' : 'cursor-not-allowed border-border/50 opacity-50'
-                  }`}>
-                    <input type="checkbox" checked={emdReturned} disabled={!poReceived} onChange={e => handleEmdToggle(e.target.checked)} className="rounded" />
-                    <div>
-                      <span className="font-medium">{emdStep}. EMD Returned by Procuring Authority</span>
-                      <p className="text-muted-foreground text-[10px]">{poReceived ? 'Confirm EMD amount has been refunded' : 'Unlocks once PO is marked Received'}</p>
-                      {bid?.emd_returned_date && <p className="text-muted-foreground text-[10px] font-mono">Returned: {new Date(bid.emd_returned_date).toLocaleDateString('en-IN')}</p>}
-                    </div>
-                  </label>
-                )}
-
-                {/* Step (conditional): BG Submitted — enabled only once PO received, shown only if BG required */}
+                {/* Step (conditional): Bank Guarantee Issued — enabled only once PO received, shown only if BG required */}
                 {bgRequired && (
                   <label className={`flex items-center gap-2 p-2.5 rounded-lg border transition-colors ${
                     poReceived ? 'cursor-pointer border-border hover:bg-muted/20' : 'cursor-not-allowed border-border/50 opacity-50'
                   }`}>
                     <input type="checkbox" checked={bgProceeded} disabled={!poReceived} onChange={e => handleBgToggle(e.target.checked)} className="rounded" />
-                    <div>
-                      <span className="font-medium">{bgSubmitStep}. Bank Guarantee (BG) Issued &amp; Submitted</span>
-                      <p className="text-muted-foreground text-[10px]">{poReceived ? 'Confirm BG has been submitted to the procuring authority' : 'Unlocks once PO is marked Received'}</p>
-                      {bid?.bg_discharged_date && <p className="text-muted-foreground text-[10px] font-mono">Submitted: {new Date(bid.bg_discharged_date).toLocaleDateString('en-IN')}</p>}
+                    <div className="flex-1">
+                      <span className="font-medium">{bgStep}. Bank Guarantee Issued</span>
+                      <p className="text-muted-foreground text-[10px]">{poReceived ? 'Confirm the Bank Guarantee has been issued to the procuring authority' : 'Unlocks once PO is marked Received'}</p>
+                      {bid?.bg_discharged_date && <p className="text-muted-foreground text-[10px] font-mono">Issued: {new Date(bid.bg_discharged_date).toLocaleDateString('en-IN')}</p>}
+                      {poReceived && (
+                        <div className="mt-1.5" onClick={e => e.preventDefault()}>
+                          <Label className="text-[10px] font-medium text-muted-foreground">BG to be issued by</Label>
+                          <Input type="date" value={bgTargetDate} onChange={e => handleBgTargetDateChange(e.target.value)} className="h-7 text-[11px] mt-0.5 max-w-[160px]" />
+                        </div>
+                      )}
                     </div>
                   </label>
                 )}
+
+                {/* Step: Delivery / Work Complete — enabled only once PO received (and BG issued, if required) */}
+                <label className={`flex items-center gap-2 p-2.5 rounded-lg border transition-colors ${
+                  poReceived && (!bgRequired || bgProceeded) ? 'cursor-pointer border-border hover:bg-muted/20' : 'cursor-not-allowed border-border/50 opacity-50'
+                }`}>
+                  <input type="checkbox" checked={deliveryComplete} disabled={!poReceived || (bgRequired && !bgProceeded)} onChange={e => handleDeliveryToggle(e.target.checked)} className="rounded" />
+                  <div>
+                    <span className="font-medium">{deliveryStep}. Delivery / Work Complete</span>
+                    <p className="text-muted-foreground text-[10px]">
+                      {!poReceived ? 'Unlocks once PO is marked Received' : (bgRequired && !bgProceeded) ? 'Unlocks once Bank Guarantee is Issued' : 'Confirm delivery, installation, or work has been completed'}
+                    </p>
+                    {bid?.delivery_complete_date && <p className="text-muted-foreground text-[10px] font-mono">Completed: {new Date(bid.delivery_complete_date).toLocaleDateString('en-IN')}</p>}
+                  </div>
+                </label>
+
+                {/* Step (conditional): EMD Returned — only when EMD wasn't exempted; last in the order,
+                    unlocked only once every step before it (PO, BG if required, Delivery) is done */}
+                {!emdExempted && (() => {
+                  const emdUnlocked = poReceived && (!bgRequired || bgProceeded) && deliveryComplete
+                  return (
+                    <label className={`flex items-center gap-2 p-2.5 rounded-lg border transition-colors ${
+                      emdUnlocked ? 'cursor-pointer border-border hover:bg-muted/20' : 'cursor-not-allowed border-border/50 opacity-50'
+                    }`}>
+                      <input type="checkbox" checked={emdReturned} disabled={!emdUnlocked} onChange={e => handleEmdToggle(e.target.checked)} className="rounded" />
+                      <div>
+                        <span className="font-medium">{emdStep}. EMD Returned by Procuring Authority</span>
+                        <p className="text-muted-foreground text-[10px]">
+                          {!poReceived ? 'Unlocks once PO is marked Received' : (bgRequired && !bgProceeded) ? 'Unlocks once Bank Guarantee is Issued' : !deliveryComplete ? 'Unlocks once Delivery / Work Complete is confirmed' : 'Confirm EMD amount has been refunded'}
+                        </p>
+                        {bid?.emd_returned_date && <p className="text-muted-foreground text-[10px] font-mono">Returned: {new Date(bid.emd_returned_date).toLocaleDateString('en-IN')}</p>}
+                      </div>
+                    </label>
+                  )
+                })()}
 
                 {emdExempted && (
                   <div className="flex items-center gap-2 p-2.5 rounded-lg border border-border/50 bg-muted/10 text-muted-foreground">
@@ -2978,10 +3198,9 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
   const isFullAccess = userRoles.some(r => fullAccessRoles.includes(r))
 
   if (!isFullAccess) {
-    // Stages 1, 2, 4, 7 (Internal Approval), 11 (Award & Delivery) for PRE_SALES
+    // Stages 1, 3, 6 (Internal Approval), 10 (Award & Delivery) for PRE_SALES
     const preSalesStages = [
       'DISCOVERED',
-      'ELIGIBILITY_ASSESSMENT',
       'PRICING_REQUEST',
       'INTERNAL_APPROVAL',
       'AWARD_HANDOVER'
@@ -3031,8 +3250,6 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
   switch (stage) {
     case 'DISCOVERED':
       return <Stage1Workspace bid={bid} onRefresh={onRefresh} />
-    case 'ELIGIBILITY_ASSESSMENT':
-      return <Stage2Workspace bid={bid} onRefresh={onRefresh} />
     case 'OEM_AUTHORIZATION_REQUEST':
       return <Stage3Workspace bid={bid} onRefresh={onRefresh} />
     case 'PRICING_REQUEST':

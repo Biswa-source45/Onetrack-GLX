@@ -505,7 +505,7 @@ function StageHistoryTab({ bidId, bid }) {
   const [selectedStageFilter, setSelectedStageFilter] = useState(null)
 
   const WORKFLOW_STAGES = [
-    'DISCOVERED', 'ELIGIBILITY_ASSESSMENT', 'OEM_AUTHORIZATION_REQUEST',
+    'DISCOVERED', 'OEM_AUTHORIZATION_REQUEST',
     'PRICING_REQUEST', 'DOCUMENT_CHECKLIST_PREPARATION', 'EMD_PROCESSING',
     'INTERNAL_APPROVAL', 'GEM_SUBMISSION',
     'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER'
@@ -574,9 +574,13 @@ function StageHistoryTab({ bidId, bid }) {
     return acc
   }, {})
 
+  // Right-panel preview index: hover previews without touching the click-selection
+  // below, so hovering across a densely packed list doesn't repaint every card's
+  // border/ring/scale on each pointer move (that coupling was the flicker bug).
   const activeIndex = hoveredIndex !== null ? hoveredIndex : (selectedIndex !== null ? selectedIndex : 0)
   const activeEntry = filteredHistory[activeIndex] || filteredHistory[0]
   const isLatestActive = activeIndex === 0 && filterType === 'ALL' && !searchQuery && !selectedStageFilter
+  const listSelectedIndex = selectedIndex !== null ? selectedIndex : 0
 
   return (
     <div className="space-y-6">
@@ -701,8 +705,11 @@ function StageHistoryTab({ bidId, bid }) {
 
             <div className="space-y-4">
               {filteredHistory.map((h, i) => {
-                const isSelected = i === activeIndex
-                const isLatest = i === 0 && isLatestActive
+                // Click-driven only — deliberately NOT tied to hoveredIndex/activeIndex,
+                // so moving the mouse across a densely packed list doesn't repaint
+                // every card's border/ring/scale on each pointer move (flicker bug).
+                const isSelected = i === listSelectedIndex
+                const isLatest = i === 0 && filterType === 'ALL' && !searchQuery && !selectedStageFilter
                 const IconComponent = STAGE_ICONS[h.to_stage] || Clock
                 const badgeInfo = getEventTypeBadge(h.event_type)
 
@@ -1154,26 +1161,10 @@ const STAGE_GUIDE = {
       'Identify the procuring authority and department',
       'Select appropriate bid type (BID / BID to RA)',
     ],
-    note: 'Advance to Eligibility Assessment once all basic information is captured.',
-  },
-  ELIGIBILITY_ASSESSMENT: {
-    title: '2. Eligibility Assessment',
-    GuideIcon: ShieldCheck,
-    color: 'text-blue-600',
-    bg: 'bg-blue-50 border-blue-200 dark:bg-blue-950/20 dark:border-blue-800',
-    description: 'Review tender eligibility criteria: turnover, experience, certifications, and sector qualifications.',
-    responsible: 'Manager / Bid Executive',
-    actions: [
-      'Review minimum turnover requirements',
-      'Verify experience certificate eligibility',
-      'Check sector/industry qualification criteria',
-      'Confirm no conflict-of-interest or blacklisting',
-      'Record eligibility decision in remarks',
-    ],
-    note: 'Advance to OEM Authorization Request if GlobX is eligible to bid.',
+    note: 'Advance to OEM Authorization Request once all basic information is captured (tenders are only added after eligibility has already been confirmed).',
   },
   OEM_AUTHORIZATION_REQUEST: {
-    title: '3. OEM Authorization',
+    title: '2. OEM Authorization',
     GuideIcon: Building2,
     color: 'text-indigo-600',
     bg: 'bg-indigo-50 border-indigo-200 dark:bg-indigo-950/20 dark:border-indigo-800',
@@ -1189,7 +1180,7 @@ const STAGE_GUIDE = {
     note: 'Advance to Pricing Request once OEM authorization letters are received.',
   },
   PRICING_REQUEST: {
-    title: '4. Pricing Request',
+    title: '3. Pricing Request',
     GuideIcon: DollarSign,
     color: 'text-violet-600',
     bg: 'bg-violet-50 border-violet-200 dark:bg-violet-950/20 dark:border-violet-800',
@@ -1205,7 +1196,7 @@ const STAGE_GUIDE = {
     note: 'Advance to Document Checklist Preparation once commercial pricing is finalized.',
   },
   DOCUMENT_CHECKLIST_PREPARATION: {
-    title: '5. Document Checklist Preparation',
+    title: '4. Document Checklist Preparation',
     GuideIcon: CheckSquare,
     color: 'text-purple-600',
     bg: 'bg-purple-50 border-purple-200 dark:bg-purple-950/20 dark:border-purple-800',
@@ -1221,7 +1212,7 @@ const STAGE_GUIDE = {
     note: 'Advance to EMD Processing once all documents are compiled and checklist is complete.',
   },
   EMD_PROCESSING: {
-    title: '6. EMD Processing',
+    title: '5. EMD Processing',
     GuideIcon: Coins,
     color: 'text-amber-600',
     bg: 'bg-amber-50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800',
@@ -1237,7 +1228,7 @@ const STAGE_GUIDE = {
     note: 'Advance to Internal Approval once EMD is successfully submitted.',
   },
   INTERNAL_APPROVAL: {
-    title: '7. Internal Approval',
+    title: '6. Internal Approval',
     GuideIcon: Eye,
     color: 'text-yellow-600',
     bg: 'bg-yellow-50 border-yellow-200 dark:bg-yellow-950/20 dark:border-yellow-800',
@@ -1253,7 +1244,7 @@ const STAGE_GUIDE = {
     note: 'Advance to GeM Submission only after internal management approval is received.',
   },
   GEM_SUBMISSION: {
-    title: '8. GeM Portal Submission',
+    title: '7. GeM Portal Submission',
     GuideIcon: Send,
     color: 'text-lime-700',
     bg: 'bg-lime-50 border-lime-200 dark:bg-lime-950/20 dark:border-lime-800',
@@ -1269,7 +1260,7 @@ const STAGE_GUIDE = {
     note: 'After successful submission, advance to Technical Evaluation stage.',
   },
   TECHNICAL_EVALUATION: {
-    title: '9. Technical Evaluation',
+    title: '8. Technical Evaluation',
     GuideIcon: ShieldCheck,
     color: 'text-teal-600',
     bg: 'bg-teal-50 border-teal-200 dark:bg-teal-950/20 dark:border-teal-800',
@@ -1285,7 +1276,7 @@ const STAGE_GUIDE = {
     note: 'Advance to Financial Evaluation after technical qualification is confirmed.',
   },
   FINANCIAL_EVALUATION: {
-    title: '10. Financial Evaluation',
+    title: '9. Financial Evaluation',
     GuideIcon: Activity,
     color: 'text-cyan-600',
     bg: 'bg-cyan-50 border-cyan-200 dark:bg-cyan-950/20 dark:border-cyan-800',
@@ -1301,7 +1292,7 @@ const STAGE_GUIDE = {
     note: 'Advance to Award & Handover if GlobX wins. Record outcome (WON/LOST) accordingly.',
   },
   AWARD_HANDOVER: {
-    title: '11. Award & Delivery Handover',
+    title: '10. Award & Delivery Handover',
     GuideIcon: Trophy,
     color: 'text-emerald-600',
     bg: 'bg-emerald-50 border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800',

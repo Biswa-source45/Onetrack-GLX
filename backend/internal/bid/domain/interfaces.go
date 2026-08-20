@@ -46,6 +46,7 @@ type BidService interface {
 	UpdateBid(ctx context.Context, id string, req *UpdateBidRequest, actorID string) error
 	TransitionStage(ctx context.Context, id string, req *TransitionStageRequest, actorID string) (*TransitionResult, error)
 	GetStageHistory(ctx context.Context, id string) ([]StageHistoryResponse, error)
+	AddMicroEvent(ctx context.Context, bidID string, req *AddMicroEventRequest, actorID string) (*StageHistoryResponse, error)
 	GetGlobalAuditLogs(ctx context.Context, limit int) ([]GlobalAuditItem, error)
 	GetTenderPerformanceMatrix(ctx context.Context) ([]TenderOwnerPerformanceStat, error)
 	AddMember(ctx context.Context, bidID string, req *AddMemberRequest, actorID string) error

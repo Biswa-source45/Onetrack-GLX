@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -15,13 +16,15 @@ const (
 	CreationModeIntelligence = "INTELLIGENCE"
 )
 
-// 11 Workflow stages matching OneTrack V2 GeM migration plan.
+// 10 Workflow stages matching OneTrack V2 GeM migration plan.
 // BID_DOCUMENTATION was removed — its only real function (stakeholder
 // notification) folded into DOCUMENT_CHECKLIST_PREPARATION, since document
 // tracking already lives there end-to-end.
+// ELIGIBILITY_ASSESSMENT was removed — tenders are only added to the system
+// after eligibility has already been determined, so a dedicated stage for it
+// was redundant.
 const (
 	StageDiscovered              = "DISCOVERED"
-	StageEligibilityAssessment   = "ELIGIBILITY_ASSESSMENT"
 	StageOEMAuthorizationRequest = "OEM_AUTHORIZATION_REQUEST"
 	StagePricingRequest          = "PRICING_REQUEST"
 	StageDocumentChecklistPrep   = "DOCUMENT_CHECKLIST_PREPARATION"
@@ -39,7 +42,6 @@ const (
 
 var OrderedWorkflowStages = []string{
 	StageDiscovered,
-	StageEligibilityAssessment,
 	StageOEMAuthorizationRequest,
 	StagePricingRequest,
 	StageDocumentChecklistPrep,
@@ -156,12 +158,15 @@ type BidWorkspace struct {
 	FinanceAlerted    bool   `json:"finance_alerted"`
 	FinanceAlertAt    *time.Time `json:"finance_alert_at,omitempty"`
 	EMDReady          bool   `json:"emd_ready"`
+	EMDReadyDate      *time.Time `json:"emd_ready_date,omitempty"`
 	EMDReturned       bool   `json:"emd_returned"`
 	EMDReturnedDate   *time.Time `json:"emd_returned_date,omitempty"`
 	BGDischarged      bool   `json:"bg_discharged"`
 	BGDischargedDate  *time.Time `json:"bg_discharged_date,omitempty"`
 	BGTargetDate      *time.Time `json:"bg_target_date,omitempty"`
 	POReceivedDate    *time.Time `json:"po_received_date,omitempty"`
+	DeliveryComplete       bool       `json:"delivery_complete"`
+	DeliveryCompleteDate   *time.Time `json:"delivery_complete_date,omitempty"`
 	SubmissionDone    bool   `json:"submission_done"`
 	GemSubmissionPrice *float64 `json:"gem_submission_price,omitempty"`
 	FinalPrice         *float64 `json:"final_price,omitempty"`
@@ -239,13 +244,27 @@ type BidWorkspaceMember struct {
 }
 
 type BidStageHistory struct {
-	ID               string    `json:"id"`
-	BidID            string    `json:"bid_id"`
-	FromStage        *string   `json:"from_stage,omitempty"`
-	ToStage          string    `json:"to_stage"`
-	TransitionReason *string   `json:"transition_reason,omitempty"`
-	TransitionedBy   string    `json:"transitioned_by"`
-	CreatedAt        time.Time `json:"created_at"`
+	ID               string          `json:"id"`
+	BidID            string          `json:"bid_id"`
+	FromStage        *string         `json:"from_stage,omitempty"`
+	ToStage          string          `json:"to_stage"`
+	TransitionReason *string         `json:"transition_reason,omitempty"`
+	TransitionedBy   string          `json:"transitioned_by"`
+	EventType        *string         `json:"event_type,omitempty"`
+	Details          json.RawMessage `json:"details,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+}
+
+// AddMicroEventRequest is the client-facing payload for POST /bids/:id/history —
+// used for granular audit events (pricing changes, alerts sent, OEM/checklist
+// edits, etc.) that aren't full workflow-stage transitions but still need to be
+// visible to every user, not just the browser that performed the action.
+type AddMicroEventRequest struct {
+	FromStage        *string         `json:"from_stage"`
+	ToStage          string          `json:"to_stage" binding:"required"`
+	EventType        string          `json:"event_type" binding:"required"`
+	TransitionReason *string         `json:"transition_reason"`
+	Details          json.RawMessage `json:"details"`
 }
 
 // ────────────────────────────────────────
@@ -349,12 +368,15 @@ type UpdateBidRequest struct {
 	// Stage tracking updates
 	FinanceAlerted    *bool    `json:"finance_alerted,omitempty"`
 	EMDReady          *bool    `json:"emd_ready,omitempty"`
+	EMDReadyDate      *string  `json:"emd_ready_date,omitempty"`
 	EMDReturned       *bool    `json:"emd_returned,omitempty"`
 	EMDReturnedDate   *string  `json:"emd_returned_date,omitempty"`
 	BGDischarged      *bool    `json:"bg_discharged,omitempty"`
 	BGDischargedDate  *string  `json:"bg_discharged_date,omitempty"`
 	BGTargetDate      *string  `json:"bg_target_date,omitempty"`
 	POReceivedDate    *string  `json:"po_received_date,omitempty"`
+	DeliveryComplete      *bool   `json:"delivery_complete,omitempty"`
+	DeliveryCompleteDate  *string `json:"delivery_complete_date,omitempty"`
 	SubmissionDone    *bool    `json:"submission_done,omitempty"`
 	GemSubmissionPrice *float64 `json:"gem_submission_price,omitempty"`
 	QuotedPrice        *float64 `json:"quoted_price,omitempty"`
@@ -432,12 +454,14 @@ type MemberResponse struct {
 }
 
 type StageHistoryResponse struct {
-	ID               string      `json:"id"`
-	FromStage        *string     `json:"from_stage"`
-	ToStage          string      `json:"to_stage"`
-	TransitionReason *string     `json:"transition_reason"`
-	TransitionedBy   UserSummary `json:"transitioned_by"`
-	CreatedAt        time.Time   `json:"created_at"`
+	ID               string          `json:"id"`
+	FromStage        *string         `json:"from_stage"`
+	ToStage          string          `json:"to_stage"`
+	TransitionReason *string         `json:"transition_reason"`
+	TransitionedBy   UserSummary     `json:"transitioned_by"`
+	EventType        *string         `json:"event_type,omitempty"`
+	Details          json.RawMessage `json:"details,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
 }
 
 type BidResponse struct {
@@ -500,12 +524,15 @@ type BidResponse struct {
 	BidResult              *string          `json:"bid_result,omitempty"`
 	FinanceAlerted         bool             `json:"finance_alerted"`
 	EMDReady               bool             `json:"emd_ready"`
+	EMDReadyDate           *time.Time       `json:"emd_ready_date,omitempty"`
 	EMDReturned            bool             `json:"emd_returned"`
 	EMDReturnedDate        *time.Time       `json:"emd_returned_date,omitempty"`
 	BGDischarged           bool             `json:"bg_discharged"`
 	BGDischargedDate       *time.Time       `json:"bg_discharged_date,omitempty"`
 	BGTargetDate           *time.Time       `json:"bg_target_date,omitempty"`
 	POReceivedDate         *time.Time       `json:"po_received_date,omitempty"`
+	DeliveryComplete       bool             `json:"delivery_complete"`
+	DeliveryCompleteDate   *time.Time       `json:"delivery_complete_date,omitempty"`
 	SubmissionDone         bool             `json:"submission_done"`
 	GemSubmissionPrice     *float64         `json:"gem_submission_price,omitempty"`
 	FinalPrice             *float64         `json:"final_price,omitempty"`
@@ -564,10 +591,16 @@ type BidListItem struct {
 	SubmissionStatus          *string     `json:"submission_status,omitempty"`
 	FinancialEvaluationStatus *string     `json:"financial_evaluation_status,omitempty"`
 	POReceivedStatus          *string     `json:"po_received_status,omitempty"`
+	POReceivedDate            *time.Time  `json:"po_received_date,omitempty"`
 	EMDExempted               bool        `json:"emd_exempted"`
 	SubmissionDone            bool        `json:"submission_done"`
 	EMDReady                  bool        `json:"emd_ready"`
+	EMDReadyDate              *time.Time  `json:"emd_ready_date,omitempty"`
 	EMDReturned               bool        `json:"emd_returned"`
+	BGDischargedDate          *time.Time  `json:"bg_discharged_date,omitempty"`
+	DeliveryComplete          bool        `json:"delivery_complete"`
+	DeliveryCompleteDate      *time.Time  `json:"delivery_complete_date,omitempty"`
+	QuotedPrice               *float64    `json:"quoted_price,omitempty"`
 	FinalBidValue             *float64    `json:"final_bid_value,omitempty"`
 	TechnicalResult           *string     `json:"technical_result,omitempty"`
 	FinancialResult           *string     `json:"financial_result,omitempty"`

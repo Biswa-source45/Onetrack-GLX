@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  X, Loader2, Building2, FileText, DollarSign, Calendar,
+  X, Loader2, Building2, FileText, DollarSign,
   ChevronLeft, Zap, PenLine, ShieldCheck, ChevronDown, Check,
   Plus, Trash2, HelpCircle, CheckSquare, Award, ArrowRight, ArrowLeft
 } from 'lucide-react'
@@ -28,6 +28,10 @@ const PORTAL_SOURCES = ['GeM', 'CPPP', 'eProcure', 'Others']
 const BID_TYPES      = ['BID', 'BID_TO_RA']
 const EMD_TYPES      = ['ONLINE', 'DD']
 const SCOPE_TYPES    = ['Supply', 'Implementation', 'Support']
+const CATEGORY_OPTIONS = [
+  'End computing', 'IT infra', 'Non-IT infra', 'Security', 'Cloud',
+  'Servilance', 'Software', 'Manpower-augmentation',
+]
 
 const BIDDER_SUGGESTIONS = [
   'Experience Certificate',
@@ -41,11 +45,6 @@ const OEM_SUGGESTIONS = [
   'MAF Certificate',
   'MII Certificate',
   'No Malicious Certificate'
-]
-
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'
 ]
 
 function inputCls(err) {
@@ -157,27 +156,11 @@ export function AddTenderPage() {
         } else {
           updated.emd_exempted = false
         }
-      } else if (field === 'end_date' && value) {
-        const d = new Date(value)
-        if (!isNaN(d.getTime())) {
-          const year = d.getFullYear()
-          const monthStr = String(d.getMonth() + 1).padStart(2, '0')
-          updated.target_month_date = `${year}-${monthStr}-01`
-        }
       }
 
       return updated
     })
     setErrors((e) => ({ ...e, [field]: undefined }))
-  }
-
-  // Calculate target month display
-  let targetMonthDisplay = 'Auto-calculated from End Date'
-  if (form.end_date) {
-    const d = new Date(form.end_date)
-    if (!isNaN(d.getTime())) {
-      targetMonthDisplay = `${MONTHS[d.getMonth()]} ${d.getFullYear()}`
-    }
   }
 
   function validateStep(currentStep) {
@@ -399,6 +382,17 @@ export function AddTenderPage() {
                       </Field>
                     </div>
 
+                    {/* Dates */}
+                    <Field label="Start Date">
+                      <Input type="date" value={form.start_date} onChange={(e) => set('start_date', e.target.value)}
+                        className={inputCls()} />
+                    </Field>
+
+                    <Field label="End Date">
+                      <Input type="datetime-local" value={form.end_date} onChange={(e) => set('end_date', e.target.value)}
+                        className={inputCls()} />
+                    </Field>
+
                     {/* GeM Bid Number */}
                     <Field label="GeM Bid Number" tooltip="Government E-Marketplace registration ID.">
                       <Input value={form.gem_bid_no} onChange={(e) => set('gem_bid_no', e.target.value)}
@@ -445,8 +439,21 @@ export function AddTenderPage() {
 
                     {/* Category / Scope Group */}
                     <Field label="Category / Scope Group">
-                      <Input value={form.category} onChange={(e) => set('category', e.target.value)}
-                        placeholder="e.g. Networking & Cybersecurity" className={inputCls()} />
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm" className="w-full h-9 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5">
+                            <span>{form.category || 'Select category...'}</span>
+                            <ChevronDown className="size-3 text-muted-foreground ml-auto" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="w-[220px]">
+                          {CATEGORY_OPTIONS.map((c) => (
+                            <DropdownMenuItem key={c} onSelect={() => set('category', c)}>
+                              {c}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </Field>
 
                     {/* Authority Organization */}
@@ -629,25 +636,6 @@ export function AddTenderPage() {
                         )}
                       </div>
                     </div>
-
-                    {/* Dates */}
-                    <Field label="Start Date">
-                      <Input type="date" value={form.start_date} onChange={(e) => set('start_date', e.target.value)}
-                        className={inputCls()} />
-                    </Field>
-
-                    <Field label="End Date">
-                      <Input type="datetime-local" value={form.end_date} onChange={(e) => set('end_date', e.target.value)}
-                        className={inputCls()} />
-                    </Field>
-
-                    {/* Auto-selected Month */}
-                    <Field label="Target Month (Auto-calculated)" tooltip="Automatically selected based on the End Date.">
-                      <div className="h-9 px-3 border border-input rounded-md bg-muted/30 flex items-center text-xs font-medium text-foreground">
-                        <Calendar className="size-3.5 text-primary mr-2 shrink-0" />
-                        {targetMonthDisplay}
-                      </div>
-                    </Field>
 
                   </div>
                 </div>
