@@ -1057,8 +1057,19 @@ func (r *postgresBidRepo) AddChecklistWithGroup(ctx context.Context, bidID strin
 	return &c, nil
 }
 
-func (r *postgresBidRepo) GetTenderPerformanceMatrix(ctx context.Context) ([]domain.TenderOwnerPerformanceStat, error) {
-	rows, err := r.pool.Query(ctx, `
+func (r *postgresBidRepo) GetTenderPerformanceMatrix(ctx context.Context, ownerID string) ([]domain.TenderOwnerPerformanceStat, error) {
+	// archived_at IS NULL is applied once here (not per-FILTER) so every
+	// column — including "Total" — consistently excludes binned/deleted
+	// tenders; previously "Total" counted them while some other columns
+	// didn't, so the matrix could disagree with the tenders list itself.
+	where := "WHERE b.archived_at IS NULL"
+	args := []interface{}{}
+	if ownerID != "" {
+		where += " AND u.id = $1"
+		args = append(args, ownerID)
+	}
+
+	query := fmt.Sprintf(`
 		SELECT
 			u.id                                             AS user_id,
 			COALESCE(u.full_name, u.username)                AS full_name,
@@ -1074,31 +1085,26 @@ func (r *postgresBidRepo) GetTenderPerformanceMatrix(ctx context.Context) ([]dom
 			)                                                AS role,
 			COUNT(*)                                         AS total,
 			COUNT(*) FILTER (
-				WHERE b.archived_at IS NULL
-				AND b.bid_status NOT IN ('WON', 'LOST', 'CANCELLED')
+				WHERE b.bid_status NOT IN ('WON', 'LOST', 'CANCELLED')
 				AND b.workflow_stage NOT IN ('WON', 'LOST', 'CANCELLED', 'GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER')
 				AND COALESCE(b.bid_outcome, '') NOT IN ('WON', 'LOST', 'CANCELLED')
 				AND COALESCE(b.technical_result, '') != 'DISQUALIFIED'
 			)                                                AS active,
 			COUNT(*) FILTER (
-				WHERE b.archived_at IS NULL
-				AND (b.submission_done = true
+				WHERE (b.submission_done = true
 					OR b.workflow_stage IN ('GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER')
 					OR b.submission_status = 'SUBMITTED'
 					OR b.bid_status = 'SUBMITTED')
 			)                                                AS submitted,
 			COUNT(*) FILTER (
-				WHERE b.archived_at IS NULL
-				AND (b.workflow_stage = 'TECHNICAL_EVALUATION'
-					OR b.bid_status = 'TECHNICAL_EVALUATION')
+				WHERE b.workflow_stage = 'TECHNICAL_EVALUATION'
+					OR b.bid_status = 'TECHNICAL_EVALUATION'
 			)                                                AS tech_eval,
 			COUNT(*) FILTER (
-				WHERE b.archived_at IS NULL
-				AND b.workflow_stage = 'FINANCIAL_EVALUATION'
+				WHERE b.workflow_stage = 'FINANCIAL_EVALUATION'
 			)                                                AS fin_eval,
 			COUNT(*) FILTER (
-				WHERE b.archived_at IS NULL
-				AND b.workflow_stage = 'AWARD_HANDOVER'
+				WHERE b.workflow_stage = 'AWARD_HANDOVER'
 			)                                                AS award,
 			COUNT(*) FILTER (
 				WHERE b.bid_status = 'WON'
@@ -1118,9 +1124,12 @@ func (r *postgresBidRepo) GetTenderPerformanceMatrix(ctx context.Context) ([]dom
 			)                                                AS cancelled
 		FROM bid.bid_workspaces b
 		JOIN auth.users u ON u.id = b.bid_owner_id
+		%s
 		GROUP BY u.id, u.full_name, u.username
 		ORDER BY COUNT(*) DESC, COALESCE(u.full_name, u.username) ASC
-	`)
+	`, where)
+
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("performance matrix query: %w", err)
 	}

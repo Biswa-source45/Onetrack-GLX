@@ -23,7 +23,9 @@ type BidRepository interface {
 	AddStageHistory(ctx context.Context, history *BidStageHistory) error
 	GetStageHistory(ctx context.Context, bidID string) ([]BidStageHistory, error)
 	GetGlobalAuditLogs(ctx context.Context, limit int) ([]GlobalAuditItem, error)
-	GetTenderPerformanceMatrix(ctx context.Context) ([]TenderOwnerPerformanceStat, error)
+	// GetTenderPerformanceMatrix returns per-owner stats. ownerID scopes the
+	// result to a single owner when non-empty; empty returns every owner.
+	GetTenderPerformanceMatrix(ctx context.Context, ownerID string) ([]TenderOwnerPerformanceStat, error)
 
 	// User lookup for response enrichment
 	GetUserSummary(ctx context.Context, userID string) (*UserSummary, error)
@@ -48,7 +50,10 @@ type BidService interface {
 	GetStageHistory(ctx context.Context, id string) ([]StageHistoryResponse, error)
 	AddMicroEvent(ctx context.Context, bidID string, req *AddMicroEventRequest, actorID string) (*StageHistoryResponse, error)
 	GetGlobalAuditLogs(ctx context.Context, limit int) ([]GlobalAuditItem, error)
-	GetTenderPerformanceMatrix(ctx context.Context) ([]TenderOwnerPerformanceStat, error)
+	// GetTenderPerformanceMatrix returns per-owner stats, scoped to ownerID
+	// when non-empty (used to restrict individual-contributor roles to their
+	// own row) or every owner when empty (management roles).
+	GetTenderPerformanceMatrix(ctx context.Context, ownerID string) ([]TenderOwnerPerformanceStat, error)
 	AddMember(ctx context.Context, bidID string, req *AddMemberRequest, actorID string) error
 	RemoveMember(ctx context.Context, bidID string, userID string) error
 	RecordOutcome(ctx context.Context, id string, req *RecordOutcomeRequest) error

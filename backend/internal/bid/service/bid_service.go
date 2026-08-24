@@ -613,8 +613,8 @@ func (s *bidService) GetGlobalAuditLogs(ctx context.Context, limit int) ([]domai
 	return s.repo.GetGlobalAuditLogs(ctx, limit)
 }
 
-func (s *bidService) GetTenderPerformanceMatrix(ctx context.Context) ([]domain.TenderOwnerPerformanceStat, error) {
-	return s.repo.GetTenderPerformanceMatrix(ctx)
+func (s *bidService) GetTenderPerformanceMatrix(ctx context.Context, ownerID string) ([]domain.TenderOwnerPerformanceStat, error) {
+	return s.repo.GetTenderPerformanceMatrix(ctx, ownerID)
 }
 
 

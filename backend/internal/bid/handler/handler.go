@@ -137,8 +137,26 @@ func (h *BidHandler) GetGlobalAuditLogs(c *gin.Context) {
 	response.Success(c, http.StatusOK, "Audit history retrieved successfully", logs)
 }
 
+// managementRoles can see every owner's row in the performance matrix;
+// everyone else (Bid Executive, Pre-Sales, Finance, ...) only sees their own.
+var managementRoles = map[string]bool{"SUPER_ADMIN": true, "ADMIN": true, "MANAGER": true}
+
 func (h *BidHandler) GetTenderPerformanceMatrix(c *gin.Context) {
-	stats, err := h.svc.GetTenderPerformanceMatrix(c.Request.Context())
+	ownerID := ""
+	rolesVal, _ := c.Get("roles")
+	roles, _ := rolesVal.([]string)
+	isManagement := false
+	for _, r := range roles {
+		if managementRoles[r] {
+			isManagement = true
+			break
+		}
+	}
+	if !isManagement {
+		ownerID = c.GetString("user_id")
+	}
+
+	stats, err := h.svc.GetTenderPerformanceMatrix(c.Request.Context(), ownerID)
 	if err != nil {
 		response.InternalError(c, err.Error())
 		return

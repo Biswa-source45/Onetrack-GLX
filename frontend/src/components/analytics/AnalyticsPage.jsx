@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/card'
 import { listBids, getTenderPerformanceMatrix } from '../../services/bids'
 import { tokenStorage } from '../../services/auth'
+import { usePermissions } from '../../hooks/usePermissions'
 
 // Currency Formatter Helper
 function formatCurrency(val) {
@@ -37,23 +38,36 @@ function formatCurrency(val) {
   return `₹${val.toLocaleString('en-IN')}`
 }
 
+// Matches the real 10-stage pipeline (WORKFLOW_STAGES_ORDERED in services/bids.js)
+// exactly — this used to only have 'PREPARATION'/'APPROVAL' placeholder keys
+// that never matched any real bid.workflow_stage value, so several stages
+// (OEM Authorization, Pricing Request, Document Checklist, EMD Processing,
+// Internal Approval) silently fell back to gray/de-slugified rendering
+// instead of their real color/label, and the milestone plot diagram below
+// skipped them and showed two permanently-zero data points instead.
 const STAGE_COLORS = {
-  DISCOVERED: '#3b82f6',             // Blue
-  PREPARATION: '#6366f1',            // Indigo
-  APPROVAL: '#8b5cf6',               // Purple
-  GEM_SUBMISSION: '#06b6d4',         // Cyan
-  TECHNICAL_EVALUATION: '#f59e0b',   // Amber
-  FINANCIAL_EVALUATION: '#ec4899',   // Pink
-  AWARD_HANDOVER: '#a855f7',         // Bright Purple
-  WON: '#10b981',                    // Emerald Green
-  LOST: '#ef4444',                   // Rose Red
-  CANCELLED: '#6b7280'               // Slate Gray
+  DISCOVERED: '#3b82f6',                     // Blue
+  OEM_AUTHORIZATION_REQUEST: '#6366f1',       // Indigo
+  PRICING_REQUEST: '#8b5cf6',                 // Violet
+  DOCUMENT_CHECKLIST_PREPARATION: '#a855f7',  // Purple
+  EMD_PROCESSING: '#f59e0b',                  // Amber
+  INTERNAL_APPROVAL: '#eab308',               // Yellow
+  GEM_SUBMISSION: '#84cc16',                  // Lime
+  TECHNICAL_EVALUATION: '#14b8a6',            // Teal
+  FINANCIAL_EVALUATION: '#ec4899',            // Pink
+  AWARD_HANDOVER: '#06b6d4',                  // Cyan
+  WON: '#10b981',                             // Emerald Green
+  LOST: '#ef4444',                            // Rose Red
+  CANCELLED: '#6b7280'                        // Slate Gray
 }
 
 const STAGE_LABELS = {
-  DISCOVERED: 'Discovered Tenders',
-  PREPARATION: 'In Preparation',
-  APPROVAL: 'Internal Approval',
+  DISCOVERED: 'Discovered',
+  OEM_AUTHORIZATION_REQUEST: 'OEM Authorization',
+  PRICING_REQUEST: 'Pricing Request',
+  DOCUMENT_CHECKLIST_PREPARATION: 'Document Checklist',
+  EMD_PROCESSING: 'EMD Processing',
+  INTERNAL_APPROVAL: 'Internal Approval',
   GEM_SUBMISSION: 'GeM Portal Submission',
   TECHNICAL_EVALUATION: 'Technical Evaluation',
   FINANCIAL_EVALUATION: 'Financial Evaluation',
@@ -69,6 +83,23 @@ const ROLE_BADGES = {
   MANAGER: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
   BID_EXECUTIVE: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
   USER: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
+}
+
+// Resolves a bid's "effective" stage bucket for charting — mirrors the
+// precedence the backend itself uses (postgres.go's derived_status CASE and
+// the performance-matrix won/lost/cancelled FILTERs): bid_status/bid_outcome
+// win over the raw workflow_stage. This matters because RecordOutcome no
+// longer mutates workflow_stage (fixed in an earlier round to stop it
+// corrupting the stage pointer) — so a WON bid's workflow_stage is normally
+// still 'AWARD_HANDOVER' (or earlier), not the literal string 'WON'. Bucketing
+// straight off workflow_stage (as this used to) silently dropped won/lost
+// bids into their pipeline-stage bucket instead of "Won"/"Lost", which is
+// what made the stage charts and the milestone plot look inaccurate.
+function getEffectiveStage(b) {
+  if (b.bid_status === 'WON' || b.workflow_stage === 'WON' || b.bid_outcome === 'WON') return 'WON'
+  if (b.bid_status === 'LOST' || b.workflow_stage === 'LOST' || b.bid_outcome === 'LOST' || b.technical_result === 'DISQUALIFIED') return 'LOST'
+  if (b.bid_status === 'CANCELLED' || b.workflow_stage === 'CANCELLED' || b.bid_outcome === 'CANCELLED') return 'CANCELLED'
+  return b.workflow_stage || 'DISCOVERED'
 }
 
 // Custom 3D Pop-Out Active Shape Renderer for Pie Chart
@@ -141,6 +172,11 @@ const render3DPieActiveShape = (props) => {
 export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
   const navigate = useNavigate()
   const location = useLocation()
+  const { isAdmin, hasRole } = usePermissions()
+  // Org-wide analytics (all tenders / all owners) is management-only — Bid
+  // Executive, Pre-Sales, and Finance only ever see their own scope, on both
+  // the Tender Analytics view and the Owner Performance Matrix.
+  const isManagementRole = isAdmin || hasRole('MANAGER')
 
   // Sync active view strictly with URL route (sidebar driven)
   const activeTab = useMemo(() => {
@@ -162,7 +198,8 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
   const [activePieIndex, setActivePieIndex] = useState(0)
 
   // Sub-tab Scope for Tender Analytics: 'all' (Total Tender Analytics) vs 'owned' (Owned Tender Analytics)
-  const [tenderAnalyticsScope, setTenderAnalyticsScope] = useState('all')
+  // Non-management roles are locked to 'owned' — they never get the 'all' view.
+  const [tenderAnalyticsScope, setTenderAnalyticsScope] = useState(isManagementRole ? 'all' : 'owned')
   const currentUser = useMemo(() => tokenStorage.getUser(), [])
 
   // Ownership Matcher Helper
@@ -197,8 +234,15 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
     if (isManual) setRefreshing(true)
 
     try {
+      // Non-management roles get their bid list scoped server-side to their
+      // own tenders (bid_owner_id) — not just filtered client-side after an
+      // org-wide fetch — and the performance matrix is scoped server-side too
+      // (the backend returns only their own row for these roles regardless).
+      const bidsParams = isManagementRole
+        ? { page: 1, limit: 1000 }
+        : { page: 1, limit: 1000, bid_owner_id: currentUser?.id }
       const [bidsRes, matrixRes] = await Promise.all([
-        listBids({ page: 1, limit: 1000 }),
+        listBids(bidsParams),
         getTenderPerformanceMatrix()
       ])
 
@@ -226,7 +270,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [])
+  }, [isManagementRole, currentUser?.id])
 
   useEffect(() => {
     fetchData(false)
@@ -317,12 +361,17 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
     const orgValueMap = {}
 
     filteredBids.forEach((b) => {
-      const val = Number(b.estimated_value || b.final_bid_value || 0)
+      // Prefer the actual final/submitted price over the original ballpark
+      // estimate when it's known — estimated_value can be set at discovery
+      // and never updated, while final_bid_value/quoted_price reflect what
+      // was actually submitted or awarded, so leading with the estimate
+      // (as this previously did) skewed every valuation total.
+      const val = Number(b.final_bid_value || b.quoted_price || b.estimated_value || 0)
       totalVal += val
       if (b.workflow_stage === 'WON' || b.bid_status === 'WON' || b.bid_outcome === 'WON') wonVal += val
       if (b.workflow_stage === 'LOST' || b.bid_status === 'LOST' || b.bid_outcome === 'LOST') lostVal += val
 
-      const stage = b.workflow_stage || 'DISCOVERED'
+      const stage = getEffectiveStage(b)
       stageCounts[stage] = (stageCounts[stage] || 0) + 1
       stageValues[stage] = (stageValues[stage] || 0) + val
 
@@ -367,14 +416,23 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
     }))
 
     // ── Milestone Plot Diagram Data (Sequential Lifecycle Arc as in story plot diagram) ──
+    // Matches the real 10-stage pipeline exactly, plus a terminal "Won" point —
+    // this used to hardcode 'PREPARATION'/'APPROVAL' keys that never matched any
+    // real workflow_stage value (always plotting as zero) and skipped 6 of the
+    // 10 real stages (OEM Auth, Pricing, Document Checklist, EMD, Internal
+    // Approval, Award & Handover) entirely.
     const orderedStages = [
       { key: 'DISCOVERED', label: '1. Discovered', milestone: 'Discovery Peak' },
-      { key: 'PREPARATION', label: '2. Preparation', milestone: 'Document Prep' },
-      { key: 'APPROVAL', label: '3. Approval', milestone: 'Internal Gate' },
-      { key: 'GEM_SUBMISSION', label: '4. GeM Submission', milestone: 'GeM Portal Deadline' },
-      { key: 'TECHNICAL_EVALUATION', label: '5. Tech Eval', milestone: 'Tech Clearance' },
-      { key: 'FINANCIAL_EVALUATION', label: '6. Fin Eval', milestone: 'Price Opening' },
-      { key: 'WON', label: '7. Contract Won', milestone: 'Final Award Handover' }
+      { key: 'OEM_AUTHORIZATION_REQUEST', label: '2. OEM Auth', milestone: 'OEM Authorization' },
+      { key: 'PRICING_REQUEST', label: '3. Pricing', milestone: 'Pricing Calculated' },
+      { key: 'DOCUMENT_CHECKLIST_PREPARATION', label: '4. Checklist', milestone: 'Documents Compiled' },
+      { key: 'EMD_PROCESSING', label: '5. EMD', milestone: 'EMD Processed' },
+      { key: 'INTERNAL_APPROVAL', label: '6. Approval', milestone: 'Internal Sign-off' },
+      { key: 'GEM_SUBMISSION', label: '7. GeM Submission', milestone: 'GeM Portal Deadline' },
+      { key: 'TECHNICAL_EVALUATION', label: '8. Tech Eval', milestone: 'Tech Clearance' },
+      { key: 'FINANCIAL_EVALUATION', label: '9. Fin Eval', milestone: 'Price Opening' },
+      { key: 'AWARD_HANDOVER', label: '10. Award & Handover', milestone: 'PO & BG Handover' },
+      { key: 'WON', label: '11. Contract Won', milestone: 'Final Award Handover' }
     ]
 
     const milestonePlotData = orderedStages.map((stg) => {
@@ -433,10 +491,11 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
   // Single User Analytics Derived Details
   const userDetailedStats = useMemo(() => {
     if (!selectedUser) return null
-    const userTotalVal = userOwnedBids.reduce((acc, b) => acc + Number(b.estimated_value || 0), 0)
+    const bidValue = (b) => Number(b.final_bid_value || b.quoted_price || b.estimated_value || 0)
+    const userTotalVal = userOwnedBids.reduce((acc, b) => acc + bidValue(b), 0)
     const userWonVal = userOwnedBids
       .filter(b => b.workflow_stage === 'WON' || b.bid_status === 'WON' || b.bid_outcome === 'WON')
-      .reduce((acc, b) => acc + Number(b.estimated_value || 0), 0)
+      .reduce((acc, b) => acc + bidValue(b), 0)
 
     const radarData = [
       { subject: 'Total', A: selectedUser.total || 0 },
@@ -518,45 +577,57 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
           transition={{ duration: 0.25 }}
           className="space-y-6"
         >
-          {/* Sub-Tab Navigation Bar: Total Tender Analytics vs Owned Tender Analytics */}
+          {/* Sub-Tab Navigation Bar: Total Tender Analytics vs Owned Tender Analytics —
+              the 'all' (org-wide) option only exists for management roles; everyone
+              else is locked to their own scope with no way to switch out of it. */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card border border-border p-2.5 rounded-xl shadow-xs">
-            <div className="flex items-center bg-muted/60 border border-border p-1 rounded-lg text-xs">
-              <button
-                type="button"
-                onClick={() => setTenderAnalyticsScope('all')}
-                className={`px-3.5 py-1.5 rounded-md font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
-                  tenderAnalyticsScope === 'all'
-                    ? 'bg-card text-foreground shadow-xs'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <Layers className="size-3.5" />
-                Total Tender Analytics
-                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-primary/10 text-primary font-bold ml-1">
-                  {bids.length}
-                </span>
-              </button>
+            {isManagementRole ? (
+              <div className="flex items-center bg-muted/60 border border-border p-1 rounded-lg text-xs">
+                <button
+                  type="button"
+                  onClick={() => setTenderAnalyticsScope('all')}
+                  className={`px-3.5 py-1.5 rounded-md font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    tenderAnalyticsScope === 'all'
+                      ? 'bg-card text-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <Layers className="size-3.5" />
+                  Total Tender Analytics
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-primary/10 text-primary font-bold ml-1">
+                    {bids.length}
+                  </span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setTenderAnalyticsScope('owned')}
-                className={`px-3.5 py-1.5 rounded-md font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
-                  tenderAnalyticsScope === 'owned'
-                    ? 'bg-primary text-primary-foreground shadow-xs'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
+                <button
+                  type="button"
+                  onClick={() => setTenderAnalyticsScope('owned')}
+                  className={`px-3.5 py-1.5 rounded-md font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    tenderAnalyticsScope === 'owned'
+                      ? 'bg-primary text-primary-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <UserCheck className="size-3.5" />
+                  Owned Tender Analytics
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ml-1 ${
+                    tenderAnalyticsScope === 'owned'
+                      ? 'bg-primary-foreground/20 text-white'
+                      : 'bg-primary/10 text-primary'
+                  }`}>
+                    {ownedCount}
+                  </span>
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-primary px-1">
                 <UserCheck className="size-3.5" />
-                Owned Tender Analytics
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ml-1 ${
-                  tenderAnalyticsScope === 'owned'
-                    ? 'bg-primary-foreground/20 text-white'
-                    : 'bg-primary/10 text-primary'
-                }`}>
+                Your Tender Analytics
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-primary/10 text-primary font-bold ml-1">
                   {ownedCount}
                 </span>
-              </button>
-            </div>
+              </div>
+            )}
 
             <div className="text-xs text-muted-foreground flex items-center gap-2">
               {tenderAnalyticsScope === 'owned' ? (
@@ -582,19 +653,22 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
               <div className="max-w-md">
                 <h3 className="font-bold text-base text-foreground">No Owned Tenders Found</h3>
                 <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
-                  You are not currently designated as the Bid Owner on any tender records. You can view organization-wide statistics or create a new tender workspace to start building your portfolio.
+                  You are not currently designated as the Bid Owner on any tender records.
+                  {isManagementRole ? ' You can view organization-wide statistics or create a new tender workspace to start building your portfolio.' : ' Create a new tender workspace to start building your portfolio.'}
                 </p>
               </div>
               <div className="flex items-center gap-2.5 mt-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setTenderAnalyticsScope('all')}
-                  className="gap-1.5 text-xs"
-                >
-                  <Layers className="size-3.5" />
-                  View Total Tender Analytics
-                </Button>
+                {isManagementRole && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setTenderAnalyticsScope('all')}
+                    className="gap-1.5 text-xs"
+                  >
+                    <Layers className="size-3.5" />
+                    View Total Tender Analytics
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   onClick={() => navigate('/dashboard/tenders')}
@@ -895,7 +969,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
 
                       {/* Milestone Peak Annotations */}
                       {analyticsSummary.milestonePlotData.map((d, index) => {
-                        if (d.valueLakhs > 0 || index === 0 || index === 6) {
+                        if (d.valueLakhs > 0 || index === 0 || index === analyticsSummary.milestonePlotData.length - 1) {
                           return (
                             <ReferenceDot
                               key={`dot-${index}`}
@@ -921,15 +995,15 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
                     <p className="text-[11px] text-foreground font-semibold">Discovery Peak</p>
                   </div>
                   <div className="p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-xs">
-                    <p className="font-bold text-cyan-500 text-[10px] uppercase">4. GeM Portal</p>
+                    <p className="font-bold text-cyan-500 text-[10px] uppercase">7. GeM Portal</p>
                     <p className="text-[11px] text-foreground font-semibold">Submission Checkpoint</p>
                   </div>
                   <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs">
-                    <p className="font-bold text-amber-500 text-[10px] uppercase">5 & 6. Technical / Fin Eval</p>
+                    <p className="font-bold text-amber-500 text-[10px] uppercase">8 & 9. Technical / Fin Eval</p>
                     <p className="text-[11px] text-foreground font-semibold">Price Opening Peak</p>
                   </div>
                   <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs">
-                    <p className="font-bold text-emerald-500 text-[10px] uppercase">7. Contract Won</p>
+                    <p className="font-bold text-emerald-500 text-[10px] uppercase">11. Contract Won</p>
                     <p className="text-[11px] text-foreground font-semibold">Final Award Milestone</p>
                   </div>
                 </div>
@@ -1033,12 +1107,14 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
                   Tender Ownership & Stage Matrix
                 </CardTitle>
                 <CardDescription className="text-xs">
-                  Real-time breakdown of tender counts per stage for all registered user accounts
+                  {isManagementRole
+                    ? 'Real-time breakdown of tender counts per stage for all registered user accounts'
+                    : 'Real-time breakdown of your own tender counts per stage'}
                 </CardDescription>
               </div>
 
               <Badge variant="outline" className="w-fit text-xs font-mono">
-                {matrixStats.length} Owners Tracked
+                {isManagementRole ? `${matrixStats.length} Owners Tracked` : 'Your Performance Only'}
               </Badge>
             </CardHeader>
 
