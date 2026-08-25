@@ -12,6 +12,15 @@ services:
       - "5433:5432" # Keeps host port 5433 mapped to allow manual DB tools access
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # On a brand-new volume Postgres runs initdb and briefly stops/restarts
+      # itself before accepting real connections — this makes Compose actually
+      # wait for that to finish instead of just checking the container started.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d onetrack"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
     networks:
       - onetrack-network
 
@@ -22,6 +31,11 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - onetrack-network
 
@@ -47,8 +61,16 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
     networks:
       - onetrack-network
 
@@ -63,7 +85,8 @@ services:
     ports:
       - "80:80" # Exposed on standard HTTP port 80 for easy local Wi-Fi access
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - onetrack-network
 
