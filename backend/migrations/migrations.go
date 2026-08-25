@@ -85,25 +85,39 @@ func EnsureDefaultAdmin(ctx context.Context, db *pgxpool.Pool) {
 		adminHash = "$2a$10$nO1jIUku8kehdnwKrV2q4u9HKgspwcsX9hFts.OePRaTBOLoZnsXK"
 	}
 
-	query := `
-		INSERT INTO auth.users (employee_code, username, email, password_hash, force_password_change, is_active)
-		VALUES ('SUPERADMIN001', 'Sadmin', 'biswabhusans@globx.co.in', $1, false, true)
-		ON CONFLICT (username) DO UPDATE SET email = 'biswabhusans@globx.co.in', password_hash = $1, is_active = true;
-	`
-	_, err = db.Exec(ctx, query, adminHash)
+	// Operate on whichever row already matches case-insensitively (e.g. a
+	// 'sadmin' created by a migration) rather than assuming a literal 'Sadmin'
+	// row — an INSERT with ON CONFLICT (username) alone can't catch a
+	// collision on the separate unique index on email when a differently-cased
+	// row already owns it, which previously crash-looped the server the
+	// instant a lowercase 'sadmin' row existed alongside this literal insert.
+	tag, err := db.Exec(ctx, `
+		UPDATE auth.users SET email = 'biswabhusans@globx.co.in', password_hash = $1, is_active = true
+		WHERE LOWER(username) = 'sadmin'
+	`, adminHash)
 	if err != nil {
 		log.Printf("[AutoMigrate] Notice seeding admin user: %v", err)
 		return
 	}
+	if tag.RowsAffected() == 0 {
+		_, err = db.Exec(ctx, `
+			INSERT INTO auth.users (employee_code, username, email, password_hash, force_password_change, is_active)
+			VALUES ('SUPERADMIN001', 'Sadmin', 'biswabhusans@globx.co.in', $1, false, true)
+		`, adminHash)
+		if err != nil {
+			log.Printf("[AutoMigrate] Notice seeding admin user: %v", err)
+			return
+		}
+	}
 
 	// Also update password hash for seeded test users so Admin@123 works for them too
-	_, _ = db.Exec(ctx, `UPDATE auth.users SET password_hash = $1 WHERE username IN ('Sadmin', 'biswapvt', 'biswabhusan')`, adminHash)
+	_, _ = db.Exec(ctx, `UPDATE auth.users SET password_hash = $1 WHERE LOWER(username) IN ('sadmin', 'biswapvt', 'biswabhusan')`, adminHash)
 
 	// Ensure SUPER_ADMIN role assignment
 	roleQuery := `
 		INSERT INTO auth.user_roles (user_id, role_id)
 		SELECT u.id, r.id FROM auth.users u, auth.roles r
-		WHERE u.username = 'Sadmin' AND r.name = 'SUPER_ADMIN'
+		WHERE LOWER(u.username) = 'sadmin' AND r.name = 'SUPER_ADMIN'
 		ON CONFLICT DO NOTHING;
 	`
 	_, _ = db.Exec(ctx, roleQuery)

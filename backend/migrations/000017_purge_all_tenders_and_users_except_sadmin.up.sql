@@ -32,15 +32,25 @@ DELETE FROM auth.password_otps;
 DELETE FROM auth.users WHERE LOWER(username) != 'sadmin';
 
 -- 5. Reset / Ensure Sadmin account exists cleanly with password Admin@123
-INSERT INTO auth.users (employee_code, username, email, full_name, password_hash, force_password_change, is_active)
-VALUES ('SA001', 'sadmin', 'biswabhusans@globx.co.in', 'Biswa SuperAdmin', 
-        '$2a$12$t8z9b7lU.qbkEwxUeHxTBuLp7JqL0Na1bsh5Qys0HI6B5BYXpPoLK', false, true)
-ON CONFLICT (username) DO UPDATE SET
+-- Operate on whichever row already matches case-insensitively (e.g. an
+-- existing 'Sadmin') rather than assuming a literal lowercase 'sadmin' row —
+-- an INSERT with ON CONFLICT (username) alone can't catch a collision on the
+-- separate unique index on email when a differently-cased row already owns
+-- it, which previously made this migration fail permanently with a
+-- "duplicate key value violates unique constraint idx_users_email" error.
+UPDATE auth.users SET
     username = 'sadmin',
     email = 'biswabhusans@globx.co.in',
+    full_name = 'Biswa SuperAdmin',
     password_hash = '$2a$12$t8z9b7lU.qbkEwxUeHxTBuLp7JqL0Na1bsh5Qys0HI6B5BYXpPoLK',
     is_active = true,
-    force_password_change = false;
+    force_password_change = false
+WHERE LOWER(username) = 'sadmin';
+
+INSERT INTO auth.users (employee_code, username, email, full_name, password_hash, force_password_change, is_active)
+SELECT 'SA001', 'sadmin', 'biswabhusans@globx.co.in', 'Biswa SuperAdmin',
+       '$2a$12$t8z9b7lU.qbkEwxUeHxTBuLp7JqL0Na1bsh5Qys0HI6B5BYXpPoLK', false, true
+WHERE NOT EXISTS (SELECT 1 FROM auth.users WHERE LOWER(username) = 'sadmin');
 
 UPDATE auth.users SET username = LOWER(username);
 

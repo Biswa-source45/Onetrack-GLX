@@ -17,6 +17,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o server ./cmd/server/main.go
 FROM alpine:latest
 WORKDIR /app
 
+# wget is used by docker-compose.yml's HEALTHCHECK to probe /health — installed
+# explicitly rather than assumed, so the healthcheck can't silently fail to run.
+RUN apk add --no-cache wget
+
 # Copy binary
 COPY --from=builder /app/server .
 
