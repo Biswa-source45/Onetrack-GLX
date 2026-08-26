@@ -1,9 +1,11 @@
-import React, { useState } from "react"
+import React, { useState, useRef } from "react"
 import { useNavigate } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
 import { Layers, Eye, EyeOff, ArrowLeft, Loader2, Key, CheckCircle } from "lucide-react"
 import { toast } from "sonner"
 import { authService, tokenStorage } from "../services/auth"
+import LoginArt from "./LoginArt"
+
 
 export default function Login() {
   const navigate = useNavigate()
@@ -22,6 +24,30 @@ export default function Login() {
   const [resetConfirmPassword, setResetConfirmPassword] = useState("")
   const [showResetNewPass, setShowResetNewPass] = useState(false)
   const [isResetting, setIsResetting] = useState(false)
+
+  // WebGL water-ripple art (Three.js) driving the left illustration panel —
+  // scoped ONLY to that panel. Pointer moves feed ripple origins straight
+  // into the shader via an imperative ref; nothing is tracked in React state.
+  const artRef = useRef(null)
+  const lastRippleAt = useRef(0)
+
+  function handlePanelMouseMove(e) {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const nx = (e.clientX - rect.left) / rect.width
+    const ny = (e.clientY - rect.top) / rect.height
+
+    artRef.current?.updatePointer(nx, ny)
+
+    const now = performance.now()
+    if (now - lastRippleAt.current > 220) {
+      lastRippleAt.current = now
+      artRef.current?.addRipple(nx, ny)
+    }
+  }
+
+  function handlePanelMouseLeave() {
+    artRef.current?.clearPointer()
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -136,7 +162,7 @@ export default function Login() {
 
   return (
     <div className="h-screen w-screen bg-neutral-50 flex items-center justify-center p-4 font-sans selection:bg-blue-100 selection:text-blue-900 relative overflow-hidden">
-      
+
       {/* MAIN CONTAINER CARD */}
       <motion.div 
         initial={{ opacity: 0, y: 15 }}
@@ -145,47 +171,38 @@ export default function Login() {
         className="relative z-10 w-full max-w-4xl h-[90vh] max-h-[550px] bg-white rounded-[2rem] p-2 flex flex-col md:flex-row gap-2 border border-neutral-200/80 overflow-hidden shadow-xl"
       >
         
-        {/* LEFT COLUMN: ABSTRACT MONOCHROME PANEL WITH SIDEBAR IMAGE */}
-        <div className="hidden md:flex md:w-[46%] lg:w-[48%] rounded-[1.5rem] overflow-hidden relative h-full flex-col justify-between p-8 lg:p-10 shrink-0 bg-neutral-950 text-white">
-          {/* Background image */}
-          <div className="absolute inset-0 z-0">
-            <img 
-              src="/login_abstract_side.png" 
-              alt="OneTrack Workspace" 
-              className="w-full h-full object-cover opacity-80" 
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-neutral-950 via-neutral-950/20 to-neutral-950/30 z-10" />
-          </div>
-          
-          {/* Top Row: Brand Header */}
-          <div className="relative z-20 flex items-center gap-3">
-            <span className="text-[9px] font-bold uppercase tracking-widest text-neutral-300">OneTrack Workspace</span>
-            <div className="h-[1px] w-16 bg-neutral-600" />
+        {/* LEFT COLUMN: WEBGL WATER PANEL (brand blue) — ripple/glow driven by Three.js, scoped to this panel only */}
+        <div
+          onMouseMove={handlePanelMouseMove}
+          onMouseLeave={handlePanelMouseLeave}
+          className="hidden md:flex md:w-[46%] lg:w-[48%] rounded-[1.5rem] overflow-hidden relative h-full flex-col justify-between p-8 lg:p-10 shrink-0 bg-neutral-950 text-white"
+        >
+          <LoginArt ref={artRef} />
+
+          {/* Legibility wash so text stays crisp over the flowing shader */}
+          <div className="absolute inset-0 z-10 bg-gradient-to-t from-neutral-950/70 via-neutral-950/10 to-neutral-950/40 pointer-events-none" />
+
+          {/* Top Row: Hero Brand Lockup */}
+          <div className="relative z-20 flex items-center gap-2.5">
+            <motion.div
+              className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 shadow-lg shadow-blue-500/30"
+              animate={{ boxShadow: ["0 0 0 rgba(37,99,235,0.35)", "0 0 22px rgba(37,99,235,0.55)", "0 0 0 rgba(37,99,235,0.35)"] }}
+              transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
+            >
+              <Layers className="size-4.5 text-white" />
+            </motion.div>
+            <span className="font-display text-2xl lg:text-[1.75rem] font-semibold tracking-tight text-white">OneTrack</span>
           </div>
 
-          {/* Middle Pattern */}
+          {/* Middle: high-impact headline + short supporting line */}
           <div className="relative z-20 my-auto py-8">
             <div className="h-1.5 w-12 bg-blue-500 rounded-full mb-6" />
-            <h1 className="font-display text-3xl lg:text-4xl font-normal text-white leading-[1.15] tracking-tight">
-              Intelligent Bid & <br />Tender Control
+            <h1 className="font-display text-4xl lg:text-[2.75rem] font-normal text-white leading-[1.1] tracking-tight">
+              Track Every <br />Tender. <br />Win With Confidence.
             </h1>
-            <p className="mt-4 text-[11px] lg:text-xs text-neutral-300 leading-relaxed max-w-[290px]">
-              Access structured workflows, permission-based dashboards, and security controls built for modern tender operations.
+            <p className="mt-4 text-[13px] lg:text-sm text-neutral-300 leading-relaxed max-w-[300px]">
+              From GeM submission to contract closure — one workspace for your entire bid lifecycle.
             </p>
-          </div>
-
-          {/* Bottom Row */}
-          <div className="relative z-20 flex flex-col gap-2">
-            <div className="flex items-center gap-4 text-[9px] font-bold tracking-widest text-neutral-400 font-mono">
-              <span>GOV-SECURE 256</span>
-              <span>•</span>
-              <span>ISO 27001</span>
-              <span>•</span>
-              <span>FEDRAMP READY</span>
-            </div>
-            <div className="text-[10px] text-neutral-550 font-mono">
-              v1.0.0 // SECURITY SEEDED
-            </div>
           </div>
         </div>
 

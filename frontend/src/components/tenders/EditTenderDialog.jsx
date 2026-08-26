@@ -37,10 +37,11 @@ function useMacOSDialog(open, originX, originY) {
   }
 }
 
-const PORTAL_SOURCES = ['GeM', 'CPPP', 'eProcure', 'Others']
+const STANDARD_PORTAL_SOURCES = ['GeM', 'CPPP', 'eProcure']
+const PORTAL_SOURCES = [...STANDARD_PORTAL_SOURCES, 'Other']
 const BID_TYPES      = ['BID', 'BID_TO_RA']
 const EMD_TYPES      = ['ONLINE', 'DD']
-const SCOPE_TYPES    = ['Supply', 'Implementation', 'Support']
+const SCOPE_TYPES    = ['Supply', 'Implementation', 'Support', 'N/A']
 
 function safeDateStr(dt) {
   if (!dt) return ''
@@ -125,6 +126,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
   const [users, setUsers]     = useState([])
   const [usersLoading, setUsersLoading] = useState(false)
   const [fetchingBid, setFetchingBid] = useState(false)
+  const [otherPortalSource, setOtherPortalSource] = useState(false)
 
   // Load users for owner selector
   useEffect(() => {
@@ -184,6 +186,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
             emd_beneficiary:    b.emd_beneficiary || '',
             emd_payable_at:     b.emd_payable_at || '',
           })
+          setOtherPortalSource(!!b.portal_source && !STANDARD_PORTAL_SOURCES.includes(b.portal_source))
         }
       } catch (err) {
         console.error('Failed to load full bid details', err)
@@ -224,6 +227,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
         emd_beneficiary:    bid.emd_beneficiary || '',
         emd_payable_at:     bid.emd_payable_at || '',
       })
+      setOtherPortalSource(!!bid.portal_source && !STANDARD_PORTAL_SOURCES.includes(bid.portal_source))
       setErrors({})
       loadFullBid()
     }
@@ -396,15 +400,15 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
                         />
                       </Field>
                     </div>
-                    <Field label="GeM Bid No">
+                    <Field label="BID Number/RFP Number">
                       <Input value={form.gem_bid_no} onChange={(e) => set('gem_bid_no', e.target.value)}
-                        placeholder="GEM/2026/B/12345" className={inputCls()} />
+                        placeholder="GEM/2026/B/12345 or RFP/2026/012" className={inputCls()} />
                     </Field>
                     <Field label="Portal Source">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="outline" size="sm" className="w-full h-8 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5">
-                            <span>{form.portal_source}</span>
+                            <span>{otherPortalSource ? 'Other' : form.portal_source}</span>
                             <ChevronDown className="size-3 text-muted-foreground ml-auto" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -412,12 +416,29 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
                           <DropdownMenuLabel>Select Portal Source</DropdownMenuLabel>
                           <DropdownMenuSeparator />
                           {PORTAL_SOURCES.map((p) => (
-                            <DropdownMenuItem key={p} onSelect={() => set('portal_source', p)}>
+                            <DropdownMenuItem key={p} onSelect={() => {
+                              if (p === 'Other') {
+                                setOtherPortalSource(true)
+                                set('portal_source', '')
+                              } else {
+                                setOtherPortalSource(false)
+                                set('portal_source', p)
+                              }
+                            }}>
                               {p}
                             </DropdownMenuItem>
                           ))}
                         </DropdownMenuContent>
                       </DropdownMenu>
+                      {otherPortalSource && (
+                        <Input
+                          value={form.portal_source}
+                          onChange={(e) => set('portal_source', e.target.value)}
+                          placeholder="Enter portal source name"
+                          className={`${inputCls()} mt-2`}
+                          autoFocus
+                        />
+                      )}
                     </Field>
                     <Field label="Bid Type">
                       <DropdownMenu>

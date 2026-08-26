@@ -24,10 +24,11 @@ import { createBid } from '../../services/bids'
 import { tokenStorage } from '../../services/auth'
 import { useBidStore } from '../../store/useBidStore'
 
-const PORTAL_SOURCES = ['GeM', 'CPPP', 'eProcure', 'Others']
+const STANDARD_PORTAL_SOURCES = ['GeM', 'CPPP', 'eProcure']
+const PORTAL_SOURCES = [...STANDARD_PORTAL_SOURCES, 'Other']
 const BID_TYPES      = ['BID', 'BID_TO_RA']
 const EMD_TYPES      = ['ONLINE', 'DD']
-const SCOPE_TYPES    = ['Supply', 'Implementation', 'Support']
+const SCOPE_TYPES    = ['Supply', 'Implementation', 'Support', 'N/A']
 const CATEGORY_OPTIONS = [
   'End computing', 'IT infra', 'Non-IT infra', 'Security', 'Cloud',
   'Servilance', 'Software', 'Manpower-augmentation',
@@ -125,6 +126,7 @@ export function AddTenderPage() {
 
   const [errors, setErrors]   = useState({})
   const [loading, setLoading] = useState(false)
+  const [otherPortalSource, setOtherPortalSource] = useState(false)
 
   // Load users for owner selector
   useEffect(() => {
@@ -393,10 +395,10 @@ export function AddTenderPage() {
                         className={inputCls()} />
                     </Field>
 
-                    {/* GeM Bid Number */}
-                    <Field label="GeM Bid Number" tooltip="Government E-Marketplace registration ID.">
+                    {/* BID / RFP Number */}
+                    <Field label="BID Number/RFP Number" tooltip="The BID number or RFP number as listed on the source portal.">
                       <Input value={form.gem_bid_no} onChange={(e) => set('gem_bid_no', e.target.value)}
-                        placeholder="e.g. GEM/2026/B/87654" className={inputCls()} />
+                        placeholder="e.g. GEM/2026/B/87654 or RFP/2026/012" className={inputCls()} />
                     </Field>
 
                     {/* Portal Source */}
@@ -404,18 +406,35 @@ export function AddTenderPage() {
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="outline" size="sm" className="w-full h-9 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5">
-                            <span>{form.portal_source}</span>
+                            <span>{otherPortalSource ? 'Other' : form.portal_source}</span>
                             <ChevronDown className="size-3 text-muted-foreground ml-auto" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent className="w-[220px]">
                           {PORTAL_SOURCES.map((p) => (
-                            <DropdownMenuItem key={p} onSelect={() => set('portal_source', p)}>
+                            <DropdownMenuItem key={p} onSelect={() => {
+                              if (p === 'Other') {
+                                setOtherPortalSource(true)
+                                set('portal_source', '')
+                              } else {
+                                setOtherPortalSource(false)
+                                set('portal_source', p)
+                              }
+                            }}>
                               {p}
                             </DropdownMenuItem>
                           ))}
                         </DropdownMenuContent>
                       </DropdownMenu>
+                      {otherPortalSource && (
+                        <Input
+                          value={form.portal_source}
+                          onChange={(e) => set('portal_source', e.target.value)}
+                          placeholder="Enter portal source name"
+                          className={`${inputCls()} mt-2`}
+                          autoFocus
+                        />
+                      )}
                     </Field>
 
                     {/* Bid Type (BID / BID_TO_RA) */}
