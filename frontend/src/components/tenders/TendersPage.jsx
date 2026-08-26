@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 import {
-  listBids, getBid, updateBid, transitionBidStage, restoreBid, permanentDeleteBid, getGlobalAuditHistory, STAGE_LABELS, STAGE_COLORS, STATUS_COLORS, STAGE_TRANSITIONS,
+  listBids, getBid, updateBid, transitionBidStage, restoreBid, permanentDeleteBid, getGlobalAuditHistory, getTenderPerformanceMatrix, STAGE_LABELS, STAGE_COLORS, STATUS_COLORS, STAGE_TRANSITIONS,
 } from '../../services/bids'
 import { usePermissions } from '../../hooks/usePermissions'
 import { useBidStore } from '../../store/useBidStore'
@@ -95,6 +95,15 @@ function formatCurrency(val) {
   if (val >= 10000000) return `₹${(val / 10000000).toFixed(1)}Cr`
   if (val >= 100000)   return `₹${(val / 100000).toFixed(1)}L`
   return `₹${val.toLocaleString('en-IN')}`
+}
+
+// EMD exemption basis, shown wherever "EMD Exemption" is tabulated (CSV export, Sheets view).
+function formatEmdExemption(bid) {
+  if (!bid?.emd_exempted) return 'No'
+  if (bid.emd_exemption_type === 'OTHER') return `Other: ${bid.emd_exemption_reason || 'N/A'}`
+  if (bid.emd_exemption_type === 'MSME') return 'MSME'
+  if (bid.emd_exemption_type === 'STARTUP') return 'Startup'
+  return 'Yes'
 }
 
 // ── Format date ───────────────────────────────────────────────────────────────
@@ -398,7 +407,7 @@ async function exportToExcel() {
         b.department_name ?? '',
         b.scope_type ?? '',
         b.emd_amount !== null && b.emd_amount !== undefined ? String(b.emd_amount) : '',
-        b.emd_exempted ? 'Yes' : 'No',
+        formatEmdExemption(b),
         b.bg_rate !== null && b.bg_rate !== undefined ? `${b.bg_rate}%` : '',
         b.target_month_date ? new Date(b.target_month_date).toLocaleDateString('en-IN') : '—',
         b.opening_date ? new Date(b.opening_date).toLocaleDateString('en-IN') : '—',
@@ -465,6 +474,13 @@ const STATUS_OPTIONS = [
   { value: 'ACTIVE', label: 'Active' },
 ]
 
+const END_DATE_OPTIONS = [
+  { value: '', label: 'All End Dates' },
+  { value: 'today', label: 'Ending Today' },
+  { value: 'week', label: 'Ending This Week' },
+  { value: 'month', label: 'Ending This Month' },
+]
+
 const PORTAL_SOURCES = ['GeM', 'CPPP', 'eProcure']
 const BID_TYPES = ['CUSTOM_BID', 'BOQ_BID', 'SERVICE_BID', 'INTELLIGENCE_BID']
 const EMD_TYPES = ['ONLINE', 'BG', 'DD', 'EXEMPTED']
@@ -479,7 +495,8 @@ function useDebounce(value, delay = 350) {
 }
 
 export function TendersPage({ initialScope = 'all' }) {
-  const { hasPermission } = usePermissions()
+  const { hasPermission, isAdmin, hasRole } = usePermissions()
+  const isManagementRole = isAdmin || hasRole('MANAGER')
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -534,6 +551,8 @@ export function TendersPage({ initialScope = 'all' }) {
     searchInput,
     inBin,
     viewMode,
+    endDateFilter,
+    ownerFilterId,
     setPage,
     setStageFilter,
     setStatusFilter,
@@ -542,10 +561,23 @@ export function TendersPage({ initialScope = 'all' }) {
     setInBin,
     setViewMode,
     setScope,
+    setEndDateFilter,
+    setOwnerFilterId,
     loadBids,
     users,
     loadUsers,
   } = useBidStore()
+
+  // Per-owner tender counts for the management-only Owner cross-filter.
+  const [ownerStats, setOwnerStats] = useState([])
+  useEffect(() => {
+    if (!isManagementRole) return
+    let active = true
+    getTenderPerformanceMatrix().then((res) => {
+      if (active && res.ok && Array.isArray(res.data)) setOwnerStats(res.data)
+    }).catch(() => {})
+    return () => { active = false }
+  }, [isManagementRole])
 
   useEffect(() => {
     const statusParam = searchParams.get('status')
@@ -1107,11 +1139,58 @@ export function TendersPage({ initialScope = 'all' }) {
               </DropdownMenuContent>
             </DropdownMenu>
 
+            {/* End date quick filter */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-8.5 text-xs font-normal bg-background border-input text-foreground hover:bg-muted/50 gap-1.5">
+                  <Calendar className="size-3 text-muted-foreground" />
+                  <span>{END_DATE_OPTIONS.find(o => o.value === endDateFilter)?.label || 'All End Dates'}</span>
+                  <ChevronDown className="size-3 text-muted-foreground ml-auto" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuLabel>Filter by End Date</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {END_DATE_OPTIONS.map((o) => (
+                  <DropdownMenuItem key={o.value} onSelect={() => setEndDateFilter(o.value)}>
+                    {o.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* Owner cross-filter — Manager/Admin/Super Admin only */}
+            {isManagementRole && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-8.5 text-xs font-normal bg-background border-input text-foreground hover:bg-muted/50 gap-1.5">
+                    <User className="size-3 text-muted-foreground" />
+                    <span className="max-w-[140px] truncate">
+                      {ownerFilterId ? (ownerStats.find(s => s.user_id === ownerFilterId)?.full_name ?? 'Owner') : 'All Owners'}
+                    </span>
+                    <ChevronDown className="size-3 text-muted-foreground ml-auto" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="max-h-72 overflow-y-auto w-[260px]">
+                  <DropdownMenuLabel>Filter by Owner</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => setOwnerFilterId('')}>
+                    All Owners
+                  </DropdownMenuItem>
+                  {ownerStats.map((s) => (
+                    <DropdownMenuItem key={s.user_id} onSelect={() => setOwnerFilterId(s.user_id)}>
+                      <span className="flex-1 truncate">{s.full_name}</span>
+                      <span className="text-muted-foreground text-[11px] ml-2 shrink-0">{s.total} tenders</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
 
             {/* Clear filters */}
-            {(stageFilter || statusFilter || searchInput) && (
+            {(stageFilter || statusFilter || searchInput || endDateFilter || ownerFilterId) && (
               <Button variant="ghost" size="sm" className="h-8.5 text-xs gap-1"
-                onClick={() => { setSearchInput(''); setStageFilter(''); setStatusFilter(''); setPage(1) }}>
+                onClick={() => { setSearchInput(''); setStageFilter(''); setStatusFilter(''); setEndDateFilter(''); setOwnerFilterId(''); setPage(1) }}>
                 <X className="size-3" />
                 Clear Filters
               </Button>
@@ -1660,7 +1739,9 @@ export function TendersPage({ initialScope = 'all' }) {
                               </button>
                             ) : (
                               bid.emd_exempted ? (
-                                <span className="text-emerald-600 font-bold flex items-center gap-0.5"><Check className="size-3.5" /> Yes</span>
+                                <span className="text-emerald-600 font-bold flex items-center gap-0.5" title={formatEmdExemption(bid)}>
+                                  <Check className="size-3.5" /> {formatEmdExemption(bid)}
+                                </span>
                               ) : (
                                 <span className="text-muted-foreground">No</span>
                               )

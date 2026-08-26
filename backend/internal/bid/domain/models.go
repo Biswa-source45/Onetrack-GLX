@@ -85,7 +85,7 @@ type BidWorkspace struct {
 	WorkflowStage    string  `json:"workflow_stage"`
 	BidStatus        string  `json:"bid_status"`
 	BidOwnerID          string  `json:"bid_owner_id"`
-	TechnicalManagerID  *string `json:"technical_manager_id,omitempty"`
+	ReportingManagerID  *string `json:"reporting_manager_id,omitempty"`
 	CreatedBy           string  `json:"created_by"`
 
 	// Financial
@@ -93,6 +93,8 @@ type BidWorkspace struct {
 	EMDAmount      *float64 `json:"emd_amount,omitempty"`
 	EMDType        *string  `json:"emd_type,omitempty"`
 	EMDExempted    bool     `json:"emd_exempted"`
+	EMDExemptionType   *string `json:"emd_exemption_type,omitempty"`
+	EMDExemptionReason *string `json:"emd_exemption_reason,omitempty"`
 	FinalBidValue  *float64 `json:"final_bid_value,omitempty"`
 	L1Price        *float64 `json:"l1_price,omitempty"`
 	QuotedPrice    *float64 `json:"quoted_price,omitempty"`
@@ -286,6 +288,8 @@ type CreateBidRequest struct {
 	EMDAmount        *float64 `json:"emd_amount"`
 	EMDType          *string  `json:"emd_type"`
 	EMDExempted      *bool    `json:"emd_exempted"`
+	EMDExemptionType   *string `json:"emd_exemption_type"`
+	EMDExemptionReason *string `json:"emd_exemption_reason"`
 	// EMD bank / DD detail fields
 	EMDBankName      *string  `json:"emd_bank_name"`
 	EMDAccountNumber *string  `json:"emd_account_number"`
@@ -302,7 +306,7 @@ type CreateBidRequest struct {
 	DurationMonths   *int     `json:"duration_months"`
 	Authority        *string  `json:"authority"`
 	BidOwnerID          string   `json:"bid_owner_id" binding:"required"`
-	TechnicalManagerID  *string  `json:"technical_manager_id"`
+	ReportingManagerID  *string  `json:"reporting_manager_id"`
 	Remarks             *string  `json:"remarks"`
 	Metadata            *string  `json:"metadata"` // raw JSON string
 	BidderChecklists    []string `json:"bidder_checklists"` // bidder doc checklist titles
@@ -334,6 +338,8 @@ type UpdateBidRequest struct {
 	EMDAmount        *float64 `json:"emd_amount"`
 	EMDType          *string  `json:"emd_type"`
 	EMDExempted      *bool    `json:"emd_exempted"`
+	EMDExemptionType   *string `json:"emd_exemption_type"`
+	EMDExemptionReason *string `json:"emd_exemption_reason"`
 	// EMD bank / DD detail fields
 	EMDBankName      *string  `json:"emd_bank_name"`
 	EMDAccountNumber *string  `json:"emd_account_number"`
@@ -350,7 +356,7 @@ type UpdateBidRequest struct {
 	ClosingDate      *string  `json:"closing_date,omitempty"`
 	DurationMonths   *int     `json:"duration_months"`
 	Authority        *string  `json:"authority"`
-	TechnicalManagerID        *string  `json:"technical_manager_id"`
+	ReportingManagerID        *string  `json:"reporting_manager_id"`
 	Remarks                   *string  `json:"remarks"`
 	TechComplianceStatus      *string  `json:"tech_compliance_status"`
 	QualificationStatus       *string  `json:"qualification_status"`
@@ -479,6 +485,8 @@ type BidResponse struct {
 	EMDAmount              *float64         `json:"emd_amount"`
 	EMDType                *string          `json:"emd_type"`
 	EMDExempted            bool             `json:"emd_exempted"`
+	EMDExemptionType       *string          `json:"emd_exemption_type"`
+	EMDExemptionReason     *string          `json:"emd_exemption_reason"`
 	EMDBankName            *string          `json:"emd_bank_name"`
 	EMDAccountNumber       *string          `json:"emd_account_number"`
 	EMDIFSCCode            *string          `json:"emd_ifsc_code"`
@@ -508,7 +516,7 @@ type BidResponse struct {
 	CompetitorInfo         interface{}      `json:"competitor_info"`
 	Metadata               interface{}      `json:"metadata"`
 	BidOwner               UserSummary        `json:"bid_owner"`
-	TechnicalManager       *UserSummary       `json:"technical_manager,omitempty"`
+	ReportingManager       *UserSummary       `json:"reporting_manager,omitempty"`
 	Members                []MemberResponse   `json:"members"`
 	Checklists             []BidChecklistItem `json:"checklists"`
 	CreatedBy              string             `json:"created_by"`
@@ -580,7 +588,7 @@ type BidListItem struct {
 	EndDate          *time.Time  `json:"end_date,omitempty"`
 	OEMRequired               bool         `json:"oem_required"`
 	BidOwner                  UserSummary  `json:"bid_owner"`
-	TechnicalManager          *UserSummary `json:"technical_manager,omitempty"`
+	ReportingManager          *UserSummary `json:"reporting_manager,omitempty"`
 	Remarks                   *string     `json:"remarks"`
 	Team                      *string     `json:"team,omitempty"`
 	ScopeType                 *string     `json:"scope_type,omitempty"`
@@ -593,6 +601,8 @@ type BidListItem struct {
 	POReceivedStatus          *string     `json:"po_received_status,omitempty"`
 	POReceivedDate            *time.Time  `json:"po_received_date,omitempty"`
 	EMDExempted               bool        `json:"emd_exempted"`
+	EMDExemptionType          *string     `json:"emd_exemption_type,omitempty"`
+	EMDExemptionReason        *string     `json:"emd_exemption_reason,omitempty"`
 	SubmissionDone            bool        `json:"submission_done"`
 	EMDReady                  bool        `json:"emd_ready"`
 	EMDReadyDate              *time.Time  `json:"emd_ready_date,omitempty"`
@@ -655,12 +665,14 @@ type CreateBidParams struct {
 	PortalSource              string
 	CreationMode              string
 	BidOwnerID                string
-	TechnicalManagerID        *string
+	ReportingManagerID        *string
 	CreatedBy                 string
 	EstimatedValue            *float64
 	EMDAmount                 *float64
 	EMDType                   *string
 	EMDExempted               bool
+	EMDExemptionType          *string
+	EMDExemptionReason        *string
 	EMDBankName               *string
 	EMDAccountNumber          *string
 	EMDIFSCCode               *string

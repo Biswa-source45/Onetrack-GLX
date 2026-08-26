@@ -98,6 +98,8 @@ export function AddTenderPage() {
     emd_amount:                  '',
     emd_type:                    'ONLINE',
     emd_exempted:                false,
+    emd_exemption_type:          '',
+    emd_exemption_reason:        '',
     oem_required:                true,
     bg_required:                 false,
     bg_rate:                     '',
@@ -105,7 +107,7 @@ export function AddTenderPage() {
     end_date:                    '',
     target_month_date:           '',
     bid_owner_id:                currentUser?.id ?? '',
-    technical_manager_id:        '',
+    reporting_manager_id:        '',
     remarks:                     '',
     scope_type:                  'Supply',
     // EMD bank/online payment details
@@ -150,6 +152,8 @@ export function AddTenderPage() {
           updated.emd_amount = ''
         } else {
           updated.emd_type = 'ONLINE'
+          updated.emd_exemption_type = ''
+          updated.emd_exemption_reason = ''
         }
       } else if (field === 'emd_type') {
         if (value === 'EXEMPTED') {
@@ -157,7 +161,11 @@ export function AddTenderPage() {
           updated.emd_amount = ''
         } else {
           updated.emd_exempted = false
+          updated.emd_exemption_type = ''
+          updated.emd_exemption_reason = ''
         }
+      } else if (field === 'emd_exemption_type') {
+        if (value !== 'OTHER') updated.emd_exemption_reason = ''
       }
 
       return updated
@@ -179,6 +187,11 @@ export function AddTenderPage() {
         } else if (form.emd_type === 'DD') {
           if (!form.emd_beneficiary.trim()) e.emd_beneficiary = 'Beneficiary is required for DD EMD'
           if (!form.emd_payable_at.trim()) e.emd_payable_at = 'Payable at location is required'
+        }
+      } else {
+        if (!form.emd_exemption_type) e.emd_exemption_type = 'Select MSME, Startup, or Other'
+        else if (form.emd_exemption_type === 'OTHER' && !form.emd_exemption_reason.trim()) {
+          e.emd_exemption_reason = 'Please specify the reason for exemption'
         }
       }
     } else if (currentStep === 2) {
@@ -535,6 +548,57 @@ export function AddTenderPage() {
                       </div>
                     </div>
 
+                    {/* EMD Exemption Basis */}
+                    {form.emd_exempted && (
+                      <div className="sm:col-span-2 space-y-2 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800">
+                        <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-200">
+                          EMD Exemption Basis <span className="text-red-500">*</span>
+                        </p>
+                        <div className="flex flex-wrap items-center gap-4">
+                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-foreground">
+                            <input
+                              type="radio"
+                              name="emd_exemption_type"
+                              checked={form.emd_exemption_type === 'MSME'}
+                              onChange={() => set('emd_exemption_type', 'MSME')}
+                              className="accent-primary"
+                            />
+                            MSME
+                          </label>
+                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-foreground">
+                            <input
+                              type="radio"
+                              name="emd_exemption_type"
+                              checked={form.emd_exemption_type === 'STARTUP'}
+                              onChange={() => set('emd_exemption_type', 'STARTUP')}
+                              className="accent-primary"
+                            />
+                            Startup
+                          </label>
+                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-foreground">
+                            <input
+                              type="checkbox"
+                              checked={form.emd_exemption_type === 'OTHER'}
+                              onChange={() => set('emd_exemption_type', form.emd_exemption_type === 'OTHER' ? '' : 'OTHER')}
+                              className="accent-primary"
+                            />
+                            Other
+                          </label>
+                        </div>
+                        {errors.emd_exemption_type && (
+                          <p className="text-[11px] text-red-500">{errors.emd_exemption_type}</p>
+                        )}
+                        {form.emd_exemption_type === 'OTHER' && (
+                          <Input
+                            value={form.emd_exemption_reason}
+                            onChange={(e) => set('emd_exemption_reason', e.target.value)}
+                            placeholder="Specify the reason for EMD exemption"
+                            className={inputCls(errors.emd_exemption_reason)}
+                          />
+                        )}
+                      </div>
+                    )}
+
                     {/* EMD Mode */}
                     <Field label="EMD Mode">
                       <DropdownMenu>
@@ -660,7 +724,7 @@ export function AddTenderPage() {
                 </div>
               )}
 
-              {/* SECTION 2: Ownership, Technical Manager & Checklist Seeds */}
+              {/* SECTION 2: Ownership, Reporting Manager & Checklist Seeds */}
               {step === 2 && (
                 <div className="space-y-6">
                   <div className="flex items-center gap-2 border-b border-border/60 pb-2.5">
@@ -686,7 +750,7 @@ export function AddTenderPage() {
                           ) : (
                             users.map((u) => (
                               <DropdownMenuItem key={u.id} onSelect={() => set('bid_owner_id', u.id)}>
-                                {u.full_name} (@{u.username})
+                                {u.full_name}
                               </DropdownMenuItem>
                             ))
                           )}
@@ -694,24 +758,24 @@ export function AddTenderPage() {
                       </DropdownMenu>
                     </Field>
 
-                    {/* Technical Manager selection */}
-                    <Field label="Technical Manager" tooltip="Technical Lead for compliance verification.">
+                    {/* Reporting Manager selection */}
+                    <Field label="Reporting Manager" tooltip="Notified when this tender is discovered and tracked as a tender member.">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="outline" size="sm" className="w-full h-9 text-xs font-normal justify-between bg-background text-foreground hover:bg-muted/50 gap-1.5 border-input">
-                            <span>{form.technical_manager_id ? (users.find(u => u.id === form.technical_manager_id)?.full_name ?? 'Select Manager...') : 'Select Technical Manager...'}</span>
+                            <span>{form.reporting_manager_id ? (users.find(u => u.id === form.reporting_manager_id)?.full_name ?? 'Select Manager...') : 'Select Reporting Manager...'}</span>
                             <ChevronDown className="size-3 text-muted-foreground ml-auto" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent className="max-h-60 overflow-y-auto w-[320px]">
-                          <DropdownMenuLabel>Select Technical Manager</DropdownMenuLabel>
+                          <DropdownMenuLabel>Select Reporting Manager</DropdownMenuLabel>
                           <DropdownMenuSeparator />
                           {usersLoading ? (
                             <DropdownMenuItem disabled>Loading users…</DropdownMenuItem>
                           ) : (
                             users.map((u) => (
-                              <DropdownMenuItem key={u.id} onSelect={() => set('technical_manager_id', u.id)}>
-                                {u.full_name} (@{u.username})
+                              <DropdownMenuItem key={u.id} onSelect={() => set('reporting_manager_id', u.id)}>
+                                {u.full_name}
                               </DropdownMenuItem>
                             ))
                           )}

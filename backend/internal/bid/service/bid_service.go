@@ -78,6 +78,26 @@ func validateEMDDetails(exempted bool, emdType string, bankName, accountNumber, 
 	return nil
 }
 
+// validateEMDExemption enforces that an EMD-exempt tender records *why* it's
+// exempt: MSME or STARTUP need no further detail, OTHER requires a non-empty
+// free-text reason. No-op when the tender isn't exempt.
+func validateEMDExemption(exempted bool, exemptionType string, exemptionReason *string) error {
+	if !exempted {
+		return nil
+	}
+	switch exemptionType {
+	case "MSME", "STARTUP":
+		return nil
+	case "OTHER":
+		if exemptionReason == nil || strings.TrimSpace(*exemptionReason) == "" {
+			return fmt.Errorf("%w: emd_exemption_reason required when emd_exemption_type is OTHER", domain.ErrValidation)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: emd_exemption_type required (MSME, STARTUP, or OTHER) when emd_exempted is true", domain.ErrValidation)
+	}
+}
+
 func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest, createdBy string) (*domain.BidResponse, error) {
 	emdExempted := req.EMDExempted != nil && *req.EMDExempted
 	emdType := ""
@@ -85,6 +105,13 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 		emdType = *req.EMDType
 	}
 	if err := validateEMDDetails(emdExempted, emdType, req.EMDBankName, req.EMDAccountNumber, req.EMDIFSCCode, req.EMDBeneficiary, req.EMDPayableAt); err != nil {
+		return nil, err
+	}
+	exemptionType := ""
+	if req.EMDExemptionType != nil {
+		exemptionType = *req.EMDExemptionType
+	}
+	if err := validateEMDExemption(emdExempted, exemptionType, req.EMDExemptionReason); err != nil {
 		return nil, err
 	}
 
@@ -97,7 +124,7 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 		PortalSource:       "GeM",
 		CreationMode:       req.CreationMode,
 		BidOwnerID:         req.BidOwnerID,
-		TechnicalManagerID: req.TechnicalManagerID,
+		ReportingManagerID: req.ReportingManagerID,
 		CreatedBy:          createdBy,
 		EstimatedValue:     req.EstimatedValue,
 		EMDAmount:          req.EMDAmount,
@@ -114,6 +141,10 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 	}
 	if req.EMDExempted != nil {
 		params.EMDExempted = *req.EMDExempted
+	}
+	if params.EMDExempted {
+		params.EMDExemptionType = req.EMDExemptionType
+		params.EMDExemptionReason = req.EMDExemptionReason
 	}
 	if req.BGRequired != nil {
 		params.BGRequired = *req.BGRequired
@@ -189,9 +220,9 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 	// Auto-add bid owner as OWNER member
 	_ = s.repo.AddMember(ctx, id, req.BidOwnerID, "OWNER", createdBy)
 
-	// Auto-add technical manager as MANAGER member if set
-	if req.TechnicalManagerID != nil {
-		_ = s.repo.AddMember(ctx, id, *req.TechnicalManagerID, "MANAGER", createdBy)
+	// Auto-add reporting manager as MANAGER member if set
+	if req.ReportingManagerID != nil {
+		_ = s.repo.AddMember(ctx, id, *req.ReportingManagerID, "MANAGER", createdBy)
 	}
 
 	// Dispatch alert & email notification for new tender creation
@@ -212,6 +243,21 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 			Title:      fmt.Sprintf("New Tender Identified: %s", req.Title),
 			Message:    fmt.Sprintf("Tender '%s' (GeM Bid No: %s) has been created and assigned for Stage 2 (Eligibility Assessment).", req.Title, gemBidNoStr),
 		})
+
+		// Directly notify the Reporting Manager (in-app alert + email, via the
+		// same CreateAlert -> dispatchAlertEmails path) that they've been
+		// assigned to a newly discovered tender — distinct from the PRE_SALES
+		// broadcast above, which doesn't target any specific person.
+		if req.ReportingManagerID != nil {
+			_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+				UserID:     req.ReportingManagerID,
+				BidID:      &bidIdCopy,
+				CreatedBy:  &createdBy,
+				Type:       "TENDER_ASSIGNED_REPORTING_MANAGER",
+				Title:      fmt.Sprintf("New Tender Discovered: %s", req.Title),
+				Message:    fmt.Sprintf("You've been assigned as Reporting Manager for tender '%s' (GeM Bid No: %s). Please review.", req.Title, gemBidNoStr),
+			})
+		}
 
 		// EMD processing alert is NOT sent automatically here — it must be
 		// manually triggered by an authorized user (Bid Executive/Manager/Admin)
@@ -247,11 +293,11 @@ func (s *bidService) GetBid(ctx context.Context, id string) (*domain.BidResponse
 		owner = &domain.UserSummary{ID: bid.BidOwnerID}
 	}
 
-	var techManager *domain.UserSummary
-	if bid.TechnicalManagerID != nil {
-		tm, err := s.repo.GetUserSummary(ctx, *bid.TechnicalManagerID)
+	var reportingManager *domain.UserSummary
+	if bid.ReportingManagerID != nil {
+		rm, err := s.repo.GetUserSummary(ctx, *bid.ReportingManagerID)
 		if err == nil {
-			techManager = tm
+			reportingManager = rm
 		}
 	}
 
@@ -284,7 +330,7 @@ func (s *bidService) GetBid(ctx context.Context, id string) (*domain.BidResponse
 		checklistItems = append(checklistItems, item)
 	}
 
-	return buildBidResponse(bid, owner, techManager, members, checklistItems), nil
+	return buildBidResponse(bid, owner, reportingManager, members, checklistItems), nil
 }
 
 func (s *bidService) GetChecklists(ctx context.Context, bidID string) ([]domain.BidChecklistItem, error) {
@@ -483,6 +529,28 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 	}
 	if err := validateEMDDetails(mergedEMDExempted, mergedEMDType, mergedBankName, mergedAccountNumber, mergedIFSCCode, mergedBeneficiary, mergedPayableAt); err != nil {
 		return err
+	}
+
+	mergedExemptionType := bid.EMDExemptionType
+	if req.EMDExemptionType != nil {
+		mergedExemptionType = req.EMDExemptionType
+	}
+	mergedExemptionReason := bid.EMDExemptionReason
+	if req.EMDExemptionReason != nil {
+		mergedExemptionReason = req.EMDExemptionReason
+	}
+	mergedExemptionTypeStr := ""
+	if mergedExemptionType != nil {
+		mergedExemptionTypeStr = *mergedExemptionType
+	}
+	if err := validateEMDExemption(mergedEMDExempted, mergedExemptionTypeStr, mergedExemptionReason); err != nil {
+		return err
+	}
+	// If exemption was just turned off, clear the stale type/reason.
+	if !mergedEMDExempted {
+		cleared := ""
+		req.EMDExemptionType = &cleared
+		req.EMDExemptionReason = &cleared
 	}
 
 	// Build human-readable audit change summaries for field changes
@@ -820,7 +888,7 @@ func (s *bidService) PermanentDeleteBid(ctx context.Context, id string) error {
 // Response builders
 // ────────────────────────────────────────
 
-func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, techManager *domain.UserSummary, members []domain.MemberResponse, checklists []domain.BidChecklistItem) *domain.BidResponse {
+func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, reportingManager *domain.UserSummary, members []domain.MemberResponse, checklists []domain.BidChecklistItem) *domain.BidResponse {
 	var competitorInfo interface{} = []interface{}{}
 	var metadata interface{} = map[string]interface{}{}
 
@@ -869,6 +937,8 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, techM
 		EMDAmount:        bid.EMDAmount,
 		EMDType:          bid.EMDType,
 		EMDExempted:      bid.EMDExempted,
+		EMDExemptionType:   bid.EMDExemptionType,
+		EMDExemptionReason: bid.EMDExemptionReason,
 		FinalBidValue:    bid.FinalBidValue,
 		L1Price:          bid.L1Price,
 		QuotedPrice:      bid.QuotedPrice,
@@ -892,7 +962,7 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, techM
 		CompetitorInfo:   competitorInfo,
 		Metadata:         metadata,
 		BidOwner:         *owner,
-		TechnicalManager: techManager,
+		ReportingManager: reportingManager,
 		Members:          members,
 		Checklists:       checklists,
 		CreatedBy:        bid.CreatedBy,
@@ -993,6 +1063,8 @@ func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary) domai
 		POReceivedStatus:          bid.POReceivedStatus,
 		POReceivedDate:            bid.POReceivedDate,
 		EMDExempted:               bid.EMDExempted,
+		EMDExemptionType:          bid.EMDExemptionType,
+		EMDExemptionReason:        bid.EMDExemptionReason,
 		SubmissionDone:            bid.SubmissionDone,
 		EMDReady:                  bid.EMDReady,
 		EMDReadyDate:              bid.EMDReadyDate,

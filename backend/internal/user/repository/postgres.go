@@ -444,7 +444,7 @@ func (r *postgresUserRepo) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("failed to reassign created_by in bid_workspaces: %w", err)
 	}
-	_, err = tx.Exec(ctx, `UPDATE bid.bid_workspaces SET technical_manager_id = NULL WHERE technical_manager_id = $1`, id)
+	_, err = tx.Exec(ctx, `UPDATE bid.bid_workspaces SET reporting_manager_id = NULL WHERE reporting_manager_id = $1`, id)
 	if err != nil {
 		// Ignore if column doesn't exist or is not nullable
 	}

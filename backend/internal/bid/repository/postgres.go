@@ -28,8 +28,9 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 		INSERT INTO bid.bid_workspaces (
 			bid_no, gem_bid_no, title, organization_name, department_name,
 			portal_source, creation_mode, workflow_stage, bid_status,
-			bid_owner_id, technical_manager_id, created_by,
+			bid_owner_id, reporting_manager_id, created_by,
 			estimated_value, emd_amount, emd_type, emd_exempted,
+			emd_exemption_type, emd_exemption_reason,
 			emd_bank_name, emd_account_number, emd_ifsc_code, emd_branch,
 			emd_beneficiary, emd_payable_at,
 			bg_required, bg_rate, high_level_scope,
@@ -44,22 +45,24 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 			$6, $7, $8, $9,
 			$10, $11, $12,
 			$13, $14, $15, $16,
-			$17, $18, $19, $20,
-			$21, $22,
-			$23, $24, $25,
-			$26, $27, $28, $29, $30, $31,
-			$32, $33, $34,
-			$35, $36,
-			$37, $38, $39,
-			$40, $41, $42, $43, $44, $45, $46, '{"DISCOVERED": true}'::jsonb
+			$17, $18,
+			$19, $20, $21, $22,
+			$23, $24,
+			$25, $26, $27,
+			$28, $29, $30, $31, $32, $33,
+			$34, $35, $36,
+			$37, $38,
+			$39, $40, $41,
+			$42, $43, $44, $45, $46, $47, $48, '{"DISCOVERED": true}'::jsonb
 		) RETURNING id
 	`
 	var id string
 	err := r.pool.QueryRow(ctx, query,
 		params.BidNo, params.GemBidNo, params.Title, params.OrganizationName, params.DepartmentName,
 		params.PortalSource, params.CreationMode, domain.StageDiscovered, domain.BidStatusActive,
-		params.BidOwnerID, params.TechnicalManagerID, params.CreatedBy,
+		params.BidOwnerID, params.ReportingManagerID, params.CreatedBy,
 		params.EstimatedValue, params.EMDAmount, params.EMDType, params.EMDExempted,
+		params.EMDExemptionType, params.EMDExemptionReason,
 		params.EMDBankName, params.EMDAccountNumber, params.EMDIFSCCode, params.EMDBranch,
 		params.EMDBeneficiary, params.EMDPayableAt,
 		params.BGRequired, params.BGRate, params.HighLevelScope,
@@ -80,8 +83,9 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 	query := `
 		SELECT id, bid_no, gem_bid_no, title, organization_name, department_name,
 		       portal_source, creation_mode, workflow_stage, bid_status,
-		       bid_owner_id, technical_manager_id, created_by,
+		       bid_owner_id, reporting_manager_id, created_by,
 		       estimated_value, emd_amount, emd_type, emd_exempted,
+		       emd_exemption_type, emd_exemption_reason,
 		       final_bid_value, l1_price, quoted_price,
 		       start_date, end_date, opening_date, closing_date, duration_months, authority,
 		       high_level_scope, bg_required, bg_rate,
@@ -259,8 +263,9 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 	dataQuery := fmt.Sprintf(`
 		SELECT b.id, b.bid_no, b.gem_bid_no, b.title, b.organization_name, b.department_name,
 		       b.portal_source, b.creation_mode, b.workflow_stage, b.bid_status,
-		       b.bid_owner_id, b.technical_manager_id, b.created_by,
+		       b.bid_owner_id, b.reporting_manager_id, b.created_by,
 		       b.estimated_value, b.emd_amount, b.emd_type, b.emd_exempted,
+		       b.emd_exemption_type, b.emd_exemption_reason,
 		       b.final_bid_value, b.l1_price, b.quoted_price,
 		       b.start_date, b.end_date, b.opening_date, b.closing_date, b.duration_months, b.authority,
 		       b.high_level_scope, b.bg_required, b.bg_rate,
@@ -359,6 +364,27 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	}
 	if req.EMDExempted != nil {
 		addSet("emd_exempted", *req.EMDExempted)
+	}
+	// emd_exemption_type/reason are CHECK-constrained (NULL or MSME/STARTUP/OTHER),
+	// so an empty-string sentinel (used by the service layer to clear them when
+	// exemption is turned off) must be written as SQL NULL, not "".
+	if req.EMDExemptionType != nil {
+		if strings.TrimSpace(*req.EMDExemptionType) == "" {
+			sets = append(sets, fmt.Sprintf("emd_exemption_type = $%d", idx))
+			args = append(args, nil)
+			idx++
+		} else {
+			addSet("emd_exemption_type", *req.EMDExemptionType)
+		}
+	}
+	if req.EMDExemptionReason != nil {
+		if strings.TrimSpace(*req.EMDExemptionReason) == "" {
+			sets = append(sets, fmt.Sprintf("emd_exemption_reason = $%d", idx))
+			args = append(args, nil)
+			idx++
+		} else {
+			addSet("emd_exemption_reason", *req.EMDExemptionReason)
+		}
 	}
 	// EMD bank / DD detail fields
 	if req.EMDBankName != nil {
@@ -573,8 +599,8 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	if req.OEMWorkspace != nil {
 		addSet("oem_workspace", []byte(*req.OEMWorkspace))
 	}
-	if req.TechnicalManagerID != nil {
-		addSet("technical_manager_id", *req.TechnicalManagerID)
+	if req.ReportingManagerID != nil {
+		addSet("reporting_manager_id", *req.ReportingManagerID)
 	}
 	if req.TechComplianceStatus != nil {
 		addSet("tech_compliance_status", *req.TechComplianceStatus)
@@ -975,8 +1001,9 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 	err := s.Scan(
 		&b.ID, &b.BidNo, &b.GemBidNo, &b.Title, &b.OrganizationName, &b.DepartmentName,
 		&b.PortalSource, &b.CreationMode, &b.WorkflowStage, &b.BidStatus,
-		&b.BidOwnerID, &b.TechnicalManagerID, &b.CreatedBy,
+		&b.BidOwnerID, &b.ReportingManagerID, &b.CreatedBy,
 		&b.EstimatedValue, &b.EMDAmount, &b.EMDType, &b.EMDExempted,
+		&b.EMDExemptionType, &b.EMDExemptionReason,
 		&b.FinalBidValue, &b.L1Price, &b.QuotedPrice,
 		&b.StartDate, &b.EndDate, &b.OpeningDate, &b.ClosingDate, &b.DurationMonths, &b.Authority,
 		&b.HighLevelScope, &b.BGRequired, &b.BGRate,

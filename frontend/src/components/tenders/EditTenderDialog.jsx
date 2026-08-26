@@ -103,6 +103,8 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
     emd_amount:        '',
     emd_type:          'ONLINE',
     emd_exempted:      false,
+    emd_exemption_type:   '',
+    emd_exemption_reason: '',
     bg_required:       false,
     bg_rate:           '',
     opening_date:      '',
@@ -110,7 +112,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
     target_month_date: '',
     bid_owner_id:      '',
     remarks:           '',
-    technical_manager_id:        '',
+    reporting_manager_id:        '',
     // EMD bank/online payment details
     emd_bank_name:               '',
     emd_account_number:          '',
@@ -171,6 +173,8 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
             emd_amount:        b.emd_amount !== undefined && b.emd_amount !== null ? String(b.emd_amount) : '',
             emd_type:          b.emd_type || 'ONLINE',
             emd_exempted:      !!b.emd_exempted,
+            emd_exemption_type:   b.emd_exemption_type || '',
+            emd_exemption_reason: b.emd_exemption_reason || '',
             bg_required:       !!b.bg_required,
             bg_rate:           b.bg_rate !== undefined && b.bg_rate !== null ? String(b.bg_rate) : '',
             opening_date:      safeDateStr(b.opening_date || b.start_date),
@@ -178,7 +182,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
             target_month_date: safeDateStr(b.target_month_date),
             bid_owner_id:      b.bid_owner?.id || b.bid_owner_id || '',
             remarks:           b.remarks || '',
-            technical_manager_id: b.technical_manager?.id || b.technical_manager_id || '',
+            reporting_manager_id: b.reporting_manager?.id || b.reporting_manager_id || '',
             emd_bank_name:      b.emd_bank_name || '',
             emd_account_number: b.emd_account_number || '',
             emd_ifsc_code:      b.emd_ifsc_code || '',
@@ -212,6 +216,8 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
         emd_amount:        bid.emd_amount !== undefined && bid.emd_amount !== null ? String(bid.emd_amount) : '',
         emd_type:          bid.emd_type || 'ONLINE',
         emd_exempted:      !!bid.emd_exempted,
+        emd_exemption_type:   bid.emd_exemption_type || '',
+        emd_exemption_reason: bid.emd_exemption_reason || '',
         bg_required:       !!bid.bg_required,
         bg_rate:           bid.bg_rate !== undefined && bid.bg_rate !== null ? String(bid.bg_rate) : '',
         opening_date:      safeDateStr(bid.opening_date || bid.start_date),
@@ -219,7 +225,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
         target_month_date: safeDateStr(bid.target_month_date),
         bid_owner_id:      bid.bid_owner?.id || bid.bid_owner_id || '',
         remarks:           bid.remarks || '',
-        technical_manager_id: bid.technical_manager?.id || bid.technical_manager_id || '',
+        reporting_manager_id: bid.reporting_manager?.id || bid.reporting_manager_id || '',
         emd_bank_name:      bid.emd_bank_name || '',
         emd_account_number: bid.emd_account_number || '',
         emd_ifsc_code:      bid.emd_ifsc_code || '',
@@ -249,6 +255,8 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
           if (f.emd_type === 'EXEMPTED') {
             updated.emd_type = 'ONLINE'
           }
+          updated.emd_exemption_type = ''
+          updated.emd_exemption_reason = ''
         }
       } else if (field === 'emd_type') {
         if (value === 'EXEMPTED') {
@@ -256,7 +264,11 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
           updated.emd_amount = ''
         } else {
           updated.emd_exempted = false
+          updated.emd_exemption_type = ''
+          updated.emd_exemption_reason = ''
         }
+      } else if (field === 'emd_exemption_type') {
+        if (value !== 'OTHER') updated.emd_exemption_reason = ''
       } else if (field === 'closing_date' && value) {
         const d = new Date(value)
         if (!isNaN(d.getTime())) {
@@ -285,6 +297,11 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
         if (!form.emd_beneficiary.trim()) e.emd_beneficiary = 'Beneficiary is required for DD EMD'
         if (!form.emd_payable_at.trim()) e.emd_payable_at = 'Payable at location is required'
       }
+    } else {
+      if (!form.emd_exemption_type) e.emd_exemption_type = 'Select MSME, Startup, or Other'
+      else if (form.emd_exemption_type === 'OTHER' && !form.emd_exemption_reason.trim()) {
+        e.emd_exemption_reason = 'Please specify the reason for exemption'
+      }
     }
     return e
   }
@@ -310,7 +327,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
         opening_date:    form.opening_date ? new Date(form.opening_date).toISOString() : null,
         closing_date:    form.closing_date ? new Date(form.closing_date).toISOString() : null,
         target_month_date: form.target_month_date ? new Date(form.target_month_date).toISOString() : null,
-        technical_manager_id: form.technical_manager_id || null,
+        reporting_manager_id: form.reporting_manager_id || null,
       }
 
       const res = await updateBid(bid.id, payload)
@@ -555,6 +572,57 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
                       <span className="text-xs text-muted-foreground">EMD Exempted</span>
                     </label>
 
+                    {/* EMD Exemption Basis */}
+                    {form.emd_exempted && (
+                      <div className="col-span-2 space-y-2 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800">
+                        <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-200">
+                          EMD Exemption Basis <span className="text-red-500">*</span>
+                        </p>
+                        <div className="flex flex-wrap items-center gap-4">
+                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-foreground">
+                            <input
+                              type="radio"
+                              name="emd_exemption_type_edit"
+                              checked={form.emd_exemption_type === 'MSME'}
+                              onChange={() => set('emd_exemption_type', 'MSME')}
+                              className="accent-primary"
+                            />
+                            MSME
+                          </label>
+                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-foreground">
+                            <input
+                              type="radio"
+                              name="emd_exemption_type_edit"
+                              checked={form.emd_exemption_type === 'STARTUP'}
+                              onChange={() => set('emd_exemption_type', 'STARTUP')}
+                              className="accent-primary"
+                            />
+                            Startup
+                          </label>
+                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-foreground">
+                            <input
+                              type="checkbox"
+                              checked={form.emd_exemption_type === 'OTHER'}
+                              onChange={() => set('emd_exemption_type', form.emd_exemption_type === 'OTHER' ? '' : 'OTHER')}
+                              className="accent-primary"
+                            />
+                            Other
+                          </label>
+                        </div>
+                        {errors.emd_exemption_type && (
+                          <p className="text-[11px] text-red-500">{errors.emd_exemption_type}</p>
+                        )}
+                        {form.emd_exemption_type === 'OTHER' && (
+                          <Input
+                            value={form.emd_exemption_reason}
+                            onChange={(e) => set('emd_exemption_reason', e.target.value)}
+                            placeholder="Specify the reason for EMD exemption"
+                            className={inputCls(errors.emd_exemption_reason)}
+                          />
+                        )}
+                      </div>
+                    )}
+
                     {/* Bank Guarantee (BG) */}
                     <div className="space-y-1.5">
                       <Label className="text-xs font-medium text-foreground">Bank Guarantee (BG)</Label>
@@ -677,27 +745,27 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
                           <DropdownMenuSeparator />
                           {users.map((u) => (
                             <DropdownMenuItem key={u.id} onSelect={() => set('bid_owner_id', u.id)}>
-                              {u.full_name} (@{u.username})
+                              {u.full_name}
                             </DropdownMenuItem>
                           ))}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </Field>
 
-                    <Field label="Technical Manager">
+                    <Field label="Reporting Manager">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild disabled={usersLoading}>
                           <Button variant="outline" size="sm" className="w-full h-8 text-xs font-normal justify-between bg-background text-foreground hover:bg-muted/50 gap-1.5 border-input">
-                            <span>{form.technical_manager_id ? (users.find((u) => u.id === form.technical_manager_id)?.full_name ?? 'Select manager...') : 'Select manager...'}</span>
+                            <span>{form.reporting_manager_id ? (users.find((u) => u.id === form.reporting_manager_id)?.full_name ?? 'Select manager...') : 'Select manager...'}</span>
                             <ChevronDown className="size-3 text-muted-foreground ml-auto" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent className="max-h-60 overflow-y-auto w-[220px]">
-                          <DropdownMenuLabel>Select Technical Manager</DropdownMenuLabel>
+                          <DropdownMenuLabel>Select Reporting Manager</DropdownMenuLabel>
                           <DropdownMenuSeparator />
                           {users.map((u) => (
-                            <DropdownMenuItem key={u.id} onSelect={() => set('technical_manager_id', u.id)}>
-                              {u.full_name} (@{u.username})
+                            <DropdownMenuItem key={u.id} onSelect={() => set('reporting_manager_id', u.id)}>
+                              {u.full_name}
                             </DropdownMenuItem>
                           ))}
                         </DropdownMenuContent>

@@ -2185,6 +2185,16 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                   <div className="space-y-2 text-sm">
                     {[
                       ['EMD Processing Type', bid.emd_exempted ? 'EXEMPTED' : (bid.emd_type || 'ONLINE')],
+                      ...(bid.emd_exempted ? [[
+                        'EMD Exemption Basis',
+                        bid.emd_exemption_type === 'OTHER'
+                          ? `Other — ${bid.emd_exemption_reason || 'N/A'}`
+                          : bid.emd_exemption_type === 'MSME'
+                            ? 'MSME'
+                            : bid.emd_exemption_type === 'STARTUP'
+                              ? 'Startup'
+                              : '—',
+                      ]] : []),
                       ['Start Date', getBidStartDate(bid)],
                       ['End Date', getBidEndDate(bid)],
                     ].map(([l,v])=>(
