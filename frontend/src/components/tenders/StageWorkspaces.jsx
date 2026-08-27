@@ -203,9 +203,15 @@ export function checkStageState(bid, stageKey) {
     remarks[stageKey] && typeof remarks[stageKey] === 'string' && remarks[stageKey].startsWith('[Re-Verification]')
   )
 
-  // EMD Processing has nothing to configure when EMD is exempted for this tender —
-  // treat it as auto-done so it doesn't block later stages from unlocking.
-  const isEmdExempt = stageKey === 'EMD_PROCESSING' && !!bid?.emd_exempted
+  // EMD Processing has nothing to configure when EMD is exempted OR not applicable
+  // for this tender — treat it as auto-done so it doesn't block later stages from
+  // unlocking. The two are distinct facts (exempted = EMD required but excused;
+  // not applicable = tender has no EMD clause at all) so callers that need to
+  // label this state get `emdSkipReason` to tell them apart.
+  const isEmdExempt = stageKey === 'EMD_PROCESSING' && !!(bid?.emd_exempted || bid?.emd_not_applicable)
+  const emdSkipReason = stageKey === 'EMD_PROCESSING'
+    ? (bid?.emd_not_applicable ? 'NOT_APPLICABLE' : bid?.emd_exempted ? 'EXEMPTED' : null)
+    : null
 
   // Stage 1 (DISCOVERED) is completed by default upon tender creation unless explicitly set to false
   const isCompleted = completions[stageKey] === true || (
@@ -221,7 +227,7 @@ export function checkStageState(bid, stageKey) {
   if (stageIdx >= 6 && !isTerminal) {
     for (let i = 0; i < stageIdx; i++) {
       const priorKey = WORKFLOW_STAGES_ORDERED[i]
-      const priorDone = completions[priorKey] === true || priorKey === 'DISCOVERED' || (priorKey === 'EMD_PROCESSING' && !!bid?.emd_exempted)
+      const priorDone = completions[priorKey] === true || priorKey === 'DISCOVERED' || (priorKey === 'EMD_PROCESSING' && !!(bid?.emd_exempted || bid?.emd_not_applicable))
       if (!priorDone) {
         isLocked = true
         break
@@ -229,7 +235,7 @@ export function checkStageState(bid, stageKey) {
     }
   }
 
-  return { isCompleted, isCurrent, isLocked, isInReview, isEmdExempt, currentIdx, stageIdx }
+  return { isCompleted, isCurrent, isLocked, isInReview, isEmdExempt, emdSkipReason, currentIdx, stageIdx }
 }
 
 export function ReVerificationModal({ title, stageKey, bidId, bid, onClose, onComplete }) {
@@ -405,7 +411,7 @@ export function Stage1Workspace({ bid, onRefresh }) {
             <div className="flex justify-between"><span className="text-muted-foreground">Authority:</span><span className="font-medium text-foreground">{bid.organization_name}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">Department:</span><span className="font-medium text-foreground">{bid.department_name || '—'}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">Estimated Value:</span><span className="font-bold text-foreground">{fmtMoney(bid.estimated_value)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">EMD Required:</span><span className="font-medium text-foreground">{bid.emd_exempted ? 'Exempted' : fmtMoney(bid.emd_amount)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">EMD Required:</span><span className="font-medium text-foreground">{bid.emd_not_applicable ? 'Not Applicable' : bid.emd_exempted ? 'Exempted' : fmtMoney(bid.emd_amount)}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">Ending Date:</span><span className="font-medium text-foreground">{fmtDate(bid.closing_date)}</span></div>
           </div>
         </div>
@@ -2761,7 +2767,8 @@ export function Stage12Workspace({ bid, onRefresh }) {
   const [bgTargetDate, setBgTargetDate] = useState(bid?.bg_target_date ? bid.bg_target_date.slice(0, 10) : '')
 
   const bgRequired = !!bid?.bg_required
-  const emdExempted = !!bid?.emd_exempted
+  const emdNotApplicable = !!bid?.emd_not_applicable
+  const emdExempted = !!bid?.emd_exempted || emdNotApplicable
 
   useEffect(() => {
     setEmdReturned(!!bid?.emd_returned)
@@ -2889,7 +2896,7 @@ export function Stage12Workspace({ bid, onRefresh }) {
   const handleFinalClose = async (remarks) => {
     await recordBidOutcome(bid.id, {
       bid_outcome: 'WON',
-      outcome_reason: `Award & Handover Completed. PO Received: ${poReceived ? 'Yes' : 'Pending'}${bgRequired ? `, BG Issued: ${bgProceeded ? 'Yes' : 'No'}` : ''}, Delivery/Work Complete: ${deliveryComplete ? 'Yes' : 'No'}${emdExempted ? ', EMD: Exempted' : `, EMD Returned: ${emdReturned ? 'Yes' : 'No'}`}. ${remarks}`,
+      outcome_reason: `Award & Handover Completed. PO Received: ${poReceived ? 'Yes' : 'Pending'}${bgRequired ? `, BG Issued: ${bgProceeded ? 'Yes' : 'No'}` : ''}, Delivery/Work Complete: ${deliveryComplete ? 'Yes' : 'No'}${emdNotApplicable ? ', EMD: Not Applicable' : emdExempted ? ', EMD: Exempted' : `, EMD Returned: ${emdReturned ? 'Yes' : 'No'}`}. ${remarks}`,
     })
     confetti({ particleCount: 200, spread: 100 })
     onRefresh()
@@ -3024,7 +3031,7 @@ export function Stage12Workspace({ bid, onRefresh }) {
                 {emdExempted && (
                   <div className="flex items-center gap-2 p-2.5 rounded-lg border border-border/50 bg-muted/10 text-muted-foreground">
                     <Ban className="size-3.5 shrink-0" />
-                    <span className="text-[11px]">EMD was exempted for this tender — no EMD return to track.</span>
+                    <span className="text-[11px]">{emdNotApplicable ? 'This tender had no EMD requirement — no EMD return to track.' : 'EMD was exempted for this tender — no EMD return to track.'}</span>
                   </div>
                 )}
               </>
@@ -3257,6 +3264,21 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
     case 'DOCUMENT_CHECKLIST_PREPARATION':
       return <Stage5Workspace bid={bid} onRefresh={onRefresh} />
     case 'EMD_PROCESSING':
+      if (bid?.emd_not_applicable) {
+        return (
+          <div className="p-8 rounded-xl border border-border bg-muted/20 text-center space-y-3 max-w-2xl mx-auto my-6">
+            <div className="size-14 rounded-full bg-muted flex items-center justify-center mx-auto text-muted-foreground border border-border">
+              <Lock className="size-7" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-foreground">No EMD</h3>
+              <p className="text-xs text-muted-foreground leading-relaxed max-w-md mx-auto">
+                This tender has no EMD requirement at all — there is nothing to process at this stage.
+              </p>
+            </div>
+          </div>
+        )
+      }
       if (bid?.emd_exempted) {
         return (
           <div className="p-8 rounded-xl border border-border bg-muted/20 text-center space-y-3 max-w-2xl mx-auto my-6">
@@ -3284,7 +3306,7 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
     case 'AWARD_HANDOVER': {
       const outcomeIsLostOrCancelled = ['LOST', 'CANCELLED'].includes(bid?.bid_status) || ['LOST', 'CANCELLED'].includes(bid?.bid_outcome)
       if (outcomeIsLostOrCancelled) {
-        if (!bid?.emd_exempted) {
+        if (!bid?.emd_exempted && !bid?.emd_not_applicable) {
           return <EmdReturnWorkspace bid={bid} onRefresh={onRefresh} />
         }
         return (
@@ -3295,7 +3317,7 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
             <div className="space-y-1">
               <h3 className="text-base font-bold text-foreground">Tender Closed</h3>
               <p className="text-xs text-muted-foreground leading-relaxed max-w-md mx-auto">
-                This tender was {bid?.bid_status === 'CANCELLED' || bid?.bid_outcome === 'CANCELLED' ? 'cancelled' : 'lost'} and EMD was exempted — there is nothing further to track for Award &amp; Handover.
+                This tender was {bid?.bid_status === 'CANCELLED' || bid?.bid_outcome === 'CANCELLED' ? 'cancelled' : 'lost'} and {bid?.emd_not_applicable ? 'had no EMD requirement' : 'EMD was exempted'} — there is nothing further to track for Award &amp; Handover.
               </p>
             </div>
           </div>

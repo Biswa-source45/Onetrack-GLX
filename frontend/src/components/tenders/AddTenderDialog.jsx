@@ -179,6 +179,7 @@ function ManualForm({ onClose, onCreated, onBack }) {
     emd_amount:        '',
     emd_type:          'ONLINE',
     emd_exempted:      false,
+    emd_not_applicable: false,
     oem_required:      false,
     has_tech_eval:     false,
     opening_date:      '',
@@ -217,17 +218,32 @@ function ManualForm({ onClose, onCreated, onBack }) {
         if (value) {
           updated.emd_type = 'EXEMPTED'
           updated.emd_amount = ''
+          updated.emd_not_applicable = false
         } else {
           if (f.emd_type === 'EXEMPTED') {
             updated.emd_type = 'ONLINE'
           }
         }
+      } else if (field === 'emd_not_applicable') {
+        if (value) {
+          updated.emd_type = 'NOT_APPLICABLE'
+          updated.emd_amount = ''
+          updated.emd_exempted = false
+        } else if (f.emd_type === 'NOT_APPLICABLE') {
+          updated.emd_type = 'ONLINE'
+        }
       } else if (field === 'emd_type') {
         if (value === 'EXEMPTED') {
           updated.emd_exempted = true
+          updated.emd_not_applicable = false
+          updated.emd_amount = ''
+        } else if (value === 'NOT_APPLICABLE') {
+          updated.emd_not_applicable = true
+          updated.emd_exempted = false
           updated.emd_amount = ''
         } else {
           updated.emd_exempted = false
+          updated.emd_not_applicable = false
         }
       }
 
@@ -408,14 +424,14 @@ function ManualForm({ onClose, onCreated, onBack }) {
             </Field>
             <Field label="EMD Amount (₹)">
               <Input type="number" value={form.emd_amount} onChange={(e) => set('emd_amount', e.target.value)}
-                placeholder="e.g. 50000" className={`${inputCls()} ${form.emd_exempted ? 'opacity-50' : ''}`}
-                disabled={form.emd_exempted} />
+                placeholder="e.g. 50000" className={`${inputCls()} ${(form.emd_exempted || form.emd_not_applicable) ? 'opacity-50' : ''}`}
+                disabled={form.emd_exempted || form.emd_not_applicable} />
             </Field>
             <Field label="EMD Type">
               <DropdownMenu>
-                <DropdownMenuTrigger asChild disabled={form.emd_exempted}>
+                <DropdownMenuTrigger asChild disabled={form.emd_exempted || form.emd_not_applicable}>
                   <Button variant="outline" size="sm" className="w-full h-8 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5 disabled:opacity-50">
-                    <span>{form.emd_type}</span>
+                    <span>{form.emd_not_applicable ? 'NOT APPLICABLE' : form.emd_type}</span>
                     <ChevronDown className="size-3 text-muted-foreground ml-auto" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -434,7 +450,8 @@ function ManualForm({ onClose, onCreated, onBack }) {
             {/* Toggles */}
             <div className="space-y-2 pt-1">
               {[
-                { field: 'emd_exempted', label: 'EMD Exempted' },
+                ...(form.emd_exempted ? [] : [{ field: 'emd_not_applicable', label: 'No EMD' }]),
+                ...(form.emd_not_applicable ? [] : [{ field: 'emd_exempted', label: 'EMD Exempted' }]),
                 { field: 'oem_required', label: 'OEM Authorization Required' },
                 { field: 'has_tech_eval', label: 'Technical Evaluation' },
               ].map(({ field, label }) => (

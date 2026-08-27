@@ -98,13 +98,28 @@ func validateEMDExemption(exempted bool, exemptionType string, exemptionReason *
 	}
 }
 
+// validateEMDMutualExclusivity enforces that a tender is never simultaneously
+// "EMD Exempted" (an EMD is required but we're excused from paying it) and
+// "EMD Not Applicable" (the tender has no EMD clause at all) — these are two
+// distinct, unrelated facts about a tender and can't both be true.
+func validateEMDMutualExclusivity(exempted, notApplicable bool) error {
+	if exempted && notApplicable {
+		return fmt.Errorf("%w: a tender cannot be both emd_exempted and emd_not_applicable — choose one", domain.ErrValidation)
+	}
+	return nil
+}
+
 func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest, createdBy string) (*domain.BidResponse, error) {
 	emdExempted := req.EMDExempted != nil && *req.EMDExempted
+	emdNotApplicable := req.EMDNotApplicable != nil && *req.EMDNotApplicable
+	if err := validateEMDMutualExclusivity(emdExempted, emdNotApplicable); err != nil {
+		return nil, err
+	}
 	emdType := ""
 	if req.EMDType != nil {
 		emdType = *req.EMDType
 	}
-	if err := validateEMDDetails(emdExempted, emdType, req.EMDBankName, req.EMDAccountNumber, req.EMDIFSCCode, req.EMDBeneficiary, req.EMDPayableAt); err != nil {
+	if err := validateEMDDetails(emdExempted || emdNotApplicable, emdType, req.EMDBankName, req.EMDAccountNumber, req.EMDIFSCCode, req.EMDBeneficiary, req.EMDPayableAt); err != nil {
 		return nil, err
 	}
 	exemptionType := ""
@@ -141,6 +156,9 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 	}
 	if req.EMDExempted != nil {
 		params.EMDExempted = *req.EMDExempted
+	}
+	if req.EMDNotApplicable != nil {
+		params.EMDNotApplicable = *req.EMDNotApplicable
 	}
 	if params.EMDExempted {
 		params.EMDExemptionType = req.EMDExemptionType
@@ -500,6 +518,25 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 	if req.EMDExempted != nil {
 		mergedEMDExempted = *req.EMDExempted
 	}
+	mergedEMDNotApplicable := bid.EMDNotApplicable
+	if req.EMDNotApplicable != nil {
+		mergedEMDNotApplicable = *req.EMDNotApplicable
+	}
+	// A client turning one flag on explicitly always wins over a stale opposite
+	// flag left on the existing row, so switching categories only requires
+	// sending the one field that's changing.
+	if req.EMDExempted != nil && mergedEMDExempted && mergedEMDNotApplicable {
+		mergedEMDNotApplicable = false
+		cleared := false
+		req.EMDNotApplicable = &cleared
+	} else if req.EMDNotApplicable != nil && mergedEMDNotApplicable && mergedEMDExempted {
+		mergedEMDExempted = false
+		cleared := false
+		req.EMDExempted = &cleared
+	}
+	if err := validateEMDMutualExclusivity(mergedEMDExempted, mergedEMDNotApplicable); err != nil {
+		return err
+	}
 	mergedEMDType := ""
 	if bid.EMDType != nil {
 		mergedEMDType = *bid.EMDType
@@ -527,7 +564,7 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 	if req.EMDPayableAt != nil {
 		mergedPayableAt = req.EMDPayableAt
 	}
-	if err := validateEMDDetails(mergedEMDExempted, mergedEMDType, mergedBankName, mergedAccountNumber, mergedIFSCCode, mergedBeneficiary, mergedPayableAt); err != nil {
+	if err := validateEMDDetails(mergedEMDExempted || mergedEMDNotApplicable, mergedEMDType, mergedBankName, mergedAccountNumber, mergedIFSCCode, mergedBeneficiary, mergedPayableAt); err != nil {
 		return err
 	}
 
@@ -546,11 +583,19 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 	if err := validateEMDExemption(mergedEMDExempted, mergedExemptionTypeStr, mergedExemptionReason); err != nil {
 		return err
 	}
-	// If exemption was just turned off, clear the stale type/reason.
+	// If exemption was just turned off (including by switching to Not Applicable
+	// above), clear the stale type/reason.
 	if !mergedEMDExempted {
 		cleared := ""
 		req.EMDExemptionType = &cleared
 		req.EMDExemptionReason = &cleared
+	}
+	// If Not Applicable was just turned off and emd_type is still stuck on its
+	// sentinel value, reset it so the tender doesn't display "NOT APPLICABLE"
+	// as its payment mode while the flag says otherwise.
+	if !mergedEMDNotApplicable && mergedEMDType == "NOT_APPLICABLE" && req.EMDType == nil {
+		resetType := "ONLINE"
+		req.EMDType = &resetType
 	}
 
 	// Build human-readable audit change summaries for field changes
@@ -937,6 +982,7 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, repor
 		EMDAmount:        bid.EMDAmount,
 		EMDType:          bid.EMDType,
 		EMDExempted:      bid.EMDExempted,
+		EMDNotApplicable: bid.EMDNotApplicable,
 		EMDExemptionType:   bid.EMDExemptionType,
 		EMDExemptionReason: bid.EMDExemptionReason,
 		FinalBidValue:    bid.FinalBidValue,
@@ -1063,6 +1109,7 @@ func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary) domai
 		POReceivedStatus:          bid.POReceivedStatus,
 		POReceivedDate:            bid.POReceivedDate,
 		EMDExempted:               bid.EMDExempted,
+		EMDNotApplicable:          bid.EMDNotApplicable,
 		EMDExemptionType:          bid.EMDExemptionType,
 		EMDExemptionReason:        bid.EMDExemptionReason,
 		SubmissionDone:            bid.SubmissionDone,

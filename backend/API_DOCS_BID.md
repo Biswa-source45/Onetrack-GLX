@@ -80,8 +80,9 @@ Both modes share **identical lifecycle, task, and reporting APIs**. Only creatio
 | `category`           | string   | No       | Product/service category                             |
 | `estimated_value`    | number   | No       | Estimated bid value (INR)                            |
 | `emd_amount`         | number   | No       | EMD amount (INR)                                     |
-| `emd_type`           | string   | No       | `ONLINE` \| `DD` \| `BG` \| `EXEMPTED`              |
-| `emd_exempted`       | boolean  | No       | Whether EMD is exempted                              |
+| `emd_type`           | string   | No       | `ONLINE` \| `DD` \| `BG` \| `EXEMPTED` \| `NOT_APPLICABLE` |
+| `emd_exempted`       | boolean  | No       | EMD is required but waived (MSME/Startup/Other cert) — see `emd_exemption_type`/`emd_exemption_reason` |
+| `emd_not_applicable` | boolean  | No       | Tender has no EMD clause at all — distinct from `emd_exempted`; mutually exclusive with it |
 | `oem_required`       | boolean  | No       | Whether OEM authorization/MAF is required            |
 | `has_tech_eval`      | boolean  | No       | Whether technical evaluation is required             |
 | `opening_date`       | datetime | No       | Bid opening date (ISO 8601)                          |
@@ -108,6 +109,7 @@ Both modes share **identical lifecycle, task, and reporting APIs**. Only creatio
   "emd_amount": 50000,
   "emd_type": "ONLINE",
   "emd_exempted": false,
+  "emd_not_applicable": false,
   "oem_required": true,
   "has_tech_eval": true,
   "opening_date": "2026-06-01T10:00:00Z",

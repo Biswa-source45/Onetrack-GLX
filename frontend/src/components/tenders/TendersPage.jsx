@@ -98,7 +98,11 @@ function formatCurrency(val) {
 }
 
 // EMD exemption basis, shown wherever "EMD Exemption" is tabulated (CSV export, Sheets view).
+// Distinct from "No EMD" (emd_not_applicable): exemption means an EMD is
+// required but waived for MSME/Startup/Other reasons, while Not Applicable
+// means the tender has no EMD clause at all.
 function formatEmdExemption(bid) {
+  if (bid?.emd_not_applicable) return 'Not Applicable'
   if (!bid?.emd_exempted) return 'No'
   if (bid.emd_exemption_type === 'OTHER') return `Other: ${bid.emd_exemption_reason || 'N/A'}`
   if (bid.emd_exemption_type === 'MSME') return 'MSME'
@@ -678,17 +682,32 @@ export function TendersPage({ initialScope = 'all' }) {
           if (value) {
             newBid.emd_type = 'EXEMPTED'
             newBid.emd_amount = 0
+            newBid.emd_not_applicable = false
           } else {
             if (b.emd_type === 'EXEMPTED') {
               newBid.emd_type = 'ONLINE'
             }
           }
+        } else if (field === 'emd_not_applicable') {
+          if (value) {
+            newBid.emd_type = 'NOT_APPLICABLE'
+            newBid.emd_amount = 0
+            newBid.emd_exempted = false
+          } else if (b.emd_type === 'NOT_APPLICABLE') {
+            newBid.emd_type = 'ONLINE'
+          }
         } else if (field === 'emd_type') {
           if (value === 'EXEMPTED') {
             newBid.emd_exempted = true
+            newBid.emd_not_applicable = false
+            newBid.emd_amount = 0
+          } else if (value === 'NOT_APPLICABLE') {
+            newBid.emd_not_applicable = true
+            newBid.emd_exempted = false
             newBid.emd_amount = 0
           } else {
             newBid.emd_exempted = false
+            newBid.emd_not_applicable = false
           }
         }
         return newBid
@@ -750,6 +769,7 @@ export function TendersPage({ initialScope = 'all' }) {
       emd_amount:        currentBid.emd_amount !== null ? Number(currentBid.emd_amount) : null,
       emd_type:          currentBid.emd_type,
       emd_exempted:      !!currentBid.emd_exempted,
+      emd_not_applicable: !!currentBid.emd_not_applicable,
       oem_required:      !!currentBid.oem_required,
       has_tech_eval:     !!currentBid.has_tech_eval,
       opening_date:      currentBid.opening_date ? new Date(currentBid.opening_date).toISOString() : null,
@@ -817,17 +837,32 @@ export function TendersPage({ initialScope = 'all' }) {
       if (value) {
         payload.emd_type = 'EXEMPTED'
         payload.emd_amount = null
+        payload.emd_not_applicable = false
       } else {
         if (currentBid.emd_type === 'EXEMPTED') {
           payload.emd_type = 'ONLINE'
         }
       }
+    } else if (field === 'emd_not_applicable') {
+      if (value) {
+        payload.emd_type = 'NOT_APPLICABLE'
+        payload.emd_amount = null
+        payload.emd_exempted = false
+      } else if (currentBid.emd_type === 'NOT_APPLICABLE') {
+        payload.emd_type = 'ONLINE'
+      }
     } else if (field === 'emd_type') {
       if (value === 'EXEMPTED') {
         payload.emd_exempted = true
+        payload.emd_not_applicable = false
+        payload.emd_amount = null
+      } else if (value === 'NOT_APPLICABLE') {
+        payload.emd_not_applicable = true
+        payload.emd_exempted = false
         payload.emd_amount = null
       } else {
         payload.emd_exempted = false
+        payload.emd_not_applicable = false
       }
     }
 
@@ -1496,6 +1531,7 @@ export function TendersPage({ initialScope = 'all' }) {
                       <th className="p-3 border-r border-border min-w-[180px]">Department</th>
                       <th className="p-3 border-r border-border min-w-[140px]">Scope Type</th>
                       <th className="p-3 border-r border-border min-w-[120px]">EMD</th>
+                      <th className="p-3 border-r border-border min-w-[100px]">No EMD</th>
                       <th className="p-3 border-r border-border min-w-[130px]">EMD Exemption</th>
                       <th className="p-3 border-r border-border min-w-[110px]">BG Rate (%)</th>
                       <th className="p-3 border-r border-border min-w-[150px]">Target Month</th>
@@ -1724,14 +1760,40 @@ export function TendersPage({ initialScope = 'all' }) {
                             )}
                           </td>
 
+                          {/* 10b. No EMD (distinct from EMD Exempted — tender has no EMD clause at all) */}
+                          <td className="p-3 border-r border-border">
+                            {!isReadOnly ? (
+                              <button
+                                onClick={() => handleImmediateChangeAndSave(bid.id, 'emd_not_applicable', !bid.emd_not_applicable)}
+                                disabled={!!bid.emd_exempted}
+                                className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                                  bid.emd_not_applicable
+                                    ? 'bg-slate-500 hover:bg-slate-600 text-white'
+                                    : 'bg-muted hover:bg-muted/80 text-muted-foreground border border-border'
+                                }`}
+                              >
+                                {bid.emd_not_applicable ? 'Yes' : 'No'}
+                              </button>
+                            ) : (
+                              bid.emd_not_applicable ? (
+                                <span className="text-slate-600 font-bold flex items-center gap-0.5">
+                                  <Check className="size-3.5" /> Yes
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground">No</span>
+                              )
+                            )}
+                          </td>
+
                           {/* 11. EMD Exempted */}
                           <td className="p-3 border-r border-border">
                             {!isReadOnly ? (
                               <button
                                 onClick={() => handleImmediateChangeAndSave(bid.id, 'emd_exempted', !bid.emd_exempted)}
-                                className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${
-                                  bid.emd_exempted 
-                                    ? 'bg-emerald-500 hover:bg-emerald-600 text-white' 
+                                disabled={!!bid.emd_not_applicable}
+                                className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                                  bid.emd_exempted
+                                    ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
                                     : 'bg-muted hover:bg-muted/80 text-muted-foreground border border-border'
                                 }`}
                               >

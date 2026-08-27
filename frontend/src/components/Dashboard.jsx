@@ -325,9 +325,9 @@ export function OverviewPanel() {
     .filter(b => b.bid_status === 'WON' || b.bid_outcome === 'WON' || b.workflow_stage === 'WON')
     .reduce((sum, b) => sum + (b.final_bid_value || b.estimated_value || 0), 0)
 
-  // EMD is counted as deposited ONLY if not exempted, amount > 0, and bid reached/passed EMD_PROCESSING stage (or emd_ready/emd_returned is true)
+  // EMD is counted as deposited ONLY if not exempted/not-applicable, amount > 0, and bid reached/passed EMD_PROCESSING stage (or emd_ready/emd_returned is true)
   const emdDepositedBids = filteredBids.filter(b => {
-    if (b.emd_exempted || !b.emd_amount || Number(b.emd_amount) <= 0) return false
+    if (b.emd_exempted || b.emd_not_applicable || !b.emd_amount || Number(b.emd_amount) <= 0) return false
     if (b.emd_ready || b.emd_returned) return true
     const postEmdStages = [
       'EMD_PROCESSING', 'INTERNAL_APPROVAL',

@@ -39,7 +39,8 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 			remarks, metadata,
 			team, scope_type, activity_type,
 			excel_bid_status, submission_status, financial_evaluation_status, po_received_status,
-			bid_result, ai_source_document_id, ai_extraction_confidence, stage_completions
+			bid_result, ai_source_document_id, ai_extraction_confidence, stage_completions,
+			emd_not_applicable
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9,
@@ -53,7 +54,8 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 			$34, $35, $36,
 			$37, $38,
 			$39, $40, $41,
-			$42, $43, $44, $45, $46, $47, $48, '{"DISCOVERED": true}'::jsonb
+			$42, $43, $44, $45, $46, $47, $48, '{"DISCOVERED": true}'::jsonb,
+			$49
 		) RETURNING id
 	`
 	var id string
@@ -72,6 +74,7 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 		params.Team, params.ScopeType, params.ActivityType,
 		params.ExcelBidStatus, params.SubmissionStatus, params.FinancialEvaluationStatus, params.POReceivedStatus,
 		params.BidResult, params.AISourceDocumentID, params.AIExtractionConfidence,
+		params.EMDNotApplicable,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("failed to create bid: %w", err)
@@ -107,7 +110,8 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 		       emd_bank_name, emd_account_number, emd_ifsc_code, emd_branch,
 		       emd_beneficiary, emd_payable_at,
 		       po_received_date, bg_target_date, bg_discharged_date, emd_returned_date,
-		       emd_ready_date, delivery_complete, delivery_complete_date
+		       emd_ready_date, delivery_complete, delivery_complete_date,
+		       emd_not_applicable
 		FROM bid.bid_workspaces
 		WHERE id = $1
 	`
@@ -287,7 +291,8 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		       b.emd_bank_name, b.emd_account_number, b.emd_ifsc_code, b.emd_branch,
 		       b.emd_beneficiary, b.emd_payable_at,
 		       b.po_received_date, b.bg_target_date, b.bg_discharged_date, b.emd_returned_date,
-		       b.emd_ready_date, b.delivery_complete, b.delivery_complete_date
+		       b.emd_ready_date, b.delivery_complete, b.delivery_complete_date,
+		       b.emd_not_applicable
 		FROM bid.bid_workspaces b
 		LEFT JOIN auth.users u ON b.bid_owner_id = u.id
 		%s
@@ -364,6 +369,9 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	}
 	if req.EMDExempted != nil {
 		addSet("emd_exempted", *req.EMDExempted)
+	}
+	if req.EMDNotApplicable != nil {
+		addSet("emd_not_applicable", *req.EMDNotApplicable)
 	}
 	// emd_exemption_type/reason are CHECK-constrained (NULL or MSME/STARTUP/OTHER),
 	// so an empty-string sentinel (used by the service layer to clear them when
@@ -1026,6 +1034,7 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 		&b.EMDBeneficiary, &b.EMDPayableAt,
 		&b.POReceivedDate, &b.BGTargetDate, &b.BGDischargedDate, &b.EMDReturnedDate,
 		&b.EMDReadyDate, &b.DeliveryComplete, &b.DeliveryCompleteDate,
+		&b.EMDNotApplicable,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan bid: %w", err)

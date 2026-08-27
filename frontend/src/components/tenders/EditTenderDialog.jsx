@@ -103,6 +103,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
     emd_amount:        '',
     emd_type:          'ONLINE',
     emd_exempted:      false,
+    emd_not_applicable: false,
     emd_exemption_type:   '',
     emd_exemption_reason: '',
     bg_required:       false,
@@ -173,6 +174,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
             emd_amount:        b.emd_amount !== undefined && b.emd_amount !== null ? String(b.emd_amount) : '',
             emd_type:          b.emd_type || 'ONLINE',
             emd_exempted:      !!b.emd_exempted,
+            emd_not_applicable: !!b.emd_not_applicable,
             emd_exemption_type:   b.emd_exemption_type || '',
             emd_exemption_reason: b.emd_exemption_reason || '',
             bg_required:       !!b.bg_required,
@@ -216,6 +218,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
         emd_amount:        bid.emd_amount !== undefined && bid.emd_amount !== null ? String(bid.emd_amount) : '',
         emd_type:          bid.emd_type || 'ONLINE',
         emd_exempted:      !!bid.emd_exempted,
+        emd_not_applicable: !!bid.emd_not_applicable,
         emd_exemption_type:   bid.emd_exemption_type || '',
         emd_exemption_reason: bid.emd_exemption_reason || '',
         bg_required:       !!bid.bg_required,
@@ -251,6 +254,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
         if (value) {
           updated.emd_type = 'EXEMPTED'
           updated.emd_amount = ''
+          updated.emd_not_applicable = false
         } else {
           if (f.emd_type === 'EXEMPTED') {
             updated.emd_type = 'ONLINE'
@@ -258,12 +262,30 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
           updated.emd_exemption_type = ''
           updated.emd_exemption_reason = ''
         }
+      } else if (field === 'emd_not_applicable') {
+        if (value) {
+          updated.emd_type = 'NOT_APPLICABLE'
+          updated.emd_amount = ''
+          updated.emd_exempted = false
+          updated.emd_exemption_type = ''
+          updated.emd_exemption_reason = ''
+        } else if (f.emd_type === 'NOT_APPLICABLE') {
+          updated.emd_type = 'ONLINE'
+        }
       } else if (field === 'emd_type') {
         if (value === 'EXEMPTED') {
           updated.emd_exempted = true
+          updated.emd_not_applicable = false
+          updated.emd_amount = ''
+        } else if (value === 'NOT_APPLICABLE') {
+          updated.emd_not_applicable = true
+          updated.emd_exempted = false
+          updated.emd_exemption_type = ''
+          updated.emd_exemption_reason = ''
           updated.emd_amount = ''
         } else {
           updated.emd_exempted = false
+          updated.emd_not_applicable = false
           updated.emd_exemption_type = ''
           updated.emd_exemption_reason = ''
         }
@@ -288,7 +310,9 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
     if (!form.title.trim())      e.title = 'Tender title is required'
     if (!form.bid_owner_id)      e.bid_owner_id = 'Bid owner is required'
     // EMD bank/DD mandatory fields (mirrors AddTenderPage's create-time validation)
-    if (!form.emd_exempted) {
+    if (form.emd_not_applicable) {
+      // No EMD clause on this tender at all — nothing further to validate.
+    } else if (!form.emd_exempted) {
       if (form.emd_type === 'ONLINE') {
         if (!form.emd_bank_name.trim()) e.emd_bank_name = 'Bank name is required for Online EMD'
         if (!form.emd_account_number.trim()) e.emd_account_number = 'Account number is required'
@@ -537,14 +561,14 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
                     </Field>
                     <Field label="EMD Amount (₹)">
                       <Input type="number" value={form.emd_amount} onChange={(e) => set('emd_amount', e.target.value)}
-                        placeholder="e.g. 50000" className={`${inputCls()} ${form.emd_exempted ? 'opacity-50' : ''}`}
-                        disabled={form.emd_exempted} />
+                        placeholder="e.g. 50000" className={`${inputCls()} ${(form.emd_exempted || form.emd_not_applicable) ? 'opacity-50' : ''}`}
+                        disabled={form.emd_exempted || form.emd_not_applicable} />
                     </Field>
                     <Field label="EMD Mode">
                       <DropdownMenu>
-                        <DropdownMenuTrigger asChild disabled={form.emd_exempted}>
+                        <DropdownMenuTrigger asChild disabled={form.emd_exempted || form.emd_not_applicable}>
                           <Button variant="outline" size="sm" className="w-full h-8 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5 disabled:opacity-50">
-                            <span>{form.emd_exempted ? 'EXEMPTED' : (form.emd_type === 'ONLINE' ? 'Online Payment' : form.emd_type)}</span>
+                            <span>{form.emd_not_applicable ? 'NOT APPLICABLE' : form.emd_exempted ? 'EXEMPTED' : (form.emd_type === 'ONLINE' ? 'Online Payment' : form.emd_type)}</span>
                             <ChevronDown className="size-3 text-muted-foreground ml-auto" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -560,17 +584,33 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
                       </DropdownMenu>
                     </Field>
 
-                    <label className="flex items-center gap-2 cursor-pointer pt-1">
-                      <div
-                        onClick={() => set('emd_exempted', !form.emd_exempted)}
-                        className={`w-8 h-4 rounded-full transition-colors relative cursor-pointer
-                          ${form.emd_exempted ? 'bg-primary' : 'bg-muted-foreground/30'}`}
-                      >
-                        <span className={`absolute top-0.5 size-3 rounded-full bg-white shadow transition-transform
-                          ${form.emd_exempted ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                      </div>
-                      <span className="text-xs text-muted-foreground">EMD Exempted</span>
-                    </label>
+                    {!form.emd_exempted && (
+                      <label className="flex items-center gap-2 cursor-pointer pt-1">
+                        <div
+                          onClick={() => set('emd_not_applicable', !form.emd_not_applicable)}
+                          className={`w-8 h-4 rounded-full transition-colors relative cursor-pointer
+                            ${form.emd_not_applicable ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+                        >
+                          <span className={`absolute top-0.5 size-3 rounded-full bg-white shadow transition-transform
+                            ${form.emd_not_applicable ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                        </div>
+                        <span className="text-xs text-muted-foreground">No EMD</span>
+                      </label>
+                    )}
+
+                    {!form.emd_not_applicable && (
+                      <label className="flex items-center gap-2 cursor-pointer pt-1">
+                        <div
+                          onClick={() => set('emd_exempted', !form.emd_exempted)}
+                          className={`w-8 h-4 rounded-full transition-colors relative cursor-pointer
+                            ${form.emd_exempted ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+                        >
+                          <span className={`absolute top-0.5 size-3 rounded-full bg-white shadow transition-transform
+                            ${form.emd_exempted ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                        </div>
+                        <span className="text-xs text-muted-foreground">EMD Exempted</span>
+                      </label>
+                    )}
 
                     {/* EMD Exemption Basis */}
                     {form.emd_exempted && (

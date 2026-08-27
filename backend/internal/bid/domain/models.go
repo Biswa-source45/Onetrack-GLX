@@ -93,6 +93,7 @@ type BidWorkspace struct {
 	EMDAmount      *float64 `json:"emd_amount,omitempty"`
 	EMDType        *string  `json:"emd_type,omitempty"`
 	EMDExempted    bool     `json:"emd_exempted"`
+	EMDNotApplicable bool   `json:"emd_not_applicable"`
 	EMDExemptionType   *string `json:"emd_exemption_type,omitempty"`
 	EMDExemptionReason *string `json:"emd_exemption_reason,omitempty"`
 	FinalBidValue  *float64 `json:"final_bid_value,omitempty"`
@@ -288,6 +289,7 @@ type CreateBidRequest struct {
 	EMDAmount        *float64 `json:"emd_amount"`
 	EMDType          *string  `json:"emd_type"`
 	EMDExempted      *bool    `json:"emd_exempted"`
+	EMDNotApplicable *bool    `json:"emd_not_applicable"`
 	EMDExemptionType   *string `json:"emd_exemption_type"`
 	EMDExemptionReason *string `json:"emd_exemption_reason"`
 	// EMD bank / DD detail fields
@@ -338,6 +340,7 @@ type UpdateBidRequest struct {
 	EMDAmount        *float64 `json:"emd_amount"`
 	EMDType          *string  `json:"emd_type"`
 	EMDExempted      *bool    `json:"emd_exempted"`
+	EMDNotApplicable *bool    `json:"emd_not_applicable"`
 	EMDExemptionType   *string `json:"emd_exemption_type"`
 	EMDExemptionReason *string `json:"emd_exemption_reason"`
 	// EMD bank / DD detail fields
@@ -485,6 +488,7 @@ type BidResponse struct {
 	EMDAmount              *float64         `json:"emd_amount"`
 	EMDType                *string          `json:"emd_type"`
 	EMDExempted            bool             `json:"emd_exempted"`
+	EMDNotApplicable       bool             `json:"emd_not_applicable"`
 	EMDExemptionType       *string          `json:"emd_exemption_type"`
 	EMDExemptionReason     *string          `json:"emd_exemption_reason"`
 	EMDBankName            *string          `json:"emd_bank_name"`
@@ -601,6 +605,7 @@ type BidListItem struct {
 	POReceivedStatus          *string     `json:"po_received_status,omitempty"`
 	POReceivedDate            *time.Time  `json:"po_received_date,omitempty"`
 	EMDExempted               bool        `json:"emd_exempted"`
+	EMDNotApplicable          bool        `json:"emd_not_applicable"`
 	EMDExemptionType          *string     `json:"emd_exemption_type,omitempty"`
 	EMDExemptionReason        *string     `json:"emd_exemption_reason,omitempty"`
 	SubmissionDone            bool        `json:"submission_done"`
@@ -671,6 +676,7 @@ type CreateBidParams struct {
 	EMDAmount                 *float64
 	EMDType                   *string
 	EMDExempted               bool
+	EMDNotApplicable          bool
 	EMDExemptionType          *string
 	EMDExemptionReason        *string
 	EMDBankName               *string

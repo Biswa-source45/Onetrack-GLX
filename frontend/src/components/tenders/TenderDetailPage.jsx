@@ -1027,7 +1027,7 @@ function StageSectionsTab({ bid, onRefresh, onAdvance }) {
         
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
           {WORKFLOW_STAGES_ORDERED.map((stageKey, idx) => {
-            const { isCompleted, isCurrent: isCurrentWorkflow, isLocked, isInReview, isEmdExempt } = checkStageState(bid, stageKey)
+            const { isCompleted, isCurrent: isCurrentWorkflow, isLocked, isInReview, isEmdExempt, emdSkipReason } = checkStageState(bid, stageKey)
             const isSelected = selectedStage === stageKey
             const guide = STAGE_GUIDE[stageKey]
 
@@ -1120,7 +1120,7 @@ function StageSectionsTab({ bid, onRefresh, onAdvance }) {
                     ? 'text-primary font-medium'
                     : 'text-muted-foreground'
                 }`}>
-                  {isEmdExempt ? '🚫 EMD Exempted' : isInReview ? '⚠️ Marked for Review' : isLocked ? '🔒 Locked' : isCompleted ? '✓ Completed' : isCurrentWorkflow ? '● Active Workflow' : 'Available Stage'}
+                  {isEmdExempt ? (emdSkipReason === 'NOT_APPLICABLE' ? '🚫 No EMD' : '🚫 EMD Exempted') : isInReview ? '⚠️ Marked for Review' : isLocked ? '🔒 Locked' : isCompleted ? '✓ Completed' : isCurrentWorkflow ? '● Active Workflow' : 'Available Stage'}
                 </span>
               </button>
             )
@@ -1319,12 +1319,12 @@ function StageActionPanel({ bid, onSelectStage }) {
   const pendingStages = []
 
   WORKFLOW_STAGES_ORDERED.forEach((stageKey, idx) => {
-    const { isCompleted, isCurrent, isLocked, isEmdExempt } = checkStageState(bid, stageKey)
+    const { isCompleted, isCurrent, isLocked, isEmdExempt, emdSkipReason } = checkStageState(bid, stageKey)
     const isInReview = reviews[stageKey] === true || (remarks[stageKey] && typeof remarks[stageKey] === 'string' && remarks[stageKey].startsWith('[Re-Verification]'))
     const stageLabel = STAGE_LABELS[stageKey] || stageKey
     const num = idx + 1
 
-    const item = { stageKey, stageLabel, num, isCurrent, isCompleted, isInReview, isLocked, isEmdExempt }
+    const item = { stageKey, stageLabel, num, isCurrent, isCompleted, isInReview, isLocked, isEmdExempt, emdSkipReason }
 
     if (isInReview) {
       reviewStages.push(item)
@@ -1373,7 +1373,7 @@ function StageActionPanel({ bid, onSelectStage }) {
                     <CheckCircle2 className="size-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
                   )}
                   <span>#{stg.num} {stg.stageLabel}</span>
-                  {stg.isEmdExempt && <span className="text-[9px] bg-muted text-muted-foreground/80 px-1.5 py-0.2 rounded-full font-bold">Exempted</span>}
+                  {stg.isEmdExempt && <span className="text-[9px] bg-muted text-muted-foreground/80 px-1.5 py-0.2 rounded-full font-bold">{stg.emdSkipReason === 'NOT_APPLICABLE' ? 'No EMD' : 'Exempted'}</span>}
                 </button>
               ))
             )}
@@ -2122,7 +2122,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
           {[
             { label:'Estimated Value', value: fmtMoney(bid.estimated_value), icon:DollarSign },
-            { label:'EMD Amount',      value: bid.emd_exempted ? 'Exempted' : fmtMoney(bid.emd_amount), icon:Target },
+            { label:'EMD Amount',      value: bid.emd_not_applicable ? 'Not Applicable' : bid.emd_exempted ? 'Exempted' : fmtMoney(bid.emd_amount), icon:Target },
             { label:'Ending Date',      value: getBidEndDate(bid), icon:Calendar },
             { label:'Owner',           value: bid.bid_owner?.full_name ?? 'Unassigned', icon:Users },
           ].map(m=>(
@@ -2184,7 +2184,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                   </p>
                   <div className="space-y-2 text-sm">
                     {[
-                      ['EMD Processing Type', bid.emd_exempted ? 'EXEMPTED' : (bid.emd_type || 'ONLINE')],
+                      ['EMD Processing Type', bid.emd_not_applicable ? 'NOT APPLICABLE' : bid.emd_exempted ? 'EXEMPTED' : (bid.emd_type || 'ONLINE')],
                       ...(bid.emd_exempted ? [[
                         'EMD Exemption Basis',
                         bid.emd_exemption_type === 'OTHER'
