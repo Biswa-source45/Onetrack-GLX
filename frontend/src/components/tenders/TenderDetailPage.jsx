@@ -85,7 +85,7 @@ function fmtMoney(v) {
   if (!v && v !== 0) return '—'
   if (v >= 10000000) return `₹${(v/10000000).toFixed(1)}Cr`
   if (v >= 100000) return `₹${(v/100000).toFixed(1)}L`
-  return `₹${Number(v).toLocaleString('en-IN')}`
+  return `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
 }
 
 function StageBadge({ stage }) {
@@ -1828,7 +1828,7 @@ function OutcomeDialog({ bid, defaultOutcome = 'WON', lockedOutcome = null, onCl
                         <div className="flex items-center gap-2 truncate">
                           {comp.rank && <span className="font-semibold text-primary">{comp.rank}</span>}
                           <span className="truncate font-medium">{comp.name}</span>
-                          {comp.quoted_price > 0 && <span className="text-muted-foreground font-mono">(₹{comp.quoted_price.toLocaleString('en-IN')})</span>}
+                          {comp.quoted_price > 0 && <span className="text-muted-foreground font-mono">(₹{comp.quoted_price.toLocaleString('en-IN', { maximumFractionDigits: 2 })})</span>}
                         </div>
                         <button
                           type="button"

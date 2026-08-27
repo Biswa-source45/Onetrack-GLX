@@ -94,7 +94,7 @@ function formatCurrency(val) {
   if (!val && val !== 0) return '—'
   if (val >= 10000000) return `₹${(val / 10000000).toFixed(1)}Cr`
   if (val >= 100000)   return `₹${(val / 100000).toFixed(1)}L`
-  return `₹${val.toLocaleString('en-IN')}`
+  return `₹${val.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
 }
 
 // EMD exemption basis, shown wherever "EMD Exemption" is tabulated (CSV export, Sheets view).

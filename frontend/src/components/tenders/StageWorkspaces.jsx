@@ -32,7 +32,7 @@ function fmtMoney(v) {
   if (!v && v !== 0) return '—'
   if (v >= 10000000) return `₹${(v/10000000).toFixed(2)} Cr`
   if (v >= 100000) return `₹${(v/100000).toFixed(2)} L`
-  return `₹${Number(v).toLocaleString('en-IN')}`
+  return `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
 }
 
 function fmtDate(dt) {

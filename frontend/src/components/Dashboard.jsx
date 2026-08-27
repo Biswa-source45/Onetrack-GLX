@@ -75,7 +75,7 @@ function formatCurrency(val) {
   if (val === null || val === undefined || isNaN(val)) return '₹0'
   if (val >= 10000000) return `₹${(val / 10000000).toFixed(2)} Cr`
   if (val >= 100000) return `₹${(val / 100000).toFixed(2)} L`
-  return `₹${val.toLocaleString('en-IN')}`
+  return `₹${val.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
 }
 
 // ── Force Password Change Guard ───────────────────────────────────────────────
