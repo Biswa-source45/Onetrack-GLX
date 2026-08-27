@@ -214,9 +214,16 @@ export function checkStageState(bid, stageKey) {
     : null
 
   // Stage 1 (DISCOVERED) is completed by default upon tender creation unless explicitly set to false
+  // NOTE: the terminal-state fallback below only backfills stages *before* the
+  // current one (stageIdx < currentIdx) — never the current stage itself. A WON
+  // or LOST outcome recorded at Financial Evaluation sets bid_status to that
+  // terminal value immediately, while workflow_stage advances to Award &
+  // Handover for its own separate closing checklist (PO/BG/Delivery/EMD or the
+  // EMD Return workspace) — using <= here would have force-completed that
+  // stage before its real closing action ever ran.
   const isCompleted = completions[stageKey] === true || (
     stageKey === 'DISCOVERED' && completions['DISCOVERED'] !== false
-  ) || isEmdExempt || (isTerminal && stageIdx <= currentIdx && completions[stageKey] !== false)
+  ) || isEmdExempt || (isTerminal && stageIdx < currentIdx && completions[stageKey] !== false)
 
   const isCurrent = stageIdx === currentIdx && !isTerminal && !isEmdExempt
 
@@ -2985,7 +2992,7 @@ export function Stage12Workspace({ bid, onRefresh }) {
                       <p className="text-muted-foreground text-[10px]">{poReceived ? 'Confirm the Bank Guarantee has been issued to the procuring authority' : 'Unlocks once PO is marked Received'}</p>
                       {bid?.bg_discharged_date && <p className="text-muted-foreground text-[10px] font-mono">Issued: {new Date(bid.bg_discharged_date).toLocaleDateString('en-IN')}</p>}
                       {poReceived && (
-                        <div className="mt-1.5" onClick={e => e.preventDefault()}>
+                        <div className="mt-1.5" onClick={e => e.stopPropagation()}>
                           <Label className="text-[10px] font-medium text-muted-foreground">BG to be issued by</Label>
                           <Input type="date" value={bgTargetDate} onChange={e => handleBgTargetDateChange(e.target.value)} className="h-7 text-[11px] mt-0.5 max-w-[160px]" />
                         </div>
