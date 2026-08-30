@@ -80,9 +80,11 @@ function releaseRefreshLock() {
 export async function apiFetch(endpoint, options = {}) {
   const url = endpoint.startsWith('http') ? endpoint : `${BASE_URL}${endpoint}`;
   
-  // Set headers
+  // Set headers. FormData bodies must keep the browser-generated
+  // multipart Content-Type (it carries the boundary), so don't force JSON.
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers = {
-    'Content-Type': 'application/json',
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...(options.headers || {})
   };
 

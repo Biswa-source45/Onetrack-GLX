@@ -94,6 +94,7 @@ export function AddTenderPage() {
     portal_source:               'GeM',
     bid_type:                    'BID',
     category:                    '',
+    quantity:                    '',
     estimated_value:             '',
     emd_amount:                  '',
     emd_type:                    'ONLINE',
@@ -254,6 +255,7 @@ export function AddTenderPage() {
       const payload = {
         ...form,
         bid_owner_id:    activeOwnerId,
+        quantity: form.quantity ? Number(form.quantity) : undefined,
         estimated_value: form.estimated_value ? Number(form.estimated_value) : undefined,
         emd_amount:      form.emd_amount ? Number(form.emd_amount) : undefined,
         bg_rate:         form.bg_required && form.bg_rate ? Number(form.bg_rate) : undefined,
@@ -539,6 +541,12 @@ export function AddTenderPage() {
                           ))}
                         </DropdownMenuContent>
                       </DropdownMenu>
+                    </Field>
+
+                    {/* Every tender is for some number of units or licences. */}
+                    <Field label="Quantity">
+                      <Input type="number" min="1" value={form.quantity} onChange={(e) => set('quantity', e.target.value)}
+                        placeholder="e.g. 100" className={inputCls()} />
                     </Field>
 
                     {/* Financial Fields */}

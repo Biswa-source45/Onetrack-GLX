@@ -5,6 +5,9 @@ import "context"
 type BidRepository interface {
 	Create(ctx context.Context, params *CreateBidParams) (string, error)
 	GetByID(ctx context.Context, id string) (*BidWorkspace, error)
+	// FindByIdentifier locates a live tender carrying the given GeM bid number
+	// or RFP number. excludeID lets an update skip its own row.
+	FindByIdentifier(ctx context.Context, identifier string, excludeID string) (*IdentifierMatch, error)
 	List(ctx context.Context, params ListBidsParams) ([]BidWorkspace, int, map[string]int, error)
 	Update(ctx context.Context, id string, req *UpdateBidRequest) error
 	UpdateStage(ctx context.Context, id string, stage string, status string) error

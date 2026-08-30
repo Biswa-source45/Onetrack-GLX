@@ -43,7 +43,10 @@ function useDebounce(value, delay = 350) {
  * `user.view` permission (enforced by the parent Dashboard).
  */
 export function UserManagement() {
-  const { hasPermission } = usePermissions()
+  const { hasPermission, hasRole } = usePermissions()
+  // Mirrors the sidebar: roles that administer the system get the management
+  // wording, everyone else just sees the user directory.
+  const isManagementRole = ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].some(hasRole)
 
   // ── Permission flags (derived from JWT payload, never hardcoded) ──────────
   const canCreate     = hasPermission('user.create')
@@ -133,10 +136,12 @@ export function UserManagement() {
         <div>
           <h2 className="font-heading text-xl font-semibold text-foreground flex items-center gap-2">
             <Users className="size-5 text-primary" />
-            User Management
+            {isManagementRole ? 'User Management' : 'Users'}
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {total > 0 ? `${total} user${total !== 1 ? 's' : ''} in the system` : 'Manage system users and permissions'}
+            {total > 0
+              ? `${total} user${total !== 1 ? 's' : ''} in the system`
+              : isManagementRole ? 'Manage system users and permissions' : 'People in your organisation'}
           </p>
         </div>
 

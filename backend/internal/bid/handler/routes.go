@@ -5,11 +5,15 @@ import (
 	"github.com/onetrack/backend/internal/middleware"
 )
 
-func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, authMiddleware *middleware.AuthMiddleware) {
+func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, importHandler *BulkImportHandler, authMiddleware *middleware.AuthMiddleware) {
 	bids := router.Group("/bids")
 	bids.Use(authMiddleware.Authenticate())
 	{
 		bids.POST("", authMiddleware.RequirePermission("bid.create"), handler.CreateBid)
+
+		// Bulk import of the GBX tracker workbook. Restricted to Super Admin —
+		// it writes many bids in one transaction and bypasses the per-bid form.
+		bids.POST("/bulk-import", authMiddleware.RequireRole("SUPER_ADMIN"), importHandler.BulkImport)
 		bids.GET("", authMiddleware.RequirePermission("bid.view"), handler.ListBids)
 		bids.GET("/:id", authMiddleware.RequirePermission("bid.view"), handler.GetBid)
 		bids.PATCH("/:id", authMiddleware.RequirePermission("bid.edit"), handler.UpdateBid)

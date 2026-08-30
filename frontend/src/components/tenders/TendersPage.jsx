@@ -5,7 +5,7 @@ import {
   Plus, Search, Filter, Download, RefreshCw, ChevronLeft, ChevronRight, ChevronDown,
   Building2, Calendar, DollarSign, Tag, ArrowUpRight, Loader2, X,
   AlertCircle, TrendingUp, FileText, Zap, MoreHorizontal, Eye,
-  CheckCircle2, XCircle, Clock, Archive, LayoutGrid, TableProperties, ShieldCheck,
+  CheckCircle2, XCircle, Clock, Archive, LayoutGrid, LayoutList, TableProperties, ShieldCheck,
   User, Check, Square, Trash2, RotateCcw, Ban, History, PanelRightOpen, Eraser,
   UserCheck, Layers
 } from 'lucide-react'
@@ -27,11 +27,18 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 import {
-  listBids, getBid, updateBid, transitionBidStage, restoreBid, permanentDeleteBid, getGlobalAuditHistory, getTenderPerformanceMatrix, STAGE_LABELS, STAGE_COLORS, STATUS_COLORS, STAGE_TRANSITIONS,
-} from '../../services/bids'
+  listBids, getBid, updateBid, transitionBidStage, restoreBid, permanentDeleteBid, getGlobalAuditHistory, getTenderPerformanceMatrix, STAGE_LABELS, statusStyle, STAGE_TRANSITIONS, listAllBids } from '../../services/bids'
+import { ImportedPill } from './ImportedPill'
 import { usePermissions } from '../../hooks/usePermissions'
 import { useBidStore } from '../../store/useBidStore'
 import { tokenStorage } from '../../services/auth'
+import {
+  formatCurrency, formatEmdExemption, formatDate, getBidEndDate,
+  formatDateTime, getTargetMonthDisplay, getSubmissionStatusVal,
+  getFinEvalStatusVal, getPoRecvStatusVal, getBidResultVal, escapeCSV,
+  getDerivedBidStatusAndOutcome,
+} from '../../lib/tenderFormat'
+import { StageBadge, StatusTag } from '../../lib/tenderDisplay'
 
 // ── Stage List order for progress computation ────────────────────────────────
 const STAGES_ORDER = [
@@ -49,104 +56,6 @@ const STAGES_ORDER = [
   'LOST'
 ]
 
-// ── Stage Badge ───────────────────────────────────────────────────────────────
-function StageBadge({ stage }) {
-  const color = STAGE_COLORS[stage] ?? 'bg-gray-100 text-gray-600 border-gray-200'
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold border ${color}`}>
-      {STAGE_LABELS[stage] ?? stage}
-    </span>
-  )
-}
-
-// ── Status Badge ──────────────────────────────────────────────────────────────
-const STATUS_DISPLAY_LABELS = {
-  WON:                  'Won',
-  LOST:                 'Lost',
-  CANCELLED:            'Cancelled',
-  SUBMITTED:            'Submitted',
-  TECHNICAL_EVALUATION: 'Under Tech Eval',
-  ACTIVE:               'Active',
-  ARCHIVED:             'Archived',
-}
-
-function StatusBadge({ status }) {
-  const color = STATUS_COLORS[status] ?? 'bg-gray-100 text-gray-600 border-gray-200'
-  const icons = {
-    WON:                  <CheckCircle2 className="size-3 mr-1 text-emerald-600" />,
-    LOST:                 <XCircle className="size-3 mr-1 text-red-600" />,
-    CANCELLED:            <XCircle className="size-3 mr-1 text-slate-500" />,
-    SUBMITTED:            <CheckCircle2 className="size-3 mr-1 text-lime-600" />,
-    TECHNICAL_EVALUATION: <Clock className="size-3 mr-1 text-teal-600" />,
-    ACTIVE:               <span className="size-1.5 rounded-full bg-blue-500 mr-1.5" />,
-    ARCHIVED:             <Archive className="size-3 mr-1" />,
-  }
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border ${color}`}>
-      {icons[status]}
-      {STATUS_DISPLAY_LABELS[status] ?? status}
-    </span>
-  )
-}
-
-// ── Format currency ───────────────────────────────────────────────────────────
-function formatCurrency(val) {
-  if (!val && val !== 0) return '—'
-  if (val >= 10000000) return `₹${(val / 10000000).toFixed(1)}Cr`
-  if (val >= 100000)   return `₹${(val / 100000).toFixed(1)}L`
-  return `₹${val.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
-}
-
-// EMD exemption basis, shown wherever "EMD Exemption" is tabulated (CSV export, Sheets view).
-// Distinct from "No EMD" (emd_not_applicable): exemption means an EMD is
-// required but waived for MSME/Startup/Other reasons, while Not Applicable
-// means the tender has no EMD clause at all.
-function formatEmdExemption(bid) {
-  if (bid?.emd_not_applicable) return 'Not Applicable'
-  if (!bid?.emd_exempted) return 'No'
-  if (bid.emd_exemption_type === 'OTHER') return `Other: ${bid.emd_exemption_reason || 'N/A'}`
-  if (bid.emd_exemption_type === 'MSME') return 'MSME'
-  if (bid.emd_exemption_type === 'STARTUP') return 'Startup'
-  return 'Yes'
-}
-
-// ── Format date ───────────────────────────────────────────────────────────────
-function isValidDate(dt) {
-  if (!dt) return false
-  const d = new Date(dt)
-  if (isNaN(d.getTime())) return false
-  if (d.getFullYear() <= 1970) return false
-  return true
-}
-
-function formatDate(dt, fallback = '—') {
-  if (!isValidDate(dt)) return fallback
-  return new Date(dt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-}
-
-function getBidStartDate(bid) {
-  if (!bid) return 'Not Specified'
-  if (isValidDate(bid.start_date)) return formatDate(bid.start_date)
-  if (isValidDate(bid.opening_date)) return formatDate(bid.opening_date)
-  return 'Not Specified'
-}
-
-function getBidEndDate(bid) {
-  if (!bid) return 'Not Specified'
-  if (isValidDate(bid.end_date)) return formatDate(bid.end_date)
-  if (isValidDate(bid.closing_date)) return formatDate(bid.closing_date)
-  if (isValidDate(bid.submission_deadline)) return formatDate(bid.submission_deadline)
-  if (isValidDate(bid.target_month_date)) return formatDate(bid.target_month_date)
-  return 'Not Specified'
-}
-
-// End Date carries a real time-of-day (submission deadlines matter down to the
-// hour) — unlike other sheet date columns, show it in full rather than truncating.
-function formatDateTime(dt, fallback = '—') {
-  if (!isValidDate(dt)) return fallback
-  return new Date(dt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-}
-
 // Helper to safely format datetimes for <input type="datetime-local"> without
 // crashing on invalid/empty values, preserving time-of-day (unlike safeDateInputFormat).
 function safeDateTimeInputFormat(dt) {
@@ -161,12 +70,6 @@ function safeDateTimeInputFormat(dt) {
   }
 }
 
-function getTechEvalResultVal(bid) {
-  if (bid.technical_result === 'QUALIFIED') return 'Qualified'
-  if (bid.technical_result === 'DISQUALIFIED') return 'Disqualified'
-  return 'Pending'
-}
-
 // Helper to safely format dates for <input type="date"> without crashing on invalid/empty values
 function safeDateInputFormat(dt) {
   if (!dt) return ''
@@ -179,164 +82,12 @@ function safeDateInputFormat(dt) {
   }
 }
 
-// ── Helper display formatters for spreadsheet columns ──────────────────────────
-function getTargetMonthDisplay(bid) {
-  if (isValidDate(bid.target_month_date)) {
-    return new Date(bid.target_month_date).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
-  }
-  const dateToUse = bid.end_date || bid.submission_date || bid.start_date || bid.opening_date
-  if (isValidDate(dateToUse)) {
-    return new Date(dateToUse).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
-  }
-  return '—'
-}
-
-function getSubmissionStatusVal(bid) {
-  if (bid.submission_status && bid.submission_status.trim() !== '') {
-    return bid.submission_status
-  }
-  const stage = bid.workflow_stage || ''
-  const status = bid.bid_status || ''
-  if (['SUBMITTED', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_DELIVERY_HANDOVER'].includes(stage) || ['WON', 'LOST'].includes(status)) {
-    return 'Submitted'
-  }
-  if (['GEM_SUBMISSION', 'READY_FOR_SUBMISSION'].includes(stage)) {
-    return 'Ready'
-  }
-  return 'Pending'
-}
-
-function getFinEvalStatusVal(bid) {
-  if (bid.financial_evaluation_status && bid.financial_evaluation_status.trim() !== '') {
-    return bid.financial_evaluation_status
-  }
-  const stage = bid.workflow_stage || ''
-  const status = bid.bid_status || ''
-  if (stage === 'FINANCIAL_EVALUATION') return 'In Progress'
-  if (stage === 'AWARD_DELIVERY_HANDOVER' || status === 'WON') return 'Qualified (L1)'
-  if (status === 'LOST') return 'Non-L1'
-  if (stage === 'TECHNICAL_EVALUATION') return 'Awaiting Tech Clear'
-  return 'Pending'
-}
-
-function getPoRecvStatusVal(bid) {
-  // Only show value from DB — never auto-set as PO Received just because bid is WON.
-  // PO Received is manually toggled inside Stage 12 checklist.
-  if (bid.po_received_status && bid.po_received_status.trim() !== '') {
-    return bid.po_received_status
-  }
-  const status = bid.bid_status || ''
-  if (status === 'LOST' || status === 'CANCELLED') return 'N/A'
-  return 'Pending'
-}
-
-function getBidResultVal(bid) {
-  if (bid.bid_result && bid.bid_result.trim() !== '') {
-    return bid.bid_result
-  }
-  const status = bid.bid_status || ''
-  if (status === 'WON') return 'Won (L1)'
-  if (status === 'LOST') return 'Lost'
-  if (status === 'CANCELLED') return 'Cancelled'
-  return 'Under Eval'
-}
-
-function StatusTag({ text, variant = 'neutral' }) {
-  if (!text || text === '—') return <span className="text-muted-foreground">—</span>
-  const styles = {
-    green: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20',
-    blue: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
-    amber: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
-    red: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20',
-    neutral: 'bg-muted text-muted-foreground border-border',
-  }
-  let v = variant
-  const lower = text.toLowerCase()
-  if (lower.includes('submi') || lower.includes('won') || lower.includes('qualified') || lower.includes('recv') || lower.includes('received') || lower.includes('yes') || lower.includes('ready')) {
-    v = 'green'
-  } else if (lower.includes('eval') || lower.includes('progress') || lower.includes('under')) {
-    v = 'blue'
-  } else if (lower.includes('pend') || lower.includes('await')) {
-    v = 'amber'
-  } else if (lower.includes('lost') || lower.includes('non') || lower.includes('cancel')) {
-    v = 'red'
-  }
-
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border ${styles[v]}`}>
-      {text}
-    </span>
-  )
-}
-
-export function getDerivedBidStatusAndOutcome(bid) {
-  if (!bid) return { status: 'ACTIVE', outcome: null };
-
-  const stage = bid.workflow_stage;
-  const rawStatus = bid.bid_status;
-  const rawOutcome = bid.bid_outcome;
-
-  // 1. Explicit Terminal & Intermediate Stage Mappings (5-State Model)
-  if (stage === 'WON' || rawStatus === 'WON' || rawOutcome === 'WON') {
-    return { status: 'WON', outcome: 'WON' };
-  }
-  if (stage === 'LOST' || rawStatus === 'LOST' || rawOutcome === 'LOST') {
-    return { status: 'LOST', outcome: 'LOST' };
-  }
-  if (stage === 'CANCELLED' || rawStatus === 'CANCELLED' || rawOutcome === 'CANCELLED') {
-    return { status: 'CANCELLED', outcome: 'CANCELLED' };
-  }
-  if (
-    stage === 'GEM_SUBMISSION' ||
-    stage === 'TECHNICAL_EVALUATION' ||
-    stage === 'FINANCIAL_EVALUATION' ||
-    rawStatus === 'TECHNICAL_EVALUATION' ||
-    rawStatus === 'SUBMITTED' ||
-    bid.submission_status === 'SUBMITTED' ||
-    bid.submission_done === true
-  ) {
-    return { status: 'TECHNICAL_EVALUATION', outcome: null };
-  }
-
-  // 2. Legacy / Result-based fallbacks if result string exists
-  const result = (bid.bid_result || '').trim();
-  const resultLower = result.toLowerCase();
-  if (result) {
-    if (resultLower.includes('l1') || resultLower.includes('won')) {
-      return { status: 'WON', outcome: 'WON' };
-    }
-    if (
-      resultLower !== 'result pending' &&
-      resultLower !== 'na' &&
-      resultLower !== 'bid in progress' &&
-      resultLower !== 'pending'
-    ) {
-      return { status: 'LOST', outcome: 'LOST' };
-    }
-  }
-
-  return { status: rawStatus || 'ACTIVE', outcome: rawOutcome || null };
-}
-
-
-
-// Helper to escape CSV fields correctly according to RFC 4180
-function escapeCSV(val) {
-  if (val === null || val === undefined) return ''
-  let str = String(val)
-  str = str.replace(/"/g, '""')
-  if (str.includes(',') || str.includes('\n') || str.includes('\r') || str.includes('"')) {
-    return `"${str}"`
-  }
-  return str
-}
-
 // ── Export to Excel/CSV (Full database export with compliance details) ─────────
 async function exportToExcel() {
   const toastId = toast.loading('Fetching all tenders and details for export...')
   try {
     // 1. Retrieve all bids in the system
-    const res = await listBids({ page: 1, limit: 1000 })
+    const res = await listAllBids()
     if (!res.ok) {
       throw new Error(res.error?.message ?? 'Failed to retrieve tenders from API')
     }
@@ -376,6 +127,8 @@ async function exportToExcel() {
       'Bid ID',
       'Platform',
       'Department',
+      'High Level Scope',
+      'Quantity',
       'Scope Type',
       'EMD',
       'EMD Exemption',
@@ -393,6 +146,7 @@ async function exportToExcel() {
       'EMD Ready Date',
       'BG Issued Date',
       'Delivery/Work Complete Date',
+      'Our Rank',
       'Result',
       'Owner',
       'Remarks'
@@ -406,9 +160,11 @@ async function exportToExcel() {
         b.bid_status ?? '',
         STAGE_LABELS[b.workflow_stage] ?? b.workflow_stage ?? '',
         b.category ?? '',
-        b.gem_bid_no ?? '',
+        b.gem_bid_no ?? b.bid_no ?? '',
         b.portal_source ?? '',
-        b.department_name ?? '',
+        b.organization_name ?? b.department_name ?? '',
+        b.high_level_scope ?? '',
+        b.quantity ?? '',
         b.scope_type ?? '',
         b.emd_amount !== null && b.emd_amount !== undefined ? String(b.emd_amount) : '',
         formatEmdExemption(b),
@@ -426,6 +182,7 @@ async function exportToExcel() {
         formatDate(b.emd_ready_date),
         formatDate(b.bg_discharged_date),
         formatDate(b.delivery_complete_date),
+        b.our_rank ?? '',
         b.bid_result ?? '',
         b.bid_owner?.full_name ?? '',
         b.remarks ?? ''
@@ -473,7 +230,12 @@ const STATUS_OPTIONS = [
   { value: 'WON', label: 'Won' },
   { value: 'LOST', label: 'Lost' },
   { value: 'CANCELLED', label: 'Cancelled' },
-  { value: 'SUBMITTED', label: 'Submitted' },
+  // Closed = assessed then dropped without bidding. Not a workflow stage, so it
+  // appears here but never in STAGE_OPTIONS above.
+  { value: 'CLOSED', label: 'Closed (No Bid)' },
+  // No "Submitted" entry: a submitted tender moves straight to evaluation, so
+  // it is always found under "Under Tech Eval". The sheet view still shows the
+  // per-tender Submission Status column.
   { value: 'TECHNICAL_EVALUATION', label: 'Under Tech Eval' },
   { value: 'ACTIVE', label: 'Active' },
 ]
@@ -979,6 +741,16 @@ export function TendersPage({ initialScope = 'all' }) {
 
               <button
                 type="button"
+                onClick={() => navigate('/dashboard/tenders/master')}
+                title="Every tender in one continuous, scrollable sheet"
+                className="px-3 py-1 rounded-md font-semibold transition-all flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+              >
+                <LayoutList className="size-3.5" />
+                Master Sheet
+              </button>
+
+              <button
+                type="button"
                 onClick={() => {
                   setInBin(true)
                   setSearchParams({ bin: 'true' })
@@ -1072,9 +844,10 @@ export function TendersPage({ initialScope = 'all' }) {
           { label: 'Total Tenders', value: meta.total ?? 0, icon: FileText, color: 'text-blue-600', bg: 'bg-blue-50/50', filterKey: '' },
           { label: 'Active', value: meta.active_count ?? 0, icon: TrendingUp, color: 'text-emerald-600', bg: 'bg-emerald-50/50', filterKey: 'ACTIVE' },
           { label: 'Under Tech Eval', value: meta.tech_eval_count ?? 0, icon: Clock, color: 'text-teal-600', bg: 'bg-teal-50/50', filterKey: 'TECHNICAL_EVALUATION' },
-          { label: 'Won', value: meta.won_count ?? 0, icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50/50', filterKey: 'WON' },
-          { label: 'Lost', value: meta.lost_count ?? 0, icon: XCircle, color: 'text-red-600', bg: 'bg-red-50/50', filterKey: 'LOST' },
-          { label: 'Cancelled', value: meta.cancelled_count ?? 0, icon: Ban, color: 'text-amber-600', bg: 'bg-amber-50/50', filterKey: 'CANCELLED' },
+          { label: 'Won', value: meta.won_count ?? 0, icon: CheckCircle2, color: 'text-sky-600', bg: 'bg-sky-50/50', filterKey: 'WON' },
+          { label: 'Lost', value: meta.lost_count ?? 0, icon: XCircle, color: 'text-orange-600', bg: 'bg-orange-50/50', filterKey: 'LOST' },
+          { label: 'Cancelled', value: meta.cancelled_count ?? 0, icon: Ban, color: 'text-red-600', bg: 'bg-red-50/50', filterKey: 'CANCELLED' },
+          { label: 'Closed', value: meta.closed_count ?? 0, icon: Archive, color: 'text-zinc-600', bg: 'bg-zinc-50/50', filterKey: 'CLOSED' },
         ].map((stat) => {
           const isActiveFilter = statusFilter === stat.filterKey || (!statusFilter && stat.filterKey === '')
           return (
@@ -1351,28 +1124,17 @@ export function TendersPage({ initialScope = 'all' }) {
                       whileHover={{ y: -3, scale: 1.01 }}
                       onClick={() => hasPermission('bid.view') && navigate(`/dashboard/tenders/${bid.id}`)}
                       className={`group border rounded-xl p-5 shadow-sm hover:shadow-md transition-[border-color,background-color] duration-300 flex flex-col justify-between relative overflow-hidden
-                        ${bid.bid_status === 'CANCELLED' || bid.bid_status === 'CLOSED' ? 'bg-red-50/30 border-red-200/50 dark:bg-red-950/10 dark:border-red-900/30 opacity-80' :
-                          bid.bid_status === 'LOST' ? 'bg-orange-50/30 border-orange-200/50 dark:bg-orange-950/10 dark:border-orange-900/30 opacity-80' :
-                          bid.bid_status === 'WON' ? 'bg-sky-50/30 border-sky-200/50 dark:bg-sky-950/10 dark:border-sky-900/30' :
-                          bid.bid_status === 'ACTIVE' ? 'bg-emerald-50/30 border-emerald-200/50 dark:bg-emerald-950/10 dark:border-emerald-900/30' :
-                          'bg-card border-border hover:border-primary/30'}
+                        ${statusStyle(bid.bid_status).tint}
+                        ${['CANCELLED', 'CLOSED', 'LOST', 'ARCHIVED'].includes(bid.bid_status) ? 'opacity-80' : ''}
                         ${hasPermission('bid.view') ? 'cursor-pointer' : ''}`}
                     >
                       {/* Decorative colored top line based on status */}
-                      <div className={`absolute top-0 left-0 right-0 h-1 
-                        ${bid.bid_status === 'WON' ? 'bg-sky-500' :
-                          bid.bid_status === 'CANCELLED' || bid.bid_status === 'CLOSED' ? 'bg-red-500' :
-                          bid.bid_status === 'LOST' ? 'bg-orange-500' :
-                          bid.bid_status === 'ACTIVE' ? 'bg-emerald-500' : 'bg-primary'}`} 
-                      />
+                      <div className={`absolute top-0 left-0 right-0 h-1 ${statusStyle(bid.bid_status).accent}`} />
                       {/* Stamp watermark for terminal status tenders */}
                       {['CANCELLED', 'CLOSED', 'WON', 'LOST'].includes(bid.bid_status) && (
                         <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-10 select-none">
-                          <span className={`text-4xl font-black tracking-widest rotate-[-25deg]
-                            ${bid.bid_status === 'WON' ? 'text-sky-500/10 dark:text-sky-500/15' :
-                              bid.bid_status === 'CANCELLED' || bid.bid_status === 'CLOSED' ? 'text-red-500/10 dark:text-red-500/15' :
-                              bid.bid_status === 'LOST' ? 'text-orange-500/10 dark:text-orange-500/15' :
-                              'text-slate-500/10 dark:text-slate-500/15'}`}>
+                          <span className={`text-4xl font-black tracking-widest rotate-[-25deg] opacity-[0.13]
+                            ${statusStyle(bid.bid_status).dot.replace('bg-', 'text-')}`}>
                             {bid.bid_status}
                           </span>
                         </div>
@@ -1387,11 +1149,12 @@ export function TendersPage({ initialScope = 'all' }) {
                                 {bid.portal_source}
                               </span>
                             )}
-                            {bid.gem_bid_no && (
+                            {(bid.gem_bid_no || bid.bid_no) && (
                               <span className="text-[10px] font-mono text-primary font-semibold">
-                                {bid.gem_bid_no}
+                                {bid.gem_bid_no || bid.bid_no}
                               </span>
                             )}
+                            {bid.is_imported && <ImportedPill />}
                           </div>
                           {inBin && (
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300 border border-rose-300">
@@ -1529,6 +1292,8 @@ export function TendersPage({ initialScope = 'all' }) {
                       <th className="p-3 border-r border-border min-w-[140px]">Bid ID</th>
                       <th className="p-3 border-r border-border min-w-[135px]">Platform</th>
                       <th className="p-3 border-r border-border min-w-[180px]">Department</th>
+                      <th className="p-3 border-r border-border min-w-[240px]">High Level Scope</th>
+                      <th className="p-3 border-r border-border min-w-[90px]">Quantity</th>
                       <th className="p-3 border-r border-border min-w-[140px]">Scope Type</th>
                       <th className="p-3 border-r border-border min-w-[120px]">EMD</th>
                       <th className="p-3 border-r border-border min-w-[100px]">No EMD</th>
@@ -1547,6 +1312,7 @@ export function TendersPage({ initialScope = 'all' }) {
                       <th className="p-3 border-r border-border min-w-[140px]">EMD Ready Date</th>
                       <th className="p-3 border-r border-border min-w-[140px]">BG Issued Date</th>
                       <th className="p-3 border-r border-border min-w-[150px]">Delivery/Work Complete Date</th>
+                      <th className="p-3 border-r border-border min-w-[110px]">Our Rank</th>
                       <th className="p-3 border-r border-border min-w-[140px]">Result</th>
                       <th className="p-3 border-r border-border min-w-[130px]">Owner</th>
                       <th className="p-3 border-r border-border min-w-[200px]">Remarks</th>
@@ -1558,6 +1324,10 @@ export function TendersPage({ initialScope = 'all' }) {
                       // WON and LOST bids are still editable (for typo corrections etc.).
                       // Only ARCHIVED/CANCELLED are truly read-only in sheet mode.
                       const isReadOnly = !sheetEditable || bid.bid_status === 'ARCHIVED'
+                      // One "RFP/BID ID" in the tracker maps to two columns here:
+                      // GeM portal ids land in gem_bid_no, everything else in
+                      // bid_no. Show and edit whichever one actually holds it.
+                      const bidIdField = bid.gem_bid_no ? 'gem_bid_no' : (bid.bid_no ? 'bid_no' : 'gem_bid_no')
                       return (
                         <tr 
                           key={bid.id} 
@@ -1575,17 +1345,17 @@ export function TendersPage({ initialScope = 'all' }) {
                             className={`p-3 border-r border-border min-w-[240px] truncate max-w-sm sticky left-0 bg-card group-hover/row:bg-[color-mix(in_srgb,var(--muted)_30%,var(--card))] z-10 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)] ${isReadOnly ? 'font-semibold text-foreground hover:text-primary hover:underline cursor-pointer' : ''}`}
                           >
                             <div className="flex items-center gap-2.5 w-full">
+                              {bid.is_imported && <ImportedPill compact />}
                               {bid.bid_status === 'ACTIVE' ? (
                                 <span className="relative flex size-2 shrink-0" title="Active">
                                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
                                   <span className="relative inline-flex rounded-full size-2 bg-emerald-500"></span>
                                 </span>
-                              ) : bid.bid_status === 'WON' ? (
-                                <span className="size-2 rounded-full bg-sky-500 shrink-0" title="Won" />
-                              ) : bid.bid_status === 'LOST' ? (
-                                <span className="size-2 rounded-full bg-orange-500 shrink-0" title="Lost" />
                               ) : (
-                                <span className="size-2 rounded-full bg-red-600 shrink-0" title={bid.bid_status} />
+                                <span
+                                  className={`size-2 rounded-full shrink-0 ${statusStyle(bid.bid_status).dot}`}
+                                  title={bid.bid_status}
+                                />
                               )}
 
                               {!isReadOnly ? (
@@ -1605,11 +1375,7 @@ export function TendersPage({ initialScope = 'all' }) {
 
                           {/* 2. Status */}
                           <td className="p-3 border-r border-border text-center">
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider
-                              ${bid.bid_status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200/50 dark:border-emerald-800/30' :
-                                bid.bid_status === 'WON' ? 'bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-400 border border-sky-200/50 dark:border-sky-800/30' :
-                                bid.bid_status === 'LOST' ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-400 border border-orange-200/50 dark:border-orange-800/30' :
-                                'bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-400 border border-red-200/50 dark:border-red-800/30'}`}>
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${statusStyle(bid.bid_status).pill}`}>
                               {bid.bid_status}
                             </span>
                           </td>
@@ -1669,15 +1435,15 @@ export function TendersPage({ initialScope = 'all' }) {
                             {!isReadOnly ? (
                               <input 
                                 type="text" 
-                                value={bid.gem_bid_no || ''} 
-                                onChange={(e) => handleFieldChangeLocal(bid.id, 'gem_bid_no', e.target.value)} 
-                                onBlur={(e) => handleFieldSave(bid.id, 'gem_bid_no', e.target.value)}
+                                value={bid[bidIdField] || ''} 
+                                onChange={(e) => handleFieldChangeLocal(bid.id, bidIdField, e.target.value)} 
+                                onBlur={(e) => handleFieldSave(bid.id, bidIdField, e.target.value)}
                                 onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
                                 className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-primary font-medium rounded font-mono"
                                 placeholder="Bid ID"
                               />
                             ) : (
-                              bid.gem_bid_no ?? '—'
+                              bid.gem_bid_no ?? bid.bid_no ?? '—'
                             )}
                           </td>
 
@@ -1722,6 +1488,40 @@ export function TendersPage({ initialScope = 'all' }) {
                               />
                             ) : (
                               bid.organization_name ?? '—'
+                            )}
+                          </td>
+
+                          {/* High Level Scope */}
+                          <td className="p-3 border-r border-border truncate max-w-xs">
+                            {!isReadOnly ? (
+                              <input
+                                type="text"
+                                value={bid.high_level_scope || ''}
+                                onChange={(e) => handleFieldChangeLocal(bid.id, 'high_level_scope', e.target.value)}
+                                onBlur={(e) => handleFieldSave(bid.id, 'high_level_scope', e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
+                                className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
+                                placeholder="High Level Scope"
+                              />
+                            ) : (
+                              bid.high_level_scope ?? '—'
+                            )}
+                          </td>
+
+                          {/* Quantity */}
+                          <td className="p-3 border-r border-border">
+                            {!isReadOnly ? (
+                              <input
+                                type="text"
+                                value={bid.quantity ?? ''}
+                                onChange={(e) => handleFieldChangeLocal(bid.id, 'quantity', e.target.value)}
+                                onBlur={(e) => handleFieldSave(bid.id, 'quantity', e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
+                                className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
+                                placeholder="Qty"
+                              />
+                            ) : (
+                              bid.quantity ?? '—'
                             )}
                           </td>
 
@@ -1972,6 +1772,23 @@ export function TendersPage({ initialScope = 'all' }) {
                           <td className="p-3 border-r border-border text-muted-foreground">{formatDate(bid.emd_ready_date)}</td>
                           <td className="p-3 border-r border-border text-muted-foreground">{formatDate(bid.bg_discharged_date)}</td>
                           <td className="p-3 border-r border-border text-muted-foreground">{formatDate(bid.delivery_complete_date)}</td>
+
+                          {/* Our Rank - set at Financial Evaluation (L1 when won) */}
+                          <td className="p-3 border-r border-border">
+                            {!isReadOnly ? (
+                              <input
+                                type="text"
+                                value={bid.our_rank ?? ''}
+                                onChange={(e) => handleFieldChangeLocal(bid.id, 'our_rank', e.target.value)}
+                                onBlur={(e) => handleFieldSave(bid.id, 'our_rank', e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
+                                className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-primary font-medium rounded font-mono"
+                                placeholder="e.g. L2"
+                              />
+                            ) : (
+                              bid.our_rank ?? '—'
+                            )}
+                          </td>
 
                           {/* 22. Bid Result */}
                           <td className="p-3 border-r border-border">

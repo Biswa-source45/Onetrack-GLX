@@ -99,6 +99,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
     bid_type:          'BID',
     category:          '',
     scope_type:        'Supply',
+    quantity:          '',
     estimated_value:   '',
     emd_amount:        '',
     emd_type:          'ONLINE',
@@ -170,6 +171,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
             bid_type:          b.bid_type || 'BID',
             category:          b.category || '',
             scope_type:        b.scope_type || 'Supply',
+            quantity:          b.quantity !== undefined && b.quantity !== null ? String(b.quantity) : '',
             estimated_value:   b.estimated_value !== undefined && b.estimated_value !== null ? String(b.estimated_value) : '',
             emd_amount:        b.emd_amount !== undefined && b.emd_amount !== null ? String(b.emd_amount) : '',
             emd_type:          b.emd_type || 'ONLINE',
@@ -214,6 +216,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
         bid_type:          bid.bid_type || 'BID',
         category:          bid.category || '',
         scope_type:        bid.scope_type || 'Supply',
+        quantity:          bid.quantity !== undefined && bid.quantity !== null ? String(bid.quantity) : '',
         estimated_value:   bid.estimated_value !== undefined && bid.estimated_value !== null ? String(bid.estimated_value) : '',
         emd_amount:        bid.emd_amount !== undefined && bid.emd_amount !== null ? String(bid.emd_amount) : '',
         emd_type:          bid.emd_type || 'ONLINE',
@@ -343,6 +346,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
     try {
       const payload = {
         ...form,
+        quantity:        form.quantity ? Number(form.quantity) : null,
         estimated_value: form.estimated_value ? Number(form.estimated_value) : null,
         emd_amount:      form.emd_amount ? Number(form.emd_amount) : null,
         bg_rate:         form.bg_required && form.bg_rate ? Number(form.bg_rate) : null,
@@ -555,6 +559,10 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
                     <h3 className="text-sm font-semibold text-foreground">Financials & Compliance</h3>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
+                    <Field label="Quantity">
+                      <Input type="number" min="1" value={form.quantity} onChange={(e) => set('quantity', e.target.value)}
+                        placeholder="e.g. 100" className={inputCls()} />
+                    </Field>
                     <Field label="Estimated Value (₹)">
                       <Input type="number" value={form.estimated_value} onChange={(e) => set('estimated_value', e.target.value)}
                         placeholder="e.g. 2500000" className={inputCls()} />

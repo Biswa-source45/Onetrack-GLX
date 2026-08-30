@@ -30,6 +30,10 @@ func (h *BidHandler) CreateBid(c *gin.Context) {
 	actorID := c.GetString("user_id")
 	bid, err := h.svc.CreateBid(c.Request.Context(), &req, actorID)
 	if err != nil {
+		if errors.Is(err, domain.ErrDuplicateIdentifier) {
+			response.Conflict(c, err.Error())
+			return
+		}
 		if errors.Is(err, domain.ErrValidation) {
 			response.BadRequest(c, err.Error(), nil)
 			return
@@ -90,16 +94,17 @@ func (h *BidHandler) ListBids(c *gin.Context) {
 		"success": true,
 		"data":    result.Bids,
 		"meta": gin.H{
-			"page":             result.Page,
-			"limit":            result.Limit,
-			"total":            result.Total,
-			"total_pages":      result.TotalPages,
-			"active_count":     result.ActiveCount,
-			"won_count":        result.WonCount,
-			"lost_count":       result.LostCount,
-			"cancelled_count":  result.CancelledCount,
-			"tech_eval_count":  result.TechEvalCount,
-			"submitted_count":  result.SubmittedCount,
+			"page":            result.Page,
+			"limit":           result.Limit,
+			"total":           result.Total,
+			"total_pages":     result.TotalPages,
+			"active_count":    result.ActiveCount,
+			"won_count":       result.WonCount,
+			"lost_count":      result.LostCount,
+			"cancelled_count": result.CancelledCount,
+			"closed_count":    result.ClosedCount,
+			"tech_eval_count": result.TechEvalCount,
+			"submitted_count": result.SubmittedCount,
 		},
 	})
 }
@@ -113,6 +118,10 @@ func (h *BidHandler) UpdateBid(c *gin.Context) {
 	}
 	actorID := c.GetString("user_id")
 	if err := h.svc.UpdateBid(c.Request.Context(), id, &req, actorID); err != nil {
+		if errors.Is(err, domain.ErrDuplicateIdentifier) {
+			response.Conflict(c, err.Error())
+			return
+		}
 		if errors.Is(err, domain.ErrValidation) {
 			response.BadRequest(c, err.Error(), nil)
 			return
@@ -261,6 +270,13 @@ func (h *BidHandler) ArchiveBid(c *gin.Context) {
 func (h *BidHandler) RestoreBid(c *gin.Context) {
 	id := c.Param("id")
 	if err := h.svc.RestoreBid(c.Request.Context(), id); err != nil {
+		// A restore can fail because another tender took this one's identifier
+		// while it sat in the bin. That is a conflict, not a missing record, and
+		// the user needs to be told which tender is in the way.
+		if errors.Is(err, domain.ErrDuplicateIdentifier) {
+			response.Conflict(c, err.Error())
+			return
+		}
 		response.NotFound(c, "Bid not found")
 		return
 	}

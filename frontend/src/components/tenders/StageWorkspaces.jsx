@@ -2600,6 +2600,7 @@ export function Stage11Workspace({ bid, onRefresh }) {
       await updateBid(bid.id, {
         bid_outcome: 'WON',
         outcome_reason: formalReason,
+        our_rank: 'L1',
       }).catch(() => {})
       await recordBidOutcome(bid.id, {
         bid_outcome: 'WON',
@@ -2614,6 +2615,7 @@ export function Stage11Workspace({ bid, onRefresh }) {
         l1_price: l1PriceNum || undefined,
         quoted_price: ourPriceNum || undefined,
         price_difference_pct: priceDiffPct !== null ? Number(priceDiffPct.toFixed(2)) : undefined,
+        our_rank: ourRank || undefined,
       }).catch(() => {})
       await recordBidOutcome(bid.id, {
         bid_outcome: 'LOST',

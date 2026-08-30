@@ -5,8 +5,8 @@ import {
   Layers, LogOut, Key, CheckCircle, Eye, EyeOff, Loader2,
   Users, LayoutDashboard, Menu, X, ChevronRight,
   FileText, TrendingUp, Activity, BarChart2, ShieldCheck, Bell,
-  Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Trash2, Pencil
-} from 'lucide-react'
+  Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Trash2, Pencil,
+  FileSpreadsheet, Archive, Ban } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button }    from '@/components/ui/button'
@@ -24,7 +24,7 @@ import { UserManagement } from './admin/UserManagement'
 import { UserAvatar }     from './admin/UserAvatar'
 import { RoleBadge }      from './admin/RoleBadge'
 import { TendersPage }    from './tenders/TendersPage'
-import { listBids }       from '../services/bids'
+import { listAllBids }   from '../services/bids'
 import { getTenderPerformanceMatrix } from '../services/bids'
 
 // ── Navigation items (each gated by a permission check) ──────────────────────
@@ -51,7 +51,8 @@ const NAV_ITEMS = [
     ]
   },
   { id: 'alerts',     label: 'Alerts',           icon: Bell,            permission: 'bid.view' },
-  { id: 'users',      label: 'User Management',  icon: Users,           permission: 'user.view' },
+  { id: 'users',      label: 'Users',            managementLabel: 'User Management', icon: Users, permission: 'user.view' },
+  { id: 'bulk-import', label: 'Bulk Import',     icon: FileSpreadsheet, permission: null, role: 'SUPER_ADMIN', path: '/dashboard/bulk-import' },
 ]
 
 function isChildActive(child, pathname) {
@@ -216,9 +217,11 @@ export function OverviewPanel() {
   const fetchBids = async () => {
     setLoading(true)
     try {
+      // Page through everything: metrics below are computed from the full list,
+      // so a single capped page would under-report every total.
       const [r, binRes] = await Promise.all([
-        listBids({ limit: 200 }),
-        listBids({ in_bin: true, limit: 200 })
+        listAllBids(),
+        listAllBids({ in_bin: true })
       ])
       if (r.ok && r.data) {
         const rawList = Array.isArray(r.data) ? r.data : (r.data?.bids || [])
@@ -320,6 +323,10 @@ export function OverviewPanel() {
     b.bid_status === 'CANCELLED' || b.bid_outcome === 'CANCELLED' || b.workflow_stage === 'CANCELLED'
   ).length
 
+  // Closed = assessed then dropped without ever bidding. Counted separately so
+  // it neither inflates the live pipeline nor the loss rate.
+  const closedBids = filteredBids.filter(b => b.bid_status === 'CLOSED').length
+
   // Financial BI metrics
   const totalWonValue = filteredBids
     .filter(b => b.bid_status === 'WON' || b.bid_outcome === 'WON' || b.workflow_stage === 'WON')
@@ -368,16 +375,24 @@ export function OverviewPanel() {
 
   const headerStats = [
     { label:'Total Tenders',     value: totalBids,         icon: Layers,       color:'text-violet-600', bg:'bg-violet-50',  border:'border-violet-200', onClick: () => navigate('/dashboard/tenders') },
-    { label:'Submitted',         value: submittedBids,     icon: CheckCircle,  color:'text-emerald-600',bg:'bg-emerald-50', border:'border-emerald-200', onClick: () => navigate('/dashboard/tenders?status=SUBMITTED') },
+    // Cumulative "how many did we submit this year" — it counts won and lost
+    // tenders too, so no single status filter matches it. Left unclickable
+    // rather than linking to a list showing a different number.
+    { label:'Submitted',         value: submittedBids,     icon: CheckCircle,  color:'text-emerald-600',bg:'bg-emerald-50', border:'border-emerald-200' },
     { label:'Tech Eval',         value: techEvalBids,      icon: FileText,     color:'text-blue-600',   bg:'bg-blue-50',    border:'border-blue-200', onClick: () => navigate('/dashboard/tenders?status=TECHNICAL_EVALUATION') },
     { label:'Financial Eval',    value: finEvalBids,       icon: IndianRupee,  color:'text-indigo-600', bg:'bg-indigo-50',  border:'border-indigo-200', onClick: () => navigate('/dashboard/tenders?stage=FINANCIAL_EVALUATION') },
-    { label:'Won Bids',          value: wonBids,           icon: Award,        color:'text-teal-600',   bg:'bg-teal-50',    border:'border-teal-200', onClick: () => navigate('/dashboard/tenders?status=WON') },
-    { label:'Lost Bids',         value: lostBids,          icon: XCircle,      color:'text-rose-600',   bg:'bg-rose-50',    border:'border-rose-200', onClick: () => navigate('/dashboard/tenders?status=LOST') },
-    { label:'Cancelled',         value: cancelledBids,     icon: XCircle,      color:'text-slate-600',  bg:'bg-slate-100',  border:'border-slate-300', onClick: () => navigate('/dashboard/tenders?status=CANCELLED') },
+    { label:'Won Bids',          value: wonBids,           icon: Award,        color:'text-sky-600',    bg:'bg-sky-50',     border:'border-sky-200', onClick: () => navigate('/dashboard/tenders?status=WON') },
+    { label:'Lost Bids',         value: lostBids,          icon: XCircle,      color:'text-orange-600', bg:'bg-orange-50',  border:'border-orange-200', onClick: () => navigate('/dashboard/tenders?status=LOST') },
+    { label:'Cancelled',         value: cancelledBids,     icon: Ban,          color:'text-red-600',    bg:'bg-red-50',     border:'border-red-200', onClick: () => navigate('/dashboard/tenders?status=CANCELLED') },
+    { label:'Closed (No Bid)',   value: closedBids,        icon: Archive,      color:'text-zinc-600',   bg:'bg-zinc-100',   border:'border-zinc-300', onClick: () => navigate('/dashboard/tenders?status=CLOSED') },
     { label:'Tender Bin',        value: binCount,          icon: Trash2,       color:'text-rose-700',   bg:'bg-rose-100/60', border:'border-rose-300', onClick: () => navigate('/dashboard/tenders?bin=true') },
   ]
 
-  const overallWinRate = totalBids > 0 ? ((wonBids / totalBids) * 100).toFixed(1) : '0.0'
+  // Win rate is won / actually-bid. Tenders closed without ever being bid were
+  // never in contention, so including them in the denominator would understate
+  // the team's real performance.
+  const contestedBids = Math.max(0, totalBids - closedBids)
+  const overallWinRate = contestedBids > 0 ? ((wonBids / contestedBids) * 100).toFixed(1) : '0.0'
 
   return (
     <div className="space-y-6">
@@ -416,7 +431,7 @@ export function OverviewPanel() {
               <motion.div key={s.label}
                 onClick={s.onClick}
                 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
-                className={`rounded-xl border ${s.border} p-3.5 bg-card hover:shadow-md transition-all cursor-pointer group`}>
+                className={`rounded-xl border ${s.border} p-3.5 bg-card hover:shadow-md transition-all group ${s.onClick ? 'cursor-pointer' : ''}`}>
                 <div className="flex items-center justify-between mb-2">
                   <div className={`size-8 rounded-lg ${s.bg} flex items-center justify-center group-hover:scale-105 transition-transform`}>
                     <s.icon className={`size-4 ${s.color}`}/>
@@ -590,7 +605,7 @@ export function OverviewPanel() {
                     <div className="size-2.5 rounded-full bg-rose-500" />
                     <span className="text-muted-foreground">Lost Bids</span>
                   </div>
-                  <span className="font-bold text-rose-600 font-mono">{lostBids} ({totalBids > 0 ? ((lostBids/totalBids)*100).toFixed(0) : 0}%)</span>
+                  <span className="font-bold text-orange-600 font-mono">{lostBids} ({totalBids > 0 ? ((lostBids/totalBids)*100).toFixed(0) : 0}%)</span>
                 </div>
 
                 <div className="flex items-center justify-between">
@@ -770,7 +785,7 @@ export function OverviewPanel() {
                           <td className="py-3 px-3 text-center text-cyan-600 font-medium">{st.fin_eval}</td>
                           <td className="py-3 px-3 text-center text-emerald-600 font-medium">{st.award}</td>
                           <td className="py-3 px-3 text-center text-teal-700 font-bold">{st.won}</td>
-                          <td className="py-3 px-3 text-center text-rose-600 font-medium">{st.lost}</td>
+                          <td className="py-3 px-3 text-center text-orange-600 font-medium">{st.lost}</td>
                           <td className="py-3 px-3 text-center text-slate-500 font-medium">{st.cancelled}</td>
                           <td className="py-3 px-3 text-right">
                             <Badge
@@ -1159,7 +1174,7 @@ export default function Dashboard() {
   const [showSuccessDialog, setShowSuccessDialog] = useState(false)
   const [unreadAlertsCount, setUnreadAlertsCount] = useState(0)
 
-  const { hasPermission } = usePermissions()
+  const { hasPermission, hasRole } = usePermissions()
 
   const fetchAlertsCount = useCallback(async () => {
     try {
@@ -1247,12 +1262,25 @@ export default function Dashboard() {
     ? 'alerts'
     : location.pathname.includes('/users')
     ? 'users'
+    : location.pathname.includes('/bulk-import')
+    ? 'bulk-import'
     : 'overview'
 
+  // Roles that run the system see management-facing wording; everyone else
+  // sees the plain noun (they can view the directory, not administer it).
+  const isManagementRole = ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].some(hasRole)
+
   // Build nav items visible to this user
-  const visibleNavItems = NAV_ITEMS.filter((item) =>
-    item.permission === null || hasPermission(item.permission)
-  )
+  const visibleNavItems = NAV_ITEMS
+    .filter((item) =>
+      (item.permission === null || hasPermission(item.permission)) &&
+      (!item.role || hasRole(item.role))
+    )
+    .map((item) =>
+      item.managementLabel && isManagementRole
+        ? { ...item, label: item.managementLabel }
+        : item
+    )
 
   return (
     <div className="h-screen bg-background text-foreground flex flex-col overflow-hidden">

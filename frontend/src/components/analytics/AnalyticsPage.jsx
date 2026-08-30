@@ -26,7 +26,7 @@ import {
   CardDescription,
   CardContent
 } from '@/components/ui/card'
-import { listBids, getTenderPerformanceMatrix } from '../../services/bids'
+import { getTenderPerformanceMatrix, listAllBids } from '../../services/bids'
 import { tokenStorage } from '../../services/auth'
 import { usePermissions } from '../../hooks/usePermissions'
 
@@ -99,6 +99,9 @@ function getEffectiveStage(b) {
   if (b.bid_status === 'WON' || b.workflow_stage === 'WON' || b.bid_outcome === 'WON') return 'WON'
   if (b.bid_status === 'LOST' || b.workflow_stage === 'LOST' || b.bid_outcome === 'LOST' || b.technical_result === 'DISQUALIFIED') return 'LOST'
   if (b.bid_status === 'CANCELLED' || b.workflow_stage === 'CANCELLED' || b.bid_outcome === 'CANCELLED') return 'CANCELLED'
+  // Closed without ever being bid. Its workflow_stage is still DISCOVERED, so
+  // without this it would be charted as live pipeline.
+  if (b.bid_status === 'CLOSED') return 'CLOSED'
   return b.workflow_stage || 'DISCOVERED'
 }
 
@@ -239,10 +242,10 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
       // org-wide fetch — and the performance matrix is scoped server-side too
       // (the backend returns only their own row for these roles regardless).
       const bidsParams = isManagementRole
-        ? { page: 1, limit: 1000 }
-        : { page: 1, limit: 1000, bid_owner_id: currentUser?.id }
+        ? {}
+        : { bid_owner_id: currentUser?.id }
       const [bidsRes, matrixRes] = await Promise.all([
-        listBids(bidsParams),
+        listAllBids(bidsParams),
         getTenderPerformanceMatrix()
       ])
 
@@ -288,7 +291,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
     let isMounted = true
     setLoadingUserBids(true)
 
-    listBids({ bid_owner_id: selectedUserId, limit: 200 })
+    listAllBids({ bid_owner_id: selectedUserId })
       .then(res => {
         if (!isMounted) return
         const fetchedBids = res?.data && Array.isArray(res.data)
@@ -471,7 +474,10 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
 
     const totalCount = filteredBids.length
     const wonCount = filteredBids.filter(b => b.workflow_stage === 'WON' || b.bid_status === 'WON' || b.bid_outcome === 'WON').length
-    const winRate = totalCount > 0 ? ((wonCount / totalCount) * 100).toFixed(1) : '0'
+    // Tenders closed without bidding were never in contention.
+    const closedNoBid = filteredBids.filter(b => b.bid_status === 'CLOSED').length
+    const contested = Math.max(0, totalCount - closedNoBid)
+    const winRate = contested > 0 ? ((wonCount / contested) * 100).toFixed(1) : '0'
 
     return {
       totalVal,

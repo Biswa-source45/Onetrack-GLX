@@ -109,7 +109,8 @@ func main() {
 	bidRepository := bidRepo.NewPostgresBidRepository(dbPool)
 	bidSvc := bidService.NewBidService(bidRepository, alertSvc)
 	bidHdlr := bidHandler.NewBidHandler(bidSvc)
-	bidHandler.RegisterBidRoutes(v1, bidHdlr, authMiddleware)
+	bidImportHdlr := bidHandler.NewBulkImportHandler(dbPool)
+	bidHandler.RegisterBidRoutes(v1, bidHdlr, bidImportHdlr, authMiddleware)
 
 	// Start server
 	srv := &http.Server{

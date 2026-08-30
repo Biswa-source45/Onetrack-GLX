@@ -3,11 +3,13 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onetrack/backend/internal/bid/domain"
 )
@@ -35,7 +37,7 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 			emd_beneficiary, emd_payable_at,
 			bg_required, bg_rate, high_level_scope,
 			start_date, end_date, opening_date, closing_date, duration_months, authority,
-			category, bid_type, gem_bid_type,
+			category, bid_type, gem_bid_type, quantity, our_rank,
 			remarks, metadata,
 			team, scope_type, activity_type,
 			excel_bid_status, submission_status, financial_evaluation_status, po_received_status,
@@ -51,7 +53,7 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 			$23, $24,
 			$25, $26, $27,
 			$28, $29, $30, $31, $32, $33,
-			$34, $35, $36,
+			$34, $35, $36, $50, $51,
 			$37, $38,
 			$39, $40, $41,
 			$42, $43, $44, $45, $46, $47, $48, '{"DISCOVERED": true}'::jsonb,
@@ -75,11 +77,42 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 		params.ExcelBidStatus, params.SubmissionStatus, params.FinancialEvaluationStatus, params.POReceivedStatus,
 		params.BidResult, params.AISourceDocumentID, params.AIExtractionConfidence,
 		params.EMDNotApplicable,
+		params.Quantity, params.OurRank,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("failed to create bid: %w", err)
 	}
 	return id, nil
+}
+
+// FindByIdentifier locates a live tender carrying this GeM bid number or RFP
+// number. Both columns are searched because one real-world identifier can land
+// in either, and the match is case-insensitive so "gem/..." and "GEM/..." are
+// treated as the same tender. Archived rows are ignored so a deleted tender
+// does not block re-adding its id.
+func (r *postgresBidRepo) FindByIdentifier(ctx context.Context, identifier, excludeID string) (*domain.IdentifierMatch, error) {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return nil, nil
+	}
+
+	query := `
+		SELECT id, title
+		FROM bid.bid_workspaces
+		WHERE archived_at IS NULL
+		  AND (UPPER(TRIM(gem_bid_no)) = UPPER($1) OR UPPER(TRIM(bid_no)) = UPPER($1))
+		  AND ($2 = '' OR id::text <> $2)
+		LIMIT 1
+	`
+	var m domain.IdentifierMatch
+	err := r.pool.QueryRow(ctx, query, identifier, excludeID).Scan(&m.ID, &m.Title)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("find bid by identifier: %w", err)
+	}
+	return &m, nil
 }
 
 func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWorkspace, error) {
@@ -92,14 +125,14 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 		       final_bid_value, l1_price, quoted_price,
 		       start_date, end_date, opening_date, closing_date, duration_months, authority,
 		       high_level_scope, bg_required, bg_rate,
-		       category, bid_type, gem_bid_type,
+		       category, bid_type, gem_bid_type, quantity, our_rank,
 		       qualification_status, bid_outcome, outcome_reason, tech_compliance_status,
 		       remarks, competitor_info, metadata,
 		       ai_source_document_id, ai_extraction_confidence,
 		       created_at, updated_at, archived_at,
 		       team, scope_type, activity_type,
 		       excel_bid_status, submission_status, financial_evaluation_status, po_received_status,
-		       bid_result,
+		       bid_result, target_month_date,
 		       finance_alerted, emd_ready, emd_returned, bg_discharged, submission_done,
 		       gem_submission_price, final_price,
 		       technical_result, disqualification_reason, financial_result,
@@ -117,6 +150,36 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 	`
 	row := r.pool.QueryRow(ctx, query, id)
 	return scanBid(row)
+}
+
+// derivedStatusExpr is the single definition of a tender's effective status.
+//
+// It has to be shared by the status counts and the status filter: they used to
+// carry separate copies, and the copies disagreed. The count was an ordered
+// CASE, so a won tender matched WON and stopped there; the filter was a flat OR
+// chain where "submission_done = true" matched every tender that had ever been
+// submitted. Clicking "Under Tech Eval" (14) therefore listed 47 tenders,
+// including every won and lost one.
+//
+// Order matters: a terminal outcome always wins over where the tender sits in
+// the pipeline, so the outcome branches come first.
+const derivedStatusExpr = `
+	CASE
+		WHEN b.bid_status = 'WON' OR b.workflow_stage = 'WON' OR b.bid_outcome = 'WON' THEN 'WON'
+		WHEN b.bid_status = 'LOST' OR b.workflow_stage = 'LOST' OR b.bid_outcome = 'LOST' OR b.technical_result = 'DISQUALIFIED' THEN 'LOST'
+		WHEN b.bid_status = 'CANCELLED' OR b.workflow_stage = 'CANCELLED' OR b.bid_outcome = 'CANCELLED' THEN 'CANCELLED'
+		WHEN b.bid_status = 'CLOSED' THEN 'CLOSED'
+		WHEN b.bid_status = 'TECHNICAL_EVALUATION' OR b.workflow_stage IN ('GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION') OR b.submission_status = 'SUBMITTED' OR b.submission_done = true THEN 'TECHNICAL_EVALUATION'
+		WHEN b.bid_status = 'SUBMITTED' THEN 'SUBMITTED'
+		ELSE 'ACTIVE'
+	END`
+
+// derivedStatuses are the values derivedStatusExpr can produce. A filter on any
+// of these is matched against the expression; anything else (ARCHIVED, say) is
+// matched against the raw column.
+var derivedStatuses = map[string]bool{
+	"WON": true, "LOST": true, "CANCELLED": true, "CLOSED": true,
+	"TECHNICAL_EVALUATION": true, "SUBMITTED": true, "ACTIVE": true,
 }
 
 func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams) ([]domain.BidWorkspace, int, map[string]int, error) {
@@ -145,20 +208,13 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		idx++
 	}
 	if params.BidStatus != "" {
-		switch params.BidStatus {
-		case "WON":
-			conditions = append(conditions, "(b.bid_status = 'WON' OR b.workflow_stage = 'WON' OR b.bid_outcome = 'WON')")
-		case "LOST":
-			conditions = append(conditions, "(b.bid_status = 'LOST' OR b.workflow_stage = 'LOST' OR b.bid_outcome = 'LOST' OR b.technical_result = 'DISQUALIFIED')")
-		case "CANCELLED":
-			conditions = append(conditions, "(b.bid_status = 'CANCELLED' OR b.workflow_stage = 'CANCELLED' OR b.bid_outcome = 'CANCELLED')")
-		case "SUBMITTED":
-			conditions = append(conditions, "(b.bid_status = 'SUBMITTED' OR b.workflow_stage IN ('GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION') OR b.submission_status = 'SUBMITTED' OR b.submission_done = true)")
-		case "TECHNICAL_EVALUATION":
-			conditions = append(conditions, "(b.bid_status = 'TECHNICAL_EVALUATION' OR b.workflow_stage IN ('GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION') OR b.submission_status = 'SUBMITTED' OR b.submission_done = true)")
-		case "ACTIVE":
-			conditions = append(conditions, "(COALESCE(b.bid_status, 'ACTIVE') = 'ACTIVE' AND b.workflow_stage NOT IN ('WON', 'LOST', 'CANCELLED', 'GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION') AND COALESCE(b.bid_outcome, '') NOT IN ('WON', 'LOST', 'CANCELLED') AND COALESCE(b.technical_result, '') != 'DISQUALIFIED')")
-		default:
+		// Filter on the same expression the counts are grouped by, so a tile's
+		// number always matches the list behind it.
+		if derivedStatuses[params.BidStatus] {
+			conditions = append(conditions, fmt.Sprintf("(%s) = $%d", derivedStatusExpr, idx))
+			args = append(args, params.BidStatus)
+			idx++
+		} else {
 			conditions = append(conditions, fmt.Sprintf("b.bid_status = $%d", idx))
 			args = append(args, params.BidStatus)
 			idx++
@@ -232,20 +288,11 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 	baseWhere := "WHERE " + strings.Join(baseConditions, " AND ")
 
 	statusQuery := fmt.Sprintf(`
-		SELECT 
-			CASE 
-				WHEN b.bid_status = 'WON' OR b.workflow_stage = 'WON' OR b.bid_outcome = 'WON' THEN 'WON'
-				WHEN b.bid_status = 'LOST' OR b.workflow_stage = 'LOST' OR b.bid_outcome = 'LOST' OR b.technical_result = 'DISQUALIFIED' THEN 'LOST'
-				WHEN b.bid_status = 'CANCELLED' OR b.workflow_stage = 'CANCELLED' OR b.bid_outcome = 'CANCELLED' THEN 'CANCELLED'
-				WHEN b.bid_status = 'TECHNICAL_EVALUATION' OR b.workflow_stage IN ('GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION') OR b.submission_status = 'SUBMITTED' OR b.submission_done = true THEN 'TECHNICAL_EVALUATION'
-				WHEN b.bid_status = 'SUBMITTED' THEN 'SUBMITTED'
-				ELSE 'ACTIVE'
-			END AS derived_status, 
-			COUNT(*)
+		SELECT %s AS derived_status, COUNT(*)
 		FROM bid.bid_workspaces b
 		%s
 		GROUP BY 1
-	`, baseWhere)
+	`, derivedStatusExpr, baseWhere)
 
 	rowsStatus, err := r.pool.Query(ctx, statusQuery, baseArgs...)
 	if err != nil {
@@ -273,14 +320,14 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		       b.final_bid_value, b.l1_price, b.quoted_price,
 		       b.start_date, b.end_date, b.opening_date, b.closing_date, b.duration_months, b.authority,
 		       b.high_level_scope, b.bg_required, b.bg_rate,
-		       b.category, b.bid_type, b.gem_bid_type,
+		       b.category, b.bid_type, b.gem_bid_type, b.quantity, b.our_rank,
 		       b.qualification_status, b.bid_outcome, b.outcome_reason, b.tech_compliance_status,
 		       b.remarks, b.competitor_info, b.metadata,
 		       b.ai_source_document_id, b.ai_extraction_confidence,
 		       b.created_at, b.updated_at, b.archived_at,
 		       b.team, b.scope_type, b.activity_type,
 		       b.excel_bid_status, b.submission_status, b.financial_evaluation_status, b.po_received_status,
-		       b.bid_result,
+		       b.bid_result, b.target_month_date,
 		       b.finance_alerted, b.emd_ready, b.emd_returned, b.bg_discharged, b.submission_done,
 		       b.gem_submission_price, b.final_price,
 		       b.technical_result, b.disqualification_reason, b.financial_result,
@@ -296,7 +343,9 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		FROM bid.bid_workspaces b
 		LEFT JOIN auth.users u ON b.bid_owner_id = u.id
 		%s
-		ORDER BY b.created_at DESC
+		-- Tenders are identified by when the tender itself started, not when the
+		-- row was keyed in, so a bulk import does not stack at the top as "latest".
+		ORDER BY COALESCE(b.start_date, b.opening_date, b.created_at) DESC, b.created_at DESC
 		LIMIT $%d OFFSET $%d
 	`, where, idx, idx+1)
 
@@ -357,6 +406,12 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	}
 	if req.Category != nil {
 		addSet("category", *req.Category)
+	}
+	if req.Quantity != nil {
+		addSet("quantity", *req.Quantity)
+	}
+	if req.OurRank != nil {
+		addSet("our_rank", *req.OurRank)
 	}
 	if req.EstimatedValue != nil {
 		addSet("estimated_value", *req.EstimatedValue)
@@ -690,19 +745,34 @@ func (r *postgresBidRepo) UpdateOutcome(ctx context.Context, id string, req *dom
 	return err
 }
 
+// SoftDelete moves a tender to the bin. Since bid_status is overwritten with
+// ARCHIVED, the status it held is stashed in metadata first - otherwise restore
+// has nothing to put back and has to guess. Guessing ACTIVE would quietly
+// return a Won, Lost or Closed tender to the live pipeline.
+// Every SET expression sees the pre-update row, so bid_status here is the old value.
 func (r *postgresBidRepo) SoftDelete(ctx context.Context, id string) error {
-	_, err := r.pool.Exec(ctx,
-		"UPDATE bid.bid_workspaces SET archived_at = NOW(), bid_status = 'ARCHIVED', updated_at = NOW() WHERE id = $1",
-		id,
-	)
+	_, err := r.pool.Exec(ctx, `
+		UPDATE bid.bid_workspaces
+		SET archived_at   = NOW(),
+		    metadata      = jsonb_set(COALESCE(metadata, '{}'::jsonb),
+		                              '{pre_archive_status}',
+		                              to_jsonb(COALESCE(bid_status, 'ACTIVE'))),
+		    bid_status    = 'ARCHIVED',
+		    updated_at    = NOW()
+		WHERE id = $1`, id)
 	return err
 }
 
+// Restore returns a tender to the status it had before it was binned, falling
+// back to ACTIVE for tenders binned before that was recorded.
 func (r *postgresBidRepo) Restore(ctx context.Context, id string) error {
-	_, err := r.pool.Exec(ctx,
-		"UPDATE bid.bid_workspaces SET archived_at = NULL, bid_status = 'ACTIVE', updated_at = NOW() WHERE id = $1",
-		id,
-	)
+	_, err := r.pool.Exec(ctx, `
+		UPDATE bid.bid_workspaces
+		SET archived_at = NULL,
+		    bid_status  = COALESCE(NULLIF(metadata->>'pre_archive_status', 'ARCHIVED'), 'ACTIVE'),
+		    metadata    = COALESCE(metadata, '{}'::jsonb) - 'pre_archive_status',
+		    updated_at  = NOW()
+		WHERE id = $1`, id)
 	return err
 }
 
@@ -1015,14 +1085,14 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 		&b.FinalBidValue, &b.L1Price, &b.QuotedPrice,
 		&b.StartDate, &b.EndDate, &b.OpeningDate, &b.ClosingDate, &b.DurationMonths, &b.Authority,
 		&b.HighLevelScope, &b.BGRequired, &b.BGRate,
-		&b.Category, &b.BidType, &b.GemBidType,
+		&b.Category, &b.BidType, &b.GemBidType, &b.Quantity, &b.OurRank,
 		&b.QualificationStatus, &b.BidOutcome, &b.OutcomeReason, &b.TechComplianceStatus,
 		&b.Remarks, &b.CompetitorInfo, &b.Metadata,
 		&b.AISourceDocumentID, &b.AIExtractionConfidence,
 		&b.CreatedAt, &b.UpdatedAt, &b.ArchivedAt,
 		&b.Team, &b.ScopeType, &b.ActivityType,
 		&b.ExcelBidStatus, &b.SubmissionStatus, &b.FinancialEvaluationStatus, &b.POReceivedStatus,
-		&b.BidResult,
+		&b.BidResult, &b.TargetMonthDate,
 		&b.FinanceAlerted, &b.EMDReady, &b.EMDReturned, &b.BGDischarged, &b.SubmissionDone,
 		&b.GemSubmissionPrice, &b.FinalPrice,
 		&b.TechnicalResult, &b.DisqualificationReason, &b.FinancialResult,
@@ -1121,7 +1191,7 @@ func (r *postgresBidRepo) GetTenderPerformanceMatrix(ctx context.Context, ownerI
 			)                                                AS role,
 			COUNT(*)                                         AS total,
 			COUNT(*) FILTER (
-				WHERE b.bid_status NOT IN ('WON', 'LOST', 'CANCELLED')
+				WHERE b.bid_status NOT IN ('WON', 'LOST', 'CANCELLED', 'CLOSED')
 				AND b.workflow_stage NOT IN ('WON', 'LOST', 'CANCELLED', 'GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER')
 				AND COALESCE(b.bid_outcome, '') NOT IN ('WON', 'LOST', 'CANCELLED')
 				AND COALESCE(b.technical_result, '') != 'DISQUALIFIED'
@@ -1157,7 +1227,10 @@ func (r *postgresBidRepo) GetTenderPerformanceMatrix(ctx context.Context, ownerI
 				WHERE b.bid_status = 'CANCELLED'
 					OR b.workflow_stage = 'CANCELLED'
 					OR b.bid_outcome = 'CANCELLED'
-			)                                                AS cancelled
+			)                                                AS cancelled,
+			COUNT(*) FILTER (
+				WHERE b.bid_status = 'CLOSED'
+			)                                                AS closed
 		FROM bid.bid_workspaces b
 		JOIN auth.users u ON u.id = b.bid_owner_id
 		%s
@@ -1177,7 +1250,7 @@ func (r *postgresBidRepo) GetTenderPerformanceMatrix(ctx context.Context, ownerI
 		if err := rows.Scan(
 			&s.UserID, &s.FullName, &s.Username, &s.Role,
 			&s.Total, &s.Active, &s.Submitted, &s.TechEval,
-			&s.FinEval, &s.Award, &s.Won, &s.Lost, &s.Cancelled,
+			&s.FinEval, &s.Award, &s.Won, &s.Lost, &s.Cancelled, &s.Closed,
 		); err != nil {
 			return nil, fmt.Errorf("scan performance matrix row: %w", err)
 		}
@@ -1188,7 +1261,6 @@ func (r *postgresBidRepo) GetTenderPerformanceMatrix(ctx context.Context, ownerI
 	}
 	return stats, nil
 }
-
 
 func calcPages(total, limit int) int {
 	if limit == 0 {

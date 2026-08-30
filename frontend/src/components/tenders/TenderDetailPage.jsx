@@ -27,9 +27,10 @@ import {
   getBid, getBidStageHistory, transitionBidStage,
   addBidMember, removeBidMember, recordBidOutcome, archiveBid, updateBid,
   softDeleteBid, restoreBid, permanentDeleteBid,
-  STAGE_LABELS, STAGE_COLORS, STATUS_COLORS, STAGE_TRANSITIONS,
+  STAGE_LABELS, STAGE_COLORS, STATUS_COLORS, statusStyle, STAGE_TRANSITIONS,
   WORKFLOW_STAGES_ORDERED,
 } from '../../services/bids'
+import { ImportedPill } from './ImportedPill'
 import { usePermissions } from '../../hooks/usePermissions'
 import { tokenStorage } from '../../services/auth'
 import { ChecklistTab } from './ChecklistTab'
@@ -2054,12 +2055,11 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full size-2.5 bg-emerald-500"></span>
                 </span>
-              ) : bid.bid_status === 'ARCHIVED' ? (
-                <span className="size-2.5 rounded-full bg-slate-400 shrink-0" title="Archived" />
-              ) : bid.bid_status === 'WON' ? (
-                <span className="size-2.5 rounded-full bg-emerald-500 shrink-0" title="Won" />
               ) : (
-                <span className="size-2.5 rounded-full bg-destructive shrink-0" title={bid.bid_status} />
+                <span
+                  className={`size-2.5 rounded-full shrink-0 ${statusStyle(bid.bid_status).dot}`}
+                  title={bid.bid_status}
+                />
               )}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
@@ -2068,6 +2068,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
               {bid.portal_source && (
                 <span className="text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-800">{bid.portal_source}</span>
               )}
+              {bid.is_imported && <ImportedPill />}
             </div>
           </div>
 

@@ -10,6 +10,11 @@ import (
 // a 400 (bad input) from a genuine 500 (unexpected server/repo failure).
 var ErrValidation = errors.New("validation failed")
 
+// ErrDuplicateIdentifier is returned when a tender id (GeM bid number or RFP
+// number) is already carried by another tender. The identifier is the tender's
+// real-world key, so two records must never share one.
+var ErrDuplicateIdentifier = errors.New("tender identifier already exists")
+
 // CreationMode drives how the bid was initialized — not its lifecycle
 const (
 	CreationModeManual       = "MANUAL"
@@ -60,6 +65,12 @@ const (
 	BidStatusArchived  = "ARCHIVED"
 	BidStatusWon       = "WON"
 	BidStatusLost      = "LOST"
+	// BidStatusClosed marks a tender that was assessed and then closed without
+	// bidding. Distinct from CANCELLED (the tender itself was withdrawn) and
+	// from LOST (we bid and did not win) - here no bid was ever submitted.
+	// It lives on bid_status only; the workflow stage stays where the tender
+	// actually reached, so moving it forward reopens it as ACTIVE.
+	BidStatusClosed = "CLOSED"
 )
 
 // Bid outcome
@@ -74,31 +85,31 @@ const (
 // ────────────────────────────────────────
 
 type BidWorkspace struct {
-	ID               string  `json:"id"`
-	BidNo            *string `json:"bid_no,omitempty"`
-	GemBidNo         *string `json:"gem_bid_no,omitempty"`
-	Title            string  `json:"title"`
-	OrganizationName *string `json:"organization_name,omitempty"`
-	DepartmentName   *string `json:"department_name,omitempty"`
-	PortalSource     string  `json:"portal_source"`
-	CreationMode     string  `json:"creation_mode"`
-	WorkflowStage    string  `json:"workflow_stage"`
-	BidStatus        string  `json:"bid_status"`
-	BidOwnerID          string  `json:"bid_owner_id"`
-	ReportingManagerID  *string `json:"reporting_manager_id,omitempty"`
-	CreatedBy           string  `json:"created_by"`
+	ID                 string  `json:"id"`
+	BidNo              *string `json:"bid_no,omitempty"`
+	GemBidNo           *string `json:"gem_bid_no,omitempty"`
+	Title              string  `json:"title"`
+	OrganizationName   *string `json:"organization_name,omitempty"`
+	DepartmentName     *string `json:"department_name,omitempty"`
+	PortalSource       string  `json:"portal_source"`
+	CreationMode       string  `json:"creation_mode"`
+	WorkflowStage      string  `json:"workflow_stage"`
+	BidStatus          string  `json:"bid_status"`
+	BidOwnerID         string  `json:"bid_owner_id"`
+	ReportingManagerID *string `json:"reporting_manager_id,omitempty"`
+	CreatedBy          string  `json:"created_by"`
 
 	// Financial
-	EstimatedValue *float64 `json:"estimated_value,omitempty"`
-	EMDAmount      *float64 `json:"emd_amount,omitempty"`
-	EMDType        *string  `json:"emd_type,omitempty"`
-	EMDExempted    bool     `json:"emd_exempted"`
-	EMDNotApplicable bool   `json:"emd_not_applicable"`
-	EMDExemptionType   *string `json:"emd_exemption_type,omitempty"`
-	EMDExemptionReason *string `json:"emd_exemption_reason,omitempty"`
-	FinalBidValue  *float64 `json:"final_bid_value,omitempty"`
-	L1Price        *float64 `json:"l1_price,omitempty"`
-	QuotedPrice    *float64 `json:"quoted_price,omitempty"`
+	EstimatedValue     *float64 `json:"estimated_value,omitempty"`
+	EMDAmount          *float64 `json:"emd_amount,omitempty"`
+	EMDType            *string  `json:"emd_type,omitempty"`
+	EMDExempted        bool     `json:"emd_exempted"`
+	EMDNotApplicable   bool     `json:"emd_not_applicable"`
+	EMDExemptionType   *string  `json:"emd_exemption_type,omitempty"`
+	EMDExemptionReason *string  `json:"emd_exemption_reason,omitempty"`
+	FinalBidValue      *float64 `json:"final_bid_value,omitempty"`
+	L1Price            *float64 `json:"l1_price,omitempty"`
+	QuotedPrice        *float64 `json:"quoted_price,omitempty"`
 
 	// EMD Bank / Online Payment details (when EMD mode = ONLINE)
 	EMDBankName      *string `json:"emd_bank_name,omitempty"`
@@ -116,6 +127,11 @@ type BidWorkspace struct {
 	SubmissionDate *time.Time `json:"submission_date,omitempty"`
 	ResultDate     *time.Time `json:"result_date,omitempty"`
 	RADate         *time.Time `json:"ra_date,omitempty"`
+
+	// Quantity of units/licences the tender is for.
+	Quantity *int `json:"quantity,omitempty"`
+	// OurRank is where GlobX placed on price: L1, L2, ... or H1.
+	OurRank *string `json:"our_rank,omitempty"`
 
 	// Categorization
 	Category    *string `json:"category,omitempty"`
@@ -145,42 +161,42 @@ type BidWorkspace struct {
 	ArchivedAt *time.Time `json:"archived_at,omitempty"`
 
 	// V2 Core Fields
-	HighLevelScope *string `json:"high_level_scope,omitempty"`
+	HighLevelScope *string    `json:"high_level_scope,omitempty"`
 	StartDate      *time.Time `json:"start_date,omitempty"`
 	EndDate        *time.Time `json:"end_date,omitempty"`
-	DurationMonths *int    `json:"duration_months,omitempty"`
-	BGRequired     bool    `json:"bg_required"`
-	Authority      *string `json:"authority,omitempty"`
+	DurationMonths *int       `json:"duration_months,omitempty"`
+	BGRequired     bool       `json:"bg_required"`
+	Authority      *string    `json:"authority,omitempty"`
 
 	// Stage tracking
-	StageCompletions  []byte `json:"-"` // raw JSONB
-	StageRemarks      []byte `json:"-"` // raw JSONB
-	StageReviews      []byte `json:"-"` // raw JSONB
-	PricingWorkspace  []byte `json:"-"` // raw JSONB — Stage 4 pricing workspace (shared across users)
-	OEMWorkspace      []byte `json:"-"` // raw JSONB — Stage 3 OEM workspace matrix (shared across users)
-	FinanceAlerted    bool   `json:"finance_alerted"`
-	FinanceAlertAt    *time.Time `json:"finance_alert_at,omitempty"`
-	EMDReady          bool   `json:"emd_ready"`
-	EMDReadyDate      *time.Time `json:"emd_ready_date,omitempty"`
-	EMDReturned       bool   `json:"emd_returned"`
-	EMDReturnedDate   *time.Time `json:"emd_returned_date,omitempty"`
-	BGDischarged      bool   `json:"bg_discharged"`
-	BGDischargedDate  *time.Time `json:"bg_discharged_date,omitempty"`
-	BGTargetDate      *time.Time `json:"bg_target_date,omitempty"`
-	POReceivedDate    *time.Time `json:"po_received_date,omitempty"`
+	StageCompletions       []byte     `json:"-"` // raw JSONB
+	StageRemarks           []byte     `json:"-"` // raw JSONB
+	StageReviews           []byte     `json:"-"` // raw JSONB
+	PricingWorkspace       []byte     `json:"-"` // raw JSONB — Stage 4 pricing workspace (shared across users)
+	OEMWorkspace           []byte     `json:"-"` // raw JSONB — Stage 3 OEM workspace matrix (shared across users)
+	FinanceAlerted         bool       `json:"finance_alerted"`
+	FinanceAlertAt         *time.Time `json:"finance_alert_at,omitempty"`
+	EMDReady               bool       `json:"emd_ready"`
+	EMDReadyDate           *time.Time `json:"emd_ready_date,omitempty"`
+	EMDReturned            bool       `json:"emd_returned"`
+	EMDReturnedDate        *time.Time `json:"emd_returned_date,omitempty"`
+	BGDischarged           bool       `json:"bg_discharged"`
+	BGDischargedDate       *time.Time `json:"bg_discharged_date,omitempty"`
+	BGTargetDate           *time.Time `json:"bg_target_date,omitempty"`
+	POReceivedDate         *time.Time `json:"po_received_date,omitempty"`
 	DeliveryComplete       bool       `json:"delivery_complete"`
 	DeliveryCompleteDate   *time.Time `json:"delivery_complete_date,omitempty"`
-	SubmissionDone    bool   `json:"submission_done"`
-	GemSubmissionPrice *float64 `json:"gem_submission_price,omitempty"`
-	FinalPrice         *float64 `json:"final_price,omitempty"`
-	TechnicalResult    *string  `json:"technical_result,omitempty"`
-	DisqualificationReason *string `json:"disqualification_reason,omitempty"`
-	FinancialResult    *string  `json:"financial_result,omitempty"`
-	L1CompanyName      *string  `json:"l1_company_name,omitempty"`
-	PriceDifference    *float64 `json:"price_difference,omitempty"`
-	PriceDifferencePct *float64 `json:"price_difference_pct,omitempty"`
-	EligibilityRemarks *string  `json:"eligibility_remarks,omitempty"`
-	EMDRemarks         *string  `json:"emd_remarks,omitempty"`
+	SubmissionDone         bool       `json:"submission_done"`
+	GemSubmissionPrice     *float64   `json:"gem_submission_price,omitempty"`
+	FinalPrice             *float64   `json:"final_price,omitempty"`
+	TechnicalResult        *string    `json:"technical_result,omitempty"`
+	DisqualificationReason *string    `json:"disqualification_reason,omitempty"`
+	FinancialResult        *string    `json:"financial_result,omitempty"`
+	L1CompanyName          *string    `json:"l1_company_name,omitempty"`
+	PriceDifference        *float64   `json:"price_difference,omitempty"`
+	PriceDifferencePct     *float64   `json:"price_difference_pct,omitempty"`
+	EligibilityRemarks     *string    `json:"eligibility_remarks,omitempty"`
+	EMDRemarks             *string    `json:"emd_remarks,omitempty"`
 
 	// Excel bulk upload fields
 	Team                      *string    `json:"team,omitempty"`
@@ -275,45 +291,47 @@ type AddMicroEventRequest struct {
 // ────────────────────────────────────────
 
 type CreateBidRequest struct {
-	CreationMode     string   `json:"creation_mode" binding:"required,oneof=MANUAL INTELLIGENCE"`
-	Title            string   `json:"title" binding:"required"`
-	BidNo            *string  `json:"bid_no"`
-	GemBidNo         *string  `json:"gem_bid_no"`
-	OrganizationName *string  `json:"organization_name"`
-	DepartmentName   *string  `json:"department_name"`
-	PortalSource     *string  `json:"portal_source"`
-	BidType          *string  `json:"bid_type"`
-	GemBidType       *string  `json:"gem_bid_type"`
-	Category         *string  `json:"category"`
-	EstimatedValue   *float64 `json:"estimated_value"`
-	EMDAmount        *float64 `json:"emd_amount"`
-	EMDType          *string  `json:"emd_type"`
-	EMDExempted      *bool    `json:"emd_exempted"`
-	EMDNotApplicable *bool    `json:"emd_not_applicable"`
-	EMDExemptionType   *string `json:"emd_exemption_type"`
-	EMDExemptionReason *string `json:"emd_exemption_reason"`
+	CreationMode       string   `json:"creation_mode" binding:"required,oneof=MANUAL INTELLIGENCE"`
+	Title              string   `json:"title" binding:"required"`
+	BidNo              *string  `json:"bid_no"`
+	GemBidNo           *string  `json:"gem_bid_no"`
+	OrganizationName   *string  `json:"organization_name"`
+	DepartmentName     *string  `json:"department_name"`
+	PortalSource       *string  `json:"portal_source"`
+	BidType            *string  `json:"bid_type"`
+	GemBidType         *string  `json:"gem_bid_type"`
+	Category           *string  `json:"category"`
+	Quantity           *int     `json:"quantity"`
+	OurRank            *string  `json:"our_rank"`
+	EstimatedValue     *float64 `json:"estimated_value"`
+	EMDAmount          *float64 `json:"emd_amount"`
+	EMDType            *string  `json:"emd_type"`
+	EMDExempted        *bool    `json:"emd_exempted"`
+	EMDNotApplicable   *bool    `json:"emd_not_applicable"`
+	EMDExemptionType   *string  `json:"emd_exemption_type"`
+	EMDExemptionReason *string  `json:"emd_exemption_reason"`
 	// EMD bank / DD detail fields
-	EMDBankName      *string  `json:"emd_bank_name"`
-	EMDAccountNumber *string  `json:"emd_account_number"`
-	EMDIFSCCode      *string  `json:"emd_ifsc_code"`
-	EMDBranch        *string  `json:"emd_branch"`
-	EMDBeneficiary   *string  `json:"emd_beneficiary"`
-	EMDPayableAt     *string  `json:"emd_payable_at"`
-	HighLevelScope   *string  `json:"high_level_scope"`
-	BGRequired       *bool    `json:"bg_required"`
-	StartDate        *string  `json:"start_date"`
-	EndDate          *string  `json:"end_date"`
-	OpeningDate      *string  `json:"opening_date,omitempty"`
-	ClosingDate      *string  `json:"closing_date,omitempty"`
-	DurationMonths   *int     `json:"duration_months"`
-	Authority        *string  `json:"authority"`
-	BidOwnerID          string   `json:"bid_owner_id" binding:"required"`
-	ReportingManagerID  *string  `json:"reporting_manager_id"`
-	Remarks             *string  `json:"remarks"`
-	Metadata            *string  `json:"metadata"` // raw JSON string
-	BidderChecklists    []string `json:"bidder_checklists"` // bidder doc checklist titles
-	OEMChecklists       []string `json:"oem_checklists"`    // OEM doc checklist titles
-	Checklists          []string `json:"checklists"` // legacy support
+	EMDBankName               *string  `json:"emd_bank_name"`
+	EMDAccountNumber          *string  `json:"emd_account_number"`
+	EMDIFSCCode               *string  `json:"emd_ifsc_code"`
+	EMDBranch                 *string  `json:"emd_branch"`
+	EMDBeneficiary            *string  `json:"emd_beneficiary"`
+	EMDPayableAt              *string  `json:"emd_payable_at"`
+	HighLevelScope            *string  `json:"high_level_scope"`
+	BGRequired                *bool    `json:"bg_required"`
+	StartDate                 *string  `json:"start_date"`
+	EndDate                   *string  `json:"end_date"`
+	OpeningDate               *string  `json:"opening_date,omitempty"`
+	ClosingDate               *string  `json:"closing_date,omitempty"`
+	DurationMonths            *int     `json:"duration_months"`
+	Authority                 *string  `json:"authority"`
+	BidOwnerID                string   `json:"bid_owner_id" binding:"required"`
+	ReportingManagerID        *string  `json:"reporting_manager_id"`
+	Remarks                   *string  `json:"remarks"`
+	Metadata                  *string  `json:"metadata"`          // raw JSON string
+	BidderChecklists          []string `json:"bidder_checklists"` // bidder doc checklist titles
+	OEMChecklists             []string `json:"oem_checklists"`    // OEM doc checklist titles
+	Checklists                []string `json:"checklists"`        // legacy support
 	Team                      *string  `json:"team,omitempty"`
 	ScopeType                 *string  `json:"scope_type,omitempty"`
 	BGRate                    *float64 `json:"bg_rate,omitempty"`
@@ -327,38 +345,40 @@ type CreateBidRequest struct {
 }
 
 type UpdateBidRequest struct {
-	Title            *string  `json:"title"`
-	BidNo            *string  `json:"bid_no"`
-	GemBidNo         *string  `json:"gem_bid_no"`
-	OrganizationName *string  `json:"organization_name"`
-	DepartmentName   *string  `json:"department_name"`
-	PortalSource     *string  `json:"portal_source"`
-	BidType          *string  `json:"bid_type"`
-	GemBidType       *string  `json:"gem_bid_type"`
-	Category         *string  `json:"category"`
-	EstimatedValue   *float64 `json:"estimated_value"`
-	EMDAmount        *float64 `json:"emd_amount"`
-	EMDType          *string  `json:"emd_type"`
-	EMDExempted      *bool    `json:"emd_exempted"`
-	EMDNotApplicable *bool    `json:"emd_not_applicable"`
-	EMDExemptionType   *string `json:"emd_exemption_type"`
-	EMDExemptionReason *string `json:"emd_exemption_reason"`
+	Title              *string  `json:"title"`
+	BidNo              *string  `json:"bid_no"`
+	GemBidNo           *string  `json:"gem_bid_no"`
+	OrganizationName   *string  `json:"organization_name"`
+	DepartmentName     *string  `json:"department_name"`
+	PortalSource       *string  `json:"portal_source"`
+	BidType            *string  `json:"bid_type"`
+	GemBidType         *string  `json:"gem_bid_type"`
+	Category           *string  `json:"category"`
+	Quantity           *int     `json:"quantity"`
+	OurRank            *string  `json:"our_rank"`
+	EstimatedValue     *float64 `json:"estimated_value"`
+	EMDAmount          *float64 `json:"emd_amount"`
+	EMDType            *string  `json:"emd_type"`
+	EMDExempted        *bool    `json:"emd_exempted"`
+	EMDNotApplicable   *bool    `json:"emd_not_applicable"`
+	EMDExemptionType   *string  `json:"emd_exemption_type"`
+	EMDExemptionReason *string  `json:"emd_exemption_reason"`
 	// EMD bank / DD detail fields
-	EMDBankName      *string  `json:"emd_bank_name"`
-	EMDAccountNumber *string  `json:"emd_account_number"`
-	EMDIFSCCode      *string  `json:"emd_ifsc_code"`
-	EMDBranch        *string  `json:"emd_branch"`
-	EMDBeneficiary   *string  `json:"emd_beneficiary"`
-	EMDPayableAt     *string  `json:"emd_payable_at"`
-	HighLevelScope   *string  `json:"high_level_scope"`
-	BGRequired       *bool    `json:"bg_required"`
-	BGRate           *float64 `json:"bg_rate"`
-	StartDate        *string  `json:"start_date"`
-	EndDate          *string  `json:"end_date"`
-	OpeningDate      *string  `json:"opening_date,omitempty"`
-	ClosingDate      *string  `json:"closing_date,omitempty"`
-	DurationMonths   *int     `json:"duration_months"`
-	Authority        *string  `json:"authority"`
+	EMDBankName               *string  `json:"emd_bank_name"`
+	EMDAccountNumber          *string  `json:"emd_account_number"`
+	EMDIFSCCode               *string  `json:"emd_ifsc_code"`
+	EMDBranch                 *string  `json:"emd_branch"`
+	EMDBeneficiary            *string  `json:"emd_beneficiary"`
+	EMDPayableAt              *string  `json:"emd_payable_at"`
+	HighLevelScope            *string  `json:"high_level_scope"`
+	BGRequired                *bool    `json:"bg_required"`
+	BGRate                    *float64 `json:"bg_rate"`
+	StartDate                 *string  `json:"start_date"`
+	EndDate                   *string  `json:"end_date"`
+	OpeningDate               *string  `json:"opening_date,omitempty"`
+	ClosingDate               *string  `json:"closing_date,omitempty"`
+	DurationMonths            *int     `json:"duration_months"`
+	Authority                 *string  `json:"authority"`
 	ReportingManagerID        *string  `json:"reporting_manager_id"`
 	Remarks                   *string  `json:"remarks"`
 	TechComplianceStatus      *string  `json:"tech_compliance_status"`
@@ -375,35 +395,35 @@ type UpdateBidRequest struct {
 	POReceivedStatus          *string  `json:"po_received_status,omitempty"`
 	BidResult                 *string  `json:"bid_result,omitempty"`
 	// Stage tracking updates
-	FinanceAlerted    *bool    `json:"finance_alerted,omitempty"`
-	EMDReady          *bool    `json:"emd_ready,omitempty"`
-	EMDReadyDate      *string  `json:"emd_ready_date,omitempty"`
-	EMDReturned       *bool    `json:"emd_returned,omitempty"`
-	EMDReturnedDate   *string  `json:"emd_returned_date,omitempty"`
-	BGDischarged      *bool    `json:"bg_discharged,omitempty"`
-	BGDischargedDate  *string  `json:"bg_discharged_date,omitempty"`
-	BGTargetDate      *string  `json:"bg_target_date,omitempty"`
-	POReceivedDate    *string  `json:"po_received_date,omitempty"`
-	DeliveryComplete      *bool   `json:"delivery_complete,omitempty"`
-	DeliveryCompleteDate  *string `json:"delivery_complete_date,omitempty"`
-	SubmissionDone    *bool    `json:"submission_done,omitempty"`
-	GemSubmissionPrice *float64 `json:"gem_submission_price,omitempty"`
-	QuotedPrice        *float64 `json:"quoted_price,omitempty"`
-	FinalPrice         *float64 `json:"final_price,omitempty"`
-	TechnicalResult    *string  `json:"technical_result,omitempty"`
-	DisqualificationReason *string `json:"disqualification_reason,omitempty"`
-	FinancialResult    *string  `json:"financial_result,omitempty"`
-	L1CompanyName      *string  `json:"l1_company_name,omitempty"`
-	L1Price            *float64 `json:"l1_price,omitempty"`
-	PriceDifference    *float64 `json:"price_difference,omitempty"`
-	PriceDifferencePct *float64 `json:"price_difference_pct,omitempty"`
-	EligibilityRemarks *string  `json:"eligibility_remarks,omitempty"`
-	EMDRemarks         *string  `json:"emd_remarks,omitempty"`
-	StageCompletions   map[string]bool   `json:"stage_completions,omitempty"`
-	StageRemarks       map[string]string `json:"stage_remarks,omitempty"`
-	StageReviews       map[string]bool   `json:"stage_reviews,omitempty"`
-	PricingWorkspace   *string           `json:"pricing_workspace,omitempty"` // raw JSON string for Stage 4
-	OEMWorkspace       *string           `json:"oem_workspace,omitempty"`     // raw JSON string for Stage 3 OEM matrix
+	FinanceAlerted         *bool             `json:"finance_alerted,omitempty"`
+	EMDReady               *bool             `json:"emd_ready,omitempty"`
+	EMDReadyDate           *string           `json:"emd_ready_date,omitempty"`
+	EMDReturned            *bool             `json:"emd_returned,omitempty"`
+	EMDReturnedDate        *string           `json:"emd_returned_date,omitempty"`
+	BGDischarged           *bool             `json:"bg_discharged,omitempty"`
+	BGDischargedDate       *string           `json:"bg_discharged_date,omitempty"`
+	BGTargetDate           *string           `json:"bg_target_date,omitempty"`
+	POReceivedDate         *string           `json:"po_received_date,omitempty"`
+	DeliveryComplete       *bool             `json:"delivery_complete,omitempty"`
+	DeliveryCompleteDate   *string           `json:"delivery_complete_date,omitempty"`
+	SubmissionDone         *bool             `json:"submission_done,omitempty"`
+	GemSubmissionPrice     *float64          `json:"gem_submission_price,omitempty"`
+	QuotedPrice            *float64          `json:"quoted_price,omitempty"`
+	FinalPrice             *float64          `json:"final_price,omitempty"`
+	TechnicalResult        *string           `json:"technical_result,omitempty"`
+	DisqualificationReason *string           `json:"disqualification_reason,omitempty"`
+	FinancialResult        *string           `json:"financial_result,omitempty"`
+	L1CompanyName          *string           `json:"l1_company_name,omitempty"`
+	L1Price                *float64          `json:"l1_price,omitempty"`
+	PriceDifference        *float64          `json:"price_difference,omitempty"`
+	PriceDifferencePct     *float64          `json:"price_difference_pct,omitempty"`
+	EligibilityRemarks     *string           `json:"eligibility_remarks,omitempty"`
+	EMDRemarks             *string           `json:"emd_remarks,omitempty"`
+	StageCompletions       map[string]bool   `json:"stage_completions,omitempty"`
+	StageRemarks           map[string]string `json:"stage_remarks,omitempty"`
+	StageReviews           map[string]bool   `json:"stage_reviews,omitempty"`
+	PricingWorkspace       *string           `json:"pricing_workspace,omitempty"` // raw JSON string for Stage 4
+	OEMWorkspace           *string           `json:"oem_workspace,omitempty"`     // raw JSON string for Stage 3 OEM matrix
 }
 
 type TransitionStageRequest struct {
@@ -474,156 +494,163 @@ type StageHistoryResponse struct {
 }
 
 type BidResponse struct {
-	ID                     string           `json:"id"`
-	BidNo                  *string          `json:"bid_no"`
-	GemBidNo               *string          `json:"gem_bid_no"`
-	Title                  string           `json:"title"`
-	OrganizationName       *string          `json:"organization_name"`
-	DepartmentName         *string          `json:"department_name"`
-	PortalSource           string           `json:"portal_source"`
-	CreationMode           string           `json:"creation_mode"`
-	WorkflowStage          string           `json:"workflow_stage"`
-	BidStatus              string           `json:"bid_status"`
-	EstimatedValue         *float64         `json:"estimated_value"`
-	EMDAmount              *float64         `json:"emd_amount"`
-	EMDType                *string          `json:"emd_type"`
-	EMDExempted            bool             `json:"emd_exempted"`
-	EMDNotApplicable       bool             `json:"emd_not_applicable"`
-	EMDExemptionType       *string          `json:"emd_exemption_type"`
-	EMDExemptionReason     *string          `json:"emd_exemption_reason"`
-	EMDBankName            *string          `json:"emd_bank_name"`
-	EMDAccountNumber       *string          `json:"emd_account_number"`
-	EMDIFSCCode            *string          `json:"emd_ifsc_code"`
-	EMDBranch              *string          `json:"emd_branch"`
-	EMDBeneficiary         *string          `json:"emd_beneficiary"`
-	EMDPayableAt           *string          `json:"emd_payable_at"`
-	FinalBidValue          *float64         `json:"final_bid_value"`
-	L1Price                *float64         `json:"l1_price"`
-	QuotedPrice            *float64         `json:"quoted_price"`
-	StartDate              *time.Time       `json:"start_date"`
-	EndDate                *time.Time       `json:"end_date"`
-	OpeningDate            *time.Time       `json:"opening_date,omitempty"`
-	ClosingDate            *time.Time       `json:"closing_date,omitempty"`
-	DurationMonths         *int             `json:"duration_months"`
-	Authority              *string          `json:"authority"`
-	HighLevelScope         *string          `json:"high_level_scope"`
-	BGRequired             bool             `json:"bg_required"`
-	BGRate                 *float64         `json:"bg_rate"`
-	Category               *string          `json:"category"`
-	BidType                *string          `json:"bid_type"`
-	GemBidType             *string          `json:"gem_bid_type"`
-	QualificationStatus    string           `json:"qualification_status"`
-	BidOutcome             *string          `json:"bid_outcome"`
-	OutcomeReason          *string          `json:"outcome_reason"`
-	TechComplianceStatus   *string          `json:"tech_compliance_status"`
-	Remarks                *string          `json:"remarks"`
-	CompetitorInfo         interface{}      `json:"competitor_info"`
-	Metadata               interface{}      `json:"metadata"`
-	BidOwner               UserSummary        `json:"bid_owner"`
-	ReportingManager       *UserSummary       `json:"reporting_manager,omitempty"`
-	Members                []MemberResponse   `json:"members"`
-	Checklists             []BidChecklistItem `json:"checklists"`
-	CreatedBy              string             `json:"created_by"`
-	AISourceDocumentID     *string          `json:"ai_source_document_id,omitempty"`
-	AIExtractionConfidence *float64         `json:"ai_extraction_confidence,omitempty"`
-	Team                   *string          `json:"team,omitempty"`
-	ScopeType              *string          `json:"scope_type,omitempty"`
-	ActivityType           *string          `json:"activity_type,omitempty"`
-	ExcelBidStatus         *string          `json:"excel_bid_status,omitempty"`
-	SubmissionStatus       *string          `json:"submission_status,omitempty"`
-	FinancialEvaluationStatus *string       `json:"financial_evaluation_status,omitempty"`
-	POReceivedStatus       *string          `json:"po_received_status,omitempty"`
-	BidResult              *string          `json:"bid_result,omitempty"`
-	FinanceAlerted         bool             `json:"finance_alerted"`
-	EMDReady               bool             `json:"emd_ready"`
-	EMDReadyDate           *time.Time       `json:"emd_ready_date,omitempty"`
-	EMDReturned            bool             `json:"emd_returned"`
-	EMDReturnedDate        *time.Time       `json:"emd_returned_date,omitempty"`
-	BGDischarged           bool             `json:"bg_discharged"`
-	BGDischargedDate       *time.Time       `json:"bg_discharged_date,omitempty"`
-	BGTargetDate           *time.Time       `json:"bg_target_date,omitempty"`
-	POReceivedDate         *time.Time       `json:"po_received_date,omitempty"`
-	DeliveryComplete       bool             `json:"delivery_complete"`
-	DeliveryCompleteDate   *time.Time       `json:"delivery_complete_date,omitempty"`
-	SubmissionDone         bool             `json:"submission_done"`
-	GemSubmissionPrice     *float64         `json:"gem_submission_price,omitempty"`
-	FinalPrice             *float64         `json:"final_price,omitempty"`
-	TechnicalResult        *string          `json:"technical_result,omitempty"`
-	DisqualificationReason *string          `json:"disqualification_reason,omitempty"`
-	FinancialResult        *string          `json:"financial_result,omitempty"`
-	L1CompanyName          *string          `json:"l1_company_name,omitempty"`
-	PriceDifference        *float64         `json:"price_difference,omitempty"`
-	PriceDifferencePct     *float64         `json:"price_difference_pct,omitempty"`
-	EligibilityRemarks     *string          `json:"eligibility_remarks,omitempty"`
-	EMDRemarks             *string          `json:"emd_remarks,omitempty"`
-	StageCompletions       map[string]bool   `json:"stage_completions"`
-	StageRemarks           map[string]string `json:"stage_remarks"`
-	StageReviews           map[string]bool   `json:"stage_reviews"`
-	PricingWorkspace       interface{}       `json:"pricing_workspace"` // Stage 4 workspace data (JSONB)
-	OEMWorkspace           interface{}       `json:"oem_workspace"`     // Stage 3 OEM matrix data (JSONB)
-	CreatedAt              time.Time        `json:"created_at"`
-	UpdatedAt              time.Time        `json:"updated_at"`
-	ArchivedAt             *time.Time       `json:"archived_at"`
-	ResultDate             *time.Time       `json:"result_date,omitempty"`
-	DaysRemaining          *int             `json:"days_remaining,omitempty"`
+	ID                        string             `json:"id"`
+	BidNo                     *string            `json:"bid_no"`
+	GemBidNo                  *string            `json:"gem_bid_no"`
+	Title                     string             `json:"title"`
+	OrganizationName          *string            `json:"organization_name"`
+	DepartmentName            *string            `json:"department_name"`
+	PortalSource              string             `json:"portal_source"`
+	CreationMode              string             `json:"creation_mode"`
+	WorkflowStage             string             `json:"workflow_stage"`
+	BidStatus                 string             `json:"bid_status"`
+	EstimatedValue            *float64           `json:"estimated_value"`
+	EMDAmount                 *float64           `json:"emd_amount"`
+	EMDType                   *string            `json:"emd_type"`
+	EMDExempted               bool               `json:"emd_exempted"`
+	EMDNotApplicable          bool               `json:"emd_not_applicable"`
+	EMDExemptionType          *string            `json:"emd_exemption_type"`
+	EMDExemptionReason        *string            `json:"emd_exemption_reason"`
+	EMDBankName               *string            `json:"emd_bank_name"`
+	EMDAccountNumber          *string            `json:"emd_account_number"`
+	EMDIFSCCode               *string            `json:"emd_ifsc_code"`
+	EMDBranch                 *string            `json:"emd_branch"`
+	EMDBeneficiary            *string            `json:"emd_beneficiary"`
+	EMDPayableAt              *string            `json:"emd_payable_at"`
+	FinalBidValue             *float64           `json:"final_bid_value"`
+	L1Price                   *float64           `json:"l1_price"`
+	QuotedPrice               *float64           `json:"quoted_price"`
+	StartDate                 *time.Time         `json:"start_date"`
+	EndDate                   *time.Time         `json:"end_date"`
+	OpeningDate               *time.Time         `json:"opening_date,omitempty"`
+	ClosingDate               *time.Time         `json:"closing_date,omitempty"`
+	DurationMonths            *int               `json:"duration_months"`
+	Authority                 *string            `json:"authority"`
+	HighLevelScope            *string            `json:"high_level_scope"`
+	BGRequired                bool               `json:"bg_required"`
+	BGRate                    *float64           `json:"bg_rate"`
+	Category                  *string            `json:"category"`
+	Quantity                  *int               `json:"quantity,omitempty"`
+	OurRank                   *string            `json:"our_rank,omitempty"`
+	BidType                   *string            `json:"bid_type"`
+	GemBidType                *string            `json:"gem_bid_type"`
+	QualificationStatus       string             `json:"qualification_status"`
+	BidOutcome                *string            `json:"bid_outcome"`
+	OutcomeReason             *string            `json:"outcome_reason"`
+	TechComplianceStatus      *string            `json:"tech_compliance_status"`
+	Remarks                   *string            `json:"remarks"`
+	CompetitorInfo            interface{}        `json:"competitor_info"`
+	Metadata                  interface{}        `json:"metadata"`
+	BidOwner                  UserSummary        `json:"bid_owner"`
+	ReportingManager          *UserSummary       `json:"reporting_manager,omitempty"`
+	Members                   []MemberResponse   `json:"members"`
+	Checklists                []BidChecklistItem `json:"checklists"`
+	CreatedBy                 string             `json:"created_by"`
+	AISourceDocumentID        *string            `json:"ai_source_document_id,omitempty"`
+	AIExtractionConfidence    *float64           `json:"ai_extraction_confidence,omitempty"`
+	Team                      *string            `json:"team,omitempty"`
+	ScopeType                 *string            `json:"scope_type,omitempty"`
+	ActivityType              *string            `json:"activity_type,omitempty"`
+	TargetMonthDate           *time.Time         `json:"target_month_date,omitempty"`
+	IsImported                bool               `json:"is_imported"`
+	ExcelBidStatus            *string            `json:"excel_bid_status,omitempty"`
+	SubmissionStatus          *string            `json:"submission_status,omitempty"`
+	FinancialEvaluationStatus *string            `json:"financial_evaluation_status,omitempty"`
+	POReceivedStatus          *string            `json:"po_received_status,omitempty"`
+	BidResult                 *string            `json:"bid_result,omitempty"`
+	FinanceAlerted            bool               `json:"finance_alerted"`
+	EMDReady                  bool               `json:"emd_ready"`
+	EMDReadyDate              *time.Time         `json:"emd_ready_date,omitempty"`
+	EMDReturned               bool               `json:"emd_returned"`
+	EMDReturnedDate           *time.Time         `json:"emd_returned_date,omitempty"`
+	BGDischarged              bool               `json:"bg_discharged"`
+	BGDischargedDate          *time.Time         `json:"bg_discharged_date,omitempty"`
+	BGTargetDate              *time.Time         `json:"bg_target_date,omitempty"`
+	POReceivedDate            *time.Time         `json:"po_received_date,omitempty"`
+	DeliveryComplete          bool               `json:"delivery_complete"`
+	DeliveryCompleteDate      *time.Time         `json:"delivery_complete_date,omitempty"`
+	SubmissionDone            bool               `json:"submission_done"`
+	GemSubmissionPrice        *float64           `json:"gem_submission_price,omitempty"`
+	FinalPrice                *float64           `json:"final_price,omitempty"`
+	TechnicalResult           *string            `json:"technical_result,omitempty"`
+	DisqualificationReason    *string            `json:"disqualification_reason,omitempty"`
+	FinancialResult           *string            `json:"financial_result,omitempty"`
+	L1CompanyName             *string            `json:"l1_company_name,omitempty"`
+	PriceDifference           *float64           `json:"price_difference,omitempty"`
+	PriceDifferencePct        *float64           `json:"price_difference_pct,omitempty"`
+	EligibilityRemarks        *string            `json:"eligibility_remarks,omitempty"`
+	EMDRemarks                *string            `json:"emd_remarks,omitempty"`
+	StageCompletions          map[string]bool    `json:"stage_completions"`
+	StageRemarks              map[string]string  `json:"stage_remarks"`
+	StageReviews              map[string]bool    `json:"stage_reviews"`
+	PricingWorkspace          interface{}        `json:"pricing_workspace"` // Stage 4 workspace data (JSONB)
+	OEMWorkspace              interface{}        `json:"oem_workspace"`     // Stage 3 OEM matrix data (JSONB)
+	CreatedAt                 time.Time          `json:"created_at"`
+	UpdatedAt                 time.Time          `json:"updated_at"`
+	ArchivedAt                *time.Time         `json:"archived_at"`
+	ResultDate                *time.Time         `json:"result_date,omitempty"`
+	DaysRemaining             *int               `json:"days_remaining,omitempty"`
 }
 
-
 type BidListItem struct {
-	ID               string      `json:"id"`
-	BidNo            *string     `json:"bid_no"`
-	GemBidNo         *string     `json:"gem_bid_no"`
-	Title            string      `json:"title"`
-	OrganizationName *string     `json:"organization_name"`
-	DepartmentName   *string     `json:"department_name"`
-	PortalSource     string      `json:"portal_source"`
-	Category         *string     `json:"category"`
-	BidType          *string     `json:"bid_type"`
-	CreationMode     string      `json:"creation_mode"`
-	WorkflowStage    string      `json:"workflow_stage"`
-	BidStatus        string      `json:"bid_status"`
-	BidOutcome       *string     `json:"bid_outcome"`
-	EstimatedValue   *float64    `json:"estimated_value"`
-	EMDAmount        *float64    `json:"emd_amount"`
-	EMDType          *string     `json:"emd_type"`
-	OpeningDate      *time.Time  `json:"opening_date"`
-	ClosingDate      *time.Time  `json:"closing_date"`
-	StartDate        *time.Time  `json:"start_date,omitempty"`
-	EndDate          *time.Time  `json:"end_date,omitempty"`
+	ID                        string       `json:"id"`
+	BidNo                     *string      `json:"bid_no"`
+	GemBidNo                  *string      `json:"gem_bid_no"`
+	Title                     string       `json:"title"`
+	OrganizationName          *string      `json:"organization_name"`
+	DepartmentName            *string      `json:"department_name"`
+	PortalSource              string       `json:"portal_source"`
+	Category                  *string      `json:"category"`
+	Quantity                  *int         `json:"quantity,omitempty"`
+	OurRank                   *string      `json:"our_rank,omitempty"`
+	BidType                   *string      `json:"bid_type"`
+	CreationMode              string       `json:"creation_mode"`
+	WorkflowStage             string       `json:"workflow_stage"`
+	BidStatus                 string       `json:"bid_status"`
+	BidOutcome                *string      `json:"bid_outcome"`
+	EstimatedValue            *float64     `json:"estimated_value"`
+	EMDAmount                 *float64     `json:"emd_amount"`
+	EMDType                   *string      `json:"emd_type"`
+	OpeningDate               *time.Time   `json:"opening_date"`
+	ClosingDate               *time.Time   `json:"closing_date"`
+	StartDate                 *time.Time   `json:"start_date,omitempty"`
+	EndDate                   *time.Time   `json:"end_date,omitempty"`
+	HighLevelScope            *string      `json:"high_level_scope,omitempty"`
 	OEMRequired               bool         `json:"oem_required"`
 	BidOwner                  UserSummary  `json:"bid_owner"`
 	ReportingManager          *UserSummary `json:"reporting_manager,omitempty"`
-	Remarks                   *string     `json:"remarks"`
-	Team                      *string     `json:"team,omitempty"`
-	ScopeType                 *string     `json:"scope_type,omitempty"`
-	BGRate                    *float64    `json:"bg_rate,omitempty"`
-	ActivityType              *string     `json:"activity_type,omitempty"`
-	TargetMonthDate           *time.Time  `json:"target_month_date,omitempty"`
-	ExcelBidStatus            *string     `json:"excel_bid_status,omitempty"`
-	SubmissionStatus          *string     `json:"submission_status,omitempty"`
-	FinancialEvaluationStatus *string     `json:"financial_evaluation_status,omitempty"`
-	POReceivedStatus          *string     `json:"po_received_status,omitempty"`
-	POReceivedDate            *time.Time  `json:"po_received_date,omitempty"`
-	EMDExempted               bool        `json:"emd_exempted"`
-	EMDNotApplicable          bool        `json:"emd_not_applicable"`
-	EMDExemptionType          *string     `json:"emd_exemption_type,omitempty"`
-	EMDExemptionReason        *string     `json:"emd_exemption_reason,omitempty"`
-	SubmissionDone            bool        `json:"submission_done"`
-	EMDReady                  bool        `json:"emd_ready"`
-	EMDReadyDate              *time.Time  `json:"emd_ready_date,omitempty"`
-	EMDReturned               bool        `json:"emd_returned"`
-	BGDischargedDate          *time.Time  `json:"bg_discharged_date,omitempty"`
-	DeliveryComplete          bool        `json:"delivery_complete"`
-	DeliveryCompleteDate      *time.Time  `json:"delivery_complete_date,omitempty"`
-	QuotedPrice               *float64    `json:"quoted_price,omitempty"`
-	FinalBidValue             *float64    `json:"final_bid_value,omitempty"`
-	TechnicalResult           *string     `json:"technical_result,omitempty"`
-	FinancialResult           *string     `json:"financial_result,omitempty"`
-	HasTechEval               bool        `json:"has_tech_eval"`
-	BidResult                 *string     `json:"bid_result,omitempty"`
-	CreatedAt                 time.Time   `json:"created_at"`
-	ArchivedAt                *time.Time  `json:"archived_at,omitempty"`
-	DaysRemaining             *int        `json:"days_remaining,omitempty"`
+	Remarks                   *string      `json:"remarks"`
+	Team                      *string      `json:"team,omitempty"`
+	ScopeType                 *string      `json:"scope_type,omitempty"`
+	BGRate                    *float64     `json:"bg_rate,omitempty"`
+	ActivityType              *string      `json:"activity_type,omitempty"`
+	TargetMonthDate           *time.Time   `json:"target_month_date,omitempty"`
+	IsImported                bool         `json:"is_imported"`
+	ExcelBidStatus            *string      `json:"excel_bid_status,omitempty"`
+	SubmissionStatus          *string      `json:"submission_status,omitempty"`
+	FinancialEvaluationStatus *string      `json:"financial_evaluation_status,omitempty"`
+	POReceivedStatus          *string      `json:"po_received_status,omitempty"`
+	POReceivedDate            *time.Time   `json:"po_received_date,omitempty"`
+	EMDExempted               bool         `json:"emd_exempted"`
+	EMDNotApplicable          bool         `json:"emd_not_applicable"`
+	EMDExemptionType          *string      `json:"emd_exemption_type,omitempty"`
+	EMDExemptionReason        *string      `json:"emd_exemption_reason,omitempty"`
+	SubmissionDone            bool         `json:"submission_done"`
+	EMDReady                  bool         `json:"emd_ready"`
+	EMDReadyDate              *time.Time   `json:"emd_ready_date,omitempty"`
+	EMDReturned               bool         `json:"emd_returned"`
+	BGDischargedDate          *time.Time   `json:"bg_discharged_date,omitempty"`
+	DeliveryComplete          bool         `json:"delivery_complete"`
+	DeliveryCompleteDate      *time.Time   `json:"delivery_complete_date,omitempty"`
+	QuotedPrice               *float64     `json:"quoted_price,omitempty"`
+	FinalBidValue             *float64     `json:"final_bid_value,omitempty"`
+	TechnicalResult           *string      `json:"technical_result,omitempty"`
+	FinancialResult           *string      `json:"financial_result,omitempty"`
+	HasTechEval               bool         `json:"has_tech_eval"`
+	BidResult                 *string      `json:"bid_result,omitempty"`
+	CreatedAt                 time.Time    `json:"created_at"`
+	ArchivedAt                *time.Time   `json:"archived_at,omitempty"`
+	DaysRemaining             *int         `json:"days_remaining,omitempty"`
 }
 
 type BidListResponse struct {
@@ -636,6 +663,7 @@ type BidListResponse struct {
 	WonCount       int           `json:"won_count"`
 	LostCount      int           `json:"lost_count"`
 	CancelledCount int           `json:"cancelled_count"`
+	ClosedCount    int           `json:"closed_count"`
 	TechEvalCount  int           `json:"tech_eval_count"`
 	SubmittedCount int           `json:"submitted_count"`
 }
@@ -655,6 +683,7 @@ type TenderOwnerPerformanceStat struct {
 	Won       int    `json:"won"`
 	Lost      int    `json:"lost"`
 	Cancelled int    `json:"cancelled"`
+	Closed    int    `json:"closed"`
 }
 
 // ────────────────────────────────────────
@@ -693,6 +722,8 @@ type CreateBidParams struct {
 	DurationMonths            *int
 	Authority                 *string
 	Category                  *string
+	Quantity                  *int
+	OurRank                   *string
 	BidType                   *string
 	GemBidType                *string
 	Remarks                   *string
@@ -729,4 +760,11 @@ type ListBidsParams struct {
 	ClosingAfter  *time.Time
 	OEMRequired   *bool
 	InBin         bool
+}
+
+// IdentifierMatch is the minimal description of an existing tender that already
+// carries a given tender identifier.
+type IdentifierMatch struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
 }

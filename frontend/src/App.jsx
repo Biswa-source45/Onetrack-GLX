@@ -9,9 +9,11 @@ import Landing from "./components/Landing"
 import Login from "./components/Login"
 import Dashboard, { OverviewPanel } from "./components/Dashboard"
 import { TendersPage } from "./components/tenders/TendersPage"
+import { MasterSheetPage } from "./components/tenders/MasterSheetPage"
 import { AddTenderPage } from "./components/tenders/AddTenderPage"
 import { TenderDetailPage } from "./components/tenders/TenderDetailPage"
 import { UserManagement } from "./components/admin/UserManagement"
+import { BulkImportPage } from "./components/admin/BulkImportPage"
 import { AlertsPage } from "./components/alerts/AlertsPage"
 import { AnalyticsPage } from "./components/analytics/AnalyticsPage"
 
@@ -31,6 +33,13 @@ function GuestGuard() {
 function PermissionGuard({ permission, fallback = "/dashboard" }) {
   const { hasPermission } = usePermissions()
   return hasPermission(permission) ? <Outlet /> : <Navigate to={fallback} replace />
+}
+
+// Role Guard for routes gated on an exact role rather than a permission.
+// Unlike hasPermission, this does not let ADMIN inherit SUPER_ADMIN routes.
+function RoleGuard({ role, fallback = "/dashboard" }) {
+  const { hasRole } = usePermissions()
+  return hasRole(role) ? <Outlet /> : <Navigate to={fallback} replace />
 }
 
 export default function App() {
@@ -73,6 +82,7 @@ export default function App() {
               <Route element={<PermissionGuard permission="bid.view" />}>
                 <Route path="tenders" element={<TendersPage initialScope="all" />} />
                 <Route path="tenders/owned" element={<TendersPage initialScope="owned" />} />
+                <Route path="tenders/master" element={<MasterSheetPage />} />
                 <Route path="tenders/:bidId" element={<TenderDetailPage />} />
                 <Route path="alerts" element={<AlertsPage />} />
               </Route>
@@ -87,6 +97,10 @@ export default function App() {
               {/* Admin sub-routes */}
               <Route element={<PermissionGuard permission="user.view" />}>
                 <Route path="users" element={<UserManagement />} />
+              </Route>
+
+              <Route element={<RoleGuard role="SUPER_ADMIN" />}>
+                <Route path="bulk-import" element={<BulkImportPage />} />
               </Route>
 
               {/* Redirect any other dashboard path to index */}
