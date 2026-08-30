@@ -343,9 +343,10 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		FROM bid.bid_workspaces b
 		LEFT JOIN auth.users u ON b.bid_owner_id = u.id
 		%s
-		-- Tenders are identified by when the tender itself started, not when the
-		-- row was keyed in, so a bulk import does not stack at the top as "latest".
-		ORDER BY COALESCE(b.start_date, b.opening_date, b.created_at) DESC, b.created_at DESC
+		-- Newest-added-first: whichever tender was most recently created or
+		-- imported into OneTrack sorts to the top, regardless of the tender's
+		-- own start date. A bulk import lands together at the top as "latest".
+		ORDER BY b.created_at DESC
 		LIMIT $%d OFFSET $%d
 	`, where, idx, idx+1)
 
