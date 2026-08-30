@@ -81,10 +81,10 @@ export function getSubmissionStatusVal(bid) {
   }
   const stage = bid.workflow_stage || ''
   const status = bid.bid_status || ''
-  if (['SUBMITTED', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_DELIVERY_HANDOVER'].includes(stage) || ['WON', 'LOST'].includes(status)) {
+  if (['TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER'].includes(stage) || ['WON', 'LOST'].includes(status)) {
     return 'Submitted'
   }
-  if (['GEM_SUBMISSION', 'READY_FOR_SUBMISSION'].includes(stage)) {
+  if (stage === 'GEM_SUBMISSION') {
     return 'Ready'
   }
   return 'Pending'
@@ -97,7 +97,7 @@ export function getFinEvalStatusVal(bid) {
   const stage = bid.workflow_stage || ''
   const status = bid.bid_status || ''
   if (stage === 'FINANCIAL_EVALUATION') return 'In Progress'
-  if (stage === 'AWARD_DELIVERY_HANDOVER' || status === 'WON') return 'Qualified (L1)'
+  if (stage === 'AWARD_HANDOVER' || status === 'WON') return 'Qualified (L1)'
   if (status === 'LOST') return 'Non-L1'
   if (stage === 'TECHNICAL_EVALUATION') return 'Awaiting Tech Clear'
   return 'Pending'

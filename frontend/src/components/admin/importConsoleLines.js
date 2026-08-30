@@ -5,7 +5,7 @@
 export function previewLines(fileName, data) {
   const out = [
     { tone: 'dim', text: `$ onetrack import --file "${fileName}" --dry-run` },
-    { tone: 'ok', text: `workbook read — ${data.row_count} rows, 23 columns matched` },
+    { tone: 'ok', text: `workbook read — ${data.row_count} rows` },
   ]
 
   const skipped = data.skipped || []
@@ -66,11 +66,23 @@ export function commitLines(fileName, data) {
   return out
 }
 
-/** Builds the console lines for a failed import. */
-export function errorLines(fileName, message) {
+/**
+ * Builds the console lines for a failed import.
+ *
+ * `certain` is false only when the failure happened after a commit request
+ * was already sent and the server's reply could not be read (e.g. the
+ * connection dropped) - in that case the server may well have written the
+ * data, so the console must not claim a rollback that may not have happened.
+ * It is true for a dry run (which never writes) and for any error the server
+ * itself reported, since the backend always rolls back before responding
+ * with an error status.
+ */
+export function errorLines(fileName, message, certain = true) {
   return [
     { tone: 'dim', text: `$ onetrack import --file "${fileName}"` },
     { tone: 'error', text: message },
-    { tone: 'dim', text: 'transaction rolled back — nothing was written' },
+    certain
+      ? { tone: 'dim', text: 'transaction rolled back — nothing was written' }
+      : { tone: 'warn', text: 'response could not be confirmed — check the tender list before retrying, to avoid a duplicate import' },
   ]
 }

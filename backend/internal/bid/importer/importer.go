@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -90,7 +91,7 @@ func ParseWorkbookDashboard(path string) (*Preview, error) {
 	if err != nil {
 		return nil, err
 	}
-	p, err := buildPreview(rows, ExpectedHeadersDashboard, ParseRowDashboard)
+	p, err := buildPreview(rows, ExpectedHeadersDashboard, dashboardRowParser(time.Now().UTC()))
 	if err != nil {
 		return nil, err
 	}
@@ -109,12 +110,21 @@ func ParseUploadDashboard(r io.ReaderAt, size int64) (*Preview, error) {
 	if err != nil {
 		return nil, err
 	}
-	p, err := buildPreview(rows, ExpectedHeadersDashboard, ParseRowDashboard)
+	p, err := buildPreview(rows, ExpectedHeadersDashboard, dashboardRowParser(time.Now().UTC()))
 	if err != nil {
 		return nil, err
 	}
 	p.SkippedSheets = otherSheets(r, size, rows)
 	return p, nil
+}
+
+// dashboardRowParser pins every row of one import run to the same instant, so
+// deadline-relative judgement calls (open vs. closed) are a pure function of
+// the file rather than of how long the request took to reach each row.
+func dashboardRowParser(now time.Time) func(int, []string) *ImportedBid {
+	return func(rowNum int, row []string) *ImportedBid {
+		return ParseRowDashboard(rowNum, row, now)
+	}
 }
 
 // otherSheets lists every worksheet in the workbook other than the one just
@@ -219,21 +229,18 @@ func MarkDuplicates(ctx context.Context, db DBTX, p *Preview) error {
 		}
 
 		if first, ok := seen[key]; ok {
-			// One GeM bid can cover several product lines, which the tracker
-			// records as separate rows sharing an id. They are one tender, so
-			// the extra lines are folded into the first rather than dropped -
-			// otherwise their bid value would vanish from the totals.
-			if !byTitle {
-				mergeLineItem(first.bid, b)
-				b.Skip = true
-				b.SkipReason = fmt.Sprintf("same tender id as row %d - merged into it as an extra product line", first.row)
-				continue
-			}
+			// A repeated tender id means the sheet lists the same tender twice,
+			// not a second product line - summing their money together would
+			// double it. Keep the first occurrence and skip the rest.
 			b.Skip = true
-			b.SkipReason = fmt.Sprintf("no tender id, and same title as row %d in this sheet", first.row)
+			if !byTitle {
+				b.SkipReason = fmt.Sprintf("same tender id as row %d - kept the first occurrence, this row skipped", first.row)
+			} else {
+				b.SkipReason = fmt.Sprintf("no tender id, and same title as row %d in this sheet", first.row)
+			}
 			continue
 		}
-		seen[key] = seenRow{row: b.RowNum, bid: b}
+		seen[key] = seenRow{row: b.RowNum}
 
 		if db == nil {
 			continue
@@ -293,15 +300,21 @@ func EnrichDuplicates(ctx context.Context, db DBTX, p *Preview) error {
 		}
 
 		var (
-			curRank          *string
-			curQty           *int
-			curRemarks       *string
-			curCompetitorRaw []byte
+			curRank           *string
+			curQty            *int
+			curRemarks        *string
+			curCompetitorRaw  []byte
+			curEstimatedValue *float64
+			curEMDAmount      *float64
+			curQuotedPrice    *float64
+			curFinalPrice     *float64
 		)
 		err := db.QueryRow(ctx, `
-			SELECT our_rank, quantity, remarks, competitor_info
+			SELECT our_rank, quantity, remarks, competitor_info,
+			       estimated_value, emd_amount, quoted_price, final_price
 			FROM bid.bid_workspaces WHERE id = $1`, *b.MatchedExistingID,
-		).Scan(&curRank, &curQty, &curRemarks, &curCompetitorRaw)
+		).Scan(&curRank, &curQty, &curRemarks, &curCompetitorRaw,
+			&curEstimatedValue, &curEMDAmount, &curQuotedPrice, &curFinalPrice)
 		if err != nil {
 			return fmt.Errorf("row %d: enrich lookup: %w", b.RowNum, err)
 		}
@@ -320,6 +333,22 @@ func EnrichDuplicates(ctx context.Context, db DBTX, p *Preview) error {
 		}
 		if curQty == nil && b.Quantity != nil {
 			addSet("quantity", *b.Quantity, "quantity")
+		}
+		// Each format has fields the other doesn't record at all (GBX's own
+		// Estimated Value, the dashboard's L1/RA price) - when the tender was
+		// created by the format that lacks one of these, the other file's
+		// upload should fill it in rather than leave it permanently blank.
+		if curEstimatedValue == nil && b.EstimatedValue != nil {
+			addSet("estimated_value", *b.EstimatedValue, "estimated value")
+		}
+		if curEMDAmount == nil && b.EMDAmount != nil {
+			addSet("emd_amount", *b.EMDAmount, "EMD amount")
+		}
+		if curQuotedPrice == nil && b.QuotedPrice != nil {
+			addSet("quoted_price", *b.QuotedPrice, "quoted price")
+		}
+		if curFinalPrice == nil && b.FinalPrice != nil {
+			addSet("final_price", *b.FinalPrice, "final price")
 		}
 		if isEmptyJSONArray(curCompetitorRaw) && len(b.Competitors) > 0 {
 			cj, mErr := json.Marshal(b.Competitors)
@@ -367,67 +396,10 @@ func isEmptyJSONArray(raw []byte) bool {
 	return s == "" || s == "[]" || s == "null"
 }
 
-// seenRow remembers both where an identifier was first seen and which parsed
-// bid it belongs to, so later rows can be merged into it.
+// seenRow remembers where an identifier was first seen, so a later duplicate
+// row's skip reason can point back to it.
 type seenRow struct {
 	row int
-	bid *ImportedBid
-}
-
-// mergeLineItem folds an extra product line into the tender that already holds
-// this bid id: money is summed, the product names are combined, and a note is
-// left on both so the merge is visible.
-func mergeLineItem(into, extra *ImportedBid) {
-	addMoney := func(dst **float64, add *float64) {
-		if add == nil {
-			return
-		}
-		if *dst == nil {
-			v := *add
-			*dst = &v
-			return
-		}
-		v := **dst + *add
-		*dst = &v
-	}
-	addMoney(&into.FinalPrice, extra.FinalPrice)
-	addMoney(&into.QuotedPrice, extra.QuotedPrice)
-	addMoney(&into.EstimatedValue, extra.EstimatedValue)
-	addMoney(&into.EMDAmount, extra.EMDAmount)
-
-	if extra.Quantity != nil {
-		if into.Quantity == nil {
-			q := *extra.Quantity
-			into.Quantity = &q
-		} else {
-			q := *into.Quantity + *extra.Quantity
-			into.Quantity = &q
-		}
-	}
-
-	if len(extra.Competitors) > 0 {
-		into.Competitors = append(into.Competitors, extra.Competitors...)
-	}
-
-	if extra.HighLevelScope != nil && *extra.HighLevelScope != "" {
-		if into.HighLevelScope == nil || *into.HighLevelScope == "" {
-			into.HighLevelScope = extra.HighLevelScope
-		} else if !strings.Contains(*into.HighLevelScope, *extra.HighLevelScope) {
-			combined := *into.HighLevelScope + "; " + *extra.HighLevelScope
-			into.HighLevelScope = &combined
-		}
-		// The title is composed from client + scope, so rebuild it or the
-		// merged tender would still be named after only its first product.
-		if into.OrganizationName != nil && into.HighLevelScope != nil {
-			title := *into.OrganizationName + " - " + *into.HighLevelScope
-			if len(title) > 500 {
-				title = title[:500]
-			}
-			into.Title = title
-		}
-	}
-
-	into.warn("row %d shares this tender id and was merged in as an extra product line (values summed)", extra.RowNum)
 }
 
 // CheckHeaders rejects a GBX Tracker format workbook whose columns have moved
@@ -515,7 +487,7 @@ const insertBidSQL = `
 		excel_bid_status, submission_status, technical_result,
 		financial_evaluation_status, po_received_status, bid_result,
 		submission_done, stage_completions, bid_outcome, quantity, our_rank,
-		competitor_info
+		competitor_info, emd_exemption_type, emd_exemption_reason
 	) VALUES (
 		$1,$2,$3,$4,$5,$6,
 		$7,$8,$9,
@@ -530,7 +502,7 @@ const insertBidSQL = `
 		$29,$30,$31,
 		$32,$33,$34,
 		$35,$36,$37,$38,$39,
-		$40
+		$40,$41,$42
 	) RETURNING id`
 
 const insertHistorySQL = `
@@ -585,7 +557,7 @@ func InsertAll(ctx context.Context, db DBTX, bids []*ImportedBid, ownerID, srcFi
 			b.ExcelBidStatus, b.SubmissionStatus, b.TechnicalResult,
 			b.FinancialEvaluationStatus, b.POReceivedStatus, b.BidResult,
 			b.SubmissionDone, completions, b.BidOutcome, b.Quantity, b.OurRank,
-			competitorJSON,
+			competitorJSON, b.EMDExemptionType, b.EMDExemptionReason,
 		).Scan(&id)
 		if err != nil {
 			return nil, fmt.Errorf("row %d (%s): insert: %w", b.RowNum, b.Title, err)

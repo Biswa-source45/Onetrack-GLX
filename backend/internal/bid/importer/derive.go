@@ -72,11 +72,13 @@ type ImportedBid struct {
 	ScopeType        *string
 	ActivityType     *string
 
-	EMDAmount        *float64
-	EMDExempted      bool
-	EMDNotApplicable bool
-	BGRequired       bool
-	BGRate           *float64
+	EMDAmount          *float64
+	EMDExempted        bool
+	EMDExemptionType   *string
+	EMDExemptionReason *string
+	EMDNotApplicable   bool
+	BGRequired         bool
+	BGRate             *float64
 
 	TargetMonthDate *time.Time
 	StartDate       *time.Time
@@ -225,6 +227,13 @@ func ParseRow(rowNum int, row []string) *ImportedBid {
 	switch exemptRaw {
 	case "yes":
 		b.EMDExempted = true
+		// The sheet only records that a tender was exempt, never why. A
+		// record inserted with emd_exempted=true and no exemption type
+		// fails validation on every subsequent edit (validateEMDExemption
+		// requires one), so a placeholder that satisfies the check is
+		// recorded here rather than leaving the tender permanently stuck.
+		b.EMDExemptionType = strPtr("OTHER")
+		b.EMDExemptionReason = strPtr("Imported from legacy tracker - exemption basis not recorded in source, please verify")
 	case "no":
 		b.EMDExempted = false
 	default:
@@ -418,10 +427,14 @@ func deriveStage(b *ImportedBid, row []string) {
 		reason = "evaluation completed, no PO"
 
 	default:
-		stage, reached = domain.StageLost, domain.StageFinancialEvaluation
-		status = domain.BidStatusLost
-		reason = "closed without a recorded win"
-		b.warn("closed but the outcome columns are inconclusive - imported as Lost, please verify")
+		// Closed per the tracker, but nothing in Final Result, PO Status or
+		// Price Ranking actually says what happened. Recording this as Lost
+		// would fabricate a loss the team never reported, so it is left
+		// Closed with no outcome and flagged for a human to fill in.
+		stage, reached = domain.StageFinancialEvaluation, domain.StageFinancialEvaluation
+		status = domain.BidStatusClosed
+		reason = "closed with no recorded outcome"
+		b.warn("closed but the outcome columns are inconclusive - imported as Closed with no outcome, please verify")
 	}
 
 	b.WorkflowStage = stage

@@ -41,20 +41,22 @@ import {
 import { StageBadge, StatusTag } from '../../lib/tenderDisplay'
 
 // ── Stage List order for progress computation ────────────────────────────────
+// The real 10-stage pipeline (mirrors services/bids.js STAGE_LABELS). A
+// terminal stage isn't a pipeline position, so it renders full progress
+// rather than indexOf returning -1 and showing 0%.
 const STAGES_ORDER = [
   'DISCOVERED',
-  'QUALIFICATION_REVIEW',
-  'DOCUMENT_COMPILATION',
-  'OEM_COORDINATION',
-  'COMMERCIAL_PREPARATION',
-  'INTERNAL_REVIEW',
-  'FINAL_APPROVAL',
-  'READY_FOR_SUBMISSION',
-  'SUBMITTED',
-  'AWAITING_RESULT',
-  'WON',
-  'LOST'
+  'OEM_AUTHORIZATION_REQUEST',
+  'PRICING_REQUEST',
+  'DOCUMENT_CHECKLIST_PREPARATION',
+  'EMD_PROCESSING',
+  'INTERNAL_APPROVAL',
+  'GEM_SUBMISSION',
+  'TECHNICAL_EVALUATION',
+  'FINANCIAL_EVALUATION',
+  'AWARD_HANDOVER',
 ]
+const TERMINAL_STAGES = ['WON', 'LOST', 'CANCELLED']
 
 // Helper to safely format datetimes for <input type="datetime-local"> without
 // crashing on invalid/empty values, preserving time-of-day (unlike safeDateInputFormat).
@@ -70,13 +72,17 @@ function safeDateTimeInputFormat(dt) {
   }
 }
 
-// Helper to safely format dates for <input type="date"> without crashing on invalid/empty values
+// Helper to safely format dates for <input type="date"> without crashing on invalid/empty values.
+// Reads local date parts (like safeDateTimeInputFormat above), not toISOString(),
+// which converts to UTC first and can render a day earlier than what read-only
+// views show for the same timestamp.
 function safeDateInputFormat(dt) {
   if (!dt) return ''
   try {
     const d = new Date(dt)
     if (isNaN(d.getTime())) return ''
-    return d.toISOString().split('T')[0]
+    const pad = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
   } catch {
     return ''
   }
@@ -411,20 +417,16 @@ export function TendersPage({ initialScope = 'all' }) {
     return (ownerId && ownerId === user.id) || (creatorId && creatorId === user.id)
   }
 
+  // bid_status/bid_outcome are shown exactly as the server returns them -
+  // re-deriving them client-side from free text made a card's own status
+  // disagree with the stat-card counts (which come from the same server
+  // truth via meta.*_count).
   const effectiveBids = bids
     .filter(bid => {
       if (isOwnedView && currentUser?.id) {
         return isBidOwnedByUser(bid, currentUser)
       }
       return true
-    })
-    .map(bid => {
-      const { status, outcome } = getDerivedBidStatusAndOutcome(bid)
-      return {
-        ...bid,
-        bid_status: status,
-        bid_outcome: outcome
-      }
     })
 
   // Setup search debouncing to update store's debouncedSearch
@@ -511,7 +513,7 @@ export function TendersPage({ initialScope = 'all' }) {
     }
 
     let sendValue = value
-    if (field === 'estimated_value' || field === 'emd_amount' || field === 'bg_rate') {
+    if (field === 'estimated_value' || field === 'emd_amount' || field === 'bg_rate' || field === 'quantity') {
       sendValue = value !== '' ? Number(value) : null
     }
     if (field === 'opening_date' || field === 'closing_date' || field === 'target_month_date') {
@@ -555,46 +557,25 @@ export function TendersPage({ initialScope = 'all' }) {
 
     payload[field] = sendValue
 
-    // Derive bid_status and bid_outcome based on the new or current bid_result
-    const finalBidResult = payload.bid_result
-    const finalBidResultStr = (finalBidResult || '').trim()
-    const resultLower = finalBidResultStr.toLowerCase()
-
-    let derivedStatus = payload.bid_status || 'ACTIVE'
-    let derivedOutcome = payload.bid_outcome || null
-
-    if (finalBidResultStr) {
+    // Only re-derive bid_status/bid_outcome when the Result cell itself was
+    // the field just edited - deriving on every unrelated save (e.g. a
+    // remarks edit) meant free text the sheet never intended as a verdict
+    // ("Reverse Auction Scheduled", a typo, anything not on the recognised
+    // list) silently flipped the tender to Lost in the database. Even here,
+    // an unrecognised result is left alone rather than guessed as a loss.
+    if (field === 'bid_result') {
+      const resultLower = (sendValue || '').trim().toLowerCase()
       if (resultLower.includes('l1') || resultLower.includes('won')) {
-        derivedStatus = 'WON'
-        derivedOutcome = 'WON'
-      } else if (
-        resultLower !== 'result pending' &&
-        resultLower !== 'na' &&
-        resultLower !== 'bid in progress' &&
-        resultLower !== 'pending'
-      ) {
-        derivedStatus = 'LOST'
-        derivedOutcome = 'LOST'
-      } else {
-        derivedStatus = 'ACTIVE'
-        derivedOutcome = null
+        payload.bid_status = 'WON'
+        payload.bid_outcome = 'WON'
+      } else if (resultLower === 'result pending' || resultLower === 'na' ||
+        resultLower === 'bid in progress' || resultLower === 'pending' || resultLower === '') {
+        payload.bid_status = 'ACTIVE'
+        payload.bid_outcome = null
       }
+      // Anything else is kept as free text with bid_status/bid_outcome
+      // untouched - the team can record the real outcome explicitly.
     }
-
-    const finalWorkflowStage = payload.workflow_stage
-    if (finalWorkflowStage === 'WON') {
-      derivedStatus = 'WON'
-      derivedOutcome = 'WON'
-    } else if (finalWorkflowStage === 'LOST') {
-      derivedStatus = 'LOST'
-      derivedOutcome = 'LOST'
-    } else if (finalWorkflowStage === 'CANCELLED') {
-      derivedStatus = 'CANCELLED'
-      derivedOutcome = 'CANCELLED'
-    }
-
-    payload.bid_status = derivedStatus
-    payload.bid_outcome = derivedOutcome
     if (field === 'emd_exempted') {
       if (value) {
         payload.emd_type = 'EXEMPTED'
@@ -1111,9 +1092,11 @@ export function TendersPage({ initialScope = 'all' }) {
               <AnimatePresence initial={false}>
                 {effectiveBids.map((bid, i) => {
                   const currentStageIdx = STAGES_ORDER.indexOf(bid.workflow_stage)
-                  const progressPct = currentStageIdx >= 0 
-                    ? ((currentStageIdx + 1) / STAGES_ORDER.length) * 100 
-                    : 0
+                  const progressPct = TERMINAL_STAGES.includes(bid.workflow_stage)
+                    ? 100
+                    : currentStageIdx >= 0
+                      ? ((currentStageIdx + 1) / STAGES_ORDER.length) * 100
+                      : 0
 
                   return (
                     <motion.div

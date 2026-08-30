@@ -2,6 +2,7 @@ package importer
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -106,8 +107,11 @@ func canonDashboardActivity(s string) string {
 }
 
 // ParseRowDashboard maps one Tender Dashboard "TENDERS" sheet row onto the
-// OneTrack schema.
-func ParseRowDashboard(rowNum int, row []string) *ImportedBid {
+// OneTrack schema. now anchors every deadline-relative judgement call
+// (open-vs-closed) so that a single import run derives every row against the
+// same instant, rather than each row's outcome depending on how long the
+// request took to reach it.
+func ParseRowDashboard(rowNum int, row []string, now time.Time) *ImportedBid {
 	b := &ImportedBid{RowNum: rowNum, StageCompletions: map[string]bool{}}
 
 	client := cell(row, dcCustomer)
@@ -162,6 +166,15 @@ func ParseRowDashboard(rowNum int, row []string) *ImportedBid {
 	emdRemark := cell(row, dcEMDRemark)
 	if strings.Contains(normLower(emdRemark), "exempt") {
 		b.EMDExempted = true
+		// Same placeholder as the GBX format: an exempt record needs a type
+		// that satisfies validateEMDExemption or every later edit 400s. The
+		// sheet's own remark becomes the reason when there is one to keep.
+		b.EMDExemptionType = strPtr("OTHER")
+		reason := strings.TrimSpace(emdRemark)
+		if reason == "" {
+			reason = "Imported from legacy tracker - exemption basis not recorded in source, please verify"
+		}
+		b.EMDExemptionReason = strPtr(reason)
 	}
 	if b.EMDAmount == nil && !b.EMDExempted {
 		b.EMDNotApplicable = true
@@ -180,7 +193,7 @@ func ParseRowDashboard(rowNum int, row []string) *ImportedBid {
 	// real closing timestamp instead of always reading midnight.
 	if t, ok, w := ParseDate(cell(row, dcEndDate)); ok {
 		if frac, tok := parseTimeFraction(cell(row, dcEndTime)); tok {
-			t = t.Add(time.Duration(frac * float64(24*time.Hour)))
+			t = t.Add(timeOfDay(frac))
 		}
 		b.EndDate = &t
 		month := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -231,7 +244,7 @@ func ParseRowDashboard(rowNum int, row []string) *ImportedBid {
 	}
 	b.Remarks = strPtr(strings.Join(remarkParts, " | "))
 
-	deriveStageDashboard(b, row)
+	deriveStageDashboard(b, row, now)
 	return b
 }
 
@@ -270,7 +283,11 @@ func parseCompetitors(row []string) []domain.CompetitorInfo {
 // and no PO/award column - "Bid Status" itself carries the outcome (or is
 // blank when nothing has been decided yet), so the rules below read directly
 // off it plus the End Date, rather than the two-signal approach used for GBX.
-func deriveStageDashboard(b *ImportedBid, row []string) {
+//
+// A closed tender whose outcome was never actually recorded is imported as
+// CLOSED with no bid_outcome, not guessed as Lost - guessing fabricates a
+// loss the team never reported, and the wrong direction to err in.
+func deriveStageDashboard(b *ImportedBid, row []string, now time.Time) {
 	status := norm(cell(row, dcBidStatus))
 	statusLower := normLower(status)
 	remark := normLower(cell(row, dcRemarks))
@@ -290,7 +307,7 @@ func deriveStageDashboard(b *ImportedBid, row []string) {
 		// otherwise the team never came back to update it after the bid
 		// closed - treated as closed without a recorded outcome, same as an
 		// unaddressed row in the GBX format.
-		if b.EndDate != nil && b.EndDate.After(time.Now()) {
+		if b.EndDate != nil && b.EndDate.After(now) {
 			stage, reached = domain.StageDiscovered, domain.StageDiscovered
 			bidStatus = domain.BidStatusActive
 			reason = "open - tracked, deadline not yet reached"
@@ -329,18 +346,18 @@ func deriveStageDashboard(b *ImportedBid, row []string) {
 		b.warn("bid status explains a non-participation reason - kept verbatim in remarks")
 
 	case statusLower == "qualified" || strings.Contains(statusLower, "qualified"):
-		if b.EndDate != nil && !b.EndDate.After(time.Now()) {
+		if b.EndDate != nil && !b.EndDate.After(now) {
 			// Qualified with the deadline long past and nothing further
-			// recorded: the team never logged a final outcome. Rather than
-			// guess a win, this is flagged for review, same treatment as the
-			// equivalent case in the GBX format. Stage and status must agree -
-			// a LOST status paired with a still-open FINANCIAL_EVALUATION stage
-			// is exactly the kind of mismatch that made "Under Tech Eval" list
-			// won/lost tenders in the GBX importer.
-			stage, reached = domain.StageLost, domain.StageFinancialEvaluation
-			bidStatus = domain.BidStatusLost
+			// recorded: the team never logged a final outcome. Stage and
+			// status must agree - a resolved outcome paired with a
+			// still-open FINANCIAL_EVALUATION stage is exactly the kind of
+			// mismatch that made "Under Tech Eval" list won/lost tenders in
+			// the GBX importer, so this stays parked at the stage it
+			// actually reached with the outcome left unrecorded.
+			stage, reached = domain.StageFinancialEvaluation, domain.StageFinancialEvaluation
+			bidStatus = domain.BidStatusClosed
 			reason = "qualified but no result ever recorded"
-			b.warn("qualified with the bid deadline passed and no final result recorded - imported as Lost, please verify")
+			b.warn("qualified with the bid deadline passed and no final result recorded - imported as Closed with no outcome, please verify")
 		} else {
 			stage, reached = domain.StageFinancialEvaluation, domain.StageTechnicalEvaluation
 			bidStatus = domain.BidStatusActive
@@ -348,19 +365,20 @@ func deriveStageDashboard(b *ImportedBid, row []string) {
 		}
 
 	case statusLower == "participated" || statusLower == "particiapted":
-		bidStatus = domain.BidStatusLost
-		stage, reached = domain.StageLost, domain.StageFinancialEvaluation
+		stage, reached = domain.StageFinancialEvaluation, domain.StageFinancialEvaluation
+		bidStatus = domain.BidStatusClosed
 		reason = "participated, no result ever recorded"
-		b.warn("marked participated with no final result recorded - imported as Lost, please verify")
+		b.warn("marked participated with no final result recorded - imported as Closed with no outcome, please verify")
 
 	default:
 		// Free text that doesn't match a known pattern (e.g. a bespoke
-		// disqualification explanation) - kept as Lost with the raw text
-		// preserved in remarks and flagged for a human to read.
-		stage, reached = domain.StageLost, domain.StageFinancialEvaluation
-		bidStatus = domain.BidStatusLost
+		// disqualification explanation) - the outcome is genuinely unknown,
+		// so it is kept Closed with the raw text preserved in remarks and
+		// flagged for a human to read, rather than guessed as a loss.
+		stage, reached = domain.StageFinancialEvaluation, domain.StageFinancialEvaluation
+		bidStatus = domain.BidStatusClosed
 		reason = "closed - see remarks for the recorded status"
-		b.warn("bid status %q did not match a known pattern - imported as Lost with the text kept in remarks, please verify", status)
+		b.warn("bid status %q did not match a known pattern - imported as Closed with no outcome, text kept in remarks, please verify", status)
 	}
 
 	b.WorkflowStage = stage
@@ -409,4 +427,12 @@ func parseTimeFraction(s string) (float64, bool) {
 		return 0, false
 	}
 	return f, true
+}
+
+// timeOfDay converts a day-fraction to a duration, rounded to the nearest
+// second. Excel's fractions are rarely exact in float64 (13:00 is stored as
+// 0.5416666666666666, not 0.5416666...7), so truncating - rather than
+// rounding - systematically lands one second before the intended time.
+func timeOfDay(frac float64) time.Duration {
+	return time.Duration(math.Round(frac * float64(24*time.Hour)))
 }

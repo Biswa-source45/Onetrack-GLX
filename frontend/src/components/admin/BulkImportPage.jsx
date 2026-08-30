@@ -150,8 +150,11 @@ export function BulkImportPage() {
       setPreview(null)
       toast.success(`Imported ${res.data.created_ids?.length ?? 0} tenders`)
     } catch (err) {
+      // Unlike the dry-run catch below, this request may have already
+      // reached the server and committed before the response failed to
+      // read - so this must not claim a rollback that may not have happened.
       const msg = err.message || 'Import failed'
-      setLines(errorLines(file.name, msg))
+      setLines(errorLines(file.name, msg, false))
       toast.error(msg)
     } finally {
       setCommitting(false)
@@ -273,16 +276,7 @@ export function BulkImportPage() {
             </span>
           </div>
 
-          {/* A second sheet exists but was not touched (Tender Dashboard's "SUPPORTING BID") */}
-          {preview.skipped_sheets?.length > 0 && (
-            <div className="rounded-md border border-amber-300/50 bg-amber-50/50 dark:bg-amber-950/20 p-3 text-xs text-amber-800 dark:text-amber-300">
-              {preview.skipped_sheets.map((s) => (
-                <div key={s.name}>
-                  This workbook also has a <strong>“{s.name}”</strong> sheet ({s.rows} rows) — not imported this round.
-                </div>
-              ))}
-            </div>
-          )}
+          <SkippedSheetsWarning sheets={preview.skipped_sheets} />
 
           {/* Skipped as already present */}
           {preview.skipped?.length > 0 && (
@@ -371,21 +365,46 @@ export function BulkImportPage() {
 
       {/* ── Step 3: result ───────────────────────────────────────────────── */}
       {done && (
-        <div className="rounded-md border border-border p-6 flex flex-col items-center gap-3 text-center">
-          <CheckCircle2 className="size-8 text-emerald-500" />
-          <h3 className="font-heading text-lg font-semibold">
-            Imported {done.created_ids?.length ?? 0} tenders
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            {done.skipped?.length > 0
-              ? `${done.skipped.length} row(s) were skipped because they already existed${
-                  done.skipped.some((s) => s.enriched?.length) ? ' — some were enriched with new data from this file' : ''
-                }. `
-              : ''}
-            They are owned by you and can be reassigned from each tender.
-          </p>
+        <div className="space-y-3">
+          <div className="rounded-md border border-border p-6 flex flex-col items-center gap-3 text-center">
+            <CheckCircle2 className="size-8 text-emerald-500" />
+            <h3 className="font-heading text-lg font-semibold">
+              Imported {done.created_ids?.length ?? 0} tenders
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              {done.skipped?.length > 0
+                ? `${done.skipped.length} row(s) were skipped because they already existed${
+                    done.skipped.some((s) => s.enriched?.length) ? ' — some were enriched with new data from this file' : ''
+                  }. `
+                : ''}
+              They are owned by you and can be reassigned from each tender.
+            </p>
+          </div>
+          <SkippedSheetsWarning sheets={done.skipped_sheets} />
         </div>
       )}
+    </div>
+  )
+}
+
+// A workbook sheet the importer deliberately never reads (the Tender
+// Dashboard's "SUPPORTING BID" tab). This is not a transient "not this
+// round" note - the sheet is permanently out of scope for this importer, so
+// the warning has to be impossible to miss both before and after commit, or
+// the tenders on it silently never show up anywhere.
+function SkippedSheetsWarning({ sheets }) {
+  if (!sheets?.length) return null
+  return (
+    <div className="rounded-md border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-200 flex gap-2">
+      <AlertTriangle className="size-5 shrink-0 text-amber-500" />
+      <div className="space-y-0.5">
+        {sheets.map((s) => (
+          <div key={s.name}>
+            <strong>{s.rows} tender{s.rows === 1 ? '' : 's'} in the “{s.name}” sheet were NOT imported.</strong>
+            {' '}This importer only reads the TENDERS sheet — add these separately if they need to be tracked.
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

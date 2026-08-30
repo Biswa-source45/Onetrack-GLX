@@ -29,14 +29,7 @@ import {
 import { getTenderPerformanceMatrix, listAllBids } from '../../services/bids'
 import { tokenStorage } from '../../services/auth'
 import { usePermissions } from '../../hooks/usePermissions'
-
-// Currency Formatter Helper
-function formatCurrency(val) {
-  if (val === null || val === undefined || isNaN(val)) return '₹0'
-  if (val >= 10000000) return `₹${(val / 10000000).toFixed(2)} Cr`
-  if (val >= 100000) return `₹${(val / 100000).toFixed(2)} L`
-  return `₹${val.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
-}
+import { formatCurrency } from '../../lib/tenderFormat'
 
 // Matches the real 10-stage pipeline (WORKFLOW_STAGES_ORDERED in services/bids.js)
 // exactly — this used to only have 'PREPARATION'/'APPROVAL' placeholder keys

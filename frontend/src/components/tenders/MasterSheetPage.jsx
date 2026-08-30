@@ -13,7 +13,7 @@ import {
   getFinEvalStatusVal, getPoRecvStatusVal, getBidResultVal, escapeCSV,
 } from '../../lib/tenderFormat'
 import { StageBadge } from '../../lib/tenderDisplay'
-import { statusStyle } from '../../services/bids'
+import { statusStyle, STAGE_LABELS } from '../../services/bids'
 
 const PAGE_SIZE = 100
 
@@ -38,9 +38,9 @@ const COLUMNS = [
   { key: 'title', label: 'Tender Title', minWidth: 240, sticky: true,
     render: (b) => b.title },
   { key: 'status', label: 'Status', minWidth: 110,
-    render: (b) => <StatusPill status={b.bid_status} /> },
+    render: (b) => <StatusPill status={b.bid_status} />, csvValue: (b) => b.bid_status ?? '' },
   { key: 'stage', label: 'Workflow Stage', minWidth: 170,
-    render: (b) => <StageBadge stage={b.workflow_stage} /> },
+    render: (b) => <StageBadge stage={b.workflow_stage} />, csvValue: (b) => STAGE_LABELS[b.workflow_stage] ?? b.workflow_stage ?? '' },
   { key: 'category', label: 'Category', minWidth: 110,
     render: (b) => b.category ?? '—' },
   { key: 'bid_id', label: 'Bid ID', minWidth: 140, mono: true,
@@ -205,7 +205,7 @@ export function MasterSheetPage() {
       const headers = COLUMNS.map((c) => c.label)
       const csvRows = [headers.map(escapeCSV).join(',')]
       for (const b of rows) {
-        csvRows.push(COLUMNS.map((c) => escapeCSV(plainText(c.render(b)))).join(','))
+        csvRows.push(COLUMNS.map((c) => escapeCSV(c.csvValue ? c.csvValue(b) : plainText(c.render(b)))).join(','))
       }
       const blob = new Blob(['﻿' + csvRows.join('\r\n')], { type: 'text/csv;charset=utf-8;' })
       const url = URL.createObjectURL(blob)
@@ -358,8 +358,10 @@ export function MasterSheetPage() {
   )
 }
 
-// Strips a React element down to its visible text, so cells rendered as JSX
-// (StatusPill, StageBadge) still produce a sane plain-text CSV value.
+// Strips a React element down to its visible text for the CSV export. Only
+// walks a node's own `children` prop, so it cannot see inside a custom
+// component that builds its text internally (StatusPill, StageBadge) -
+// those columns provide their own `csvValue` instead of relying on this.
 function plainText(node) {
   if (node == null || typeof node === 'boolean') return ''
   if (typeof node === 'string' || typeof node === 'number') return node

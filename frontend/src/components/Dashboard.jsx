@@ -26,6 +26,7 @@ import { RoleBadge }      from './admin/RoleBadge'
 import { TendersPage }    from './tenders/TendersPage'
 import { listAllBids }   from '../services/bids'
 import { getTenderPerformanceMatrix } from '../services/bids'
+import { formatCurrency } from '../lib/tenderFormat'
 
 // ── Navigation items (each gated by a permission check) ──────────────────────
 const NAV_ITEMS = [
@@ -69,14 +70,6 @@ function isChildActive(child, pathname) {
     return pathname.startsWith('/dashboard/analytics/performance-matrix')
   }
   return pathname === child.path
-}
-
-// Currency Helper
-function formatCurrency(val) {
-  if (val === null || val === undefined || isNaN(val)) return '₹0'
-  if (val >= 10000000) return `₹${(val / 10000000).toFixed(2)} Cr`
-  if (val >= 100000) return `₹${(val / 100000).toFixed(2)} L`
-  return `₹${val.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
 }
 
 // ── Force Password Change Guard ───────────────────────────────────────────────

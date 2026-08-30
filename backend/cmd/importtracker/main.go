@@ -94,7 +94,7 @@ func main() {
 		log.Fatalf("cannot commit without a database connection: %v", connErr)
 	}
 
-	if err := commit(ctx, conn, preview, *owner, *file, *format == "dashboard"); err != nil {
+	if err := commit(ctx, conn, preview, *owner, *file); err != nil {
 		log.Fatalf("import failed (rolled back): %v", err)
 	}
 	fmt.Printf("\nImported %d tenders successfully (%d skipped).\n", preview.ImportCount, len(preview.Skipped))
@@ -239,7 +239,7 @@ func connect(ctx context.Context) (*pgx.Conn, error) {
 	return pgx.Connect(ctx, dsn)
 }
 
-func commit(ctx context.Context, conn *pgx.Conn, preview *importer.Preview, owner, srcFile string, enrich bool) error {
+func commit(ctx context.Context, conn *pgx.Conn, preview *importer.Preview, owner, srcFile string) error {
 	ownerID, err := importer.ResolveOwner(ctx, conn, owner)
 	if err != nil {
 		return err
@@ -254,10 +254,8 @@ func commit(ctx context.Context, conn *pgx.Conn, preview *importer.Preview, owne
 
 	// Cross-file duplicates: fill in any field an already-existing tender is
 	// missing, from a row that would otherwise just be skipped.
-	if enrich {
-		if err := importer.EnrichDuplicates(ctx, tx, preview); err != nil {
-			return err
-		}
+	if err := importer.EnrichDuplicates(ctx, tx, preview); err != nil {
+		return err
 	}
 
 	if _, err := importer.InsertAll(ctx, tx, preview.Bids, ownerID, srcFile); err != nil {

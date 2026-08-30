@@ -129,7 +129,7 @@ func (h *BulkImportHandler) BulkImport(c *gin.Context) {
 	// In dry-run mode, show what enrichment WOULD happen too - run it inside a
 	// transaction that always rolls back, so the preview is honest about cross-
 	// file effects without writing anything.
-	if dryRun && format == "dashboard" {
+	if dryRun {
 		if err := func() error {
 			tx, err := h.pool.Begin(ctx)
 			if err != nil {
@@ -173,13 +173,11 @@ func (h *BulkImportHandler) BulkImport(c *gin.Context) {
 	// workbook and the other format's, sometimes with different completeness.
 	// Rather than the second upload's data being discarded, any field the
 	// already-existing tender is missing gets filled in from this row.
-	if format == "dashboard" {
-		if err := importer.EnrichDuplicates(ctx, tx, preview); err != nil {
-			response.InternalError(c, "import rolled back: "+err.Error())
-			return
-		}
-		resp.Skipped = preview.Skipped
+	if err := importer.EnrichDuplicates(ctx, tx, preview); err != nil {
+		response.InternalError(c, "import rolled back: "+err.Error())
+		return
 	}
+	resp.Skipped = preview.Skipped
 
 	ids, err := importer.InsertAll(ctx, tx, preview.Bids, ownerID, fileHeader.Filename)
 	if err != nil {
