@@ -1,0 +1,18 @@
+{
+  "buildPath": "code",
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "ai-color-palette",
+        "value": "*",
+        "files": [
+          "frontend/src/components/Dashboard.jsx"
+        ],
+        "createdAt": "2026-08-30T15:05:15.502Z",
+        "reason": "pre-existing stage-funnel gradient palette, not touched by this QA/bug-fix pass; out of scope"
+      }
+    ]
+  }
+}

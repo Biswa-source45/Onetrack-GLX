@@ -1,11 +1,19 @@
-import React, { useState, useRef } from "react"
+import React, { useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { motion, AnimatePresence } from "framer-motion"
-import { Layers, Eye, EyeOff, ArrowLeft, Loader2, Key, CheckCircle } from "lucide-react"
+import { motion, AnimatePresence, MotionConfig } from "framer-motion"
+import { Eye, EyeOff, ArrowLeft, Loader2, Key } from "lucide-react"
 import { toast } from "sonner"
-import { authService, tokenStorage } from "../services/auth"
-import LoginArt from "./LoginArt"
+import { authService } from "../services/auth"
+import { ledger, ledgerFont } from "../lib/ledgerTheme"
+import { LedgerStampMark } from "../lib/ledgerMarks"
+import { LoginHeroPanel } from "../lib/LoginHeroPanel"
 
+const inputStyle = {
+  fontFamily: ledgerFont.body,
+  background: "#FFFFFF",
+  border: `1px solid ${ledger.border}`,
+  color: ledger.text,
+}
 
 export default function Login() {
   const navigate = useNavigate()
@@ -25,43 +33,19 @@ export default function Login() {
   const [showResetNewPass, setShowResetNewPass] = useState(false)
   const [isResetting, setIsResetting] = useState(false)
 
-  // WebGL water-ripple art (Three.js) driving the left illustration panel —
-  // scoped ONLY to that panel. Pointer moves feed ripple origins straight
-  // into the shader via an imperative ref; nothing is tracked in React state.
-  const artRef = useRef(null)
-  const lastRippleAt = useRef(0)
-
-  function handlePanelMouseMove(e) {
-    const rect = e.currentTarget.getBoundingClientRect()
-    const nx = (e.clientX - rect.left) / rect.width
-    const ny = (e.clientY - rect.top) / rect.height
-
-    artRef.current?.updatePointer(nx, ny)
-
-    const now = performance.now()
-    if (now - lastRippleAt.current > 220) {
-      lastRippleAt.current = now
-      artRef.current?.addRipple(nx, ny)
-    }
-  }
-
-  function handlePanelMouseLeave() {
-    artRef.current?.clearPointer()
-  }
-
   const handleSubmit = async (e) => {
     e.preventDefault()
-    
+
     if (!username.trim() || !password) {
       toast.error("Please enter both username/email and password")
       return
     }
 
     setIsLoading(true)
-    
+
     try {
       const result = await authService.login(username.trim().toLowerCase(), password)
-      
+
       if (result.ok && result.success) {
         toast.success(result.message || "Logged in successfully!")
         setSuccess(true)
@@ -161,93 +145,67 @@ export default function Login() {
   }
 
   return (
-    <div className="h-screen w-screen bg-neutral-50 flex items-center justify-center p-4 font-sans selection:bg-blue-100 selection:text-blue-900 relative overflow-hidden">
-
+    <MotionConfig reducedMotion="user">
+    <div
+      className="h-screen w-screen flex items-center justify-center p-4 relative overflow-hidden"
+      style={{ background: ledger.ground, fontFamily: ledgerFont.body }}
+    >
       {/* MAIN CONTAINER CARD */}
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: 15 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: "easeOut" }}
-        className="relative z-10 w-full max-w-4xl h-[90vh] max-h-[550px] bg-white rounded-[2rem] p-2 flex flex-col md:flex-row gap-2 border border-neutral-200/80 overflow-hidden shadow-xl"
+        className="relative z-10 w-full max-w-4xl h-[90vh] max-h-[560px] rounded-[8px] p-2 flex flex-col md:flex-row gap-2 overflow-hidden"
+        style={{ background: ledger.surface, border: `1px solid ${ledger.borderBright}`, boxShadow: "0 32px 80px -24px rgba(16,24,40,0.28)" }}
       >
-        
-        {/* LEFT COLUMN: WEBGL WATER PANEL (brand blue) — ripple/glow driven by Three.js, scoped to this panel only */}
-        <div
-          onMouseMove={handlePanelMouseMove}
-          onMouseLeave={handlePanelMouseLeave}
-          className="hidden md:flex md:w-[46%] lg:w-[48%] rounded-[1.5rem] overflow-hidden relative h-full flex-col justify-between p-8 lg:p-10 shrink-0 bg-neutral-950 text-white"
-        >
-          <LoginArt ref={artRef} />
-
-          {/* Legibility wash so text stays crisp over the flowing shader */}
-          <div className="absolute inset-0 z-10 bg-gradient-to-t from-neutral-950/70 via-neutral-950/10 to-neutral-950/40 pointer-events-none" />
-
-          {/* Top Row: Hero Brand Lockup */}
-          <div className="relative z-20 flex items-center gap-2.5">
-            <motion.div
-              className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 shadow-lg shadow-blue-500/30"
-              animate={{ boxShadow: ["0 0 0 rgba(37,99,235,0.35)", "0 0 22px rgba(37,99,235,0.55)", "0 0 0 rgba(37,99,235,0.35)"] }}
-              transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
-            >
-              <Layers className="size-4.5 text-white" />
-            </motion.div>
-            <span className="font-display text-2xl lg:text-[1.75rem] font-semibold tracking-tight text-white">OneTrack</span>
-          </div>
-
-          {/* Middle: high-impact headline + short supporting line */}
-          <div className="relative z-20 my-auto py-8">
-            <div className="h-1.5 w-12 bg-blue-500 rounded-full mb-6" />
-            <h1 className="font-display text-4xl lg:text-[2.75rem] font-normal text-white leading-[1.1] tracking-tight">
-              Track Every <br />Tender. <br />Win With Confidence.
-            </h1>
-            <p className="mt-4 text-[13px] lg:text-sm text-neutral-300 leading-relaxed max-w-[300px]">
-              From GeM submission to contract closure — one workspace for your entire bid lifecycle.
-            </p>
-          </div>
+        {/* LEFT COLUMN: abstract brand panel */}
+        <div className="hidden md:block md:w-[46%] lg:w-[48%] rounded-[6px] overflow-hidden shrink-0">
+          <LoginHeroPanel />
         </div>
 
-        {/* RIGHT COLUMN: LOGIN FORM PANEL */}
-        <div className="w-full md:w-[54%] lg:w-[52%] flex flex-col justify-between p-5 sm:p-6 lg:p-8 h-full overflow-y-auto bg-white">
-          
+        {/* RIGHT COLUMN: the blank entry page — a ruled paper form panel */}
+        <div
+          className="w-full md:w-[54%] lg:w-[52%] flex flex-col justify-between p-5 sm:p-6 lg:p-8 h-full overflow-y-auto rounded-[6px]"
+          style={{ background: ledger.ground }}
+        >
           {/* Top Row: Back Navigation & Logo */}
           <div className="flex items-center justify-between w-full">
-            <button 
+            <button
               onClick={() => navigate("/")}
-              className="group inline-flex items-center gap-1.5 text-xs font-semibold text-neutral-450 hover:text-blue-600 transition-colors cursor-pointer"
+              className="group inline-flex items-center gap-1.5 text-xs font-semibold cursor-pointer"
+              style={{ color: ledger.textMuted }}
             >
               <ArrowLeft className="size-3.5 group-hover:-translate-x-0.5 transition-transform" />
               <span>Back</span>
             </button>
-            
+
             <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600 text-white shadow-xs">
-                <Layers className="size-3.5" />
-              </div>
-              <span className="font-heading text-sm font-bold tracking-tight text-neutral-900">OneTrack</span>
+              <span className="flex h-7 w-7 items-center justify-center rounded-[4px]" style={{ background: ledger.surfaceRaised, border: `1px solid ${ledger.borderBright}` }}>
+                <LedgerStampMark className="size-4" color={ledger.accent} />
+              </span>
+              <span className="text-sm font-semibold tracking-tight" style={{ fontFamily: ledgerFont.display, color: ledger.text }}>OneTrack</span>
             </div>
-            
+
             <div className="w-10 opacity-0 pointer-events-none" />
           </div>
 
           {/* Middle Row: Content & Form */}
           <div className="my-auto max-w-sm w-full mx-auto space-y-6 py-4">
-            
             {/* Headings */}
             <div className="text-center space-y-1">
-              <h2 className="font-display text-2xl sm:text-3xl font-normal text-neutral-900 tracking-tight leading-none">
+              <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight leading-none" style={{ fontFamily: ledgerFont.display, color: ledger.text }}>
                 Welcome Back
               </h2>
-              <p className="text-[11px] text-neutral-400 font-normal leading-relaxed">
+              <p className="text-[11px] font-normal leading-relaxed" style={{ color: ledger.textMuted }}>
                 Enter your system credentials to access your account
               </p>
             </div>
 
             {/* Form */}
             <form onSubmit={handleSubmit} className="space-y-3.5">
-              
               {/* Username Input */}
               <div className="space-y-1">
-                <label htmlFor="username" className="block text-xs font-semibold text-neutral-500">
+                <label htmlFor="username" className="block text-xs font-semibold" style={{ color: ledger.textMuted }}>
                   Username or Email Address
                 </label>
                 <input
@@ -257,20 +215,22 @@ export default function Login() {
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   placeholder="Enter username or email address"
-                  className="w-full bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none rounded-xl px-3.5 py-2.5 text-xs placeholder:text-neutral-400 font-medium transition-all text-neutral-900"
+                  className="w-full focus:outline-none focus:ring-2 rounded-[4px] px-3.5 py-2.5 text-xs font-medium transition-all"
+                  style={{ ...inputStyle, "--tw-ring-color": ledger.accent }}
                 />
               </div>
 
               {/* Password Input */}
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <label htmlFor="password" className="block text-xs font-semibold text-neutral-505">
+                  <label htmlFor="password" className="block text-xs font-semibold" style={{ color: ledger.textMuted }}>
                     Password
                   </label>
                   <button
                     type="button"
                     onClick={() => setShowResetModal(true)}
-                    className="text-[11px] font-bold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
+                    className="text-[11px] font-bold hover:underline cursor-pointer"
+                    style={{ color: ledger.accentDeep }}
                   >
                     Reset Password?
                   </button>
@@ -283,12 +243,14 @@ export default function Login() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Enter password"
-                    className="w-full bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none rounded-xl pl-3.5 pr-9 py-2.5 text-xs placeholder:text-neutral-400 font-medium transition-all text-neutral-900"
+                    className="w-full focus:outline-none focus:ring-2 rounded-[4px] pl-3.5 pr-9 py-2.5 text-xs font-medium transition-all"
+                    style={{ ...inputStyle, "--tw-ring-color": ledger.accent }}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-900 transition-colors cursor-pointer"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 transition-colors cursor-pointer"
+                    style={{ color: ledger.textMuted }}
                   >
                     {showPassword ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
                   </button>
@@ -300,7 +262,8 @@ export default function Login() {
                 <button
                   type="submit"
                   disabled={isLoading || success}
-                  className="bg-blue-600 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 text-white w-full py-3 rounded-xl font-bold text-xs tracking-wide transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-blue-500/10"
+                  className="w-full py-3 rounded-[4px] font-semibold text-xs tracking-wide transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 active:scale-[0.99]"
+                  style={{ background: ledger.accent, color: "#FFFFFF", boxShadow: `0 1px 0 ${ledger.accentDeep}` }}
                 >
                   {isLoading ? (
                     <>
@@ -314,33 +277,30 @@ export default function Login() {
                   )}
                 </button>
               </div>
-
             </form>
           </div>
 
           {/* Bottom Row: Sign Up Prompt */}
-          <div className="text-center text-xs text-neutral-455">
+          <div className="text-center text-xs" style={{ color: ledger.textMuted }}>
             <span>Accessing public workspace? </span>
-            <button 
-              type="button" 
+            <button
+              type="button"
               onClick={() => navigate("/")}
-              className="font-bold text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
+              className="font-bold hover:underline cursor-pointer"
+              style={{ color: ledger.accentDeep }}
             >
               Go to Landing Page
             </button>
           </div>
-
         </div>
-
       </motion.div>
 
       {/* RESET PASSWORD MODAL (From Login Form) */}
       <AnimatePresence>
         {showResetModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            
             {/* Backdrop */}
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -348,22 +308,24 @@ export default function Login() {
                 setShowResetModal(false)
                 setForgotStep(1)
               }}
-              className="absolute inset-0 bg-neutral-900/60 backdrop-blur-xs"
+              className="absolute inset-0 backdrop-blur-xs"
+              style={{ background: "rgba(15,23,42,0.55)" }}
             />
 
             {/* Modal Card */}
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.96 }}
-              className="relative z-10 w-full max-w-md bg-white border border-neutral-200 rounded-2xl p-6 shadow-xl space-y-5 text-neutral-900"
+              className="relative z-10 w-full max-w-md rounded-[8px] p-6 space-y-5"
+              style={{ background: ledger.ground, border: `1px solid ${ledger.border}`, boxShadow: "0 32px 80px -24px rgba(16,24,40,0.28)" }}
             >
               <div className="space-y-1">
-                <h3 className="font-display text-xl font-normal text-neutral-900 flex items-center gap-2">
-                  <Key className="size-5 text-blue-600" />
+                <h3 className="text-xl font-semibold flex items-center gap-2" style={{ fontFamily: ledgerFont.display, color: ledger.text }}>
+                  <Key className="size-5" style={{ color: ledger.accentDeep }} />
                   Forgot Password OTP Reset
                 </h3>
-                <p className="text-xs text-neutral-500 leading-normal">
+                <p className="text-xs leading-normal" style={{ color: ledger.textMuted }}>
                   {forgotStep === 1 && "Step 1/3: Enter your registered email address to receive a 6-digit OTP code."}
                   {forgotStep === 2 && `Step 2/3: Enter the 6-digit OTP code sent to ${resetEmail}.`}
                   {forgotStep === 3 && "Step 3/3: Set a new secure password for your OneTrack account."}
@@ -374,14 +336,15 @@ export default function Login() {
               {forgotStep === 1 && (
                 <form onSubmit={handleSendOTP} className="space-y-4">
                   <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">Registered Email</label>
+                    <label className="block text-[11px] font-semibold uppercase tracking-wider" style={{ color: ledger.textMuted }}>Registered Email</label>
                     <input
                       type="email"
                       required
                       value={resetEmail}
                       onChange={(e) => setResetEmail(e.target.value)}
                       placeholder="e.g. biswabhusans@globx.co.in"
-                      className="w-full bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none rounded-xl px-3.5 py-2.5 text-xs placeholder:text-neutral-400 font-medium transition-all text-neutral-900"
+                      className="w-full focus:outline-none focus:ring-2 rounded-[4px] px-3.5 py-2.5 text-xs font-medium transition-all"
+                      style={{ ...inputStyle, "--tw-ring-color": ledger.accent }}
                     />
                   </div>
 
@@ -389,15 +352,17 @@ export default function Login() {
                     <button
                       type="button"
                       onClick={() => setShowResetModal(false)}
-                      className="flex-1 bg-neutral-100 border border-neutral-200 hover:bg-neutral-200 text-neutral-700 py-2.5 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+                      className="flex-1 py-2.5 rounded-[4px] font-semibold text-xs transition-colors cursor-pointer"
+                      style={{ background: "#FFFFFF", border: `1px solid ${ledger.border}`, color: ledger.text }}
                     >
                       Cancel
                     </button>
-                    
+
                     <button
                       type="submit"
                       disabled={isResetting}
-                      className="flex-1 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 text-white py-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-blue-500/10"
+                      className="flex-1 py-2.5 rounded-[4px] font-semibold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      style={{ background: ledger.accent, color: "#FFFFFF" }}
                     >
                       {isResetting ? (
                         <>
@@ -416,7 +381,7 @@ export default function Login() {
               {forgotStep === 2 && (
                 <form onSubmit={handleVerifyOTP} className="space-y-4">
                   <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">6-Digit Verification Code</label>
+                    <label className="block text-[11px] font-semibold uppercase tracking-wider" style={{ color: ledger.textMuted }}>6-Digit Verification Code</label>
                     <input
                       type="text"
                       maxLength={6}
@@ -424,7 +389,8 @@ export default function Login() {
                       value={resetOtp}
                       onChange={(e) => setResetOtp(e.target.value)}
                       placeholder="Enter 6-digit OTP code"
-                      className="w-full bg-neutral-50 text-center tracking-widest text-lg font-mono hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none rounded-xl px-3.5 py-2 text-neutral-900 font-bold"
+                      className="w-full text-center tracking-widest text-lg font-bold focus:outline-none focus:ring-2 rounded-[4px] px-3.5 py-2"
+                      style={{ ...inputStyle, fontFamily: ledgerFont.mono, "--tw-ring-color": ledger.accent }}
                     />
                   </div>
 
@@ -432,15 +398,17 @@ export default function Login() {
                     <button
                       type="button"
                       onClick={() => setForgotStep(1)}
-                      className="flex-1 bg-neutral-100 border border-neutral-200 hover:bg-neutral-200 text-neutral-700 py-2.5 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+                      className="flex-1 py-2.5 rounded-[4px] font-semibold text-xs transition-colors cursor-pointer"
+                      style={{ background: "#FFFFFF", border: `1px solid ${ledger.border}`, color: ledger.text }}
                     >
                       Back
                     </button>
-                    
+
                     <button
                       type="submit"
                       disabled={isResetting}
-                      className="flex-1 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 text-white py-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-blue-500/10"
+                      className="flex-1 py-2.5 rounded-[4px] font-semibold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      style={{ background: ledger.accent, color: "#FFFFFF" }}
                     >
                       {isResetting ? (
                         <>
@@ -459,7 +427,7 @@ export default function Login() {
               {forgotStep === 3 && (
                 <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
                   <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">New Password</label>
+                    <label className="block text-[11px] font-semibold uppercase tracking-wider" style={{ color: ledger.textMuted }}>New Password</label>
                     <div className="relative">
                       <input
                         type={showResetNewPass ? "text" : "password"}
@@ -467,12 +435,14 @@ export default function Login() {
                         value={resetNewPassword}
                         onChange={(e) => setResetNewPassword(e.target.value)}
                         placeholder="Minimum 8 characters"
-                        className="w-full bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none rounded-xl pl-3.5 pr-9 py-2.5 text-xs placeholder:text-neutral-400 font-medium transition-all text-neutral-900"
+                        className="w-full focus:outline-none focus:ring-2 rounded-[4px] pl-3.5 pr-9 py-2.5 text-xs font-medium transition-all"
+                        style={{ ...inputStyle, "--tw-ring-color": ledger.accent }}
                       />
                       <button
                         type="button"
                         onClick={() => setShowResetNewPass(!showResetNewPass)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-900 transition-colors cursor-pointer"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 transition-colors cursor-pointer"
+                        style={{ color: ledger.textMuted }}
                       >
                         {showResetNewPass ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
                       </button>
@@ -480,14 +450,15 @@ export default function Login() {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">Confirm New Password</label>
+                    <label className="block text-[11px] font-semibold uppercase tracking-wider" style={{ color: ledger.textMuted }}>Confirm New Password</label>
                     <input
                       type="password"
                       required
                       value={resetConfirmPassword}
                       onChange={(e) => setResetConfirmPassword(e.target.value)}
                       placeholder="Confirm new password"
-                      className="w-full bg-neutral-50 hover:bg-neutral-100/60 focus:bg-white border border-neutral-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none rounded-xl px-3.5 py-2.5 text-xs placeholder:text-neutral-400 font-medium transition-all text-neutral-900"
+                      className="w-full focus:outline-none focus:ring-2 rounded-[4px] px-3.5 py-2.5 text-xs font-medium transition-all"
+                      style={{ ...inputStyle, "--tw-ring-color": ledger.accent }}
                     />
                   </div>
 
@@ -495,15 +466,17 @@ export default function Login() {
                     <button
                       type="button"
                       onClick={() => setForgotStep(2)}
-                      className="flex-1 bg-neutral-100 border border-neutral-200 hover:bg-neutral-200 text-neutral-700 py-2.5 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+                      className="flex-1 py-2.5 rounded-[4px] font-semibold text-xs transition-colors cursor-pointer"
+                      style={{ background: "#FFFFFF", border: `1px solid ${ledger.border}`, color: ledger.text }}
                     >
                       Back
                     </button>
-                    
+
                     <button
                       type="submit"
                       disabled={isResetting}
-                      className="flex-1 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 text-white py-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-blue-500/10"
+                      className="flex-1 py-2.5 rounded-[4px] font-semibold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      style={{ background: ledger.accent, color: "#FFFFFF" }}
                     >
                       {isResetting ? (
                         <>
@@ -517,12 +490,11 @@ export default function Login() {
                   </div>
                 </form>
               )}
-
             </motion.div>
           </div>
         )}
       </AnimatePresence>
-
     </div>
+    </MotionConfig>
   )
 }

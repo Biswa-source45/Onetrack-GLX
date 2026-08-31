@@ -7,9 +7,37 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap" rel="stylesheet">
-    <title>OneTrack - Enterprise Bid & Tender Operations Platform</title>
+    <!-- Landing + login page only ("The Ledger" world) - not used elsewhere in the app -->
+    <link href="https://fonts.googleapis.com/css2?family=Zilla+Slab:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,600&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <title>OneTrack — Tender Operations Platform</title>
   </head>
   <body>
+    <!--
+      DIRECTION CONTRACT — "The Ledger" (landing + login only; seed f674f1cc)
+      THESIS: The pipeline itself is the interface — every screen reads as an
+      open bid-finance ledger, not a dashboard wearing tender vocabulary.
+      OWN-WORLD: White paper ground, blue rule lines, one blue ink-stamp
+      accent (#2563EB) reserved for what's actually reached or needs
+      attention — the same white-and-blue the rest of the app already uses,
+      not a separate dark identity; Zilla Slab display, Public Sans body,
+      JetBrains Mono for money/IDs. Login's left panel alone runs the same
+      blue at full ink saturation as a paired register page. Repalette from
+      an initial dark-graphite/brass draft to this, on the user's explicit
+      direction after seeing the dark version. See src/lib/ledgerTheme.js.
+      STORY: A bid team recognizes their own ten-stage process at a glance,
+      believes this tool tracks it faithfully because it is shown as a real
+      ledger rather than an abstraction, and signs in.
+      FIRST VIEWPORT: Left — headline, one line of proof, sign-in CTA. Right —
+      a live 10-row ledger register: dim rows pending, blue ink-stamped rows
+      reached, one row pulsing "active now."
+      FORM: Assigned direction, candidate 3 of 7 grounded (over "Departure
+      Board" and "Blueprint"), seed f674f1cc; raised with Ikeda's
+      data-as-protagonist restraint, Nixie's fixed-position-lights-when-
+      reached device, and Glazier's color-reserved-for-attention discipline.
+      FINISH: unreviewed and undocumented is unfinished; this build ends with
+      the finish review, the verdict, DESIGN.md, and every shipping raster
+      carrying its provenance.
+    -->
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

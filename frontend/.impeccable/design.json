@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-31T00:00:00Z",
+  "title": "Design System: OneTrack — The Ledger",
+  "extensions": {
+    "colorMeta": {
+      "accent": { "role": "primary", "displayName": "Ink Blue", "canonical": "#2563EB", "tonalRamp": ["#0F2E7A", "#123A96", "#1D4ED8", "#2563EB", "#3B82F6", "#60A5FA", "#93C5FD", "#DBEAFE"] },
+      "accent-deep": { "role": "primary", "displayName": "Ink Blue Deep", "canonical": "#1D4ED8", "tonalRamp": ["#0B2461", "#0F2E7A", "#173F9E", "#1D4ED8", "#2F63EB", "#5B85F0", "#9AB4F5", "#D6E1FB"] },
+      "accent-bright": { "role": "primary", "displayName": "Ink Blue Bright", "canonical": "#3B82F6", "tonalRamp": ["#12336E", "#173F9E", "#2160E0", "#3B82F6", "#5B96F8", "#84B0FA", "#B4D0FC", "#E4EFFE"] },
+      "ground": { "role": "neutral", "displayName": "Paper White", "canonical": "#FFFFFF", "tonalRamp": ["#101828", "#333B49", "#5A6272", "#8891A0", "#B9C1CE", "#DDE3EC", "#F0F3F8", "#FFFFFF"] },
+      "ground-deep": { "role": "neutral", "displayName": "Paper Tint", "canonical": "#F3F6FC", "tonalRamp": ["#101828", "#333B49", "#5A6272", "#8891A0", "#B9C1CE", "#DDE3EC", "#EAF0FA", "#F3F6FC"] },
+      "surface-raised": { "role": "neutral", "displayName": "Ledger Wash", "canonical": "#EAF1FC", "tonalRamp": ["#0E2350", "#173F9E", "#2160E0", "#5B96F8", "#9AC0FB", "#C9DEFD", "#E1EDFE", "#EAF1FC"] },
+      "rule": { "role": "neutral", "displayName": "Rule Line", "canonical": "#D7E2F2", "tonalRamp": ["#101828", "#3D4657", "#6B7488", "#98A2B8", "#BCC7DA", "#D7E2F2", "#E8EEF8", "#F5F8FC"] },
+      "rule-bright": { "role": "neutral", "displayName": "Rule Line Bright", "canonical": "#6D8FC9", "tonalRamp": ["#152A52", "#1F3E77", "#2E5498", "#4771B4", "#6D8FC9", "#9BB4DC", "#C6D5EC", "#E9EFF9"] },
+      "text": { "role": "neutral", "displayName": "Ink Text", "canonical": "#101828", "tonalRamp": ["#101828", "#232C3B", "#3C4657", "#5A6272", "#8891A0", "#B9C1CE", "#DDE3EC", "#F0F3F8"] },
+      "text-muted": { "role": "neutral", "displayName": "Ink Text Muted", "canonical": "#47536B", "tonalRamp": ["#161B23", "#262E3B", "#374156", "#47536B", "#6E7A93", "#99A3B8", "#C6CDD9", "#E9ECF2"] },
+      "text-faint": { "role": "neutral", "displayName": "Ink Text Faint", "canonical": "#667289", "tonalRamp": ["#1B2029", "#2E3542", "#454E60", "#667289", "#8891A2", "#AAB2C0", "#CDD3DC", "#EBEEF2"] },
+      "border": { "role": "neutral", "displayName": "Card Border", "canonical": "#E4EAF5", "tonalRamp": ["#101828", "#454E60", "#8891A2", "#AAB2C0", "#CDD3DC", "#E4EAF5", "#EFF3FA", "#FAFBFD"] },
+      "border-bright": { "role": "neutral", "displayName": "Card Border Bright", "canonical": "#C7D6EC", "tonalRamp": ["#12203D", "#233D63", "#365C8B", "#6486B8", "#98AFD3", "#C7D6EC", "#E1E9F5", "#F3F6FB"] },
+      "alert": { "role": "neutral", "displayName": "Alert Red", "canonical": "#DC2626", "tonalRamp": ["#450A0A", "#7F1D1D", "#991B1B", "#B91C1C", "#DC2626", "#EF4444", "#FCA5A5", "#FEE2E2"] },
+      "deep-panel": { "role": "primary", "displayName": "Deep Ledger Blue", "canonical": "#1E3A8A", "tonalRamp": ["#0B1A3D", "#122A5E", "#183278", "#1E3A8A", "#2A4CA8", "#4A6CC4", "#8AA3DD", "#D3DDF2"] },
+      "deep-panel-raised": { "role": "primary", "displayName": "Deep Panel Raised", "canonical": "#24439C", "tonalRamp": ["#0D2049", "#153170", "#1C3B8B", "#24439C", "#3A5CB8", "#6482CE", "#9CB4E2", "#DAE3F6"] },
+      "deep-panel-rule": { "role": "primary", "displayName": "Deep Panel Rule", "canonical": "#33478A", "tonalRamp": ["#121C3B", "#1D2A5A", "#283874", "#33478A", "#4E60A5", "#7C8AC0", "#B0B9DC", "#E4E8F6"] },
+      "deep-panel-muted": { "role": "primary", "displayName": "Deep Panel Muted", "canonical": "#BFDBFE", "tonalRamp": ["#0B2C61", "#164186", "#1F5CB4", "#3B82F6", "#7EAFF9", "#BFDBFE", "#DCEBFE", "#F0F8FF"] },
+      "deep-panel-mark": { "role": "primary", "displayName": "Deep Panel Mark", "canonical": "#7DD3FC", "tonalRamp": ["#053349", "#0A4A6B", "#0D6390", "#12A0D9", "#3EC0EF", "#7DD3FC", "#BAE6FD", "#EAF9FF"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Zilla Slab Display", "purpose": "Headlines, section headings, row/entry titles inside LedgerRow, login welcome heading and left-panel headline." },
+      "body": { "displayName": "Public Sans Body", "purpose": "Paragraph copy, row notes, labels, badges, nav links, form field text." },
+      "mono": { "displayName": "JetBrains Mono Data", "purpose": "Entered-value text only: row codes, tender identifiers, OTP digits, stat figures — always tabular-nums." }
+    },
+    "shadows": [
+      { "name": "card-ambient", "value": "0 24px 60px -24px rgba(16,24,40,0.18)", "purpose": "Soft diffuse lift under the landing hero register card." },
+      { "name": "card-ambient-tight", "value": "0 16px 40px -20px rgba(16,24,40,0.14)", "purpose": "Lift under the pipeline stage detail card." },
+      { "name": "login-card-ambient", "value": "0 32px 80px -24px rgba(16,24,40,0.28)", "purpose": "Higher-intensity lift for the login card and its OTP modal, floating over plain white." },
+      { "name": "button-lip", "value": "0 1px 0 #1D4ED8", "purpose": "1px embossed edge under every primary (StampButton) fill." },
+      { "name": "button-glow", "value": "0 10px 22px -8px rgba(37,99,235,0.45)", "purpose": "Soft blue glow paired with the button lip on the landing page's large CTA." }
+    ],
+    "breakpoints": [
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "xl", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button (StampButton)",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Ink-blue filled CTA used for every sign-in / submit / open-dashboard action on both pages.",
+      "html": "<button class=\"ds-btn-primary\">Sign In to the Ledger</button>",
+      "css": ".ds-btn-primary { font-family: 'Public Sans', system-ui, sans-serif; background: #2563EB; color: #FFFFFF; font-weight: 600; letter-spacing: 0.02em; padding: 10px 20px; border-radius: 5px; border: none; box-shadow: 0 1px 0 #1D4ED8, 0 10px 22px -8px rgba(37,99,235,0.45); transition: transform 0.15s ease; cursor: pointer; } .ds-btn-primary:hover { background: #1D4ED8; } .ds-btn-primary:focus-visible { outline: 2px solid #3B82F6; outline-offset: 2px; } .ds-btn-primary:active { transform: scale(0.98); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary bordered action, used beside the primary CTA in the nav.",
+      "html": "<button class=\"ds-btn-ghost\">Sign In</button>",
+      "css": ".ds-btn-ghost { font-family: 'Public Sans', system-ui, sans-serif; background: transparent; color: #101828; font-weight: 600; font-size: 13px; padding: 8px 16px; border-radius: 5px; border: 1px solid #C7D6EC; cursor: pointer; transition: background 0.15s ease; } .ds-btn-ghost:hover { background: #EAF1FC; } .ds-btn-ghost:focus-visible { outline: 2px solid #3B82F6; outline-offset: 2px; }"
+    },
+    {
+      "name": "Ledger Row",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "The world's one repeating list unit: mono code, slab-serif title with a body-font note, and a right-aligned status mark (pending / active / reached), divided by a rule line.",
+      "html": "<div class=\"ds-ledger-row\"><span class=\"ds-ledger-row-code\">05</span><span class=\"ds-ledger-row-main\"><span class=\"ds-ledger-row-title\">EMD Processing</span><span class=\"ds-ledger-row-note\">Deposit — online, DD, or exemption</span></span><span class=\"ds-ledger-row-mark\"><svg viewBox=\"0 0 32 32\" fill=\"none\" width=\"20\" height=\"20\"><circle cx=\"16\" cy=\"16\" r=\"13\" stroke=\"#2563EB\" stroke-width=\"2\"/><path d=\"M10 16.5l4 4 8-9\" stroke=\"#2563EB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span></div>",
+      "css": ".ds-ledger-row { display: flex; align-items: center; gap: 16px; width: 100%; padding: 14px 4px; border-bottom: 1px solid #D7E2F2; } .ds-ledger-row-code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; letter-spacing: 0.02em; color: #667289; min-width: 1.6rem; } .ds-ledger-row-main { flex: 1; min-width: 0; } .ds-ledger-row-title { display: block; font-family: 'Zilla Slab', Georgia, serif; font-weight: 500; font-size: 1.05rem; color: #101828; } .ds-ledger-row-note { display: block; margin-top: 2px; font-family: 'Public Sans', system-ui, sans-serif; font-size: 12px; color: #47536B; } .ds-ledger-row-mark { flex-shrink: 0; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Login form field: white fill, hairline border, blue focus ring.",
+      "html": "<div class=\"ds-field\"><label class=\"ds-field-label\" for=\"ds-username\">Username or Email Address</label><input id=\"ds-username\" class=\"ds-input\" type=\"text\" placeholder=\"Enter username or email address\" /></div>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 4px; } .ds-field-label { font-family: 'Public Sans', system-ui, sans-serif; font-size: 12px; font-weight: 600; color: #47536B; } .ds-input { font-family: 'Public Sans', system-ui, sans-serif; font-size: 12px; font-weight: 500; color: #101828; background: #FFFFFF; border: 1px solid #E4EAF5; border-radius: 4px; padding: 10px 14px; } .ds-input:focus-visible { outline: none; box-shadow: 0 0 0 2px #2563EB; }"
+    },
+    {
+      "name": "Wordmark",
+      "kind": "nav",
+      "refersTo": null,
+      "description": "Stamp-tile icon plus 'OneTrack' in Zilla Slab, shared by the landing nav, landing footer, and login form panel header.",
+      "html": "<span class=\"ds-wordmark\"><span class=\"ds-wordmark-tile\"><svg viewBox=\"0 0 32 32\" fill=\"none\" width=\"16\" height=\"16\"><circle cx=\"16\" cy=\"16\" r=\"13\" stroke=\"#2563EB\" stroke-width=\"2\"/><path d=\"M10 16.5l4 4 8-9\" stroke=\"#2563EB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span><span class=\"ds-wordmark-text\">OneTrack</span></span>",
+      "css": ".ds-wordmark { display: inline-flex; align-items: center; gap: 8px; } .ds-wordmark-tile { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 5px; background: #EAF1FC; border: 1px solid #C7D6EC; } .ds-wordmark-text { font-family: 'Zilla Slab', Georgia, serif; font-weight: 600; letter-spacing: -0.01em; color: #101828; font-size: 16px; }"
+    },
+    {
+      "name": "Card (Register Panel)",
+      "kind": "card",
+      "refersTo": null,
+      "description": "The floating white card that holds the landing hero register and the login form — ambient shadow, hairline bright border, 8px radius.",
+      "html": "<div class=\"ds-card\">Card content</div>",
+      "css": ".ds-card { background: #FFFFFF; border: 1px solid #C7D6EC; border-radius: 8px; box-shadow: 0 24px 60px -24px rgba(16,24,40,0.18); padding: 20px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Ledger",
+    "overview": "The Ledger renders the product's own ten-stage bid pipeline as a real, open finance ledger rather than a dashboard borrowing tender vocabulary: a white paper ground, blue rule lines like a cash-book page, and one blue ink-stamp mark reserved for what has actually been reached. The world's single repeating grammar unit — a ruled row with a code, a title, a note, and a status mark (LedgerRow) — is reused across the landing hero register, the capability list, and the pipeline register, so the page teaches its own vocabulary once and then repeats it rather than switching card patterns per section. Motion is restrained and diegetic: a completed row's stamp strikes with a small spring on mount, an active row pulses a single ring — the interaction budget is the stamp strike, not a different animation per component. This world is intentionally confined to two surfaces — Landing.jsx and Login.jsx — plus the shared src/lib/Ledger*.jsx and ledgerTheme.js files that back them; every color and font here is a literal value, never the app-wide CSS custom properties used everywhere else. The palette was repaletted once during the build: an initial dark-graphite-ground/brass-accent draft was replaced, on explicit direction after review, with the current white-paper/blue-ink palette — the same blue family the rest of the app already uses.",
+    "keyCharacteristics": [
+      "White paper ground with thin blue rule lines standing in for ledger-pad lines.",
+      "One accent color (blue ink) reserved for what is reached, active, or actionable — never decorative.",
+      "One repeating row grammar (LedgerRow) instead of a different card shape per section.",
+      "One recurring glyph, the circular stamp/check mark (LedgerStampMark), never a set of varied icons.",
+      "Geometric, hand-authored abstract marks (concentric rings, offset arcs) built from the same rule-line material as the ledger itself — never a stock gradient blob or a literal screenshot of the live pipeline."
+    ],
+    "rules": [
+      { "name": "The One Accent Rule", "body": "#2563EB is the only color in the system that means \"reached, active, or actionable.\" It never appears as pure decoration — every instance of ink blue on either page marks a stamped row, an active pulse, a CTA, or a live link.", "section": "colors" },
+      { "name": "The One Row Rule", "body": "Every list-like unit that isn't the role list (hero pipeline snapshot, capability list, full pipeline register) is the same LedgerRow component — a code, a title, an optional note, and a status mark on the right, divided by a resting rule line. New list content on these two surfaces should reuse LedgerRow, not invent a card shape.", "section": "colors" },
+      { "name": "The Data-Is-Mono Rule", "body": "Anything that is an entered value rather than authored prose — a stage code, a tender ID, a stat number, an OTP digit — renders in JetBrains Mono with tabular figures. Zilla Slab and Public Sans never carry a number that represents ledger data.", "section": "typography" },
+      { "name": "The Rule-Over-Shadow Rule", "body": "Inside a register or list, adjacency is shown with a 1px rule line (#D7E2F2, brightening to #6D8FC9 on selection), never a shadow or card boundary. Shadows are reserved for a surface floating above the page as a whole (cards, modals, the primary CTA), not for separating list rows from each other.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do treat #2563EB as the only color that signals \"reached / active / actionable\" on these two pages; every other color is structural (ground, rule, text) or role-specific to the deep panel.",
+      "Do reuse LedgerRow for any new list content added to the landing page's registers (capabilities, pipeline) rather than introducing a new card shape.",
+      "Do keep numbers and IDs (stage codes, tender identifiers, OTP digits, stat figures) in JetBrains Mono with tabular figures.",
+      "Do keep list adjacency expressed with a 1px rule line, reserving shadows for cards and modals that float over a whole section.",
+      "Do keep this palette and these fonts scoped to Landing.jsx, Login.jsx, and src/lib/Ledger*.jsx/ledgerTheme.js — never apply ink blue, Zilla Slab, or Public Sans-as-ledger-body to the dashboard, tender workspace, admin, or analytics screens, which run the separate App.css custom-property theme."
+    ],
+    "donts": [
+      "Don't reintroduce the dark-graphite-ground/brass-accent palette from the build's first draft — it was explicitly reviewed and replaced; white paper ground and blue ink is the only current palette for this world.",
+      "Don't put a live, self-advancing 10-row stage register back on the login page's left panel. That was the shipped and reviewed first iteration but was explicitly replaced with the abstract artwork composition (LedgerAbstract); the live register is the landing hero's job only.",
+      "Don't reference or recreate LedgerBoard.jsx — it no longer exists in the codebase and is not part of the current system.",
+      "Don't treat the role list's plain flex-div markup in RoleSection as a second official row grammar to build on; it is a one-off variance from LedgerRow, not a second signature pattern — extend LedgerRow itself for new list needs rather than the role list's markup."
+    ]
+  }
+}
