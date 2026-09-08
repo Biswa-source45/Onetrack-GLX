@@ -193,6 +193,12 @@ export const ROLE_DETAILS = {
     description: 'Manages the complete tender lifecycle. Can create tenders, assign Bid Owners, manage team tasks, and review analytics.',
     summary: 'Full Bid Lifecycle & Pipeline Lead'
   },
+  ACCOUNT_MANAGER: {
+    label: 'Account Manager',
+    badgeVariant: 'secondary',
+    description: 'The approving authority for a tender. Owns the Primary Review Go/No-Go decision, the EMD mode/exemption choice, Pre-Sales assignment, and pricing sign-off.',
+    summary: 'Tender Approving Authority'
+  },
   BID_EXECUTIVE: {
     label: 'Bid Executive',
     badgeVariant: 'outline',

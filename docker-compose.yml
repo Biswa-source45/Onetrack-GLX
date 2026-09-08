@@ -60,6 +60,16 @@ services:
       - DB_SSLMODE=disable
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      # Pulled from a .env file sitting next to this docker-compose.yml (Compose
+      # loads it automatically) — see .env.example for what to put in it.
+      # Falls back to an empty string if .env is missing, same as before, so the
+      # stack still boots; fill in .env for real auth/email to work.
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:-}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-}
+      - EMAIL_SMTP_SERVER=${EMAIL_SMTP_SERVER:-}
+      - EMAIL_SMTP_PORT=${EMAIL_SMTP_PORT:-587}
+      - EMAIL_USERNAME=${EMAIL_USERNAME:-}
+      - EMAIL_PASSWORD=${EMAIL_PASSWORD:-}
     depends_on:
       postgres:
         condition: service_healthy

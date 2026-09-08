@@ -222,7 +222,7 @@ const STAGE_OPTIONS = [
   { value: 'DOCUMENT_CHECKLIST_PREPARATION', label: '4. Checklist Prep' },
   { value: 'EMD_PROCESSING', label: '5. EMD Processing' },
   { value: 'INTERNAL_APPROVAL', label: '6. Internal Approval' },
-  { value: 'GEM_SUBMISSION', label: '7. GeM Submission' },
+  { value: 'GEM_SUBMISSION', label: '7. Bid Submission' },
   { value: 'TECHNICAL_EVALUATION', label: '8. Tech Eval' },
   { value: 'FINANCIAL_EVALUATION', label: '9. Financial Eval' },
   { value: 'AWARD_HANDOVER', label: '10. Award & Delivery' },
@@ -239,11 +239,14 @@ const STATUS_OPTIONS = [
   // Closed = assessed then dropped without bidding. Not a workflow stage, so it
   // appears here but never in STAGE_OPTIONS above.
   { value: 'CLOSED', label: 'Closed (No Bid)' },
-  // No "Submitted" entry: a submitted tender moves straight to evaluation, so
-  // it is always found under "Under Tech Eval". The sheet view still shows the
-  // per-tender Submission Status column.
-  { value: 'TECHNICAL_EVALUATION', label: 'Under Tech Eval' },
+  // Broad "has been submitted" bucket the backend derives (Bid Submission,
+  // Tech Eval, or Fin Eval, or otherwise flagged submitted) — matches what the
+  // "Submitted" KPI tile above counts. For one exact stage, not the bucket,
+  // use the two entries below (they route to the Stage filter instead).
+  { value: 'TECHNICAL_EVALUATION', label: 'Submitted' },
   { value: 'ACTIVE', label: 'Active' },
+  { value: 'STAGE_TECHNICAL_EVALUATION', label: 'Under Tech Eval', stage: 'TECHNICAL_EVALUATION' },
+  { value: 'STAGE_FINANCIAL_EVALUATION', label: 'Under Fin Eval', stage: 'FINANCIAL_EVALUATION' },
 ]
 
 const END_DATE_OPTIONS = [
@@ -824,7 +827,7 @@ export function TendersPage({ initialScope = 'all' }) {
         {[
           { label: 'Total Tenders', value: meta.total ?? 0, icon: FileText, color: 'text-blue-600', bg: 'bg-blue-50/50', filterKey: '' },
           { label: 'Active', value: meta.active_count ?? 0, icon: TrendingUp, color: 'text-emerald-600', bg: 'bg-emerald-50/50', filterKey: 'ACTIVE' },
-          { label: 'Under Tech Eval', value: meta.tech_eval_count ?? 0, icon: Clock, color: 'text-teal-600', bg: 'bg-teal-50/50', filterKey: 'TECHNICAL_EVALUATION' },
+          { label: 'Submitted', value: meta.tech_eval_count ?? 0, icon: Clock, color: 'text-teal-600', bg: 'bg-teal-50/50', filterKey: 'TECHNICAL_EVALUATION' },
           { label: 'Won', value: meta.won_count ?? 0, icon: CheckCircle2, color: 'text-sky-600', bg: 'bg-sky-50/50', filterKey: 'WON' },
           { label: 'Lost', value: meta.lost_count ?? 0, icon: XCircle, color: 'text-orange-600', bg: 'bg-orange-50/50', filterKey: 'LOST' },
           { label: 'Cancelled', value: meta.cancelled_count ?? 0, icon: Ban, color: 'text-red-600', bg: 'bg-red-50/50', filterKey: 'CANCELLED' },
@@ -913,7 +916,10 @@ export function TendersPage({ initialScope = 'all' }) {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" className="h-8.5 text-xs font-normal bg-background border-input text-foreground hover:bg-muted/50 gap-1.5">
-                  <span>{STATUS_OPTIONS.find(o => o.value === statusFilter)?.label || 'All Statuses'}</span>
+                  <span>{(
+                    (statusFilter ? STATUS_OPTIONS.find(o => !o.stage && o.value === statusFilter) : null)
+                    || STATUS_OPTIONS.find(o => o.stage && o.stage === stageFilter)
+                  )?.label || 'All Statuses'}</span>
                   <ChevronDown className="size-3 text-muted-foreground ml-auto" />
                 </Button>
               </DropdownMenuTrigger>
@@ -921,7 +927,14 @@ export function TendersPage({ initialScope = 'all' }) {
                 <DropdownMenuLabel>Filter by Status</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 {STATUS_OPTIONS.filter(o => o.value !== 'ARCHIVED').map((o) => (
-                  <DropdownMenuItem key={o.value} onSelect={() => { setStatusFilter(o.value); setPage(1) }}>
+                  <DropdownMenuItem key={o.value} onSelect={() => {
+                    // The two exact-stage entries (Under Tech Eval / Under Fin
+                    // Eval) route through the Stage filter — same mechanism as
+                    // the Stage dropdown — instead of the broad status bucket.
+                    if (o.stage) { setStageFilter(o.stage); setStatusFilter('') }
+                    else { setStatusFilter(o.value); setStageFilter('') }
+                    setPage(1)
+                  }}>
                     {o.label}
                   </DropdownMenuItem>
                 ))}
@@ -1175,7 +1188,7 @@ export function TendersPage({ initialScope = 'all' }) {
                         <div className="space-y-1.5 bg-muted/30 p-2.5 rounded-lg border border-border/40 text-xs">
                           <div className="flex justify-between items-center">
                             <span className="text-muted-foreground flex items-center gap-1">
-                              <Building2 className="size-3 text-muted-foreground/75" /> Authority
+                              <Building2 className="size-3 text-muted-foreground/75" /> Account Name
                             </span>
                             <span className="font-semibold text-foreground truncate max-w-[150px]">
                               {bid.organization_name ?? '—'}
@@ -1189,6 +1202,16 @@ export function TendersPage({ initialScope = 'all' }) {
                               {formatCurrency(bid.estimated_value)}
                             </span>
                           </div>
+                          {bid.account_manager && (
+                            <div className="flex justify-between items-center">
+                              <span className="text-muted-foreground flex items-center gap-1">
+                                <UserCheck className="size-3 text-muted-foreground/75" /> Account Manager
+                              </span>
+                              <span className="font-semibold text-foreground truncate max-w-[150px]">
+                                {bid.account_manager.full_name}
+                              </span>
+                            </div>
+                          )}
                         </div>
 
                         {/* Workflow Progress */}
@@ -1670,7 +1693,7 @@ export function TendersPage({ initialScope = 'all' }) {
                             )}
                           </td>
 
-                          {/* GlobX Total — the final submitted bid price (Stage 7 / GeM Submission),
+                          {/* GlobX Total — the final submitted bid price (Stage 7 / Bid Submission),
                                sourced automatically from the approved Pricing Request total. Read-only. */}
                           <td className="p-3 border-r border-border font-mono font-semibold text-foreground">
                             {bid.quoted_price !== null && bid.quoted_price !== undefined ? formatCurrency(bid.quoted_price) : '—'}

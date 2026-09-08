@@ -5,7 +5,7 @@ import {
   AlertCircle, CheckCircle2, Send, Upload, Hourglass, Trophy,
   XCircle, Plus, Trash2, ArrowRight, DollarSign, Building2,
   Lock, Sparkles, UserCheck, Bell, Calculator, ExternalLink, RefreshCw, Edit2, Loader2, AlertTriangle,
-  Calendar, Clock, History, MessageSquare, Eye, ChevronRight, Ban
+  Calendar, Clock, History, MessageSquare, Eye, ChevronRight, Ban, Users
 } from 'lucide-react'
 import { toast } from 'sonner'
 import confetti from 'canvas-confetti'
@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import {
   Dialog,
   DialogContent,
@@ -21,12 +22,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { transitionBidStage, recordBidOutcome, updateBid, getBidStageHistory } from '../../services/bids'
+import { transitionBidStage, recordBidOutcome, updateBid, getBidStageHistory, toggleChecklist } from '../../services/bids'
 import { usePermissions } from '../../hooks/usePermissions'
 import { tokenStorage } from '../../services/auth'
 import { ChecklistTab } from './ChecklistTab'
 import { logStageMicroEvent } from '../../services/auditLogger'
 import { useBidStore } from '../../store/useBidStore'
+import { buildAlertNoteHtml } from '../../lib/tenderFormat'
 
 function fmtMoney(v) {
   if (!v && v !== 0) return '—'
@@ -38,6 +40,97 @@ function fmtMoney(v) {
 function fmtDate(dt) {
   if (!dt) return '—'
   return new Date(dt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function fmtDateTime(dt) {
+  if (!dt) return '—'
+  return new Date(dt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+// Pre-Sales' per-product OEM used to be one free-text string per product
+// index; it's now an array of candidates. Old tenders still carry the
+// string, so every read goes through here. A legacy single value is treated
+// as "suggested" so it keeps winning over the static requested_products
+// seed in resolveProductOem below — an old tender must not visibly change.
+function normalizeOemCandidates(stored) {
+  if (Array.isArray(stored)) return stored.filter(c => c && c.oem)
+  if (typeof stored === 'string' && stored.trim()) {
+    return [{ oem: stored.trim(), remarks: '', suggested: true }]
+  }
+  return []
+}
+
+// Single source of truth for "which OEM applies to requested_products[index]".
+// Priority: Account Manager's final pick > Pre-Sales' suggested candidate >
+// Pre-Sales' first candidate > the static Add/Edit-Tender seed.
+function resolveProductOem(bid, index) {
+  const pr = (bid?.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
+  const am = (pr.amOemSelections || {})[index]
+  if (am) return am
+  const cands = normalizeOemCandidates((pr.presalesProducts || {})[index])
+  const pick = cands.find(c => c.suggested) || cands[0]
+  if (pick?.oem) return pick.oem
+  return (bid?.requested_products || [])[index]?.oem || ''
+}
+
+// Local-id generator for OEM-candidate/matrix rows that only need a stable
+// React key — Date.now() alone collides when several rows are created in
+// the same tick (e.g. "Add" clicked twice fast).
+let __oemRowSeq = 0
+function nextLocalId() { return `${Date.now()}-${__oemRowSeq++}` }
+
+// Builds Pre-Sales' per-product OEM-candidate rows from primary_review —
+// shared by Stage2PrimaryReviewWorkspace's initial useState and its resync
+// effect, so a refresh rebuilds this the exact same way mount did.
+function buildPresalesCands(products, primaryReview) {
+  const saved = primaryReview.presalesProducts || {}
+  return products.map((p, i) => {
+    const rows = normalizeOemCandidates(saved[i])
+    if (rows.length) return rows.map(c => ({ id: nextLocalId(), oem: c.oem, remarks: c.remarks || '', suggested: !!c.suggested }))
+    return p.oem ? [{ id: nextLocalId(), oem: p.oem, remarks: '', suggested: true }] : []
+  })
+}
+
+// The OEM Authorization matrix row shape — shared by the manual "Add OEM
+// Row" action and the Primary-Review auto-seed, so both produce identical rows.
+function makeOemRow(name, origin, byName) {
+  return {
+    id: nextLocalId(), name, origin,
+    // Never auto-initiated — a row appearing on the sheet (whether seeded
+    // from Primary Review or added by hand) is not the same as someone
+    // having actually kicked off the OEM authorization process for it.
+    initiated: 'NO', initiatedByName: '',
+    contactName: '', contactEmail: '',
+    docStatus: {},
+    maf: 'NOT RECEIVED',
+    compliance: 'NA',
+    followUp: '', followUps: [], remark: '',
+  }
+}
+
+// Renders a tender's key facts as an HTML table so identification alert
+// emails carry full detail dynamically, not a one-line mention the recipient
+// has to open the app to expand on. The backend's alert mailer passes HTML
+// straight through once it detects a <table>/<div>/<p> in the message.
+function buildTenderDetailHtml(bid) {
+  const rows = [
+    ['Tender Title', bid.title],
+    ['GeM / RFP No.', bid.gem_bid_no || bid.bid_no],
+    ['Account Name', bid.organization_name],
+    ['Department / Ministry', bid.department_name],
+    ['Location', bid.location],
+    ['Category', bid.category],
+    ['High-Level Scope', bid.high_level_scope],
+    ['Estimated Value', fmtMoney(bid.estimated_value)],
+    ['EMD Amount', bid.emd_not_applicable ? 'Not Applicable' : fmtMoney(bid.emd_amount)],
+    ['EMD Online Available', bid.emd_bank_name ? `Yes — ${bid.emd_bank_name}` : 'No'],
+    ['EMD DD Available', bid.emd_beneficiary ? `Yes — ${bid.emd_beneficiary}` : 'No'],
+    ['Exemptions Listed', (bid.emd_exemption_types || []).join(', ')],
+    ['Bank Guarantee', bid.bg_required ? `Required — ${bid.bg_rate ?? '—'}%${bid.bg_duration_months ? `, ${bid.bg_duration_months} mo` : ''}` : 'Not Required'],
+    ['Closing Date', fmtDate(bid.closing_date)],
+  ].filter(([, v]) => v)
+  const body = rows.map(([k, v]) => `<tr><td style="padding:4px 14px 4px 0;color:#64748b;font-weight:600;white-space:nowrap;vertical-align:top;">${k}</td><td style="padding:4px 0;color:#0f172a;">${v}</td></tr>`).join('')
+  return `<table style="border-collapse:collapse;width:100%;font-size:13px;margin-top:8px;">${body}</table>${buildAlertNoteHtml(bid.alert_note)}`
 }
 
 // Common Transition Dialog Component
@@ -168,6 +261,7 @@ function CompleteStageModal({ title, description, stageKey, bidId, bid, onComple
 
 export const WORKFLOW_STAGES_ORDERED = [
   'DISCOVERED',
+  'PRIMARY_REVIEW',
   'OEM_AUTHORIZATION_REQUEST',
   'PRICING_REQUEST',
   'DOCUMENT_CHECKLIST_PREPARATION',
@@ -177,6 +271,16 @@ export const WORKFLOW_STAGES_ORDERED = [
   'TECHNICAL_EVALUATION',
   'FINANCIAL_EVALUATION',
   'AWARD_HANDOVER',
+]
+
+// Stages gated behind Primary Review — locked (even though they otherwise
+// don't require strict prior-stage sequencing among themselves) until the
+// Account Manager marks PRIMARY_REVIEW complete.
+const STAGES_GATED_BY_PRIMARY_REVIEW = [
+  'OEM_AUTHORIZATION_REQUEST',
+  'PRICING_REQUEST',
+  'DOCUMENT_CHECKLIST_PREPARATION',
+  'EMD_PROCESSING',
 ]
 
 export function logStageInteraction(bidId, stageKey, actionReason, userOverride) {
@@ -228,10 +332,21 @@ export function checkStageState(bid, stageKey) {
   const isCurrent = stageIdx === currentIdx && !isTerminal && !isEmdExempt
 
   // Stage Locking:
-  // Stages 1 through 6 (indices 0 through 5) are NEVER locked.
-  // Stage locking applies ONLY from GeM Portal Submission onwards (stageIdx >= 6).
+  // 1. OEM Authorization / Pricing Request / Document Checklist Prep / EMD
+  //    Processing are locked until the Account Manager completes Primary
+  //    Review — but NOT sequentially gated against each other (they stay
+  //    parallel-accessible once unlocked, matching how the team actually
+  //    works them).
+  // 2. From Bid Submission onwards, every prior stage must actually be
+  //    complete (looked up by name, not a hardcoded index, so inserting a
+  //    stage earlier in the pipeline can't silently shift this boundary).
   let isLocked = false
-  if (stageIdx >= 6 && !isTerminal) {
+  const primaryReviewDone = completions['PRIMARY_REVIEW'] === true
+  if (!isTerminal && STAGES_GATED_BY_PRIMARY_REVIEW.includes(stageKey) && !primaryReviewDone) {
+    isLocked = true
+  }
+  const gemSubmissionIdx = WORKFLOW_STAGES_ORDERED.indexOf('GEM_SUBMISSION')
+  if (!isLocked && stageIdx >= gemSubmissionIdx && !isTerminal) {
     for (let i = 0; i < stageIdx; i++) {
       const priorKey = WORKFLOW_STAGES_ORDERED[i]
       const priorDone = completions[priorKey] === true || priorKey === 'DISCOVERED' || (priorKey === 'EMD_PROCESSING' && !!(bid?.emd_exempted || bid?.emd_not_applicable))
@@ -413,9 +528,9 @@ export function Stage1Workspace({ bid, onRefresh }) {
         </div>
 
         <div className="p-4 rounded-xl border border-border bg-card space-y-3">
-          <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Authority & Financials</h4>
+          <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Account & Financials</h4>
           <div className="space-y-2 text-xs">
-            <div className="flex justify-between"><span className="text-muted-foreground">Authority:</span><span className="font-medium text-foreground">{bid.organization_name}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Account Name:</span><span className="font-medium text-foreground">{bid.organization_name}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">Department:</span><span className="font-medium text-foreground">{bid.department_name || '—'}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">Estimated Value:</span><span className="font-bold text-foreground">{fmtMoney(bid.estimated_value)}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">EMD Required:</span><span className="font-medium text-foreground">{bid.emd_not_applicable ? 'Not Applicable' : bid.emd_exempted ? 'Exempted' : fmtMoney(bid.emd_amount)}</span></div>
@@ -427,7 +542,7 @@ export function Stage1Workspace({ bid, onRefresh }) {
       {showModal && (
         <CompleteStageModal
           title="Complete Stage 1: Search & Identification"
-          description="Marks Stage 1 as complete and sends an automated alert to the Pre-Sales team."
+          description="Marks Stage 1 as complete and alerts the Account Manager that Primary Review is ready."
           stageKey="DISCOVERED"
           bidId={bid.id}
           bid={bid}
@@ -435,18 +550,716 @@ export function Stage1Workspace({ bid, onRefresh }) {
           onComplete={async () => {
             try {
               const { createAlert } = await import('../../services/alerts')
-              await createAlert({
-                target_role: 'PRE_SALES',
-                bid_id: bid.id,
-                type: 'INFO',
-                title: `New Tender for Eligibility Assessment — ${bid.title}`,
-                message: `Tender ${bid.gem_bid_no || bid.id} has been identified and requires your eligibility assessment. Closing: ${fmtDate(bid.closing_date)}.`,
-              })
+              if (bid.account_manager?.id) {
+                await createAlert({
+                  user_id: bid.account_manager.id,
+                  bid_id: bid.id,
+                  type: 'INFO',
+                  title: `Ready for Primary Review — ${bid.title}`,
+                  message: `<p>Tender ${bid.gem_bid_no || bid.id} has been identified and is ready for your Primary Review (Go/No-Go).</p>${buildTenderDetailHtml(bid)}`,
+                })
+              }
             } catch {}
-            toast.success('Pre-Sales team alerted!')
+            toast.success('Account Manager alerted!')
             onRefresh()
           }}
         />
+      )}
+    </div>
+  )
+}
+
+// ── Stage 2: Primary Review ──────────────────────────────────────────────────
+// The Account Manager's Go/No-Go gate. Go unlocks OEM Authorization, Pricing
+// Request, Document Checklist Prep, and EMD Processing (see the
+// STAGES_GATED_BY_PRIMARY_REVIEW check in checkStageState above); No-Go
+// cancels the tender via the existing recordBidOutcome flow. Pre-Sales (if
+// assigned) gets its own tab to map each requested product to an OEM — that
+// tab's "mark done" is informational only and does not advance the stage.
+function NoGoModal({ bid, onClose, onDone }) {
+  const [reason, setReason] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!reason.trim()) { toast.error('A reason is required to cancel the tender'); return }
+    setSubmitting(true)
+    try {
+      const res = await recordBidOutcome(bid.id, { bid_outcome: 'CANCELLED', outcome_reason: reason.trim() })
+      if (!res.ok) {
+        toast.error(res.error?.message || 'Failed to cancel tender')
+        return
+      }
+      logStageInteraction(bid.id, 'PRIMARY_REVIEW', `[No-Go] Tender cancelled at Primary Review: ${reason.trim()}`)
+      toast.success('Tender marked No-Go and cancelled')
+      onDone()
+    } catch {
+      toast.error('Network error')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-md bg-card border border-border rounded-xl p-6 shadow-xl space-y-4">
+        <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+          <Ban className="size-5" />
+          <h3 className="text-base font-semibold font-heading text-foreground">No-Go — Cancel Tender</h3>
+        </div>
+        <p className="text-xs text-muted-foreground">This cancels the tender. This cannot be undone from here — a cancelled tender can only be revived by an Admin.</p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">Reason for No-Go *</Label>
+            <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this tender not being pursued?" className="text-xs min-h-[80px]" required />
+          </div>
+          <div className="flex gap-2 justify-end pt-2">
+            <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={submitting}>Cancel</Button>
+            <Button type="submit" size="sm" disabled={submitting} className="gap-2 bg-rose-600 hover:bg-rose-700 text-white">
+              {submitting ? <><Loader2 className="size-3.5 animate-spin" /> Cancelling...</> : 'Confirm No-Go'}
+            </Button>
+          </div>
+        </form>
+      </motion.div>
+    </div>
+  )
+}
+
+function EmdDecisionModal({ bid, onClose, onDone }) {
+  // Only offer the modes the tender document actually raised at Add/Edit
+  // Tender time — Online/DD are "available" when their fields were filled in,
+  // exemption is available when at least one criterion was ticked. Not
+  // Applicable always stays as a fallback override for a mistaken raw capture.
+  const hasOnline = !!bid.emd_bank_name
+  const hasDD = !!bid.emd_beneficiary
+  const rawExemptionTypes = Array.isArray(bid.emd_exemption_types) ? bid.emd_exemption_types : []
+  const hasExemption = rawExemptionTypes.length > 0
+  const availableModes = [
+    ...(hasOnline ? ['ONLINE'] : []),
+    ...(hasDD ? ['DD'] : []),
+    ...(hasExemption ? ['EXEMPTED'] : []),
+    'NOT_APPLICABLE',
+  ]
+  const exemptionChoices = hasExemption ? rawExemptionTypes : ['MSME', 'STARTUP', 'OTHER']
+
+  const [emdType, setEmdType] = useState(() => {
+    if (bid.emd_not_applicable) return 'NOT_APPLICABLE'
+    if (bid.emd_exempted) return 'EXEMPTED'
+    if (bid.emd_type && availableModes.includes(bid.emd_type)) return bid.emd_type
+    return availableModes[0] || 'NOT_APPLICABLE'
+  })
+  const [exemptionType, setExemptionType] = useState(bid.emd_exemption_type || '')
+  const [exemptionReason, setExemptionReason] = useState(bid.emd_exemption_reason || '')
+  const [bankName, setBankName] = useState(bid.emd_bank_name || '')
+  const [accountNumber, setAccountNumber] = useState(bid.emd_account_number || '')
+  const [ifscCode, setIfscCode] = useState(bid.emd_ifsc_code || '')
+  const [branch, setBranch] = useState(bid.emd_branch || '')
+  const [beneficiary, setBeneficiary] = useState(bid.emd_beneficiary || '')
+  const [payableAt, setPayableAt] = useState(bid.emd_payable_at || '')
+  const [submitting, setSubmitting] = useState(false)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (emdType === 'EXEMPTED' && !exemptionType) { toast.error('Select the exemption criterion (MSME / Startup / Other)'); return }
+    if (emdType === 'EXEMPTED' && exemptionType === 'OTHER' && !exemptionReason.trim()) { toast.error('Specify the reason for the Other exemption'); return }
+    if (emdType === 'ONLINE' && (!bankName.trim() || !accountNumber.trim() || !ifscCode.trim())) { toast.error('Bank name, account number, and IFSC code are required for Online EMD'); return }
+    if (emdType === 'DD' && (!beneficiary.trim() || !payableAt.trim())) { toast.error('Beneficiary and payable-at location are required for DD EMD'); return }
+    setSubmitting(true)
+    try {
+      const payload = {
+        emd_not_applicable: emdType === 'NOT_APPLICABLE',
+        emd_exempted: emdType === 'EXEMPTED',
+        emd_type: emdType === 'EXEMPTED' || emdType === 'NOT_APPLICABLE' ? bid.emd_type || 'ONLINE' : emdType,
+        emd_exemption_type: emdType === 'EXEMPTED' ? exemptionType : '',
+        emd_exemption_reason: emdType === 'EXEMPTED' && exemptionType === 'OTHER' ? exemptionReason.trim() : '',
+        emd_bank_name: emdType === 'ONLINE' ? bankName.trim() : bid.emd_bank_name || '',
+        emd_account_number: emdType === 'ONLINE' ? accountNumber.trim() : bid.emd_account_number || '',
+        emd_ifsc_code: emdType === 'ONLINE' ? ifscCode.trim() : bid.emd_ifsc_code || '',
+        emd_branch: emdType === 'ONLINE' ? branch.trim() : bid.emd_branch || '',
+        emd_beneficiary: emdType === 'DD' ? beneficiary.trim() : bid.emd_beneficiary || '',
+        emd_payable_at: emdType === 'DD' ? payableAt.trim() : bid.emd_payable_at || '',
+      }
+      const res = await updateBid(bid.id, payload)
+      if (!res.ok) { toast.error(res.error?.message || 'Failed to save EMD decision'); return }
+      logStageInteraction(bid.id, 'PRIMARY_REVIEW', `EMD decision confirmed: ${emdType}${exemptionType ? ` (${exemptionType})` : ''}`)
+      toast.success('EMD decision saved')
+      onDone()
+    } catch {
+      toast.error('Network error')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-md bg-card border border-border rounded-xl p-6 shadow-xl space-y-4 max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center gap-2 text-foreground">
+          <Coins className="size-5 text-amber-600" />
+          <h3 className="text-base font-semibold font-heading">Confirm EMD Decision</h3>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">EMD Mode</Label>
+            <div className="flex flex-wrap gap-2">
+              {availableModes.map((t) => (
+                <button key={t} type="button" onClick={() => setEmdType(t)}
+                  className={`text-xs px-3 py-1.5 rounded-md border font-medium transition-colors ${emdType === t ? 'bg-primary text-primary-foreground border-primary' : 'bg-background border-input text-foreground hover:bg-muted/50'}`}>
+                  {t === 'ONLINE' ? 'Online Payment' : t === 'DD' ? 'DD (Demand Draft)' : t === 'EXEMPTED' ? 'Exempted' : 'Not Applicable'}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground">Only the modes ticked on this tender at Add/Edit Tender time are offered here.</p>
+          </div>
+          {emdType === 'ONLINE' && (
+            <div className="space-y-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800">
+              <p className="text-xs font-semibold text-blue-800 dark:text-blue-200">Bank Details *</p>
+              <Input value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="Bank Name" className="text-xs h-8" />
+              <Input value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} placeholder="Account Number" className="text-xs h-8" />
+              <Input value={ifscCode} onChange={(e) => setIfscCode(e.target.value.toUpperCase())} placeholder="IFSC Code" className="text-xs h-8" />
+              <Input value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="Branch (if required)" className="text-xs h-8" />
+            </div>
+          )}
+          {emdType === 'DD' && (
+            <div className="space-y-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800">
+              <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">DD Details *</p>
+              <Input value={beneficiary} onChange={(e) => setBeneficiary(e.target.value)} placeholder="Beneficiary" className="text-xs h-8" />
+              <Input value={payableAt} onChange={(e) => setPayableAt(e.target.value)} placeholder="Payable At" className="text-xs h-8" />
+            </div>
+          )}
+          {emdType === 'EXEMPTED' && (
+            <div className="space-y-2 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800">
+              <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-200">Exemption Basis *</p>
+              <div className="flex flex-wrap items-center gap-4">
+                {exemptionChoices.map((t) => (
+                  <label key={t} className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-foreground">
+                    <input type="radio" name="pr_emd_exemption" checked={exemptionType === t} onChange={() => setExemptionType(t)} className="accent-primary" />
+                    {t === 'OTHER' ? 'Other' : t === 'STARTUP' ? 'Startup' : t === 'MSME' ? 'MSME' : t}
+                  </label>
+                ))}
+              </div>
+              {exemptionType === 'OTHER' && (
+                <Input value={exemptionReason} onChange={(e) => setExemptionReason(e.target.value)} placeholder="Specify the reason" className="text-xs h-8" />
+              )}
+            </div>
+          )}
+          <div className="flex gap-2 justify-end pt-2">
+            <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={submitting}>Cancel</Button>
+            <Button type="submit" size="sm" disabled={submitting} className="gap-2">
+              {submitting ? <><Loader2 className="size-3.5 animate-spin" /> Saving...</> : 'Confirm EMD Decision'}
+            </Button>
+          </div>
+        </form>
+      </motion.div>
+    </div>
+  )
+}
+
+function AssignPresalesModal({ bid, users, onClose, onDone }) {
+  const [presalesId, setPresalesId] = useState(bid.presales?.id || '')
+  const [submitting, setSubmitting] = useState(false)
+  const presalesUsers = users.filter(u => Array.isArray(u.roles) && u.roles.includes('PRE_SALES'))
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!presalesId) { toast.error('Select a Pre-Sales user'); return }
+    setSubmitting(true)
+    try {
+      const res = await updateBid(bid.id, { presales_id: presalesId })
+      if (!res.ok) { toast.error(res.error?.message || 'Failed to assign Pre-Sales'); return }
+      const person = presalesUsers.find(u => u.id === presalesId)
+      logStageInteraction(bid.id, 'PRIMARY_REVIEW', `Pre-Sales assigned: ${person?.full_name || presalesId}`)
+      toast.success('Pre-Sales assigned — they have been notified')
+      onDone()
+    } catch {
+      toast.error('Network error')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-md bg-card border border-border rounded-xl p-6 shadow-xl space-y-4">
+        <div className="flex items-center gap-2 text-foreground">
+          <Users className="size-5 text-violet-600" />
+          <h3 className="text-base font-semibold font-heading">{bid.presales ? 'Reassign Pre-Sales' : 'Assign Pre-Sales'}</h3>
+        </div>
+        {bid.presales && (
+          <div className="px-3 py-2 rounded-lg bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-900 text-xs">
+            <span className="text-muted-foreground">Currently assigned: </span>
+            <span className="font-semibold text-foreground">{bid.presales.full_name}</span>
+          </div>
+        )}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">{bid.presales ? 'Reassign To *' : 'Pre-Sales User *'}</Label>
+            {presalesUsers.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic">No users hold the Pre-Sales role yet.</p>
+            ) : (
+              <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto">
+                {presalesUsers.map((u) => (
+                  <label key={u.id} className="flex items-center gap-2 text-xs cursor-pointer p-2 rounded-md border border-border/60 hover:bg-muted/40">
+                    <input type="radio" name="pr_presales" checked={presalesId === u.id} onChange={() => setPresalesId(u.id)} className="accent-primary" />
+                    {u.full_name}
+                    {bid.presales?.id === u.id && (
+                      <span className="text-[10px] font-semibold text-violet-600 dark:text-violet-400">(current)</span>
+                    )}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2 justify-end pt-2">
+            <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={submitting}>Cancel</Button>
+            <Button type="submit" size="sm" disabled={submitting || presalesUsers.length === 0} className="gap-2">
+              {submitting ? <><Loader2 className="size-3.5 animate-spin" /> Assigning...</> : 'Assign'}
+            </Button>
+          </div>
+        </form>
+      </motion.div>
+    </div>
+  )
+}
+
+// Who completed a given stage, and when — read back from the shared stage
+// history (every CompleteStageModal submission logs a STAGE_CHANGE event via
+// logStageInteraction), rather than a stage-specific field. Same technique
+// Stage6Workspace already uses for "who alerted Finance", generalized so
+// Stage3 (OEM Authorization) and Stage8 (Internal Approval) can show the
+// same "completed by / on" line instead of leaving the completion silent.
+function useStageCompletedBy(bidId, stageKey, enabled) {
+  const [completedBy, setCompletedBy] = useState(null)
+  useEffect(() => {
+    if (!enabled) { setCompletedBy(null); return }
+    let cancelled = false
+    getBidStageHistory(bidId).then((res) => {
+      if (cancelled || !res.ok) return
+      const entries = (res.data || []).filter(
+        (h) => h.to_stage === stageKey && h.event_type === 'STAGE_CHANGE'
+      )
+      const last = entries[entries.length - 1]
+      if (last?.transitioned_by) {
+        setCompletedBy({
+          name: last.transitioned_by.full_name || last.transitioned_by.username || 'someone',
+          at: last.created_at,
+        })
+      }
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [bidId, stageKey, enabled])
+  return completedBy
+}
+
+function fmtEmdSummary(bid) {
+  if (bid.emd_not_applicable) return 'Not Applicable'
+  if (bid.emd_exempted) {
+    const base = `Exempted (${bid.emd_exemption_type || '—'})`
+    return bid.emd_exemption_type === 'OTHER' && bid.emd_exemption_reason ? `${base}: ${bid.emd_exemption_reason}` : base
+  }
+  return bid.emd_type === 'DD' ? 'DD (Demand Draft)' : 'Online Payment'
+}
+
+export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
+  const { user: currentUser, isAdmin } = usePermissions()
+  const { users, loadUsers } = useBidStore()
+  useEffect(() => { loadUsers() }, [loadUsers])
+
+  const isAssignedAM = !!currentUser?.id && currentUser.id === bid?.account_manager?.id
+  const isAssignedPresales = !!currentUser?.id && currentUser.id === bid?.presales?.id
+  const canManageAM = isAssignedAM || isAdmin
+  const canManagePresales = isAssignedPresales || isAdmin
+  // Once Go is recorded (stage complete), No-Go no longer applies here — cancelling
+  // an already-approved tender goes through the top-right "Cancel Tender" action instead.
+  const primaryReviewCompleted = bid?.stage_completions?.PRIMARY_REVIEW === true
+
+  const [activeTab, setActiveTab] = useState((isAssignedPresales && !canManageAM) ? 'presales' : 'account_manager')
+  const [showCompleteModal, setShowCompleteModal] = useState(false)
+  const [showNoGoModal, setShowNoGoModal] = useState(false)
+  const [showEmdModal, setShowEmdModal] = useState(false)
+  const [showAssignPresalesModal, setShowAssignPresalesModal] = useState(false)
+
+  const products = Array.isArray(bid.requested_products) ? bid.requested_products : []
+  const primaryReview = bid.primary_review && typeof bid.primary_review === 'object' ? bid.primary_review : {}
+  // Each product gets a list of OEM candidates (name + remarks + an optional
+  // "suggested" flag), not a single string — backward-compatible with old
+  // tenders whose saved value is still a bare string (normalizeOemCandidates
+  // wraps it as one suggested candidate).
+  const [presalesCands, setPresalesCands] = useState(() => buildPresalesCands(products, primaryReview))
+  const presalesCompleted = !!primaryReview.presalesCompleted
+
+  // Resync when bid.primary_review changes after mount (a refresh, or
+  // another session's edit) — without this, a refresh updates the
+  // surrounding chrome (option lists, "Finalized" badge) but leaves the
+  // actual candidate rows frozen at whatever they were on mount.
+  useEffect(() => {
+    setPresalesCands(buildPresalesCands(products, primaryReview))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bid.primary_review, bid.requested_products])
+
+  const addCand = (i) => setPresalesCands(prev => prev.map((rows, j) => j === i ? [...rows, { id: nextLocalId(), oem: '', remarks: '', suggested: false }] : rows))
+  const rmCand = (i, id) => setPresalesCands(prev => prev.map((rows, j) => j === i ? rows.filter(r => r.id !== id) : rows))
+  const updCand = (i, id, field, value) => setPresalesCands(prev => prev.map((rows, j) => j === i ? rows.map(r => r.id === id ? { ...r, [field]: value } : r) : rows))
+  const toggleSuggested = (i, id) => setPresalesCands(prev => prev.map((rows, j) => j === i ? rows.map(r => ({ ...r, suggested: r.id === id ? !r.suggested : false })) : rows))
+
+  const savePresalesOems = async (next, markComplete) => {
+    const map = {}
+    next.forEach((rows, i) => {
+      const clean = rows.filter(r => r.oem.trim()).map(({ id, ...rest }) => ({ ...rest, oem: rest.oem.trim() }))
+      if (clean.length) map[i] = clean
+    })
+    const payload = {
+      ...primaryReview,
+      presalesProducts: map,
+      ...(markComplete !== undefined ? {
+        presalesCompleted: markComplete,
+        presalesCompletedAt: markComplete ? new Date().toISOString() : '',
+        presalesCompletedBy: markComplete ? (currentUser?.full_name || currentUser?.username || '') : '',
+      } : {}),
+    }
+    const res = await updateBid(bid.id, { primary_review: JSON.stringify(payload) })
+    if (!res.ok) { toast.error(res.error?.message || 'Failed to save'); return false }
+    return true
+  }
+
+  const handleSaveOems = async () => {
+    const ok = await savePresalesOems(presalesCands)
+    if (ok) { toast.success('OEM mapping saved'); onRefresh() }
+  }
+
+  const handleTogglePresalesComplete = async () => {
+    const ok = await savePresalesOems(presalesCands, !presalesCompleted)
+    if (ok) {
+      logStageInteraction(bid.id, 'PRIMARY_REVIEW', presalesCompleted ? 'Pre-Sales reopened their OEM mapping' : 'Pre-Sales marked their Primary Review task complete')
+      toast.success(presalesCompleted ? 'Marked as in progress again' : 'Marked your part complete')
+      onRefresh()
+    }
+  }
+
+  // Account Manager's per-product final OEM pick, finalized separately from
+  // Pre-Sales' candidate list below (see the "Finalize Product OEMs" card).
+  const [amPicks, setAmPicks] = useState(() => products.map((p, i) => (primaryReview.amOemSelections || {})[i] || ''))
+  const [amPickOther, setAmPickOther] = useState(() => products.map(() => false))
+  // Same resync need as presalesCands above — otherwise a refresh leaves the
+  // AM's dropdown selections frozen at mount even though the dropdown's own
+  // option list (built straight off primaryReview) updates fine.
+  useEffect(() => {
+    setAmPicks(products.map((p, i) => (primaryReview.amOemSelections || {})[i] || ''))
+    setAmPickOther(products.map(() => false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bid.primary_review, bid.requested_products])
+  const amOemComplete = products.length === 0 || products.every((p, i) => !!(primaryReview.amOemSelections || {})[i])
+
+  const handleSaveAmOems = async () => {
+    const map = {}
+    amPicks.forEach((v, i) => { if (v && v.trim()) map[i] = v.trim() })
+    const payload = {
+      ...primaryReview,
+      amOemSelections: map,
+      amOemFinalizedAt: new Date().toISOString(),
+      amOemFinalizedBy: currentUser?.full_name || currentUser?.username || '',
+    }
+    const res = await updateBid(bid.id, { primary_review: JSON.stringify(payload) })
+    if (!res.ok) { toast.error(res.error?.message || 'Failed to save'); return }
+    logStageInteraction(bid.id, 'PRIMARY_REVIEW', 'Account Manager finalized the product→OEM selections')
+    toast.success('OEM selections saved')
+    onRefresh()
+  }
+
+  const showTabs = !!bid.presales
+
+  return (
+    <div className="space-y-6">
+      <div className="p-4 rounded-xl border border-rose-200 bg-rose-50/50 dark:bg-rose-950/20 dark:border-rose-900/50 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-rose-900 dark:text-rose-300">Stage 2: Primary Review</h3>
+          <p className="text-xs text-rose-700 dark:text-rose-400">Account Manager Go/No-Go — unlocks OEM Authorization, Pricing, Document Checklist &amp; EMD Processing.</p>
+        </div>
+        <StageHeaderActions
+          bid={bid}
+          stageKey="PRIMARY_REVIEW"
+          onCompleteClick={() => setShowCompleteModal(true)}
+          onRefresh={onRefresh}
+          completeLabel="Mark Primary Review Complete"
+          disabled={!canManageAM || !amOemComplete}
+          disabledTooltip={!canManageAM ? 'Only the assigned Account Manager (or an Admin) can complete Primary Review.' : 'Finalize the OEM for every product before completing Primary Review.'}
+        />
+      </div>
+
+      {showTabs && (
+        <div className="flex gap-1 border-b border-border/60">
+          <button onClick={() => setActiveTab('account_manager')}
+            className={`px-3 py-2 text-xs font-semibold uppercase tracking-wider border-b-2 transition-colors ${activeTab === 'account_manager' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
+            Account Manager
+          </button>
+          <button onClick={() => setActiveTab('presales')}
+            className={`px-3 py-2 text-xs font-semibold uppercase tracking-wider border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === 'presales' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
+            Pre-Sales
+            {presalesCompleted && <CheckCircle2 className="size-3.5 text-emerald-500" />}
+          </button>
+        </div>
+      )}
+
+      {(!showTabs || activeTab === 'account_manager') && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-4 rounded-xl border border-border bg-card space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Tender Overview</h4>
+              <div className="space-y-2 text-xs">
+                <div><span className="text-muted-foreground block">Title:</span> <span className="font-semibold text-foreground">{bid.title}</span></div>
+                <div><span className="text-muted-foreground block">Account Name:</span> <span className="font-medium text-foreground">{bid.organization_name || '—'}</span></div>
+                <div><span className="text-muted-foreground block">Department:</span> <span className="font-medium text-foreground">{bid.department_name || '—'}</span></div>
+                <div><span className="text-muted-foreground block">Location:</span> <span className="font-medium text-foreground">{bid.location || '—'}</span></div>
+                <div><span className="text-muted-foreground block">Category:</span> <span className="font-medium text-foreground">{bid.category || '—'}</span></div>
+              </div>
+            </div>
+            <div className="p-4 rounded-xl border border-border bg-card space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Financials</h4>
+              <div className="space-y-2 text-xs">
+                <div className="flex justify-between"><span className="text-muted-foreground">Estimated Value:</span><span className="font-bold text-foreground">{fmtMoney(bid.estimated_value)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">EMD Amount:</span><span className="font-medium text-foreground">{bid.emd_not_applicable ? 'Not Applicable' : fmtMoney(bid.emd_amount)}</span></div>
+                {!bid.emd_not_applicable && (
+                  <>
+                    <div className="flex justify-between"><span className="text-muted-foreground">EMD Online:</span><span className="font-medium text-foreground">{bid.emd_bank_name ? `Offered — ${bid.emd_bank_name}` : 'Not Offered'}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">EMD DD:</span><span className="font-medium text-foreground">{bid.emd_beneficiary ? `Offered — ${bid.emd_beneficiary}` : 'Not Offered'}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Exemptions Listed:</span><span className="font-medium text-foreground">{(bid.emd_exemption_types || []).length ? bid.emd_exemption_types.join(', ') : 'None'}</span></div>
+                  </>
+                )}
+                <div className="flex justify-between border-t border-border/60 pt-2 mt-1"><span className="text-muted-foreground">AM Decision:</span><span className="font-semibold text-foreground">{(bid.emd_type || bid.emd_exempted || bid.emd_not_applicable) ? fmtEmdSummary(bid) : 'Pending'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">BG Required:</span><span className="font-medium text-foreground">{bid.bg_required ? `Yes — ${bid.bg_rate ?? '—'}%${bid.bg_duration_months ? `, ${bid.bg_duration_months} mo` : ''}` : 'No'}</span></div>
+              </div>
+            </div>
+          </div>
+
+          {products.length > 0 && (
+            <div className="p-4 rounded-xl border border-border bg-card space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Products/Services Asked in the RFP</h4>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Product/Service</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead className="w-20">Qty</TableHead>
+                    <TableHead>OEM</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {products.map((p, i) => (
+                    <TableRow key={i}>
+                      <TableCell>{p.product || '—'}</TableCell>
+                      <TableCell>{p.description || '—'}</TableCell>
+                      <TableCell>{p.qty || '—'}</TableCell>
+                      <TableCell>{resolveProductOem(bid, i) || '—'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+
+          {products.length > 0 && (
+            <div className="p-4 rounded-xl border border-border bg-card space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Finalize Product OEMs</h4>
+                {primaryReview.amOemFinalizedAt && (
+                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                    Finalized {fmtDate(primaryReview.amOemFinalizedAt)}
+                  </span>
+                )}
+              </div>
+              <div className="space-y-3">
+                {products.map((p, i) => {
+                  const cands = normalizeOemCandidates(primaryReview.presalesProducts?.[i])
+                  const isOther = amPickOther[i] || (amPicks[i] && !cands.some(c => c.oem === amPicks[i]))
+                  return (
+                    <div key={i} className="flex flex-col sm:flex-row sm:items-center gap-2">
+                      <span className="text-xs font-medium text-foreground sm:w-40 shrink-0">{p.product || `Product ${i + 1}`}</span>
+                      <select
+                        className="h-8 text-xs bg-background border border-input rounded-md px-2 flex-1"
+                        disabled={!canManageAM}
+                        value={isOther ? '__other' : (amPicks[i] || '')}
+                        onChange={(e) => {
+                          const v = e.target.value
+                          setAmPickOther(prev => prev.map((x, j) => j === i ? v === '__other' : x))
+                          if (v !== '__other') setAmPicks(prev => prev.map((x, j) => j === i ? v : x))
+                        }}
+                      >
+                        <option value="">Select OEM…</option>
+                        {cands.map((c) => (
+                          <option key={c.oem} value={c.oem}>{c.oem}{c.suggested ? ' — suggested by Pre-Sales' : ''}</option>
+                        ))}
+                        <option value="__other">Other…</option>
+                      </select>
+                      {isOther && (
+                        <Input
+                          value={amPicks[i] || ''}
+                          onChange={(e) => setAmPicks(prev => prev.map((x, j) => j === i ? e.target.value : x))}
+                          placeholder="Enter OEM name"
+                          disabled={!canManageAM}
+                          className="h-8 text-xs bg-background sm:w-48"
+                        />
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+              <div className="flex justify-end">
+                <span title={!canManageAM ? 'Only the assigned Account Manager (or an Admin) can act here' : undefined}>
+                  <Button size="sm" disabled={!canManageAM} onClick={handleSaveAmOems} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm font-semibold disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none">Save OEM Selections</Button>
+                </span>
+              </div>
+            </div>
+          )}
+
+          <div className="p-4 rounded-xl border border-border bg-card space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Account Manager Actions</h4>
+            <div className="flex flex-wrap gap-2">
+              <span title={!canManageAM ? 'Only the assigned Account Manager (or an Admin) can act here' : undefined}>
+                <Button size="sm" variant="outline" disabled={!canManageAM} onClick={() => setShowEmdModal(true)} className="gap-1.5 text-xs">
+                  <Coins className="size-3.5" /> {bid.emd_type || bid.emd_exempted || bid.emd_not_applicable ? 'Update EMD Details' : 'Set EMD Decision'}
+                </Button>
+              </span>
+              <span title={!canManageAM ? 'Only the assigned Account Manager (or an Admin) can act here' : undefined}>
+                <Button size="sm" variant="outline" disabled={!canManageAM} onClick={() => setShowAssignPresalesModal(true)} className="gap-1.5 text-xs">
+                  <Users className="size-3.5" /> {bid.presales ? 'Reassign Pre-Sales' : 'Assign Pre-Sales'}
+                </Button>
+              </span>
+              {!primaryReviewCompleted && (
+                <span title={!canManageAM ? 'Only the assigned Account Manager (or an Admin) can act here' : undefined}>
+                  <Button size="sm" variant="outline" disabled={!canManageAM} onClick={() => setShowNoGoModal(true)} className="gap-1.5 text-xs border-rose-300 text-rose-700 hover:bg-rose-50 dark:text-rose-400 dark:border-rose-800 dark:hover:bg-rose-950/40">
+                    <Ban className="size-3.5" /> No-Go — Cancel Tender
+                  </Button>
+                </span>
+              )}
+            </div>
+            {primaryReviewCompleted && (
+              <p className="text-[11px] text-muted-foreground italic">Go was recorded for this tender — to cancel it now, use "Cancel Tender" at the top of the page.</p>
+            )}
+            {bid.presales && (
+              <p className="text-xs text-muted-foreground">Pre-Sales: <span className="font-semibold text-foreground">{bid.presales.full_name}</span>{presalesCompleted && <span className="text-emerald-600 dark:text-emerald-400"> — marked their part complete{primaryReview.presalesCompletedAt ? ` on ${fmtDate(primaryReview.presalesCompletedAt)}` : ''}</span>}</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showTabs && activeTab === 'presales' && (
+        <div className="space-y-4">
+          <div className="p-4 rounded-xl border border-border bg-card space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Map Each Product to an OEM</h4>
+              {presalesCompleted && (
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">Marked Complete</span>
+              )}
+            </div>
+            {products.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic">No products were added to this tender at creation time.</p>
+            ) : (
+              <div className="space-y-4">
+                {products.map((p, i) => (
+                  <div key={i} className="rounded-lg border border-border/70 p-3 space-y-2">
+                    <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                      <span className="text-xs font-semibold text-foreground">{p.product || `Product ${i + 1}`}</span>
+                      <span className="text-[11px] text-muted-foreground">{p.description || '—'} {p.qty ? `· Qty ${p.qty}` : ''}</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {(presalesCands[i] || []).map((c) => (
+                        <div key={c.id} className={`flex items-center gap-1.5 p-1.5 rounded-md border ${c.suggested ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800' : 'border-transparent'}`}>
+                          <input
+                            type="checkbox"
+                            checked={c.suggested}
+                            onChange={() => toggleSuggested(i, c.id)}
+                            disabled={!canManagePresales}
+                            title="Suggested by Pre-Sales"
+                            className="size-3.5 accent-amber-500 shrink-0"
+                          />
+                          <Input
+                            value={c.oem}
+                            onChange={(e) => updCand(i, c.id, 'oem', e.target.value)}
+                            placeholder="OEM name"
+                            disabled={!canManagePresales}
+                            className="h-8 text-xs bg-background flex-1 min-w-[100px]"
+                          />
+                          <Input
+                            value={c.remarks}
+                            onChange={(e) => updCand(i, c.id, 'remarks', e.target.value)}
+                            placeholder="Remarks (optional)"
+                            disabled={!canManagePresales}
+                            className="h-8 text-xs bg-background flex-1 min-w-[120px]"
+                          />
+                          <button type="button" onClick={() => rmCand(i, c.id)} disabled={!canManagePresales}
+                            className="p-1 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30 disabled:cursor-not-allowed shrink-0">
+                            <XCircle className="size-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <Button type="button" size="sm" variant="outline" disabled={!canManagePresales} onClick={() => addCand(i)} className="h-7 text-[11px] gap-1">
+                      <Plus className="size-3" /> Add OEM
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2 justify-end pt-1">
+              <span title={!canManagePresales ? 'Only the assigned Pre-Sales user (or an Admin) can act here' : undefined}>
+                <Button size="sm" variant="outline" disabled={!canManagePresales || products.length === 0} onClick={handleSaveOems} className="text-xs">Save</Button>
+              </span>
+              <span title={!canManagePresales ? 'Only the assigned Pre-Sales user (or an Admin) can act here' : undefined}>
+                <Button size="sm" disabled={!canManagePresales} onClick={handleTogglePresalesComplete}
+                  className={`text-xs gap-1.5 ${presalesCompleted ? '' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
+                  variant={presalesCompleted ? 'outline' : 'default'}>
+                  <CheckCircle2 className="size-3.5" /> {presalesCompleted ? 'Reopen' : 'Mark My Part Complete'}
+                </Button>
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCompleteModal && (
+        <CompleteStageModal
+          title="Complete Primary Review"
+          description="Marks Primary Review complete and unlocks OEM Authorization, Pricing Request, Document Checklist Preparation, and EMD Processing."
+          stageKey="PRIMARY_REVIEW"
+          bidId={bid.id}
+          bid={bid}
+          onClose={() => setShowCompleteModal(false)}
+          onComplete={async () => {
+            try {
+              const { createAlert } = await import('../../services/alerts')
+              await createAlert({
+                user_id: bid.created_by,
+                bid_id: bid.id,
+                type: 'INFO',
+                title: `Primary Review Complete — ${bid.title}`,
+                message: `Primary Review is complete for '${bid.title}'. EMD mode: ${fmtEmdSummary(bid)}. OEM Authorization, Pricing, Document Checklist, and EMD Processing are now unlocked.`,
+              })
+              if (bid.presales?.id) {
+                await createAlert({
+                  user_id: bid.presales.id,
+                  bid_id: bid.id,
+                  type: 'INFO',
+                  title: `Tender Approved — ${bid.title}`,
+                  message: `The Account Manager has approved '${bid.title}' at Primary Review. Please review and verify your OEM mapping.`,
+                })
+              }
+            } catch {}
+            toast.success('Primary Review complete — pipeline unlocked!')
+            onRefresh()
+          }}
+        />
+      )}
+
+      {showNoGoModal && (
+        <NoGoModal bid={bid} onClose={() => setShowNoGoModal(false)} onDone={() => { setShowNoGoModal(false); onRefresh() }} />
+      )}
+
+      {showEmdModal && (
+        <EmdDecisionModal bid={bid} onClose={() => setShowEmdModal(false)} onDone={() => { setShowEmdModal(false); onRefresh() }} />
+      )}
+
+      {showAssignPresalesModal && (
+        <AssignPresalesModal bid={bid} users={users} onClose={() => setShowAssignPresalesModal(false)} onDone={() => { setShowAssignPresalesModal(false); onRefresh() }} />
       )}
     </div>
   )
@@ -674,6 +1487,10 @@ function OEMFollowUpModal({ oem, bidId, onClose, onSaveFollowUps }) {
 // ── Stage 3: OEM Authorization Request ─────────────────────────────────────
 export function Stage3Workspace({ bid, onRefresh }) {
   const key = `onetrack_oem_${bid.id}`
+  // Declared early (used as a guard by the sync effect right below) rather
+  // than lower with the rest of the UI state — while the matrix is open for
+  // editing, a background refresh must not clobber in-progress row edits.
+  const [isEditing, setIsEditing] = useState(false)
 
   // Initialize: DB value (bid.oem_workspace) takes priority, then localStorage cache
   const [oems, setOems] = useState(() => {
@@ -691,55 +1508,99 @@ export function Stage3Workspace({ bid, onRefresh }) {
     return []
   })
 
-  // Sync state if bid.oem_workspace changes from background sync or onRefresh
+  // Sync state if bid.oem_workspace changes from background sync or onRefresh.
+  // Skipped while the matrix is open for editing — a refresh landing mid-edit
+  // (another session's change, or this session's own header refresh button)
+  // must not silently discard in-progress row edits.
   useEffect(() => {
+    if (isEditing) return
     if (bid.oem_workspace) {
-      let serverOems = []
+      let serverOems = null
       if (Array.isArray(bid.oem_workspace)) {
         serverOems = bid.oem_workspace
       } else if (typeof bid.oem_workspace === 'object' && Array.isArray(bid.oem_workspace.oems)) {
         serverOems = bid.oem_workspace.oems
       }
-      if (serverOems.length > 0) {
+      // Array.isArray (not a length check) — an empty array is a legitimate
+      // "every row was deleted elsewhere" state and must propagate too.
+      if (Array.isArray(serverOems)) {
         setOems(serverOems)
         localStorage.setItem(key, JSON.stringify(serverOems))
       }
     }
-  }, [bid.oem_workspace, key])
+  }, [bid.oem_workspace, key, isEditing])
 
-  const [isEditing, setIsEditing] = useState(false)
-  const [showModal, setShowModal] = useState(false)
-  const [activeFollowUpOem, setActiveFollowUpOem] = useState(null)
-  const [newOemName, setNewOemName] = useState('')
-
-  const saveOems = (list) => {
-    setOems(list)
-    localStorage.setItem(key, JSON.stringify(list))
-    // Persist to database so ALL users see the same data immediately
-    updateBid(bid.id, { oem_workspace: JSON.stringify(list) }).catch((err) => {
-      console.error('Failed to save OEM workspace to backend:', err)
+  // Rows are no longer added by hand — the sheet is kept in sync with
+  // whatever the Account Manager has finalized in Primary Review. A local
+  // "dismissed" set (mirrored into primary_review.oemRowsDismissed for
+  // persistence) remembers rows the user deliberately deleted, so the sync
+  // below doesn't immediately resurrect them. It's read from local state
+  // rather than straight off `bid` so a delete takes effect on the very
+  // next render, before the backend round-trip that persists it completes.
+  const [dismissedNames, setDismissedNames] = useState(() => {
+    const pr = (bid.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
+    return new Set((pr.oemRowsDismissed || []).map(n => n.trim().toLowerCase()))
+  })
+  useEffect(() => {
+    const pr = (bid.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
+    const fromServer = (pr.oemRowsDismissed || []).map(n => n.trim().toLowerCase())
+    if (!fromServer.length) return
+    setDismissedNames(prev => {
+      // Bail out to the same Set (no state change, no re-render) when there's
+      // nothing new — every refresh gives bid.primary_review a fresh object
+      // identity even with identical content, and a new Set here would
+      // re-trigger the additive-sync effect below on every single refresh.
+      const missing = fromServer.filter(n => !prev.has(n))
+      if (!missing.length) return prev
+      return new Set([...prev, ...missing])
     })
-  }
+  }, [bid.primary_review])
 
-  const addOem = () => {
-    if (!newOemName.trim()) { toast.error('OEM Name required'); return }
-    const entry = {
-      id: Date.now(), name: newOemName.trim(),
-      initiated: 'YES', maf: 'NOT RECEIVED', mii: 'NOT RECEIVED',
-      noMalicious: 'NOT RECEIVED', additionalDocs: '',
-      followUp: '', followUps: [], remark: ''
-    }
-    const nextList = [...oems, entry]
-    saveOems(nextList)
+  // Additive sync: every OEM the Account Manager has finalized gets a row on
+  // this sheet if it doesn't have one already — not just the first time, so
+  // a later addition in Primary Review still lands here without a manual
+  // "Add OEM Row" step. Runs on every render where `oems` or the AM's
+  // selections change; it's a no-op (checked via existingNames) once nothing
+  // is missing, so it settles after one write instead of looping.
+  useEffect(() => {
+    const pr = (bid.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
+    const picks = [...new Set(Object.values(pr.amOemSelections || {}).filter(Boolean))]
+    if (!picks.length) return
+    const existingNames = new Set(oems.map(o => o.name.trim().toLowerCase()))
+    const missing = picks.filter(n => !existingNames.has(n.trim().toLowerCase()) && !dismissedNames.has(n.trim().toLowerCase()))
+    if (!missing.length) return
+    const newRows = missing.map(n => makeOemRow(n, 'presales', ''))
+    const rows = [...oems, ...newRows]
+    setOems(rows)
+    localStorage.setItem(key, JSON.stringify(rows))
+    updateBid(bid.id, { oem_workspace: JSON.stringify(rows) }).then(() => { if (onRefresh) onRefresh() }).catch(() => {})
     logStageMicroEvent(bid.id, {
       fromStage: 'OEM_AUTHORIZATION_REQUEST',
       toStage: 'OEM_AUTHORIZATION_REQUEST',
       eventType: 'OEM',
-      transitionReason: `Added OEM authorization entry for "${entry.name}"`,
-      details: { oem_name: entry.name }
+      transitionReason: `Auto-created ${newRows.length} OEM row(s) from the Account Manager's finalized selections`,
+      details: { oems: missing },
     })
-    setNewOemName('')
-    toast.success(`OEM "${entry.name}" added to matrix`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bid.primary_review, bid.id, oems, dismissedNames])
+
+  const [showModal, setShowModal] = useState(false)
+  const [activeFollowUpOem, setActiveFollowUpOem] = useState(null)
+  const stageCompleted = bid?.stage_completions?.OEM_AUTHORIZATION_REQUEST === true
+  const completedBy = useStageCompletedBy(bid.id, 'OEM_AUTHORIZATION_REQUEST', stageCompleted)
+
+  // Awaitable — a caller that immediately follows a save with onRefresh()
+  // (a GET) must wait for this PATCH to actually land first, or the GET can
+  // win the race and the sync effect above overwrites the just-saved edit
+  // with pre-save data.
+  const saveOems = async (list) => {
+    setOems(list)
+    localStorage.setItem(key, JSON.stringify(list))
+    try {
+      await updateBid(bid.id, { oem_workspace: JSON.stringify(list) })
+    } catch (err) {
+      console.error('Failed to save OEM workspace to backend:', err)
+    }
   }
 
   const updateOemField = (id, field, value) => {
@@ -763,8 +1624,8 @@ export function Stage3Workspace({ bid, onRefresh }) {
     })
   }
 
-  const handleSaveMatrix = () => {
-    saveOems(oems)
+  const handleSaveMatrix = async () => {
+    await saveOems(oems)
     setIsEditing(false)
     logStageMicroEvent(bid.id, {
       fromStage: 'OEM_AUTHORIZATION_REQUEST',
@@ -773,14 +1634,41 @@ export function Stage3Workspace({ bid, onRefresh }) {
       transitionReason: `Saved OEM Authorization Matrix updates (${oems.length} OEM entries tracked)`,
       details: { oems }
     })
+    // Bidirectional sync: the linked Document Checklist item is complete only
+    // once EVERY tracked OEM has that document RECEIVED — with 2+ OEMs a
+    // single "yes" doesn't mean the requirement is satisfied for all of
+    // them, so this can't complete on just one row being RECEIVED. The
+    // reverse direction lives in ChecklistTab. Collected and awaited so the
+    // follow-up onRefresh() below can't race ahead of these writes either.
+    const checklistSyncs = []
+    oemChecklistItems.forEach(col => {
+      const shouldBeDone = oems.length > 0 && oems.every(o => (o.docStatus || {})[col.id] === 'RECEIVED')
+      if (!!col.is_done !== shouldBeDone) {
+        checklistSyncs.push(toggleChecklist(bid.id, col.id, shouldBeDone).catch(() => {}))
+      }
+    })
+    if (mafChecklistItem) {
+      const mafShouldBeDone = oems.length > 0 && oems.every(o => o.maf === 'RECEIVED')
+      if (!!mafChecklistItem.is_done !== mafShouldBeDone) {
+        checklistSyncs.push(toggleChecklist(bid.id, mafChecklistItem.id, mafShouldBeDone).catch(() => {}))
+      }
+    }
+    await Promise.all(checklistSyncs)
     toast.success('OEM Authorization Matrix saved successfully')
-    if (onRefresh) onRefresh()
+    if (onRefresh) await onRefresh()
   }
 
   const deleteOem = (id) => {
     const target = oems.find(o => o.id === id)
     const updated = oems.filter(o => o.id !== id)
     saveOems(updated)
+    if (target?.name) {
+      const normalized = target.name.trim().toLowerCase()
+      setDismissedNames(prev => new Set([...prev, normalized]))
+      const pr = (bid.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
+      const nextDismissed = [...new Set([...(pr.oemRowsDismissed || []), target.name])]
+      updateBid(bid.id, { primary_review: JSON.stringify({ ...pr, oemRowsDismissed: nextDismissed }) }).catch(() => {})
+    }
     logStageMicroEvent(bid.id, {
       fromStage: 'OEM_AUTHORIZATION_REQUEST',
       toStage: 'OEM_AUTHORIZATION_REQUEST',
@@ -792,20 +1680,64 @@ export function Stage3Workspace({ bid, onRefresh }) {
   }
 
   const getStageStatus = (o) => {
-    if (o.maf === 'RECEIVED') return { label: 'Permission to Proceed', cls: 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300' }
+    const allDocsReceived = docColumns.length > 0 && docColumns.every(col => getDocStatus(o, col) === 'RECEIVED')
+    if (allDocsReceived) return { label: 'Permission to Proceed', cls: 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300' }
     if (o.initiated === 'YES') return { label: 'Initiated (MAF Pending)', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-300' }
     return { label: 'Not Started', cls: 'bg-muted text-muted-foreground border-border' }
   }
+
+  // MAF is always tracked (GlobX requires it for every OEM regardless of the
+  // tender's own checklist). Every other document column is driven live by
+  // this tender's OEM checklist — add one there and it appears here; delete
+  // it there and it disappears here. (The checklist item titled like "MAF
+  // ..." is excluded from the dynamic list so it doesn't duplicate the fixed
+  // MAF column.) Deleting a checklist item never touches stage/audit history
+  // — that trail is append-only and unaffected by this.
+  const oemChecklistItems = (bid.checklists || [])
+    .filter(c => (c.checklist_group === 'OEM' || c.title.startsWith('[OEM]')) && !/\bmaf\b/i.test(c.title))
+    .map(c => ({ ...c, title: c.title.replace(/^\[OEM\]\s*/, '') }))
+  // The checklist item behind the fixed MAF column above — kept separate
+  // from oemChecklistItems (which excludes it) so Save Matrix can still
+  // back-sync it to the Document Checklist tab, matching every other OEM doc.
+  const mafChecklistItem = (bid.checklists || [])
+    .find(c => (c.checklist_group === 'OEM' || c.title.startsWith('[OEM]')) && /\bmaf\b/i.test(c.title))
+  const docColumns = [
+    { id: 'maf', title: 'MAF Cert', legacy: true },
+    ...oemChecklistItems.map(c => ({ id: c.id, title: c.title, legacy: false })),
+  ]
+  const getDocStatus = (o, col) => col.legacy ? (o[col.id] || 'NOT RECEIVED') : ((o.docStatus || {})[col.id] || 'NOT RECEIVED')
+  const setDocStatus = (oemId, col, value) => {
+    if (col.legacy) { updateOemField(oemId, col.id, value); return }
+    setOems(prev => prev.map(o => o.id === oemId ? { ...o, docStatus: { ...(o.docStatus || {}), [col.id]: value } } : o))
+  }
+
+  // Pre-Sales' own current product→OEM mapping (Primary Review), if they've
+  // ever saved one — the thing that can go stale when they revise it. Deliberately
+  // excludes the tender's static requested_products.oem seed value: that's
+  // fixed metadata from Add/Edit Tender time, not something Pre-Sales
+  // actively maintains, so a matrix row matching only that seed was never
+  // actually "confirmed" by a Pre-Sales mapping in the first place.
+  const presalesConfirmedNames = useMemo(() => {
+    const pr = (bid.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
+    // presalesProducts values are now arrays of {oem,remarks,suggested}
+    // candidates (previously a single string) — flatten through the shared
+    // normalizer rather than Object.values() directly, which would put
+    // whole candidate arrays into the Set instead of OEM name strings. An
+    // Account-Manager-finalized pick counts as confirmed too.
+    const cands = Object.values(pr.presalesProducts || {}).flatMap(v => normalizeOemCandidates(v).map(c => c.oem))
+    return new Set([...cands, ...Object.values(pr.amOemSelections || {})].filter(Boolean))
+  }, [bid.primary_review])
 
   const totalOEMs = oems.length
   const totalFollowUpsCount = useMemo(() => {
     return oems.reduce((acc, o) => acc + getOemFollowUps(o).length, 0)
   }, [oems])
-  const mafReceivedCount = useMemo(() => {
-    return oems.filter(o => o.maf === 'RECEIVED').length
-  }, [oems])
-  const miiReceivedCount = useMemo(() => {
-    return oems.filter(o => o.mii === 'RECEIVED').length
+  const docsCompleteCount = useMemo(() => {
+    if (docColumns.length === 0) return 0
+    return oems.filter(o => docColumns.every(col => getDocStatus(o, col) === 'RECEIVED')).length
+  }, [oems, docColumns])
+  const compliantCount = useMemo(() => {
+    return oems.filter(o => o.compliance === 'COMPLIANT').length
   }, [oems])
 
   return (
@@ -818,7 +1750,7 @@ export function Stage3Workspace({ bid, onRefresh }) {
               <ShieldCheck className="size-4.5" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-purple-950 dark:text-purple-200">Stage 2: OEM Authorization Matrix</h3>
+              <h3 className="text-sm font-bold text-purple-950 dark:text-purple-200">Stage 3: OEM Authorization Matrix</h3>
               <p className="text-xs text-purple-700 dark:text-purple-400 mt-0.5">Track MAF, MII, certificates, multiple follow-up logs, and OEM clarifications.</p>
             </div>
           </div>
@@ -864,8 +1796,8 @@ export function Stage3Workspace({ bid, onRefresh }) {
             <CheckCircle2 className="size-4" />
           </div>
           <div>
-            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">MAF Received</div>
-            <div className="text-base font-extrabold text-foreground font-mono">{mafReceivedCount} / {totalOEMs}</div>
+            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Docs Complete</div>
+            <div className="text-base font-extrabold text-foreground font-mono">{docsCompleteCount} / {totalOEMs}</div>
           </div>
         </div>
 
@@ -874,8 +1806,8 @@ export function Stage3Workspace({ bid, onRefresh }) {
             <ShieldCheck className="size-4" />
           </div>
           <div>
-            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">MII Received</div>
-            <div className="text-base font-extrabold text-foreground font-mono">{miiReceivedCount} / {totalOEMs}</div>
+            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">OEM Compliant</div>
+            <div className="text-base font-extrabold text-foreground font-mono">{compliantCount} / {totalOEMs}</div>
           </div>
         </div>
       </div>
@@ -903,11 +1835,12 @@ export function Stage3Workspace({ bid, onRefresh }) {
               <tr className="bg-muted/70 text-muted-foreground font-bold text-[11px] border-b border-border">
                 <th className="p-3 text-center w-12 border-r border-border/60">S.No</th>
                 <th className="p-3 border-r border-border/60 min-w-[150px]">OEM Name</th>
-                <th className="p-3 text-center border-r border-border/60">Initiated</th>
-                <th className="p-3 text-center border-r border-border/60">MAF Cert</th>
-                <th className="p-3 text-center border-r border-border/60">MII Cert</th>
-                <th className="p-3 text-center border-r border-border/60">No Malicious</th>
-                <th className="p-3 border-r border-border/60 min-w-[130px]">Additional Docs</th>
+                <th className="p-3 border-r border-border/60 min-w-[160px]">OEM Contact</th>
+                <th className="p-3 text-center border-r border-border/60 min-w-[120px]">Initiated By</th>
+                {docColumns.map(col => (
+                  <th key={col.id} className="p-3 text-center border-r border-border/60">{col.title}</th>
+                ))}
+                <th className="p-3 text-center border-r border-border/60 min-w-[110px]">OEM Compliance</th>
                 <th className="p-3 border-r border-border/60 bg-purple-50/50 dark:bg-purple-950/20 text-purple-900 dark:text-purple-300 min-w-[180px]">
                   <div className="flex items-center gap-1">
                     <History className="size-3 text-purple-600" />
@@ -922,9 +1855,9 @@ export function Stage3Workspace({ bid, onRefresh }) {
             <tbody className="divide-y divide-border/60">
               {oems.length === 0 ? (
                 <tr>
-                  <td colSpan={isEditing ? 11 : 10} className="p-8 text-center text-muted-foreground italic">
+                  <td colSpan={8 + docColumns.length + (isEditing ? 1 : 0)} className="p-8 text-center text-muted-foreground italic">
                     <Building2 className="size-8 text-muted-foreground/30 mx-auto mb-2" />
-                    No OEM authorization rows recorded. {isEditing ? 'Add an OEM below.' : 'Click "Edit Matrix" above to start tracking OEMs.'}
+                    No OEM authorization rows recorded yet. Finalize the product OEM selections in Primary Review to populate this sheet automatically.
                   </td>
                 </tr>
               ) : (
@@ -944,72 +1877,98 @@ export function Stage3Workspace({ bid, onRefresh }) {
                         {isEditing ? (
                           <Input size="sm" value={o.name} onChange={e => updateOemField(o.id, 'name', e.target.value)} className="h-8 text-xs font-bold" />
                         ) : (
-                          <span className="text-xs font-extrabold text-foreground">{o.name}</span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-extrabold text-foreground">{o.name}</span>
+                            {o.origin === 'presales' && presalesConfirmedNames.size > 0 && !presalesConfirmedNames.has(o.name) && (
+                              <span
+                                className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800"
+                                title="No longer matches any current Pre-Sales product→OEM mapping — rename this row or leave it if it's still valid."
+                              >
+                                Unmapped
+                              </span>
+                            )}
+                          </div>
                         )}
                       </td>
 
-                      {/* Process Initiated */}
+                      {/* OEM Contact Person */}
+                      <td className="p-3 border-r border-border/60">
+                        {isEditing ? (
+                          <div className="space-y-1">
+                            <Input size="sm" value={o.contactName || ''} onChange={e => updateOemField(o.id, 'contactName', e.target.value)} placeholder="Contact name" className="h-7 text-xs" />
+                            <Input size="sm" value={o.contactEmail || ''} onChange={e => updateOemField(o.id, 'contactEmail', e.target.value)} placeholder="Contact email" className="h-7 text-xs" />
+                          </div>
+                        ) : (
+                          <div className="text-xs">
+                            <div className="font-semibold text-foreground">{o.contactName || '—'}</div>
+                            {o.contactEmail && <div className="text-muted-foreground">{o.contactEmail}</div>}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Process Initiated (by whom) */}
                       <td className="p-3 text-center border-r border-border/60">
                         {isEditing ? (
-                          <select value={o.initiated} onChange={e => updateOemField(o.id, 'initiated', e.target.value)} className="h-7 text-xs border border-border rounded-md px-1.5 bg-background font-semibold">
+                          <select
+                            value={o.initiated}
+                            onChange={e => {
+                              const value = e.target.value
+                              updateOemField(o.id, 'initiated', value)
+                              if (value === 'YES' && !o.initiatedByName) {
+                                const cu = tokenStorage.getUser()
+                                updateOemField(o.id, 'initiatedByName', cu?.full_name || cu?.username || '')
+                              }
+                            }}
+                            className="h-7 text-xs border border-border rounded-md px-1.5 bg-background font-semibold">
                             <option value="YES">YES</option>
                             <option value="NO">NO</option>
                           </select>
                         ) : (
-                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold border ${o.initiated === 'YES' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-muted text-muted-foreground border-border'}`}>
-                            {o.initiated}
-                          </span>
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold border ${o.initiated === 'YES' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-muted text-muted-foreground border-border'}`}>
+                              {o.initiated}
+                            </span>
+                            {o.initiated === 'YES' && o.initiatedByName && (
+                              <span className="text-[10px] text-muted-foreground font-medium">by {o.initiatedByName}</span>
+                            )}
+                          </div>
                         )}
                       </td>
 
-                      {/* MAF Cert */}
+                      {/* Document status columns — dynamic, driven by this tender's OEM checklist items */}
+                      {docColumns.map(col => (
+                        <td key={col.id} className="p-3 text-center border-r border-border/60">
+                          {isEditing ? (
+                            <select value={getDocStatus(o, col)} onChange={e => setDocStatus(o.id, col, e.target.value)} className="h-7 text-xs border border-border rounded-md px-1.5 bg-background font-semibold">
+                              <option value="NOT RECEIVED">NOT RECEIVED</option>
+                              <option value="RECEIVED">RECEIVED</option>
+                            </select>
+                          ) : (
+                            <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold border ${getDocStatus(o, col) === 'RECEIVED' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300'}`}>
+                              {getDocStatus(o, col)}
+                            </span>
+                          )}
+                        </td>
+                      ))}
+
+                      {/* OEM Compliance */}
                       <td className="p-3 text-center border-r border-border/60">
                         {isEditing ? (
-                          <select value={o.maf} onChange={e => updateOemField(o.id, 'maf', e.target.value)} className="h-7 text-xs border border-border rounded-md px-1.5 bg-background font-semibold">
-                            <option value="NOT RECEIVED">NOT RECEIVED</option>
-                            <option value="RECEIVED">RECEIVED</option>
+                          <select value={o.compliance || 'NA'} onChange={e => updateOemField(o.id, 'compliance', e.target.value)} className="h-7 text-xs border border-border rounded-md px-1.5 bg-background font-semibold">
+                            <option value="COMPLIANT">Compliant</option>
+                            <option value="NOT_COMPLIANT">Not Compliant</option>
+                            <option value="PARTIAL_COMPLIANT">Partial Compliant</option>
+                            <option value="NA">NA</option>
                           </select>
                         ) : (
-                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold border ${o.maf === 'RECEIVED' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300'}`}>
-                            {o.maf}
+                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold border whitespace-nowrap ${
+                            o.compliance === 'COMPLIANT' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300'
+                            : o.compliance === 'NOT_COMPLIANT' ? 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300'
+                            : o.compliance === 'PARTIAL_COMPLIANT' ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300'
+                            : 'bg-muted text-muted-foreground border-border'
+                          }`}>
+                            {o.compliance === 'COMPLIANT' ? 'Compliant' : o.compliance === 'NOT_COMPLIANT' ? 'Not Compliant' : o.compliance === 'PARTIAL_COMPLIANT' ? 'Partial' : 'NA'}
                           </span>
-                        )}
-                      </td>
-
-                      {/* MII Cert */}
-                      <td className="p-3 text-center border-r border-border/60">
-                        {isEditing ? (
-                          <select value={o.mii} onChange={e => updateOemField(o.id, 'mii', e.target.value)} className="h-7 text-xs border border-border rounded-md px-1.5 bg-background font-semibold">
-                            <option value="NOT RECEIVED">NOT RECEIVED</option>
-                            <option value="RECEIVED">RECEIVED</option>
-                          </select>
-                        ) : (
-                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold border ${o.mii === 'RECEIVED' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-muted text-muted-foreground border-border'}`}>
-                            {o.mii}
-                          </span>
-                        )}
-                      </td>
-
-                      {/* No Malicious Cert */}
-                      <td className="p-3 text-center border-r border-border/60">
-                        {isEditing ? (
-                          <select value={o.noMalicious} onChange={e => updateOemField(o.id, 'noMalicious', e.target.value)} className="h-7 text-xs border border-border rounded-md px-1.5 bg-background font-semibold">
-                            <option value="NOT RECEIVED">NOT RECEIVED</option>
-                            <option value="RECEIVED">RECEIVED</option>
-                          </select>
-                        ) : (
-                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold border ${o.noMalicious === 'RECEIVED' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-muted text-muted-foreground border-border'}`}>
-                            {o.noMalicious}
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Additional Docs */}
-                      <td className="p-3 border-r border-border/60">
-                        {isEditing ? (
-                          <Input size="sm" value={o.additionalDocs} onChange={e => updateOemField(o.id, 'additionalDocs', e.target.value)} placeholder="e.g. OEM Compliance" className="h-7 text-xs" />
-                        ) : (
-                          <span className="text-xs text-muted-foreground font-medium">{o.additionalDocs || '—'}</span>
                         )}
                       </td>
 
@@ -1067,23 +2026,15 @@ export function Stage3Workspace({ bid, onRefresh }) {
             </tbody>
           </table>
         </div>
-
-        {/* Add OEM Row Form (Visible when editing) */}
-        {isEditing && (
-          <div className="pt-3 border-t border-border/60 flex flex-col sm:flex-row gap-2 items-end">
-            <div className="flex-1 w-full">
-              <Label className="text-[11px] font-semibold text-muted-foreground">Add New OEM Name</Label>
-              <Input value={newOemName} onChange={e => setNewOemName(e.target.value)} placeholder="e.g. Cisco Systems, Dell Enterprise, HP Inc." className="h-9 text-xs" onKeyDown={e => e.key === 'Enter' && addOem()} />
-            </div>
-            <Button size="sm" onClick={addOem} className="h-9 text-xs gap-1.5 bg-purple-600 hover:bg-purple-700 text-white font-semibold shadow-xs">
-              <Plus className="size-4" /> Add OEM Row
-            </Button>
-          </div>
-        )}
       </div>
 
       {/* Stage completion action — kept separate from Edit/Save Matrix above to avoid confusion */}
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-3">
+        {stageCompleted && completedBy && (
+          <span className="text-[11px] text-muted-foreground">
+            Completed by <span className="font-semibold text-foreground">{completedBy.name}</span> on {fmtDate(completedBy.at)}
+          </span>
+        )}
         <StageHeaderActions
           bid={bid}
           stageKey="OEM_AUTHORIZATION_REQUEST"
@@ -1120,7 +2071,7 @@ export function Stage3Workspace({ bid, onRefresh }) {
 }
 
 // Shared L1-quote-plus-GST calculation, used by both Stage 4 (Pricing Request,
-// where it's the live working calculation) and Stage 9 (GeM Submission, where
+// where it's the live working calculation) and Stage 8 (Bid Submission, where
 // it's a fallback for pricing sheets that were never sent through approval).
 // Calculation sequence: Base Purchase Price -> Margin % (applied to Base) ->
 // GlobX Unit Price Excl GST -> GST -> GlobX Unit Price w/GST -> GlobX Total.
@@ -1167,7 +2118,7 @@ function computeL1PricingSummary(pricingData, fallbackMarginPct = 2.45) {
     grandTotalProfit += profitTotal
 
     return {
-      sNo: idx + 1, desc: it.desc, qty, basicPrice, itemMargin,
+      sNo: idx + 1, desc: it.desc, oem: it.oem || '', qty, basicPrice, itemMargin,
       profitPerUnit, unitPriceExclGst, itemGstRate, unitGst, globxUnit,
       totalBase, totalSellingExclGst, totalGst, globxTotal, profitTotal,
     }
@@ -1184,11 +2135,50 @@ function computeL1PricingSummary(pricingData, fallbackMarginPct = 2.45) {
   }
 }
 
+// Highlighted callouts shared by the pricing approval request, reminder, and
+// approved alert/email bodies. Deliberately not red/green/blue — those read
+// as pass/fail state elsewhere in the app — and kept as inline `style=`
+// rather than Tailwind classes, since these strings are injected via
+// dangerouslySetInnerHTML and mailed verbatim; a class name that only ever
+// exists inside a runtime template literal is never emitted into the
+// Tailwind build.
+function buildRemarkCalloutHtml(name, text, label = 'Remarks') {
+  if (!text) return ''
+  return `<div style="margin:0 0 12px 0;padding:10px 14px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #f59e0b;color:#78350f;font-size:12px;"><strong style="color:#78350f;">⚑ ${label} from ${name}:</strong> ${text}</div>`
+}
+function buildValuesAdjustedBannerHtml(reqMargin, finalMargin, reqTotal, finalTotal) {
+  return `<div style="margin:0 0 12px 0;padding:10px 14px;border-radius:8px;background:#f5f3ff;border:1px solid #ddd6fe;border-left:4px solid #8b5cf6;color:#5b21b6;font-size:12px;font-weight:600;">⚠ Values were adjusted before approval — Margin: ${Number(reqMargin).toFixed(2)}% → ${Number(finalMargin).toFixed(2)}%, GlobX Total (incl. GST): ${fmtMoney(reqTotal)} → ${fmtMoney(finalTotal)}</div>`
+}
+
+// Module scope (not just the useState initializer) so the resync effect
+// below can reuse the exact same shape instead of redeclaring it.
+const PRICING_DEFAULTS = {
+  phase: 'INIT', // INIT | AWAITING | QUOTING | APPROVAL
+  distNames: [],
+  quotes: [], // [{id,distName,items:[{desc,qty,basicPrice}]}]
+  selectedDist: '',
+  // Single-approver pricing sign-off (replaces the old role-broadcast)
+  approverId: '',
+  approverName: '',
+  approvalRequestedAt: '',
+  approvalRemarks: '',
+  approvalStatus: '', // '' | 'PENDING' | 'APPROVED'
+  approvedAt: '',
+  reminders: [], // [{ sentAt, sentBy }]
+  marginPct: 2.45,
+}
+
 // ── Stage 4: Pricing Request ────────────────────────────────────────────────
 export function Stage4Workspace({ bid, onRefresh }) {
   const { hasRole, user: currentUser, isAdmin } = usePermissions()
-  // Presales can only VIEW Stage 4, not edit it
-  const isReadOnly = hasRole('PRE_SALES')
+  // Presales can only VIEW Stage 4, not edit it — unless they also hold a
+  // higher role (e.g. an Account Manager who has PRE_SALES as a secondary
+  // role must still be able to edit pricing on their own tender).
+  // Sending/managing pricing (request, quotes, approval routing) is the Bid
+  // Executive's job. Account Manager only approves — their own "Approve
+  // Pricing" action below is gated separately by canApprovePricing and isn't
+  // affected by this flag.
+  const isReadOnly = (hasRole('PRE_SALES') || hasRole('ACCOUNT_MANAGER')) && !hasRole('MANAGER') && !hasRole('BID_EXECUTIVE') && !isAdmin
 
   const { users, loadUsers } = useBidStore()
   useEffect(() => { loadUsers() }, [loadUsers])
@@ -1197,34 +2187,32 @@ export function Stage4Workspace({ bid, onRefresh }) {
 
   // Initialize: DB value (bid.pricing_workspace) takes priority, then localStorage cache
   const [pricingData, setPricingData] = useState(() => {
-    const DEFAULTS = {
-      phase: 'INIT', // INIT | AWAITING | QUOTING | APPROVAL
-      distNames: [],
-      quotes: [], // [{id,distName,items:[{desc,qty,basicPrice}]}]
-      selectedDist: '',
-      // Single-approver pricing sign-off (replaces the old role-broadcast)
-      approverId: '',
-      approverName: '',
-      approvalRequestedAt: '',
-      approvalStatus: '', // '' | 'PENDING' | 'APPROVED'
-      approvedAt: '',
-      reminders: [], // [{ sentAt, sentBy }]
-      marginPct: 2.45,
-    }
     // Prefer server-stored data (visible to all users)
     if (bid.pricing_workspace && typeof bid.pricing_workspace === 'object') {
-      return { ...DEFAULTS, ...bid.pricing_workspace }
+      return { ...PRICING_DEFAULTS, ...bid.pricing_workspace }
     }
     // Fallback: local cache (for backward compat)
     try {
       const cached = localStorage.getItem(key4)
-      if (cached) return { ...DEFAULTS, ...JSON.parse(cached) }
+      if (cached) return { ...PRICING_DEFAULTS, ...JSON.parse(cached) }
     } catch (_) {}
-    return DEFAULTS
+    return PRICING_DEFAULTS
   })
 
+  // Resync when bid.pricing_workspace changes after mount (a refresh, or
+  // another session's edit) — without this, Pricing Request's whole UI
+  // (phase, quotes, approval status, margin) stays frozen at whatever it was
+  // when the stage tab was first opened, since the workspace is never
+  // remounted on a bid refresh.
+  useEffect(() => {
+    if (bid.pricing_workspace && typeof bid.pricing_workspace === 'object') {
+      const next = { ...PRICING_DEFAULTS, ...bid.pricing_workspace }
+      setPricingData(next)
+      localStorage.setItem(key4, JSON.stringify(next))
+    }
+  }, [bid.pricing_workspace, key4])
+
   const marginPct = pricingData.marginPct ?? 2.45
-  const setMarginPct = (val) => save({ marginPct: Number(val) })
 
   const [showModal, setShowModal] = useState(false)
   const [showRequestDlg, setShowRequestDlg] = useState(false)
@@ -1233,22 +2221,47 @@ export function Stage4Workspace({ bid, onRefresh }) {
   const [showEditQuoteDlg, setShowEditQuoteDlg] = useState(false)
   const [editingQuoteId, setEditingQuoteId] = useState(null)
   const [showApprovalDlg, setShowApprovalDlg] = useState(false)
+  const [showMarginDlg, setShowMarginDlg] = useState(false)
   const [approverSelId, setApproverSelId] = useState('')
+  const [approvalRemarks, setApprovalRemarks] = useState('')
   const [quoteToDelete, setQuoteToDelete] = useState(null)
   const [newDistNameInput, setNewDistNameInput] = useState('')
   const [initDistNames, setInitDistNames] = useState('')
   const [addMoreDistNames, setAddMoreDistNames] = useState('')
   const [quoteDistSel, setQuoteDistSel] = useState('')
   const [quoteCustomName, setQuoteCustomName] = useState('')
-  const [quoteItems, setQuoteItems] = useState([{ desc: '', qty: 1, basicPrice: '' }])
+  const [quoteItems, setQuoteItems] = useState([{ desc: '', qty: 1, basicPrice: '', marginPct: '', oem: '' }])
+  const requestedProductNames = (bid.requested_products || []).map(p => p.product).filter(Boolean)
+  // Selecting a product line-item seeds its quantity from what was actually
+  // requested — the distributor is quoting against a known ask, not a blank
+  // field — but the value stays a normal editable input afterward, since a
+  // distributor's quote quantity can legitimately differ.
+  const requestedProductQtyByName = Object.fromEntries(
+    (bid.requested_products || []).filter(p => p.product && p.qty).map(p => [p.product, p.qty])
+  )
+  // Same idea, for the OEM finalized (or suggested) back in Primary Review —
+  // seeded onto a line item the same way qty is, and used as a fallback for
+  // rendering the OEM column on quotes saved before this field existed.
+  const resolvedOemByProductName = Object.fromEntries(
+    (bid.requested_products || [])
+      .map((p, i) => [p.product, resolveProductOem(bid, i)])
+      .filter(([n, o]) => n && o)
+  )
 
-  // Keep localStorage in sync as a fast cache, but source of truth is DB
-  const save = (upd) => {
+  // Keep localStorage in sync as a fast cache, but source of truth is DB.
+  // Awaitable — a caller that follows a save with onRefresh() (a GET) must
+  // wait for this PATCH to land first, or the GET can win the race and
+  // overwrite the just-saved edit with pre-save data.
+  const save = async (upd) => {
     const next = { ...pricingData, ...upd }
     setPricingData(next)
     localStorage.setItem(key4, JSON.stringify(next))
-    // Persist to database so ALL users see the same data
-    updateBid(bid.id, { pricing_workspace: JSON.stringify(next) }).catch(() => {})
+    try {
+      await updateBid(bid.id, { pricing_workspace: JSON.stringify(next) })
+    } catch (err) {
+      console.error('Failed to save pricing workspace to backend:', err)
+    }
+    return next
   }
 
   const handleSendRequest = () => {
@@ -1284,11 +2297,33 @@ export function Stage4Workspace({ bid, onRefresh }) {
     toast.success(`Added ${newNames.length} distributor(s) to the request list`)
   }
 
+  const handleOpenAddQuote = () => {
+    setQuoteDistSel('')
+    setQuoteCustomName('')
+    // Seed one line per requested product instead of a single blank row, so
+    // the user only has to fill in the base price per item — qty comes from
+    // what was actually requested, OEM from the finalized Primary Review
+    // pick (both already editable afterward, same as a manually typed row).
+    const seeded = (bid.requested_products || [])
+      .filter(p => p.product)
+      .map(p => ({
+        desc: p.product,
+        qty: requestedProductQtyByName[p.product] ?? (p.qty || 1),
+        basicPrice: '',
+        marginPct: '',
+        oem: resolvedOemByProductName[p.product] || '',
+      }))
+    setQuoteItems(seeded.length ? seeded : [{ desc: '', qty: 1, basicPrice: '', marginPct: '', oem: '' }])
+    setShowQuoteDlg(true)
+  }
+
   const handleAddQuote = () => {
     const effectiveName = quoteDistSel === 'Others' ? (quoteCustomName.trim() || 'Others') : (quoteDistSel || 'Others')
     if (!quoteItems.some(i => i.desc && i.basicPrice)) { toast.error('Fill at least one item'); return }
     const items = quoteItems.filter(i => i.desc && i.basicPrice).map(i => ({
-      desc: i.desc, qty: Number(i.qty) || 1, basicPrice: Number(i.basicPrice) || 0
+      desc: i.desc, qty: Number(i.qty) || 1, basicPrice: Number(i.basicPrice) || 0,
+      ...(i.marginPct !== '' && i.marginPct != null ? { marginPct: Number(i.marginPct) } : {}),
+      ...(i.oem ? { oem: i.oem } : {}),
     }))
     const quotes = [...pricingData.quotes, { id: Date.now(), distName: effectiveName, items }]
     save({ phase: pricingData.phase === 'APPROVAL' ? 'APPROVAL' : 'QUOTING', quotes })
@@ -1302,7 +2337,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
     setShowQuoteDlg(false)
     setQuoteDistSel('')
     setQuoteCustomName('')
-    setQuoteItems([{ desc: '', qty: 1, basicPrice: '' }])
+    setQuoteItems([{ desc: '', qty: 1, basicPrice: '', marginPct: '', oem: '' }])
     toast.success('Distributor quote added')
   }
 
@@ -1315,7 +2350,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
       setQuoteDistSel('Others')
       setQuoteCustomName(q.distName)
     }
-    setQuoteItems(q.items.map(i => ({ desc: i.desc, qty: i.qty, basicPrice: i.basicPrice })))
+    setQuoteItems(q.items.map(i => ({ desc: i.desc, qty: i.qty, basicPrice: i.basicPrice, marginPct: i.marginPct ?? '', oem: i.oem || '' })))
     setShowEditQuoteDlg(true)
   }
 
@@ -1323,7 +2358,9 @@ export function Stage4Workspace({ bid, onRefresh }) {
     const effectiveName = quoteDistSel === 'Others' ? (quoteCustomName.trim() || 'Others') : (quoteDistSel || 'Others')
     if (!quoteItems.some(i => i.desc && i.basicPrice)) { toast.error('Fill at least one item'); return }
     const items = quoteItems.filter(i => i.desc && i.basicPrice).map(i => ({
-      desc: i.desc, qty: Number(i.qty) || 1, basicPrice: Number(i.basicPrice) || 0
+      desc: i.desc, qty: Number(i.qty) || 1, basicPrice: Number(i.basicPrice) || 0,
+      ...(i.marginPct !== '' && i.marginPct != null ? { marginPct: Number(i.marginPct) } : {}),
+      ...(i.oem ? { oem: i.oem } : {}),
     }))
     const updatedQuotes = pricingData.quotes.map(q => q.id === editingQuoteId ? { ...q, distName: effectiveName, items } : q)
     save({ quotes: updatedQuotes })
@@ -1338,7 +2375,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
     setEditingQuoteId(null)
     setQuoteDistSel('')
     setQuoteCustomName('')
-    setQuoteItems([{ desc: '', qty: 1, basicPrice: '' }])
+    setQuoteItems([{ desc: '', qty: 1, basicPrice: '', marginPct: '', oem: '' }])
     toast.success('Distributor quote updated successfully')
   }
 
@@ -1346,11 +2383,11 @@ export function Stage4Workspace({ bid, onRefresh }) {
     setQuoteToDelete({ id: quoteId, distName })
   }
 
-  const confirmDeleteQuote = () => {
+  const confirmDeleteQuote = async () => {
     if (!quoteToDelete) return
     const { id: quoteId, distName } = quoteToDelete
     const updatedQuotes = pricingData.quotes.filter(q => q.id !== quoteId)
-    save({ quotes: updatedQuotes })
+    await save({ quotes: updatedQuotes })
     logStageMicroEvent(bid.id, {
       fromStage: 'PRICING_REQUEST',
       toStage: 'PRICING_REQUEST',
@@ -1360,7 +2397,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
     })
     setQuoteToDelete(null)
     toast.success(`Deleted distributor quote from "${distName}"`)
-    if (typeof onRefresh === 'function') onRefresh()
+    if (typeof onRefresh === 'function') await onRefresh()
   }
 
   const buildPricingTableHtml = (l1Q, margin) => {
@@ -1450,13 +2487,21 @@ export function Stage4Workspace({ bid, onRefresh }) {
 
   const handleSendApproval = () => {
     if (!approverSelId) { toast.error('Select the person to send this pricing sheet for approval'); return }
+    if (!approvalRemarks.trim()) { toast.error('Add a remark for the approver before sending'); return }
     const approver = users.find(u => u.id === approverSelId)
+    const remarks = approvalRemarks.trim()
+    // The blended per-item margin — not the flat `marginPct` default, which
+    // is never actually written once quotes carry their own per-item
+    // margins — is what "before" and "after" must both be measured against
+    // at approval time, or an edit here would never register as a change.
+    const marginAtRequest = l1Calculations?.effectiveMarginPct ?? marginPct
     const tableHtml = buildPricingTableHtml(l1Quote, marginPct)
+    const remarksHtml = buildRemarkCalloutHtml(currentUser?.full_name || currentUser?.username || 'requester', remarks)
     const nowISO = new Date().toISOString()
     import('../../services/alerts').then(({ createAlert }) => {
       createAlert({ user_id: approverSelId, bid_id: bid.id, type: 'ACTION_REQUIRED', created_by: currentUser?.id,
         title: `Pricing Approval Required — ${bid.title}`,
-        message: `<p style="margin: 0 0 12px 0;">Bid #${bid.gem_bid_no || bid.id}: Commercial pricing calculation from L1 distributor (<strong>${l1Quote?.distName || 'N/A'}</strong>) is ready for your review and approval.</p>${tableHtml}<p style="margin: 12px 0 0 0;">Please review and approve from the tender's Pricing Request stage.</p>`
+        message: `<p style="margin: 0 0 12px 0;">Bid #${bid.gem_bid_no || bid.id}: Commercial pricing calculation from L1 distributor (<strong>${l1Quote?.distName || 'N/A'}</strong>) is ready for your review and approval.</p>${remarksHtml}${tableHtml}<p style="margin: 12px 0 0 0;">Please review and approve from the tender's Pricing Request stage.</p>`
       })
     })
     save({
@@ -1466,20 +2511,21 @@ export function Stage4Workspace({ bid, onRefresh }) {
       approvalRequestedAt: nowISO,
       approvalStatus: 'PENDING',
       approvedAt: '',
+      approvalRemarks: remarks,
       reminders: [],
       // Snapshot of the values at request time, so the approval email can
       // flag it if the approver adjusts margin/pricing before accepting.
       requestedById: currentUser?.id || '',
       requestedByName: currentUser?.full_name || currentUser?.username || 'Unknown',
-      requestedMarginPct: marginPct,
+      requestedMarginPct: marginAtRequest,
       requestedGrandTotal: l1Calculations?.grandGlobxTotal ?? null,
     })
     logStageMicroEvent(bid.id, {
       fromStage: 'PRICING_REQUEST',
       toStage: 'PRICING_REQUEST',
       eventType: 'ALERT',
-      transitionReason: `Sent pricing approval request to ${approver?.full_name || approver?.username || approverSelId} (Margin: ${marginPct}%, L1 Distributor: ${l1Quote?.distName || 'N/A'})`,
-      details: { approverId: approverSelId, marginPct, l1Distributor: l1Quote?.distName }
+      transitionReason: `Sent pricing approval request to ${approver?.full_name || approver?.username || approverSelId} (Margin: ${marginAtRequest.toFixed(2)}%, L1 Distributor: ${l1Quote?.distName || 'N/A'}) — Remarks: ${remarks}`,
+      details: { approverId: approverSelId, marginPct: marginAtRequest, l1Distributor: l1Quote?.distName, remarks }
     })
     setShowApprovalDlg(false)
     toast.success(`Approval request with formatted pricing table sent to ${approver?.full_name || 'the selected approver'}!`)
@@ -1488,11 +2534,13 @@ export function Stage4Workspace({ bid, onRefresh }) {
   const handleSendReminder = () => {
     if (!pricingData.approverId) return
     const tableHtml = buildPricingTableHtml(l1Quote, marginPct)
+    const remarksHtml = buildRemarkCalloutHtml(pricingData.requestedByName || 'requester', pricingData.approvalRemarks)
+    const reminderHeaderHtml = `<div style="margin:0 0 12px 0;padding:10px 14px;border-radius:8px;background:#fff7ed;border:1px solid #fed7aa;border-left:4px solid #fb923c;color:#9a3412;font-size:12px;font-weight:700;">🔔 Reminder — Bid #${bid.gem_bid_no || bid.id}: this commercial pricing calculation is still awaiting your approval.</div>`
     const nowISO = new Date().toISOString()
     import('../../services/alerts').then(({ createAlert }) => {
       createAlert({ user_id: pricingData.approverId, bid_id: bid.id, type: 'ACTION_REQUIRED', created_by: currentUser?.id,
         title: `Reminder: Pricing Approval Pending — ${bid.title}`,
-        message: `<p style="margin: 0 0 12px 0;"><strong>Reminder</strong> — Bid #${bid.gem_bid_no || bid.id}: this commercial pricing calculation is still awaiting your approval.</p>${tableHtml}`
+        message: `${reminderHeaderHtml}${remarksHtml}${tableHtml}`
       })
     })
     const reminders = [...(pricingData.reminders || []), { sentAt: nowISO, sentBy: currentUser?.full_name || currentUser?.username || 'Unknown' }]
@@ -1509,28 +2557,33 @@ export function Stage4Workspace({ bid, onRefresh }) {
 
   const canApprovePricing = !!currentUser?.id && (currentUser.id === pricingData.approverId || isAdmin)
 
-  const handleApprovePricing = () => {
+  const handleApprovePricing = async () => {
     const nowISO = new Date().toISOString()
-    const finalMargin = marginPct
+    const finalMargin = l1Calculations?.effectiveMarginPct ?? marginPct
     const finalTotal = l1Calculations?.grandGlobxTotal ?? null
     const reqMargin = pricingData.requestedMarginPct
     const reqTotal = pricingData.requestedGrandTotal
     const marginChanged = reqMargin != null && Math.abs(Number(reqMargin) - Number(finalMargin)) > 0.001
     const totalChanged = reqTotal != null && finalTotal != null && Math.abs(Number(reqTotal) - Number(finalTotal)) > 0.01
     const valuesChanged = marginChanged || totalChanged
+    // Legacy pricing sheets sent before requestedMarginPct existed leave
+    // reqMargin null — fall back to finalMargin so that case reads as "no
+    // margin change" instead of a bogus "0.00% -> X%".
+    const reqMarginDisplay = reqMargin ?? finalMargin
     const changeNote = valuesChanged
-      ? ` Values were adjusted before approval — Margin: ${reqMargin}% → ${finalMargin}%, GlobX Total (incl. GST): ${fmtMoney(reqTotal)} → ${fmtMoney(finalTotal)}.`
+      ? ` Values were adjusted before approval — Margin: ${Number(reqMarginDisplay).toFixed(2)}% → ${Number(finalMargin).toFixed(2)}%, GlobX Total (incl. GST): ${fmtMoney(reqTotal)} → ${fmtMoney(finalTotal)}.`
       : ''
 
-    save({ approvalStatus: 'APPROVED', approvedAt: nowISO, approvedGrandTotal: finalTotal })
+    await save({ approvalStatus: 'APPROVED', approvedAt: nowISO, approvedGrandTotal: finalTotal })
 
     // Notify the tender owner (and the original requester, if different) that
     // pricing has been approved — this was previously silent; only the
     // "request sent" email existed before.
     const tableHtml = buildPricingTableHtml(l1Quote, finalMargin)
     const changeBannerHtml = valuesChanged
-      ? `<div style="margin:0 0 12px 0;padding:10px 14px;border-radius:8px;background:#fef3c7;border:1px solid #fbbf24;color:#92400e;font-size:12px;font-weight:600;">⚠ Values were adjusted before approval — Margin: ${reqMargin}% → ${finalMargin}%, GlobX Total (incl. GST): ${fmtMoney(reqTotal)} → ${fmtMoney(finalTotal)}</div>`
+      ? buildValuesAdjustedBannerHtml(reqMarginDisplay, finalMargin, reqTotal, finalTotal)
       : ''
+    const remarksHtml = buildRemarkCalloutHtml(pricingData.requestedByName || 'requester', pricingData.approvalRemarks, 'Original remarks')
     const recipientIds = new Set()
     if (bid.bid_owner?.id) recipientIds.add(bid.bid_owner.id)
     if (pricingData.requestedById) recipientIds.add(pricingData.requestedById)
@@ -1538,7 +2591,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
       recipientIds.forEach((uid) => {
         createAlert({ user_id: uid, bid_id: bid.id, type: 'APPROVAL', created_by: currentUser?.id,
           title: `Pricing Approved — ${bid.title}`,
-          message: `<p style="margin: 0 0 12px 0;">Bid #${bid.gem_bid_no || bid.id}: the commercial pricing sheet has been <strong>approved</strong> by ${currentUser?.full_name || currentUser?.username || 'the approver'}.</p>${changeBannerHtml}${tableHtml}`
+          message: `<p style="margin: 0 0 12px 0;">Bid #${bid.gem_bid_no || bid.id}: the commercial pricing sheet has been <strong>approved</strong> by ${currentUser?.full_name || currentUser?.username || 'the approver'}.</p>${changeBannerHtml}${remarksHtml}${tableHtml}`
         })
       })
     })
@@ -1551,7 +2604,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
       details: { approvedBy: currentUser?.id, approvedGrandTotal: finalTotal, requestedMarginPct: reqMargin, finalMarginPct: finalMargin, requestedGrandTotal: reqTotal, valuesChanged }
     })
     toast.success(valuesChanged ? 'Pricing approved — owner notified of the adjusted values!' : 'Pricing approved — owner notified!')
-    onRefresh()
+    if (onRefresh) await onRefresh()
   }
 
   // Find L1 (lowest total basic cost across all quotes) and the calculation breakdown
@@ -1561,12 +2614,64 @@ export function Stage4Workspace({ bid, onRefresh }) {
     [pricingData]
   )
 
+  // Same comparison handleApprovePricing uses to decide which email to send —
+  // surfaced here too so the Approve button's own label can tell the
+  // approver, before they click, whether they're about to trigger the
+  // plain-approval email or the "values were adjusted" one.
+  const pendingApprovalValuesChanged = (() => {
+    const reqMargin = pricingData.requestedMarginPct
+    const reqTotal = pricingData.requestedGrandTotal
+    const finalMargin = l1Calculations?.effectiveMarginPct ?? marginPct
+    const finalTotal = l1Calculations?.grandGlobxTotal ?? null
+    const marginChanged = reqMargin != null && Math.abs(Number(reqMargin) - Number(finalMargin)) > 0.001
+    const totalChanged = reqTotal != null && finalTotal != null && Math.abs(Number(reqTotal) - Number(finalTotal)) > 0.01
+    return marginChanged || totalChanged
+  })()
+
+  // Margin is set per product on the L1 quote, from a dedicated dialog — not
+  // at quote-entry time, and not as one global preset. Blank clears back to
+  // the fallback margin used by computeL1PricingSummary.
+  const [marginEdits, setMarginEdits] = useState({})
+  const openMarginDlg = () => {
+    const seed = {}
+    ;(l1Quote?.items || []).forEach((it, idx) => { seed[idx] = it.marginPct != null && it.marginPct !== '' ? String(it.marginPct) : '' })
+    setMarginEdits(seed)
+    setShowMarginDlg(true)
+  }
+  const handleSaveMargins = () => {
+    if (!l1Quote) return
+    const updatedQuotes = pricingData.quotes.map(q => {
+      if (q.id !== l1Quote.id) return q
+      return {
+        ...q,
+        items: q.items.map((it, idx) => {
+          const val = marginEdits[idx]
+          if (val === '' || val == null) {
+            const { marginPct, ...rest } = it
+            return rest
+          }
+          return { ...it, marginPct: Number(val) }
+        }),
+      }
+    })
+    save({ quotes: updatedQuotes })
+    logStageMicroEvent(bid.id, {
+      fromStage: 'PRICING_REQUEST',
+      toStage: 'PRICING_REQUEST',
+      eventType: 'PRICING',
+      transitionReason: `Updated per-product margins for L1 distributor "${l1Quote.distName}"`,
+      details: { distName: l1Quote.distName, margins: marginEdits },
+    })
+    setShowMarginDlg(false)
+    toast.success('Margins saved')
+  }
+
   return (
     <div className="space-y-5">
       <div className="p-4 rounded-xl border border-violet-200 bg-violet-50/50 dark:bg-violet-950/20 dark:border-violet-900/50">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div>
-            <h3 className="text-sm font-semibold text-violet-900 dark:text-violet-300">Stage 3: Pricing Request & Commercial Calculation</h3>
+            <h3 className="text-sm font-semibold text-violet-900 dark:text-violet-300">Stage 4: Pricing Request & Commercial Calculation</h3>
             <p className="text-xs text-violet-700 dark:text-violet-400">Send pricing request → Collect distributor quotes → Calculate GlobX pricing → Send for approval</p>
           </div>
           <div className="flex gap-2 flex-wrap items-center">
@@ -1586,12 +2691,14 @@ export function Stage4Workspace({ bid, onRefresh }) {
               </Button>
             )}
             {!isReadOnly && pricingData.phase !== 'INIT' && (
-              <Button size="sm" variant="outline" onClick={() => setShowQuoteDlg(true)} className="gap-1.5 border-violet-300 text-violet-800 dark:text-violet-300 hover:bg-violet-100 text-xs">
-                <Plus className="size-3.5" /> Add Distributor Quote
-              </Button>
+              <span title={requestedProductNames.length === 0 ? 'Add requested products to this tender (via Edit Tender) before a quote can be entered' : undefined}>
+                <Button size="sm" variant="outline" disabled={requestedProductNames.length === 0} onClick={handleOpenAddQuote} className="gap-1.5 border-violet-300 text-violet-800 dark:text-violet-300 hover:bg-violet-100 text-xs">
+                  <Plus className="size-3.5" /> Add Distributor Quote
+                </Button>
+              </span>
             )}
             {!isReadOnly && (pricingData.phase === 'QUOTING' || pricingData.phase === 'APPROVAL') && l1Quote && pricingData.approvalStatus !== 'APPROVED' && (
-              <Button size="sm" variant="outline" onClick={() => { setApproverSelId(pricingData.approverId || ''); setShowApprovalDlg(true) }} className={`gap-1.5 text-xs ${pricingData.phase === 'APPROVAL' ? 'border-orange-300 text-orange-800 hover:bg-orange-100' : 'border-amber-300 text-amber-800 dark:text-amber-300 hover:bg-amber-100'}`}>
+              <Button size="sm" variant="outline" onClick={() => { setApproverSelId(pricingData.approverId || ''); setApprovalRemarks(pricingData.approvalRemarks || ''); setShowApprovalDlg(true) }} className={`gap-1.5 text-xs ${pricingData.phase === 'APPROVAL' ? 'border-orange-300 text-orange-800 hover:bg-orange-100' : 'border-amber-300 text-amber-800 dark:text-amber-300 hover:bg-amber-100'}`}>
                 <Send className="size-3.5" /> {pricingData.phase === 'APPROVAL' ? 'Resend Approval Request' : 'Send for Approval'}
               </Button>
             )}
@@ -1602,7 +2709,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
             )}
             {pricingData.approvalStatus === 'PENDING' && canApprovePricing && (
               <Button size="sm" onClick={handleApprovePricing} className="gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm font-semibold">
-                <CheckCircle2 className="size-3.5" /> Approve Pricing
+                <CheckCircle2 className="size-3.5" /> {pendingApprovalValuesChanged ? 'Update & Approve Pricing' : 'Approve Pricing'}
               </Button>
             )}
             {isReadOnly && pricingData.phase !== 'INIT' && (
@@ -1623,24 +2730,65 @@ export function Stage4Workspace({ bid, onRefresh }) {
           </div>
         </div>
 
-        {pricingData.approverId && (
-          <div className="mt-2 flex items-center gap-2 flex-wrap text-[11px]">
-            {pricingData.approvalStatus === 'APPROVED' ? (
-              <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-semibold border border-emerald-300 dark:border-emerald-800">
-                ✓ Approved by {pricingData.approverName} on {fmtDate(pricingData.approvedAt)}
-              </span>
-            ) : (
-              <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-semibold border border-amber-300 dark:border-amber-800">
-                ⏳ Pending approval from {pricingData.approverName}
-              </span>
-            )}
-            {pricingData.reminders?.length > 0 && (
-              <span className="text-muted-foreground">
-                Reminded {pricingData.reminders.length}× — last: {fmtDate(pricingData.reminders[pricingData.reminders.length - 1].sentAt)}
-              </span>
-            )}
-          </div>
-        )}
+        {pricingData.approverId && (() => {
+          const activity = [
+            { type: 'SENT', by: pricingData.requestedByName, at: pricingData.approvalRequestedAt },
+            ...(pricingData.reminders || []).map(r => ({ type: 'REMINDER', by: r.sentBy, at: r.sentAt })),
+            ...(pricingData.approvalStatus === 'APPROVED'
+              ? [{ type: 'ACCEPTED', by: pricingData.approverName, at: pricingData.approvedAt }]
+              : []),
+          ].filter(a => a.at).sort((a, b) => new Date(a.at) - new Date(b.at))
+          const eventStyle = {
+            SENT: 'bg-muted text-muted-foreground border-border',
+            REMINDER: 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800',
+            ACCEPTED: 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800',
+          }
+          const eventLabel = { SENT: 'Sent', REMINDER: 'Reminder', ACCEPTED: 'Accepted' }
+          return (
+            <div className="mt-2 flex items-center gap-2 flex-wrap text-[11px]">
+              {pricingData.approvalStatus === 'APPROVED' ? (
+                <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-semibold border border-emerald-300 dark:border-emerald-800">
+                  ✓ Approved by {pricingData.approverName} on {fmtDate(pricingData.approvedAt)}
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-semibold border border-amber-300 dark:border-amber-800">
+                  ⏳ Pending approval from {pricingData.approverName}
+                </span>
+              )}
+              {pricingData.approvalRemarks && (
+                <span className="w-full px-2.5 py-1.5 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 border-l-4 border-l-amber-500 text-amber-900 dark:text-amber-200">
+                  <strong className="font-semibold">⚑ Remarks:</strong> {pricingData.approvalRemarks}
+                </span>
+              )}
+              {activity.length > 0 && (
+                <div className="w-full mt-1 overflow-hidden rounded-md border border-border/60">
+                  <table className="text-[11px] w-full">
+                    <thead>
+                      <tr className="bg-muted/50 text-muted-foreground">
+                        <th className="px-2 py-1 text-left font-semibold w-8">#</th>
+                        <th className="px-2 py-1 text-left font-semibold">Event</th>
+                        <th className="px-2 py-1 text-left font-semibold">By</th>
+                        <th className="px-2 py-1 text-left font-semibold">At</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activity.map((a, i) => (
+                        <tr key={i} className="border-t border-border/60">
+                          <td className="px-2 py-1 text-muted-foreground">{i + 1}</td>
+                          <td className="px-2 py-1">
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${eventStyle[a.type]}`}>{eventLabel[a.type]}</span>
+                          </td>
+                          <td className="px-2 py-1 text-foreground font-medium">{a.by}</td>
+                          <td className="px-2 py-1 text-muted-foreground">{fmtDateTime(a.at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )
+        })()}
         <div className="mt-2 flex gap-2 flex-wrap">
           {['INIT','AWAITING','QUOTING','APPROVAL'].map((ph, i) => (
             <span key={ph} className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${pricingData.phase === ph ? 'bg-violet-600 text-white' : 'bg-muted text-muted-foreground'}`}>
@@ -1754,38 +2902,12 @@ export function Stage4Workspace({ bid, onRefresh }) {
               </p>
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap">
-              <Label className="text-xs font-semibold text-muted-foreground">Margin Presets:</Label>
-              <div className="flex items-center gap-1">
-                {[2.0, 2.45, 3.0, 5.0, 7.5, 10.0].map(val => (
-                  <button
-                    key={val}
-                    type="button"
-                    disabled={isReadOnly}
-                    onClick={() => setMarginPct(val)}
-                    className={`px-2 py-1 text-[11px] font-semibold rounded-md border transition-all ${
-                      marginPct === val
-                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
-                        : 'bg-muted/40 hover:bg-muted text-foreground border-border'
-                    } ${isReadOnly ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
-                  >
-                    {val}%
-                  </button>
-                ))}
-              </div>
-              <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-border">
-                <Label className="text-xs font-bold">Custom %:</Label>
-                <Input
-                  type="number"
-                  value={marginPct}
-                  onChange={e => !isReadOnly && setMarginPct(Number(e.target.value))}
-                  readOnly={isReadOnly}
-                  disabled={isReadOnly}
-                  className={`w-20 h-8 text-xs font-bold text-center ${isReadOnly ? 'opacity-60 cursor-not-allowed' : ''}`}
-                  step="0.01"
-                />
-              </div>
-            </div>
+            {/* The assigned approver can always adjust margin before signing
+                off, even though they can't send/manage pricing otherwise —
+                canApprovePricing overrides the general read-only gate. */}
+            <Button size="sm" variant="outline" disabled={isReadOnly && !canApprovePricing} onClick={openMarginDlg} className="gap-1.5 text-xs font-semibold">
+              <Plus className="size-3.5" /> {pricingData.phase === 'APPROVAL' ? 'Update Margin' : 'Add Margin'}
+            </Button>
           </div>
 
           {/* Interactive Pricing Calculation Table */}
@@ -1795,6 +2917,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
                 <tr className="bg-muted/60 text-muted-foreground font-bold text-[10px] uppercase tracking-wider">
                   <th className="border border-border p-2 text-center">S.No</th>
                   <th className="border border-border p-2 text-left">Item Description</th>
+                  <th className="border border-border p-2 text-left">OEM</th>
                   <th className="border border-border p-2 text-center">Qty</th>
                   <th className="border border-border p-2 text-right">Base Purchase Price</th>
                   <th className="border border-border p-2 text-center">Margin %</th>
@@ -1809,6 +2932,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
                   <tr key={row.sNo} className="hover:bg-muted/10 transition-colors">
                     <td className="border border-border p-2 text-center font-mono font-bold text-muted-foreground">{row.sNo}</td>
                     <td className="border border-border p-2 font-medium text-foreground">{row.desc}</td>
+                    <td className="border border-border p-2 text-muted-foreground">{row.oem || resolvedOemByProductName[row.desc] || '—'}</td>
                     <td className="border border-border p-2 text-center font-semibold">{row.qty}</td>
                     <td className="border border-border p-2 text-right font-mono text-muted-foreground">{fmtMoney(row.basicPrice)}</td>
                     <td className="border border-border p-2 text-center font-semibold text-indigo-600 dark:text-indigo-400">{row.itemMargin}%</td>
@@ -1823,7 +2947,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
               </tbody>
               <tfoot>
                 <tr className="bg-muted/40 font-bold border-t-2 border-border text-xs">
-                  <td colSpan={3} className="border border-border p-2.5 text-right text-muted-foreground uppercase tracking-wider">Grand Total Summary:</td>
+                  <td colSpan={4} className="border border-border p-2.5 text-right text-muted-foreground uppercase tracking-wider">Grand Total Summary:</td>
                   <td className="border border-border p-2.5 text-right font-mono font-bold text-foreground">{fmtMoney(l1Calculations.grandBaseCost)}</td>
                   <td className="border border-border p-2.5 text-center font-bold text-indigo-700 dark:text-indigo-300">{l1Calculations.effectiveMarginPct.toFixed(2)}%</td>
                   <td colSpan={3} className="border border-border p-2.5 text-right text-muted-foreground uppercase tracking-wider">Total Offered Value (Incl. GST):</td>
@@ -1900,14 +3024,14 @@ export function Stage4Workspace({ bid, onRefresh }) {
             <div className="space-y-2">
               <Label className="text-xs font-semibold">Line Items</Label>
               {quoteItems.map((it, ii) => (
-                <div key={ii} className="grid grid-cols-5 gap-1.5 items-end">
-                  <div className="col-span-2"><Input value={it.desc} onChange={e => { const a = [...quoteItems]; a[ii].desc = e.target.value; setQuoteItems(a) }} placeholder="Description" className="h-8 text-xs" /></div>
+                <div key={ii} className="grid grid-cols-6 gap-1.5 items-end">
+                  <div className="col-span-2 h-8 flex items-center px-2 text-xs font-medium text-foreground truncate" title={it.desc}>{it.desc || '—'}</div>
+                  <div className="h-8 flex items-center px-2 text-xs text-muted-foreground truncate" title={it.oem ? `OEM: ${it.oem}` : 'No OEM finalized for this product'}>{it.oem || '—'}</div>
                   <div><Input type="number" value={it.qty} onChange={e => { const a = [...quoteItems]; a[ii].qty = e.target.value; setQuoteItems(a) }} placeholder="Qty" className="h-8 text-xs" /></div>
                   <div><Input type="number" value={it.basicPrice} onChange={e => { const a = [...quoteItems]; a[ii].basicPrice = e.target.value; setQuoteItems(a) }} placeholder="Basic Price ₹" className="h-8 text-xs" /></div>
                   <button onClick={() => setQuoteItems(quoteItems.filter((_, i) => i !== ii))} className="h-8 text-destructive border border-border rounded px-2 text-xs">✕</button>
                 </div>
               ))}
-              <Button size="sm" variant="outline" onClick={() => setQuoteItems([...quoteItems, { desc: '', qty: 1, basicPrice: '' }])} className="text-xs gap-1"><Plus className="size-3" /> Add Line</Button>
             </div>
             <div className="flex gap-2 justify-end">
               <Button size="sm" variant="outline" onClick={() => setShowQuoteDlg(false)}>Cancel</Button>
@@ -1936,17 +3060,17 @@ export function Stage4Workspace({ bid, onRefresh }) {
             <div className="space-y-2">
               <Label className="text-xs font-semibold">Line Items</Label>
               {quoteItems.map((it, ii) => (
-                <div key={ii} className="grid grid-cols-5 gap-1.5 items-end">
-                  <div className="col-span-2"><Input value={it.desc} onChange={e => { const a = [...quoteItems]; a[ii].desc = e.target.value; setQuoteItems(a) }} placeholder="Description" className="h-8 text-xs" /></div>
+                <div key={ii} className="grid grid-cols-6 gap-1.5 items-end">
+                  <div className="col-span-2 h-8 flex items-center px-2 text-xs font-medium text-foreground truncate" title={it.desc}>{it.desc || '—'}</div>
+                  <div className="h-8 flex items-center px-2 text-xs text-muted-foreground truncate" title={it.oem ? `OEM: ${it.oem}` : 'No OEM finalized for this product'}>{it.oem || '—'}</div>
                   <div><Input type="number" value={it.qty} onChange={e => { const a = [...quoteItems]; a[ii].qty = e.target.value; setQuoteItems(a) }} placeholder="Qty" className="h-8 text-xs" /></div>
                   <div><Input type="number" value={it.basicPrice} onChange={e => { const a = [...quoteItems]; a[ii].basicPrice = e.target.value; setQuoteItems(a) }} placeholder="Basic Price ₹" className="h-8 text-xs" /></div>
                   <button onClick={() => setQuoteItems(quoteItems.filter((_, i) => i !== ii))} className="h-8 text-destructive border border-border rounded px-2 text-xs">✕</button>
                 </div>
               ))}
-              <Button size="sm" variant="outline" onClick={() => setQuoteItems([...quoteItems, { desc: '', qty: 1, basicPrice: '' }])} className="text-xs gap-1"><Plus className="size-3" /> Add Line</Button>
             </div>
             <div className="flex gap-2 justify-end">
-              <Button size="sm" variant="outline" onClick={() => { setShowEditQuoteDlg(false); setEditingQuoteId(null); setQuoteDistSel(''); setQuoteCustomName(''); setQuoteItems([{ desc: '', qty: 1, basicPrice: '' }]) }}>Cancel</Button>
+              <Button size="sm" variant="outline" onClick={() => { setShowEditQuoteDlg(false); setEditingQuoteId(null); setQuoteDistSel(''); setQuoteCustomName(''); setQuoteItems([{ desc: '', qty: 1, basicPrice: '', marginPct: '', oem: '' }]) }}>Cancel</Button>
               <Button size="sm" onClick={handleUpdateQuote} className="bg-violet-600 hover:bg-violet-700 text-white">Update Quote</Button>
             </div>
           </motion.div>
@@ -1958,17 +3082,55 @@ export function Stage4Workspace({ bid, onRefresh }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
           <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-sm bg-card border border-border rounded-xl p-6 space-y-4">
             <h3 className="text-sm font-semibold">Send Pricing for Approval</h3>
-            <p className="text-xs text-muted-foreground">Choose one person to review and approve this pricing sheet — they'll get an in-app alert and email with the pricing table.</p>
+            <p className="text-xs text-muted-foreground">Only this tender's Account Manager can approve pricing — they'll get an in-app alert and email with the pricing table.</p>
             <div className="space-y-1.5">
               <Label className="text-xs">Send to</Label>
-              <select value={approverSelId} onChange={e => setApproverSelId(e.target.value)} className="w-full text-xs border border-border rounded px-2 py-1.5 bg-background">
-                <option value="">-- Select approver --</option>
-                {users.map(u => <option key={u.id} value={u.id}>{u.full_name} (@{u.username})</option>)}
-              </select>
+              {bid.account_manager ? (
+                <select value={approverSelId} onChange={e => setApproverSelId(e.target.value)} className="w-full text-xs border border-border rounded px-2 py-1.5 bg-background">
+                  <option value="">-- Select approver --</option>
+                  <option value={bid.account_manager.id}>{bid.account_manager.full_name} (Account Manager)</option>
+                </select>
+              ) : (
+                <p className="text-xs text-rose-600 dark:text-rose-400 font-medium">No Account Manager is assigned to this tender — assign one from Primary Review before sending for approval.</p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Remarks *</Label>
+              <Textarea value={approvalRemarks} onChange={e => setApprovalRemarks(e.target.value)} placeholder="Add context for the approver — e.g. why this margin, anything to double-check..." className="text-xs min-h-[70px]" />
             </div>
             <div className="flex gap-2 justify-end">
               <Button size="sm" variant="outline" onClick={() => setShowApprovalDlg(false)}>Cancel</Button>
               <Button size="sm" onClick={handleSendApproval}>Send Alert &amp; Email</Button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Add Margin Dialog — per-product margin on the L1 quote */}
+      {showMarginDlg && l1Quote && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-lg bg-card border border-border rounded-xl p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+            <h3 className="text-sm font-semibold">Add Margin — {l1Quote.distName} (L1)</h3>
+            <p className="text-xs text-muted-foreground">Set a margin per product. Leave blank to use the fallback margin (2.45%) in the calculation.</p>
+            <div className="space-y-2">
+              {l1Quote.items.map((it, idx) => (
+                <div key={idx} className="grid grid-cols-5 gap-2 items-center p-2 rounded-md border border-border/60">
+                  <div className="col-span-2 text-xs font-medium text-foreground truncate">{it.desc}</div>
+                  <div className="text-xs text-muted-foreground">Qty {it.qty}</div>
+                  <div className="text-xs text-muted-foreground">₹{it.basicPrice}</div>
+                  <Input
+                    type="number" step="any"
+                    value={marginEdits[idx] ?? ''}
+                    onChange={e => setMarginEdits(prev => ({ ...prev, [idx]: e.target.value }))}
+                    placeholder="Margin %"
+                    className="h-8 text-xs"
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button size="sm" variant="outline" onClick={() => setShowMarginDlg(false)}>Cancel</Button>
+              <Button size="sm" onClick={handleSaveMargins}>Save Margins</Button>
             </div>
           </motion.div>
         </div>
@@ -2032,34 +3194,22 @@ export function Stage4Workspace({ bid, onRefresh }) {
 // ── Stage 5: Document Checklist Preparation ────────────────────────────────
 export function Stage5Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
-
-  const handleNotifyAll = async () => {
-    try {
-      const { createAlert } = await import('../../services/alerts')
-      await Promise.all(['ADMIN','MANAGER','PRE_SALES'].map(role =>
-        createAlert({
-          target_role: role,
-          bid_id: bid.id,
-          type: 'ACTION_REQUIRED',
-          title: `All Bid Documents Ready — ${bid.title}`,
-          message: `Bid ${bid.gem_bid_no || bid.id}: All documents are compiled and ready. Internal approval is required before GeM submission.`,
-        })
-      ))
-      toast.success('Admin, Manager & Pre-Sales alerted!')
-    } catch { toast.error('Failed to send alert') }
-  }
+  const [handoffRemarks, setHandoffRemarks] = useState('')
+  // EMD isn't required, so completing the checklist is the actual moment
+  // this tender becomes ready for Internal Approval — the backend fires
+  // that notification off this exact transition (see notifyInternalApprovalReady
+  // in bid_service.go). When EMD IS required, that moment is EMD Processing's
+  // own completion instead (Stage6Workspace carries the equivalent framing).
+  const emdNotRequired = !!(bid.emd_exempted || bid.emd_not_applicable)
 
   return (
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-purple-200 bg-purple-50/50 dark:bg-purple-950/20 dark:border-purple-900/50 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-purple-900 dark:text-purple-300">Stage 4: Document Checklist Preparation</h3>
+          <h3 className="text-sm font-semibold text-purple-900 dark:text-purple-300">Stage 5: Document Checklist Preparation</h3>
           <p className="text-xs text-purple-700 dark:text-purple-400">Ensure all mandatory bidder and OEM documents are compiled, verified, and tracked below.</p>
         </div>
         <div className="flex gap-2 items-center flex-wrap">
-          <Button size="sm" variant="outline" onClick={handleNotifyAll} className="gap-1.5 border-purple-300 text-purple-900 dark:text-purple-300 hover:bg-purple-100 text-xs">
-            <Bell className="size-3.5" /> Notify All Stakeholders
-          </Button>
           <StageHeaderActions
             bid={bid}
             stageKey="DOCUMENT_CHECKLIST_PREPARATION"
@@ -2078,14 +3228,33 @@ export function Stage5Workspace({ bid, onRefresh }) {
 
       {showModal && (
         <CompleteStageModal
-          title="Complete Stage 4: Checklist Prep"
-          description="Marks Stage 5 as complete. EMD Processing can now proceed independently."
+          title="Complete Stage 5: Checklist Prep"
+          description={
+            emdNotRequired
+              ? `Marks Stage 5 as complete. This tender has no EMD to process, so completing this will notify ${bid.account_manager?.full_name || 'the Account Manager'} and ${bid.presales?.full_name || 'Pre-Sales'} that it's ready for Internal Approval.`
+              : "Marks Stage 5 as complete. EMD Processing can now proceed independently."
+          }
           stageKey="DOCUMENT_CHECKLIST_PREPARATION"
           bidId={bid.id}
           bid={bid}
           onClose={() => setShowModal(false)}
           onComplete={onRefresh}
-        />
+          hideDefaultRemarks={emdNotRequired}
+          remarksValue={handoffRemarks}
+        >
+          {emdNotRequired && (
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Message for Account Manager &amp; Pre-Sales</Label>
+              <Textarea
+                value={handoffRemarks}
+                onChange={(e) => setHandoffRemarks(e.target.value)}
+                placeholder="Anything they should know before reviewing for Internal Approval..."
+                className="text-xs min-h-[80px]"
+                required
+              />
+            </div>
+          )}
+        </CompleteStageModal>
       )}
     </div>
   )
@@ -2135,34 +3304,47 @@ function buildEmdDetailsTableHtml(bid) {
 // ── Stage 6: EMD Processing ─────────────────────────────────────────────────
 export function Stage6Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
+  const [showAlertDlg, setShowAlertDlg] = useState(false)
+  const [alertRemarks, setAlertRemarks] = useState('')
+  const [handoffRemarks, setHandoffRemarks] = useState('')
   const { hasRole, isAdmin } = usePermissions()
   const isFinance = hasRole('FINANCE')
   // EMD alerts must be triggered by someone other than Finance — Bid Executive,
   // Manager, or Admin — so Finance can't self-trigger its own processing request.
-  const canTriggerEmdAlert = isAdmin || hasRole('MANAGER') || hasRole('BID_EXECUTIVE')
+  const canTriggerEmdAlert = isAdmin || hasRole('MANAGER') || hasRole('ACCOUNT_MANAGER') || hasRole('BID_EXECUTIVE')
+  // EMD isn't required, so completing THIS stage is handled by Stage 5
+  // instead — Internal-Approval readiness is only framed here when EMD
+  // actually has to be processed (mirrors Stage5Workspace's emdNotRequired).
+  const emdRequired = !bid.emd_exempted && !bid.emd_not_applicable
 
-  // Who last triggered the "Alert Finance Team" EMD request — resolved from the
-  // shared (DB-backed) stage history so we know who to notify back once Finance
-  // confirms it's ready. Falls back to the tender owner if nobody explicitly
-  // triggered an alert (e.g. EMD was marked ready without ever alerting Finance).
-  const [emdTriggeredBy, setEmdTriggeredBy] = useState(null)
+  // Every "Alert Finance" / reminder sent for this stage — resolved from the
+  // shared (DB-backed) stage history, same technique as useStageCompletedBy,
+  // so no new field is needed to track alert/reminder history or who to
+  // notify back once Finance confirms it's ready.
+  const [emdAlertHistory, setEmdAlertHistory] = useState([])
+  const [emdHistoryReload, setEmdHistoryReload] = useState(0)
   useEffect(() => {
     let cancelled = false
     getBidStageHistory(bid.id).then((res) => {
       if (cancelled || !res.ok) return
-      const entries = (res.data || []).filter(
-        (h) => h.to_stage === 'EMD_PROCESSING' && h.event_type === 'ALERT'
-      )
-      const last = entries[entries.length - 1]
-      if (last?.transitioned_by?.id) {
-        setEmdTriggeredBy({
-          id: last.transitioned_by.id,
-          name: last.transitioned_by.full_name || last.transitioned_by.username || 'the requester',
-        })
-      }
+      const entries = (res.data || [])
+        .filter((h) => h.to_stage === 'EMD_PROCESSING' && (h.event_type === 'ALERT' || h.event_type === 'REMINDER'))
+        .map((h) => ({
+          type: h.event_type,
+          by: h.transitioned_by?.full_name || h.transitioned_by?.username || 'someone',
+          byId: h.transitioned_by?.id,
+          at: h.created_at,
+        }))
+      setEmdAlertHistory(entries)
     }).catch(() => {})
     return () => { cancelled = true }
-  }, [bid.id])
+    // bid.updated_at (bumped by the backend on every write) makes the header
+    // refresh button re-fetch this too, on top of emdHistoryReload covering
+    // this session's own handleAlertFinance sends.
+  }, [bid.id, bid.updated_at, emdHistoryReload])
+  const emdTriggeredBy = emdAlertHistory.length > 0
+    ? { id: emdAlertHistory[emdAlertHistory.length - 1].byId, name: emdAlertHistory[emdAlertHistory.length - 1].by }
+    : null
 
   const handleMarkEmdReady = async () => {
     try {
@@ -2204,27 +3386,36 @@ export function Stage6Workspace({ bid, onRefresh }) {
   }
 
   const handleAlertFinance = async () => {
+    const isReminder = emdAlertHistory.length > 0
     try {
       const { createAlert } = await import('../../services/alerts')
       const currentUser = tokenStorage.getUser()
       const tableHtml = buildEmdDetailsTableHtml(bid)
+      const remarks = alertRemarks.trim()
+      const remarksHtml = remarks
+        ? `<div style="margin:0 0 12px 0;padding:10px 14px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;color:#334155;font-size:12px;"><strong style="color:#1e293b;">Clarification from ${currentUser?.full_name || currentUser?.username || 'requester'}:</strong> ${remarks}</div>`
+        : ''
 
       await createAlert({
         target_role: 'FINANCE',
         bid_id: bid.id,
         created_by: currentUser?.id,
         type: 'ACTION_REQUIRED',
-        title: `EMD Processing Required — ${bid.title}`,
-        message: `<p style="margin: 0 0 8px 0;">Tender: <strong>${bid.title}</strong> (GeM Bid No: ${bid.gem_bid_no || 'N/A'}) requires EMD processing.</p>${tableHtml}`,
+        title: `${isReminder ? 'Reminder: ' : ''}EMD Processing Required — ${bid.title}`,
+        message: `<p style="margin: 0 0 8px 0;">Tender: <strong>${bid.title}</strong> (GeM Bid No: ${bid.gem_bid_no || 'N/A'}) requires EMD processing.</p>${remarksHtml}${tableHtml}`,
       })
       logStageMicroEvent(bid.id, {
         fromStage: 'EMD_PROCESSING',
         toStage: 'EMD_PROCESSING',
-        eventType: 'ALERT',
-        transitionReason: `Alerted Finance Team for EMD processing (Amount: ${fmtMoney(bid.emd_amount)}, Mode: ${bid.emd_exempted ? 'EXEMPTED' : bid.emd_type})`,
-        details: { emdAmount: bid.emd_amount, exempted: bid.emd_exempted }
+        eventType: isReminder ? 'REMINDER' : 'ALERT',
+        transitionReason: `${isReminder ? 'Sent a reminder to' : 'Alerted'} Finance Team for EMD processing (Amount: ${fmtMoney(bid.emd_amount)}, Mode: ${bid.emd_exempted ? 'EXEMPTED' : bid.emd_type})${remarks ? ` — ${remarks}` : ''}`,
+        details: { emdAmount: bid.emd_amount, exempted: bid.emd_exempted, remarks }
       })
-      toast.success('Finance team alerted via in-app notification + email (CC sent to you)!')
+      toast.success(`Finance team ${isReminder ? 'reminded' : 'alerted'} via in-app notification + email (CC sent to you)!`)
+      setShowAlertDlg(false)
+      setAlertRemarks('')
+      setEmdHistoryReload((n) => n + 1)
+      onRefresh()
     } catch (e) {
       toast.error('Failed to send alert. Check your connection.')
     }
@@ -2234,15 +3425,15 @@ export function Stage6Workspace({ bid, onRefresh }) {
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/50 dark:bg-amber-950/20 dark:border-amber-900/50 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-300">Stage 5: EMD Processing</h3>
+          <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-300">Stage 6: EMD Processing</h3>
           <p className="text-xs text-amber-700 dark:text-amber-400">Manage EMD payment or exemption certificates. Bank Guarantee is tracked later, after Purchase Order receipt.</p>
         </div>
         <div className="flex gap-2 items-center flex-wrap">
-          {canTriggerEmdAlert ? (
-            <Button size="sm" variant="outline" onClick={handleAlertFinance} className="gap-1.5 border-amber-300 text-amber-900 dark:text-amber-300 hover:bg-amber-100 text-xs">
-              <Bell className="size-3.5" /> Alert Finance Team
+          {canTriggerEmdAlert && !bid.emd_ready ? (
+            <Button size="sm" variant="outline" onClick={() => setShowAlertDlg(true)} className="gap-1.5 border-amber-300 text-amber-900 dark:text-amber-300 hover:bg-amber-100 text-xs">
+              <Bell className="size-3.5" /> {emdAlertHistory.length > 0 ? 'Send Reminder' : 'Alert Finance Team'}
             </Button>
-          ) : isFinance ? (
+          ) : isFinance && !bid.emd_ready ? (
             <span className="text-[10px] font-semibold text-amber-600 italic px-2 py-1 rounded bg-amber-50 border border-amber-200 dark:bg-amber-950/40 dark:border-amber-800" title="Finance cannot self-trigger the EMD alert — ask a Bid Executive, Manager, or Admin to initiate it.">
               🔒 EMD alert must be triggered by a Bid Executive/Manager/Admin
             </span>
@@ -2259,11 +3450,40 @@ export function Stage6Workspace({ bid, onRefresh }) {
             onRefresh={onRefresh}
             completeLabel="EMD Ready & Advance"
             completeClass="bg-amber-600 hover:bg-amber-700 text-white"
-            disabled={!bid.emd_ready}
-            disabledTooltip="Awaiting EMD Ready confirmation from Finance"
+            disabled={!bid.emd_ready || isFinance}
+            disabledTooltip={isFinance ? 'Advancing this stage is a Bid Executive/Account Manager action, not Finance.' : 'Awaiting EMD Ready confirmation from Finance'}
           />
         </div>
       </div>
+
+      {emdAlertHistory.length > 0 && (
+        <div className="max-w-md overflow-hidden rounded-md border border-border/60">
+          <table className="text-[11px] w-full">
+            <thead>
+              <tr className="bg-muted/50 text-muted-foreground">
+                <th className="px-2 py-1 text-left font-semibold w-8">#</th>
+                <th className="px-2 py-1 text-left font-semibold">Event</th>
+                <th className="px-2 py-1 text-left font-semibold">By</th>
+                <th className="px-2 py-1 text-left font-semibold">At</th>
+              </tr>
+            </thead>
+            <tbody>
+              {emdAlertHistory.map((a, i) => (
+                <tr key={i} className="border-t border-border/60">
+                  <td className="px-2 py-1 text-muted-foreground">{i + 1}</td>
+                  <td className="px-2 py-1">
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${a.type === 'ALERT' ? 'bg-muted text-muted-foreground border-border' : 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800'}`}>
+                      {a.type === 'ALERT' ? 'Alert' : 'Reminder'}
+                    </span>
+                  </td>
+                  <td className="px-2 py-1 text-foreground font-medium">{a.by}</td>
+                  <td className="px-2 py-1 text-muted-foreground">{fmtDateTime(a.at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {bid.emd_ready ? (
         <div className="px-3.5 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 text-xs font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5 max-w-md">
@@ -2300,16 +3520,61 @@ export function Stage6Workspace({ bid, onRefresh }) {
         )}
       </div>
 
+      {showAlertDlg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-md bg-card border border-border rounded-xl p-6 shadow-xl space-y-4">
+            <div className="flex items-center gap-2 text-foreground">
+              <Bell className="size-5 text-amber-600" />
+              <h3 className="text-base font-semibold font-heading">{emdAlertHistory.length > 0 ? 'Send Reminder to Finance' : 'Alert Finance Team'}</h3>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Clarification remarks (optional)</Label>
+              <Textarea
+                value={alertRemarks}
+                onChange={(e) => setAlertRemarks(e.target.value)}
+                placeholder="Anything Finance should know before processing this EMD..."
+                className="text-xs min-h-[70px]"
+              />
+            </div>
+            <div className="flex gap-2 justify-end pt-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => { setShowAlertDlg(false); setAlertRemarks('') }}>Cancel</Button>
+              <Button size="sm" onClick={handleAlertFinance} className="gap-1.5">
+                <Bell className="size-3.5" /> {emdAlertHistory.length > 0 ? 'Send Reminder' : 'Send Alert'}
+              </Button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
       {showModal && (
         <CompleteStageModal
           title="Complete EMD Processing"
-          description="Confirm EMD DD / Online Receipt / Exemption document is attached. Marks Stage 5 as complete."
+          description={
+            emdRequired
+              ? `Confirm EMD DD / Online Receipt / Exemption document is attached. Marks Stage 6 as complete — this will notify ${bid.account_manager?.full_name || 'the Account Manager'} and ${bid.presales?.full_name || 'Pre-Sales'} that it's ready for Internal Approval.`
+              : "Confirm EMD DD / Online Receipt / Exemption document is attached. Marks Stage 6 as complete."
+          }
           stageKey="EMD_PROCESSING"
           bidId={bid.id}
           bid={bid}
           onClose={() => setShowModal(false)}
           onComplete={onRefresh}
-        />
+          hideDefaultRemarks={emdRequired}
+          remarksValue={handoffRemarks}
+        >
+          {emdRequired && (
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Message for Account Manager &amp; Pre-Sales</Label>
+              <Textarea
+                value={handoffRemarks}
+                onChange={(e) => setHandoffRemarks(e.target.value)}
+                placeholder="Anything they should know before reviewing for Internal Approval..."
+                className="text-xs min-h-[80px]"
+                required
+              />
+            </div>
+          )}
+        </CompleteStageModal>
       )}
     </div>
   )
@@ -2317,30 +3582,238 @@ export function Stage6Workspace({ bid, onRefresh }) {
 
 
 // ── Stage 8: Internal Approval ──────────────────────────────────────────────
+// Both the Account Manager and Pre-Sales assigned to a tender must sign off
+// Internal Approval independently — resolved from the shared stage history
+// (eventType 'APPROVAL', details.role) rather than a new backend column,
+// the same audit-trail-first approach as useStageCompletedBy.
+function useInternalApprovals(bidId, bid) {
+  const [approvals, setApprovals] = useState({ ACCOUNT_MANAGER: null, PRESALES: null })
+  const [reload, setReload] = useState(0)
+  useEffect(() => {
+    let cancelled = false
+    getBidStageHistory(bidId).then((res) => {
+      if (cancelled || !res.ok) return
+      const next = { ACCOUNT_MANAGER: null, PRESALES: null }
+      ;(res.data || [])
+        .filter((h) => h.to_stage === 'INTERNAL_APPROVAL' && h.event_type === 'APPROVAL')
+        .forEach((h) => {
+          const role = h.details?.role
+          if (role === 'ACCOUNT_MANAGER' || role === 'PRESALES') {
+            next[role] = {
+              name: h.transitioned_by?.full_name || h.transitioned_by?.username || 'someone',
+              comment: h.details?.comment || h.transition_reason || '',
+              at: h.created_at,
+            }
+          }
+        })
+      setApprovals(next)
+    }).catch(() => {})
+    return () => { cancelled = true }
+    // bid?.updated_at (bumped by the backend on every write) makes the
+    // header refresh button re-fetch this too — bid was already accepted as
+    // a param for this but wasn't actually used anywhere.
+  }, [bidId, reload, bid?.updated_at])
+  return [approvals, () => setReload((n) => n + 1)]
+}
+
+function InternalApprovalDialog({ role, roleLabel, bid, onClose, onDone }) {
+  const [comment, setComment] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!comment.trim()) { toast.error('A comment is required before approving'); return }
+    setSubmitting(true)
+    try {
+      await logStageMicroEvent(bid.id, {
+        fromStage: 'INTERNAL_APPROVAL',
+        toStage: 'INTERNAL_APPROVAL',
+        eventType: 'APPROVAL',
+        transitionReason: comment.trim(),
+        details: { role, comment: comment.trim() },
+      })
+      const currentUser = tokenStorage.getUser()
+      if (bid.bid_owner?.id) {
+        import('../../services/alerts').then(({ createAlert }) => {
+          createAlert({
+            user_id: bid.bid_owner.id,
+            bid_id: bid.id,
+            type: 'APPROVAL',
+            created_by: currentUser?.id,
+            title: `Internal Approval — ${roleLabel} signed off: ${bid.title}`,
+            message: `<p style="margin:0 0 12px 0;">${currentUser?.full_name || currentUser?.username || roleLabel} (${roleLabel}) approved Internal Approval for '<strong>${bid.title}</strong>'.</p><div style="margin:0;padding:10px 14px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;color:#334155;font-size:13px;">${comment.trim()}</div>`,
+          })
+        })
+      }
+      toast.success(`Approved as ${roleLabel}`)
+      onDone()
+    } catch {
+      toast.error('Network error')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-md bg-card border border-border rounded-xl p-6 shadow-xl space-y-4">
+        <div className="flex items-center gap-2 text-foreground">
+          <CheckCircle2 className="size-5 text-yellow-600" />
+          <h3 className="text-base font-semibold font-heading">Approve as {roleLabel}</h3>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">Comment *</Label>
+            <Textarea
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              placeholder="What you reviewed, any conditions, or context for the Bid Executive..."
+              className="text-xs min-h-[120px]"
+              required
+            />
+          </div>
+          <div className="flex gap-2 justify-end pt-2">
+            <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={submitting}>Cancel</Button>
+            <Button type="submit" size="sm" disabled={submitting} className="gap-2">
+              {submitting ? <><Loader2 className="size-3.5 animate-spin" /> Approving...</> : 'Approve'}
+            </Button>
+          </div>
+        </form>
+      </motion.div>
+    </div>
+  )
+}
+
 export function Stage8Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
+  const [approvingRole, setApprovingRole] = useState(null) // 'ACCOUNT_MANAGER' | null
+  const { user: currentUser, isAdmin } = usePermissions()
+  const isAssignedAM = !!currentUser?.id && currentUser.id === bid?.account_manager?.id
+  const [approvals, refetchApprovals] = useInternalApprovals(bid.id, bid)
+  // Only the Account Manager's sign-off is required to advance this stage —
+  // Pre-Sales approval was dropped from the gate (they can still view the
+  // stage; see the PRE_SALES access-control list elsewhere in this file).
+  const amApproved = !!approvals.ACCOUNT_MANAGER
+  const stageCompleted = bid?.stage_completions?.INTERNAL_APPROVAL === true
+  const completedBy = useStageCompletedBy(bid.id, 'INTERNAL_APPROVAL', stageCompleted)
+
+  const handleReminder = async (role, name, userId) => {
+    if (!userId) return
+    const currentUser = tokenStorage.getUser()
+    try {
+      await import('../../services/alerts').then(({ createAlert }) =>
+        createAlert({
+          user_id: userId,
+          bid_id: bid.id,
+          type: 'ACTION_REQUIRED',
+          created_by: currentUser?.id,
+          title: `Reminder: Internal Approval needed — ${bid.title}`,
+          message: `<p>Tender '${bid.title}' is still awaiting your Internal Approval sign-off.</p>`,
+        })
+      )
+      logStageMicroEvent(bid.id, {
+        fromStage: 'INTERNAL_APPROVAL',
+        toStage: 'INTERNAL_APPROVAL',
+        eventType: 'REMINDER',
+        transitionReason: `Sent an Internal Approval reminder to ${name} (Account Manager)`,
+      })
+      toast.success(`Reminder sent to ${name}`)
+    } catch {
+      toast.error('Failed to send reminder')
+    }
+  }
+
+  const rows = [
+    { role: 'ACCOUNT_MANAGER', label: 'Account Manager', person: bid.account_manager, approval: approvals.ACCOUNT_MANAGER, isAssigned: isAssignedAM },
+  ]
 
   return (
     <div className="space-y-6">
-      <div className="p-4 rounded-xl border border-yellow-200 bg-yellow-50/50 dark:bg-yellow-950/20 dark:border-yellow-900/50 flex items-center justify-between">
+      <div className="p-4 rounded-xl border border-yellow-200 bg-yellow-50/50 dark:bg-yellow-950/20 dark:border-yellow-900/50 flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h3 className="text-sm font-semibold text-yellow-900 dark:text-yellow-300">Stage 6: Internal Sign-off & Approval</h3>
-          <p className="text-xs text-yellow-700 dark:text-yellow-400">Manager and Executive management review bid package before GeM submission.</p>
+          <h3 className="text-sm font-semibold text-yellow-900 dark:text-yellow-300">Stage 7: Internal Sign-off & Approval</h3>
+          <p className="text-xs text-yellow-700 dark:text-yellow-400">
+            The assigned Account Manager must approve.
+          </p>
         </div>
         <StageHeaderActions
           bid={bid}
           stageKey="INTERNAL_APPROVAL"
           onCompleteClick={() => setShowModal(true)}
           onRefresh={onRefresh}
-          completeLabel="Approve & Unlock GeM Submission"
+          completeLabel="Approve & Unlock Bid Submission"
           completeClass="bg-yellow-600 hover:bg-yellow-700 text-white"
+          disabled={!amApproved || !(isAssignedAM || isAdmin)}
+          disabledTooltip={!amApproved ? 'The Account Manager must approve first.' : 'Only the assigned Account Manager or an Admin can advance this stage.'}
         />
       </div>
+
+      {stageCompleted && completedBy && (
+        <div className="px-3.5 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 text-xs font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5 max-w-md">
+          <CheckCircle2 className="size-3.5" /> Advanced by {completedBy.name} on {fmtDate(completedBy.at)}
+        </div>
+      )}
+
+      <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Approvals</h4>
+        <div className="overflow-x-auto rounded-md border border-border/60">
+          <table className="text-xs w-full">
+            <thead>
+              <tr className="bg-muted/50 text-muted-foreground">
+                <th className="px-3 py-1.5 text-left font-semibold">Role</th>
+                <th className="px-3 py-1.5 text-left font-semibold">Name</th>
+                <th className="px-3 py-1.5 text-left font-semibold">Status</th>
+                <th className="px-3 py-1.5 text-left font-semibold min-w-[220px]">Comment</th>
+                <th className="px-3 py-1.5 text-left font-semibold">Approved At</th>
+                <th className="px-3 py-1.5 text-left font-semibold">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.role} className="border-t border-border/60">
+                  <td className="px-3 py-2 font-semibold text-foreground">{r.label}</td>
+                  <td className="px-3 py-2 text-foreground">{r.person?.full_name || '—'}</td>
+                  <td className="px-3 py-2">
+                    {r.approval ? (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-semibold border border-emerald-300 dark:border-emerald-800 text-[10px]">✓ Approved</span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-semibold border border-amber-300 dark:border-amber-800 text-[10px]">⏳ Pending</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-muted-foreground">{r.approval?.comment || '—'}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{r.approval ? fmtDateTime(r.approval.at) : '—'}</td>
+                  <td className="px-3 py-2">
+                    {r.approval ? null : r.isAssigned ? (
+                      <Button size="sm" onClick={() => setApprovingRole(r.role)} className="h-7 text-[11px] gap-1 bg-yellow-600 hover:bg-yellow-700 text-white">
+                        <CheckCircle2 className="size-3" /> Approve
+                      </Button>
+                    ) : r.person ? (
+                      <Button size="sm" variant="outline" onClick={() => handleReminder(r.role, r.person.full_name, r.person.id)} className="h-7 text-[11px] gap-1">
+                        <Bell className="size-3" /> Remind
+                      </Button>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {approvingRole && (
+        <InternalApprovalDialog
+          role={approvingRole}
+          roleLabel="Account Manager"
+          bid={bid}
+          onClose={() => setApprovingRole(null)}
+          onDone={() => { setApprovingRole(null); refetchApprovals(); onRefresh() }}
+        />
+      )}
 
       {showModal && (
         <CompleteStageModal
           title="Approve Bid Submission"
-          description="Marks Stage 6 (Internal Approval) as complete. This will unlock Stage 7: GeM Submission."
+          description="Marks Stage 7 (Internal Approval) as complete. This will unlock Stage 8: Bid Submission."
           stageKey="INTERNAL_APPROVAL"
           bidId={bid.id}
           bid={bid}
@@ -2357,7 +3830,7 @@ export function Stage9Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
   const { isLocked } = checkStageState(bid, 'GEM_SUBMISSION')
 
-  // Final submitted price is no longer hand-typed — it's sourced from Stage 3's
+  // Final submitted price is no longer hand-typed — it's sourced from Stage 4's
   // (Pricing Request) approved GlobX Total (incl. GST). If pricing was never
   // sent through approval, fall back to a live recalculation so the stage
   // isn't blocked, but flag it clearly since it isn't a locked-in figure yet.
@@ -2402,7 +3875,7 @@ export function Stage9Workspace({ bid, onRefresh }) {
         <div className="p-6 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50/50 dark:bg-amber-950/20 text-center">
           <Hourglass className="size-10 mx-auto text-amber-500 mb-3" />
           <h3 className="text-base font-bold text-amber-900 dark:text-amber-300">Stage Locked — Awaiting Internal Approval</h3>
-          <p className="text-xs text-amber-700 dark:text-amber-400 mt-1 max-w-sm mx-auto">GeM Submission is locked until Stage 6 (Internal Sign-off) is fully approved. Please complete internal approval first.</p>
+          <p className="text-xs text-amber-700 dark:text-amber-400 mt-1 max-w-sm mx-auto">Bid Submission is locked until Stage 7 (Internal Sign-off) is fully approved. Please complete internal approval first.</p>
           <span className="mt-3 inline-block px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-[11px] font-semibold border border-amber-300">Current Stage: {bid.workflow_stage?.replace(/_/g,' ')}</span>
         </div>
       </div>
@@ -2413,7 +3886,7 @@ export function Stage9Workspace({ bid, onRefresh }) {
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-lime-200 bg-lime-50/50 dark:bg-lime-950/20 dark:border-lime-900/50 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-lime-900 dark:text-lime-300">Stage 7: Tender Submission — GeM Portal</h3>
+          <h3 className="text-sm font-semibold text-lime-900 dark:text-lime-300">Stage 8: Tender Submission — GeM Portal</h3>
           <p className="text-xs text-lime-700 dark:text-lime-400">Record GeM Portal submission confirmation and final offered bid price.</p>
         </div>
         <StageHeaderActions
@@ -2428,8 +3901,8 @@ export function Stage9Workspace({ bid, onRefresh }) {
 
       {showModal && (
         <CompleteStageModal
-          title="Record GeM Submission"
-          description="Marks Stage 7 (GeM Submission) as complete. Enter final bid price submitted on GeM portal."
+          title="Record Bid Submission"
+          description="Marks Stage 8 (Bid Submission) as complete. Enter final bid price submitted on GeM portal."
           stageKey="GEM_SUBMISSION"
           bidId={bid.id}
           bid={bid}
@@ -2441,7 +3914,7 @@ export function Stage9Workspace({ bid, onRefresh }) {
               <Label className="text-xs font-medium">Final Submitted Bid Price (₹)</Label>
               {priceSource === 'approved' && (
                 <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 dark:bg-emerald-950/30 dark:text-emerald-400">
-                  ✓ From Stage 3's approved pricing
+                  ✓ From Stage 4's approved pricing
                 </span>
               )}
               {priceSource === 'live' && (
@@ -2451,7 +3924,7 @@ export function Stage9Workspace({ bid, onRefresh }) {
               )}
             </div>
             <div className="h-9 px-3 border border-input rounded-md bg-muted/30 flex items-center text-sm font-mono font-bold text-foreground">
-              {finalPriceNum != null ? fmtMoney(finalPriceNum) : 'Not set — complete Stage 3 (Pricing Request) first'}
+              {finalPriceNum != null ? fmtMoney(finalPriceNum) : 'Not set — complete Stage 4 (Pricing Request) first'}
             </div>
             <p className="text-[10px] text-muted-foreground">This value comes from the Pricing Request stage's GlobX Total (incl. GST) — it is not editable here. It will be saved as your official quoted price for all further comparisons.</p>
           </div>
@@ -2470,7 +3943,7 @@ export function Stage10Workspace({ bid, onRefresh }) {
   const handleResult = async (remarks) => {
     if (status === 'QUALIFIED') {
       confetti({ particleCount: 100, spread: 60 })
-      // Stage 10 completion is handled atomically by CompleteStageModal
+      // Stage 9 completion is handled atomically by CompleteStageModal
       await updateBid(bid.id, { technical_result: 'QUALIFIED' })
     } else {
       // Setting technical_result to DISQUALIFIED triggers the backend's
@@ -2490,7 +3963,7 @@ export function Stage10Workspace({ bid, onRefresh }) {
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-teal-200 bg-teal-50/50 dark:bg-teal-950/20 dark:border-teal-900/50 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-teal-900 dark:text-teal-300">Stage 8: Technical Evaluation</h3>
+          <h3 className="text-sm font-semibold text-teal-900 dark:text-teal-300">Stage 9: Technical Evaluation</h3>
           <p className="text-xs text-teal-700 dark:text-teal-400">Record official technical qualification status from procuring authority.</p>
         </div>
         <StageHeaderActions
@@ -2558,6 +4031,14 @@ export function Stage11Workspace({ bid, onRefresh }) {
   useEffect(() => {
     if (stage9Price) setOurPrice(String(stage9Price))
   }, [stage9Price])
+  // Same resync need for the L1/rank fields — a refresh (this session's own
+  // header button, or another session's edit) otherwise leaves these frozen
+  // at whatever they were when this stage tab was first opened.
+  useEffect(() => {
+    setL1Name(bid?.l1_company_name || '')
+    setL1Price(bid?.l1_price ? String(bid.l1_price) : '')
+    setOurRank(bid?.our_rank || '')
+  }, [bid?.l1_company_name, bid?.l1_price, bid?.our_rank])
 
   const l1PriceNum = Number(l1Price) || 0
   const ourPriceNum = Number(ourPrice) || 0
@@ -2645,7 +4126,7 @@ export function Stage11Workspace({ bid, onRefresh }) {
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-cyan-200 bg-cyan-50/50 dark:bg-cyan-950/20 dark:border-cyan-900/50 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-cyan-900 dark:text-cyan-300">Stage 9: Financial Evaluation &amp; L1 Determination</h3>
+          <h3 className="text-sm font-semibold text-cyan-900 dark:text-cyan-300">Stage 10: Financial Evaluation &amp; L1 Determination</h3>
           <p className="text-xs text-cyan-700 dark:text-cyan-400">Record financial bid opening outcome (L1 / Won / Lost).</p>
         </div>
         <StageHeaderActions
@@ -2701,7 +4182,7 @@ export function Stage11Workspace({ bid, onRefresh }) {
               </label>
             </div>
           </div>
-          {/* Our GeM Submitted Price — pre-filled from Stage 7, always editable. Our Rank sits
+          {/* Our GeM Submitted Price — pre-filled from Stage 8, always editable. Our Rank sits
               beside it (not beside L1 Company) since Rank qualifies our own price, not L1's. */}
           <div className={`grid gap-3 ${outcome === 'LOST' ? 'grid-cols-2' : 'grid-cols-1'}`}>
             <div className="space-y-1.5">
@@ -2709,10 +4190,10 @@ export function Stage11Workspace({ bid, onRefresh }) {
                 <Label className="text-xs font-medium">Our GeM Submitted Price (₹) *</Label>
                 {stage9Price ? (
                   <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 dark:bg-emerald-950/30 dark:text-emerald-400">
-                    ✓ Auto-filled from Stage 7
+                    ✓ Auto-filled from Stage 8
                   </span>
                 ) : (
-                  <span className="text-[10px] text-amber-600 italic">Stage 7 price not set — enter manually</span>
+                  <span className="text-[10px] text-amber-600 italic">Stage 8 price not set — enter manually</span>
                 )}
               </div>
               <Input
@@ -2935,7 +4416,7 @@ export function Stage12Workspace({ bid, onRefresh }) {
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/20 dark:border-emerald-900/50 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-emerald-900 dark:text-emerald-300">Stage 10: Contract Award &amp; Operations Handover</h3>
+          <h3 className="text-sm font-semibold text-emerald-900 dark:text-emerald-300">Stage 11: Contract Award &amp; Operations Handover</h3>
           <p className="text-xs text-emerald-700 dark:text-emerald-400">Confirm Purchase Order receipt, then Bank Guarantee (if required), Delivery/Work Complete, and EMD return — in that order.</p>
         </div>
         <StageHeaderActions
@@ -3189,6 +4670,7 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
 
   if (isLocked) {
     const priorStageKey = WORKFLOW_STAGES_ORDERED[stageIdx - 1]
+    const gatedByPrimaryReview = STAGES_GATED_BY_PRIMARY_REVIEW.includes(stage)
     return (
       <div className="p-8 rounded-xl border border-amber-200 bg-amber-50/50 dark:bg-amber-950/20 dark:border-amber-900/50 text-center space-y-4 max-w-2xl mx-auto my-6">
         <div className="size-14 rounded-full bg-amber-100 dark:bg-amber-900/50 flex items-center justify-center mx-auto text-amber-600 dark:text-amber-400 border border-amber-300 dark:border-amber-800 shadow-sm">
@@ -3197,26 +4679,29 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
         <div className="space-y-1">
           <h3 className="text-base font-bold text-foreground">Stage {stageIdx + 1} ({stage.replace(/_/g, ' ')}) is Locked</h3>
           <p className="text-xs text-muted-foreground leading-relaxed max-w-md mx-auto">
-            Strict enterprise stage-gating is active. All preceding stage sections (Stages 1 through {stageIdx}) must be completed before Stage {stageIdx + 1} can be accessed.
+            {gatedByPrimaryReview
+              ? 'This section opens once the Account Manager completes Primary Review (Go decision).'
+              : `Strict enterprise stage-gating is active. All preceding stage sections (Stages 1 through ${stageIdx}) must be completed before Stage ${stageIdx + 1} can be accessed.`}
           </p>
         </div>
         <div className="pt-2">
           <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
-            <Lock className="size-3.5" /> Pending Completion of Stage {stageIdx} ({priorStageKey?.replace(/_/g, ' ')})
+            <Lock className="size-3.5" /> Pending Completion of {gatedByPrimaryReview ? 'Primary Review' : `Stage ${stageIdx} (${priorStageKey?.replace(/_/g, ' ')})`}
           </span>
         </div>
       </div>
     )
   }
 
-  // Full access roles (Super Admin, Admin, Manager, Bid Executive)
-  const fullAccessRoles = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'BID_EXECUTIVE']
+  // Full access roles (Super Admin, Admin, Manager, Account Manager, Bid Executive)
+  const fullAccessRoles = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ACCOUNT_MANAGER', 'BID_EXECUTIVE']
   const isFullAccess = userRoles.some(r => fullAccessRoles.includes(r))
 
   if (!isFullAccess) {
-    // Stages 1, 3, 6 (Internal Approval), 10 (Award & Delivery) for PRE_SALES
+    // Stages 1, 2 (own Primary Review tab, when assigned), 4, 7, 11 for PRE_SALES
     const preSalesStages = [
       'DISCOVERED',
+      'PRIMARY_REVIEW',
       'PRICING_REQUEST',
       'INTERNAL_APPROVAL',
       'AWARD_HANDOVER'
@@ -3266,6 +4751,8 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
   switch (stage) {
     case 'DISCOVERED':
       return <Stage1Workspace bid={bid} onRefresh={onRefresh} />
+    case 'PRIMARY_REVIEW':
+      return <Stage2PrimaryReviewWorkspace bid={bid} onRefresh={onRefresh} />
     case 'OEM_AUTHORIZATION_REQUEST':
       return <Stage3Workspace bid={bid} onRefresh={onRefresh} />
     case 'PRICING_REQUEST':

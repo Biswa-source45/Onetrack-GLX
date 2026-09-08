@@ -48,7 +48,10 @@ type BidService interface {
 	CreateBid(ctx context.Context, req *CreateBidRequest, createdBy string) (*BidResponse, error)
 	GetBid(ctx context.Context, id string) (*BidResponse, error)
 	ListBids(ctx context.Context, params ListBidsParams) (*BidListResponse, error)
-	UpdateBid(ctx context.Context, id string, req *UpdateBidRequest, actorID string) error
+	// actorRoles is the acting user's global roles (e.g. SUPER_ADMIN, ADMIN),
+	// used only to authorize a Bid Owner reassignment when the actor isn't
+	// this specific tender's Account Manager or Reporting Manager.
+	UpdateBid(ctx context.Context, id string, req *UpdateBidRequest, actorID string, actorRoles []string) error
 	TransitionStage(ctx context.Context, id string, req *TransitionStageRequest, actorID string) (*TransitionResult, error)
 	GetStageHistory(ctx context.Context, id string) ([]StageHistoryResponse, error)
 	AddMicroEvent(ctx context.Context, bidID string, req *AddMicroEventRequest, actorID string) (*StageHistoryResponse, error)
@@ -58,7 +61,12 @@ type BidService interface {
 	// own row) or every owner when empty (management roles).
 	GetTenderPerformanceMatrix(ctx context.Context, ownerID string) ([]TenderOwnerPerformanceStat, error)
 	AddMember(ctx context.Context, bidID string, req *AddMemberRequest, actorID string) error
-	RemoveMember(ctx context.Context, bidID string, userID string) error
+	// RemoveMember blocks removing the Bid Owner or Account Manager (every
+	// tender must always carry both — reassign via UpdateBid instead) and
+	// nulls the matching FK when a Reporting Manager / Pre-Sales member is
+	// removed, so the team panel and the tender's actual assignment can't
+	// drift apart the way they used to.
+	RemoveMember(ctx context.Context, bidID string, userID string, actorID string) error
 	RecordOutcome(ctx context.Context, id string, req *RecordOutcomeRequest) error
 	ArchiveBid(ctx context.Context, id string) error
 	RestoreBid(ctx context.Context, id string) error

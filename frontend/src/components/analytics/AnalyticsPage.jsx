@@ -31,7 +31,7 @@ import { tokenStorage } from '../../services/auth'
 import { usePermissions } from '../../hooks/usePermissions'
 import { formatCurrency } from '../../lib/tenderFormat'
 
-// Matches the real 10-stage pipeline (WORKFLOW_STAGES_ORDERED in services/bids.js)
+// Matches the real 11-stage pipeline (WORKFLOW_STAGES_ORDERED in services/bids.js)
 // exactly — this used to only have 'PREPARATION'/'APPROVAL' placeholder keys
 // that never matched any real bid.workflow_stage value, so several stages
 // (OEM Authorization, Pricing Request, Document Checklist, EMD Processing,
@@ -40,6 +40,7 @@ import { formatCurrency } from '../../lib/tenderFormat'
 // skipped them and showed two permanently-zero data points instead.
 const STAGE_COLORS = {
   DISCOVERED: '#3b82f6',                     // Blue
+  PRIMARY_REVIEW: '#f43f5e',                  // Rose
   OEM_AUTHORIZATION_REQUEST: '#6366f1',       // Indigo
   PRICING_REQUEST: '#8b5cf6',                 // Violet
   DOCUMENT_CHECKLIST_PREPARATION: '#a855f7',  // Purple
@@ -56,12 +57,13 @@ const STAGE_COLORS = {
 
 const STAGE_LABELS = {
   DISCOVERED: 'Discovered',
+  PRIMARY_REVIEW: 'Primary Review',
   OEM_AUTHORIZATION_REQUEST: 'OEM Authorization',
   PRICING_REQUEST: 'Pricing Request',
   DOCUMENT_CHECKLIST_PREPARATION: 'Document Checklist',
   EMD_PROCESSING: 'EMD Processing',
   INTERNAL_APPROVAL: 'Internal Approval',
-  GEM_SUBMISSION: 'GeM Portal Submission',
+  GEM_SUBMISSION: 'Bid Submission',
   TECHNICAL_EVALUATION: 'Technical Evaluation',
   FINANCIAL_EVALUATION: 'Financial Evaluation',
   AWARD_HANDOVER: 'Award & Handover',
@@ -74,6 +76,7 @@ const ROLE_BADGES = {
   SUPER_ADMIN: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
   ADMIN: 'bg-purple-500/10 text-purple-500 border-purple-500/20',
   MANAGER: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+  ACCOUNT_MANAGER: 'bg-rose-500/10 text-rose-500 border-rose-500/20',
   BID_EXECUTIVE: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
   USER: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
 }
@@ -424,7 +427,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
       { key: 'DOCUMENT_CHECKLIST_PREPARATION', label: '4. Checklist', milestone: 'Documents Compiled' },
       { key: 'EMD_PROCESSING', label: '5. EMD', milestone: 'EMD Processed' },
       { key: 'INTERNAL_APPROVAL', label: '6. Approval', milestone: 'Internal Sign-off' },
-      { key: 'GEM_SUBMISSION', label: '7. GeM Submission', milestone: 'GeM Portal Deadline' },
+      { key: 'GEM_SUBMISSION', label: '7. Bid Submission', milestone: 'GeM Portal Deadline' },
       { key: 'TECHNICAL_EVALUATION', label: '8. Tech Eval', milestone: 'Tech Clearance' },
       { key: 'FINANCIAL_EVALUATION', label: '9. Fin Eval', milestone: 'Price Opening' },
       { key: 'AWARD_HANDOVER', label: '10. Award & Handover', milestone: 'PO & BG Handover' },
@@ -719,7 +722,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
                   <option value="ALL">All Stages</option>
                   <option value="DISCOVERED">Discovered</option>
                   <option value="PREPARATION">Preparation</option>
-                  <option value="GEM_SUBMISSION">GeM Submission</option>
+                  <option value="GEM_SUBMISSION">Bid Submission</option>
                   <option value="TECHNICAL_EVALUATION">Technical Eval</option>
                   <option value="FINANCIAL_EVALUATION">Financial Eval</option>
                   <option value="WON">Won</option>

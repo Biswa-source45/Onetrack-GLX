@@ -42,7 +42,9 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 			team, scope_type, activity_type,
 			excel_bid_status, submission_status, financial_evaluation_status, po_received_status,
 			bid_result, ai_source_document_id, ai_extraction_confidence, stage_completions,
-			emd_not_applicable
+			emd_not_applicable,
+			account_manager_id, presales_id, location, bg_duration_months, requested_products,
+			emd_exemption_types, alert_note
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9,
@@ -57,7 +59,9 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 			$37, $38,
 			$39, $40, $41,
 			$42, $43, $44, $45, $46, $47, $48, '{"DISCOVERED": true}'::jsonb,
-			$49
+			$49,
+			$52, $53, $54, $55, $56,
+			$57, $58
 		) RETURNING id
 	`
 	var id string
@@ -78,6 +82,8 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 		params.BidResult, params.AISourceDocumentID, params.AIExtractionConfidence,
 		params.EMDNotApplicable,
 		params.Quantity, params.OurRank,
+		params.AccountManagerID, params.PresalesID, params.Location, params.BGDurationMonths, params.RequestedProducts,
+		params.EMDExemptionTypes, params.AlertNote,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("failed to create bid: %w", err)
@@ -121,7 +127,7 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 		       portal_source, creation_mode, workflow_stage, bid_status,
 		       bid_owner_id, reporting_manager_id, created_by,
 		       estimated_value, emd_amount, emd_type, emd_exempted,
-		       emd_exemption_type, emd_exemption_reason,
+		       emd_exemption_type, emd_exemption_reason, emd_exemption_types,
 		       final_bid_value, l1_price, quoted_price,
 		       start_date, end_date, opening_date, closing_date, duration_months, authority,
 		       high_level_scope, bg_required, bg_rate,
@@ -144,7 +150,9 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 		       emd_beneficiary, emd_payable_at,
 		       po_received_date, bg_target_date, bg_discharged_date, emd_returned_date,
 		       emd_ready_date, delivery_complete, delivery_complete_date,
-		       emd_not_applicable
+		       emd_not_applicable,
+		       account_manager_id, presales_id, location, bg_duration_months,
+		       requested_products, primary_review, alert_note
 		FROM bid.bid_workspaces
 		WHERE id = $1
 	`
@@ -169,7 +177,11 @@ const derivedStatusExpr = `
 		WHEN b.bid_status = 'LOST' OR b.workflow_stage = 'LOST' OR b.bid_outcome = 'LOST' OR b.technical_result = 'DISQUALIFIED' THEN 'LOST'
 		WHEN b.bid_status = 'CANCELLED' OR b.workflow_stage = 'CANCELLED' OR b.bid_outcome = 'CANCELLED' THEN 'CANCELLED'
 		WHEN b.bid_status = 'CLOSED' THEN 'CLOSED'
-		WHEN b.bid_status = 'TECHNICAL_EVALUATION' OR b.workflow_stage IN ('GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION') OR b.submission_status = 'SUBMITTED' OR b.submission_done = true THEN 'TECHNICAL_EVALUATION'
+		-- "Submitted": has cleared GeM Submission and hasn't yet resolved to an
+		-- outcome above — includes Award & Handover, since sitting there isn't
+		-- itself a resolution (a WON/LOST/CANCELLED outcome there is caught by
+		-- the branches above, before this one is ever reached).
+		WHEN b.bid_status = 'TECHNICAL_EVALUATION' OR b.workflow_stage IN ('GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER') OR b.submission_status = 'SUBMITTED' OR b.submission_done = true THEN 'TECHNICAL_EVALUATION'
 		WHEN b.bid_status = 'SUBMITTED' THEN 'SUBMITTED'
 		ELSE 'ACTIVE'
 	END`
@@ -203,7 +215,18 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		idx += 7
 	}
 	if params.WorkflowStage != "" {
-		conditions = append(conditions, fmt.Sprintf("b.workflow_stage = $%d", idx))
+		// A stage filter means "currently, actively sitting at this stage" —
+		// exclude a tender whose workflow_stage column is stale (recordBidOutcome
+		// can mark WON/LOST/CANCELLED/CLOSED without moving workflow_stage off
+		// wherever it was), so it isn't double-counted under both its real
+		// outcome and a leftover stage name. The three terminal stage values
+		// are themselves exact matches, since selecting them means "show me
+		// the WON/LOST/CANCELLED ones" and they'd otherwise match nothing.
+		if params.WorkflowStage == "WON" || params.WorkflowStage == "LOST" || params.WorkflowStage == "CANCELLED" {
+			conditions = append(conditions, fmt.Sprintf("b.workflow_stage = $%d", idx))
+		} else {
+			conditions = append(conditions, fmt.Sprintf("b.workflow_stage = $%d AND (%s) NOT IN ('WON', 'LOST', 'CANCELLED', 'CLOSED')", idx, derivedStatusExpr))
+		}
 		args = append(args, params.WorkflowStage)
 		idx++
 	}
@@ -316,7 +339,7 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		       b.portal_source, b.creation_mode, b.workflow_stage, b.bid_status,
 		       b.bid_owner_id, b.reporting_manager_id, b.created_by,
 		       b.estimated_value, b.emd_amount, b.emd_type, b.emd_exempted,
-		       b.emd_exemption_type, b.emd_exemption_reason,
+		       b.emd_exemption_type, b.emd_exemption_reason, b.emd_exemption_types,
 		       b.final_bid_value, b.l1_price, b.quoted_price,
 		       b.start_date, b.end_date, b.opening_date, b.closing_date, b.duration_months, b.authority,
 		       b.high_level_scope, b.bg_required, b.bg_rate,
@@ -339,7 +362,9 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		       b.emd_beneficiary, b.emd_payable_at,
 		       b.po_received_date, b.bg_target_date, b.bg_discharged_date, b.emd_returned_date,
 		       b.emd_ready_date, b.delivery_complete, b.delivery_complete_date,
-		       b.emd_not_applicable
+		       b.emd_not_applicable,
+		       b.account_manager_id, b.presales_id, b.location, b.bg_duration_months,
+		       b.requested_products, b.primary_review, b.alert_note
 		FROM bid.bid_workspaces b
 		LEFT JOIN auth.users u ON b.bid_owner_id = u.id
 		%s
@@ -449,6 +474,9 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 		} else {
 			addSet("emd_exemption_reason", *req.EMDExemptionReason)
 		}
+	}
+	if req.EMDExemptionTypes != nil {
+		addSet("emd_exemption_types", req.EMDExemptionTypes)
 	}
 	// EMD bank / DD detail fields
 	if req.EMDBankName != nil {
@@ -663,8 +691,52 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	if req.OEMWorkspace != nil {
 		addSet("oem_workspace", []byte(*req.OEMWorkspace))
 	}
+	// bid_owner_id is required (never NULL) — an empty-string sentinel is
+	// ignored rather than written, so a stray "" never clears the one field
+	// every tender must always carry.
+	if req.BidOwnerID != nil && strings.TrimSpace(*req.BidOwnerID) != "" {
+		addSet("bid_owner_id", *req.BidOwnerID)
+	}
+	// reporting_manager_id / presales_id are optional relationships, so (unlike
+	// bid_owner_id above) an empty-string sentinel here means "clear it" — the
+	// same NULL-vs-empty convention emd_exemption_type/reason use above, needed
+	// so RemoveMember can null these out when a Reporting Manager / Pre-Sales
+	// member is removed from the team panel.
 	if req.ReportingManagerID != nil {
-		addSet("reporting_manager_id", *req.ReportingManagerID)
+		if strings.TrimSpace(*req.ReportingManagerID) == "" {
+			sets = append(sets, fmt.Sprintf("reporting_manager_id = $%d", idx))
+			args = append(args, nil)
+			idx++
+		} else {
+			addSet("reporting_manager_id", *req.ReportingManagerID)
+		}
+	}
+	if req.AccountManagerID != nil {
+		addSet("account_manager_id", *req.AccountManagerID)
+	}
+	if req.PresalesID != nil {
+		if strings.TrimSpace(*req.PresalesID) == "" {
+			sets = append(sets, fmt.Sprintf("presales_id = $%d", idx))
+			args = append(args, nil)
+			idx++
+		} else {
+			addSet("presales_id", *req.PresalesID)
+		}
+	}
+	if req.Location != nil {
+		addSet("location", *req.Location)
+	}
+	if req.BGDurationMonths != nil {
+		addSet("bg_duration_months", *req.BGDurationMonths)
+	}
+	if req.RequestedProducts != nil {
+		addSet("requested_products", []byte(*req.RequestedProducts))
+	}
+	if req.PrimaryReview != nil {
+		addSet("primary_review", []byte(*req.PrimaryReview))
+	}
+	if req.AlertNote != nil {
+		addSet("alert_note", []byte(*req.AlertNote))
 	}
 	if req.TechComplianceStatus != nil {
 		addSet("tech_compliance_status", *req.TechComplianceStatus)
@@ -1082,7 +1154,7 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 		&b.PortalSource, &b.CreationMode, &b.WorkflowStage, &b.BidStatus,
 		&b.BidOwnerID, &b.ReportingManagerID, &b.CreatedBy,
 		&b.EstimatedValue, &b.EMDAmount, &b.EMDType, &b.EMDExempted,
-		&b.EMDExemptionType, &b.EMDExemptionReason,
+		&b.EMDExemptionType, &b.EMDExemptionReason, &b.EMDExemptionTypes,
 		&b.FinalBidValue, &b.L1Price, &b.QuotedPrice,
 		&b.StartDate, &b.EndDate, &b.OpeningDate, &b.ClosingDate, &b.DurationMonths, &b.Authority,
 		&b.HighLevelScope, &b.BGRequired, &b.BGRate,
@@ -1106,6 +1178,8 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 		&b.POReceivedDate, &b.BGTargetDate, &b.BGDischargedDate, &b.EMDReturnedDate,
 		&b.EMDReadyDate, &b.DeliveryComplete, &b.DeliveryCompleteDate,
 		&b.EMDNotApplicable,
+		&b.AccountManagerID, &b.PresalesID, &b.Location, &b.BGDurationMonths,
+		&b.RequestedProducts, &b.PrimaryReview, &b.AlertNote,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan bid: %w", err)

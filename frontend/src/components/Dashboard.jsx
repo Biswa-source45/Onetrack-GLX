@@ -27,6 +27,9 @@ import { TendersPage }    from './tenders/TendersPage'
 import { listAllBids }   from '../services/bids'
 import { getTenderPerformanceMatrix } from '../services/bids'
 import { formatCurrency } from '../lib/tenderFormat'
+import { StageBadge, StatusBadge } from '../lib/tenderDisplay'
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 
 // ── Navigation items (each gated by a permission check) ──────────────────────
 const NAV_ITEMS = [
@@ -207,6 +210,10 @@ export function OverviewPanel() {
   const [executiveFilter, setExecutiveFilter] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
 
+  // EMD Returned / EMD Pending Refund tile drill-down: null when closed, else
+  // { title, subtitle, bids }.
+  const [emdDrill, setEmdDrill] = useState(null)
+
   const fetchBids = async () => {
     setLoading(true)
     try {
@@ -345,14 +352,18 @@ export function OverviewPanel() {
 
   const pendingEMDReturn = Math.max(0, totalEMDDeposited - totalEMDReturned)
 
+  // Same buckets as the two sums above, kept as arrays for the drill-down dialog.
+  const emdReturnedBids = emdDepositedBids.filter(b => b.emd_returned)
+  const emdPendingBids  = emdDepositedBids.filter(b => !b.emd_returned)
+
   // Stage Funnel Analytics Data
   const stageGroups = [
-    { label: 'Stages 1-3: Discovery & Pre-Qual', stages: ['DISCOVERED', 'OEM_AUTHORIZATION_REQUEST', 'PRICING_REQUEST'], color: 'bg-violet-500', barGradient: 'from-violet-500 to-indigo-500' },
-    { label: 'Stages 4-6: Costing & Docs', stages: ['DOCUMENT_CHECKLIST_PREPARATION', 'EMD_PROCESSING', 'INTERNAL_APPROVAL'], color: 'bg-blue-500', barGradient: 'from-blue-500 to-sky-500' },
-    { label: 'Stage 7: Portal Submission', stages: ['GEM_SUBMISSION'], color: 'bg-emerald-500', barGradient: 'from-emerald-500 to-teal-500' },
-    { label: 'Stage 8: Technical Eval', stages: ['TECHNICAL_EVALUATION'], color: 'bg-amber-500', barGradient: 'from-amber-500 to-yellow-500' },
-    { label: 'Stage 9: Financial Eval', stages: ['FINANCIAL_EVALUATION'], color: 'bg-indigo-500', barGradient: 'from-indigo-500 to-purple-500' },
-    { label: 'Stage 10: Award & Handover', stages: ['AWARD_HANDOVER'], color: 'bg-teal-500', barGradient: 'from-teal-500 to-emerald-600' },
+    { label: 'Stages 1-4: Discovery & Pre-Qual', stages: ['DISCOVERED', 'PRIMARY_REVIEW', 'OEM_AUTHORIZATION_REQUEST', 'PRICING_REQUEST'], color: 'bg-violet-500', barGradient: 'from-violet-500 to-indigo-500' },
+    { label: 'Stages 5-7: Costing & Docs', stages: ['DOCUMENT_CHECKLIST_PREPARATION', 'EMD_PROCESSING', 'INTERNAL_APPROVAL'], color: 'bg-blue-500', barGradient: 'from-blue-500 to-sky-500' },
+    { label: 'Stage 8: Bid Submission', stages: ['GEM_SUBMISSION'], color: 'bg-emerald-500', barGradient: 'from-emerald-500 to-teal-500' },
+    { label: 'Stage 9: Technical Eval', stages: ['TECHNICAL_EVALUATION'], color: 'bg-amber-500', barGradient: 'from-amber-500 to-yellow-500' },
+    { label: 'Stage 10: Financial Eval', stages: ['FINANCIAL_EVALUATION'], color: 'bg-indigo-500', barGradient: 'from-indigo-500 to-purple-500' },
+    { label: 'Stage 11: Award & Handover', stages: ['AWARD_HANDOVER'], color: 'bg-teal-500', barGradient: 'from-teal-500 to-emerald-600' },
   ]
 
   const stageFunnelData = stageGroups.map(grp => {
@@ -640,7 +651,9 @@ export function OverviewPanel() {
               </div>
             </div>
 
-            <div className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2">
+            <button type="button"
+              onClick={() => setEmdDrill({ title: 'EMD Returned', subtitle: 'Tenders whose EMD has been refunded', bids: emdReturnedBids })}
+              className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2 w-full text-left cursor-pointer hover:border-primary/40 hover:shadow-md transition-all">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">EMD Returned</span>
                 <div className="size-8 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center">
@@ -651,9 +664,11 @@ export function OverviewPanel() {
                 <p className="text-2xl font-bold font-heading text-teal-600">{formatCurrency(totalEMDReturned)}</p>
                 <p className="text-[11px] text-muted-foreground mt-0.5">EMD successfully refunded back</p>
               </div>
-            </div>
+            </button>
 
-            <div className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2">
+            <button type="button"
+              onClick={() => setEmdDrill({ title: 'EMD Pending Refund', subtitle: 'Tenders whose EMD has not been refunded yet', bids: emdPendingBids })}
+              className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2 w-full text-left cursor-pointer hover:border-primary/40 hover:shadow-md transition-all">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">EMD Pending Refund</span>
                 <div className="size-8 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-center">
@@ -664,8 +679,51 @@ export function OverviewPanel() {
                 <p className="text-2xl font-bold font-heading text-amber-600">{formatCurrency(pendingEMDReturn)}</p>
                 <p className="text-[11px] text-muted-foreground mt-0.5">Outstanding EMD awaiting refund</p>
               </div>
-            </div>
+            </button>
           </div>
+
+          <Dialog open={!!emdDrill} onOpenChange={(o) => !o && setEmdDrill(null)}>
+            <DialogContent className="sm:max-w-3xl">
+              <DialogHeader>
+                <DialogTitle>{emdDrill?.title}</DialogTitle>
+                <DialogDescription>{emdDrill?.bids.length ?? 0} tender(s) — {emdDrill?.subtitle}</DialogDescription>
+              </DialogHeader>
+              {emdDrill && emdDrill.bids.length === 0 ? (
+                <div className="py-10 text-center text-muted-foreground">
+                  <Archive className="size-8 mx-auto opacity-40 mb-2" />
+                  <p className="text-sm">No tenders in this bucket yet.</p>
+                </div>
+              ) : (
+                <div className="max-h-[60vh] overflow-y-auto -mx-2 px-2">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Title</TableHead>
+                        <TableHead>GeM / Bid No</TableHead>
+                        <TableHead>Organization</TableHead>
+                        <TableHead>Owner</TableHead>
+                        <TableHead>EMD Amount</TableHead>
+                        <TableHead>Stage</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {emdDrill?.bids.map((b) => (
+                        <TableRow key={b.id} className="cursor-pointer hover:bg-muted/40"
+                          onClick={() => { setEmdDrill(null); navigate(`/dashboard/tenders/${b.id}`) }}>
+                          <TableCell className="font-medium text-foreground max-w-[220px] truncate">{b.title}</TableCell>
+                          <TableCell className="font-mono text-xs">{b.gem_bid_no || b.bid_no || '—'}</TableCell>
+                          <TableCell className="max-w-[160px] truncate">{b.organization_name || '—'}</TableCell>
+                          <TableCell>{b.bid_owner?.full_name || b.bid_owner?.username || '—'}</TableCell>
+                          <TableCell className="font-mono">{formatCurrency(b.emd_amount)}</TableCell>
+                          <TableCell>{b.workflow_stage ? <StageBadge stage={b.workflow_stage} /> : <StatusBadge status={b.bid_status} />}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
 
           {/* Tender Owner Performance Matrix (Management BI) — Real-time from backend */}
           <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
@@ -738,6 +796,7 @@ export function OverviewPanel() {
                         SUPER_ADMIN: 'bg-violet-50 text-violet-700 border-violet-200',
                         ADMIN:       'bg-blue-50 text-blue-700 border-blue-200',
                         MANAGER:     'bg-indigo-50 text-indigo-700 border-indigo-200',
+                        ACCOUNT_MANAGER: 'bg-rose-50 text-rose-700 border-rose-200',
                         BID_EXECUTIVE: 'bg-teal-50 text-teal-700 border-teal-200',
                         FINANCE:     'bg-amber-50 text-amber-700 border-amber-200',
                         PRE_SALES:   'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -746,6 +805,7 @@ export function OverviewPanel() {
                         SUPER_ADMIN: 'Super Admin',
                         ADMIN: 'Admin',
                         MANAGER: 'Manager',
+                        ACCOUNT_MANAGER: 'Account Mgr',
                         BID_EXECUTIVE: 'Bid Exec',
                         FINANCE: 'Finance',
                         PRE_SALES: 'Pre-Sales',

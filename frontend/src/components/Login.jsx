@@ -1,39 +1,66 @@
 import React, { useState } from "react"
-import { useNavigate } from "react-router-dom"
-import { motion, AnimatePresence, MotionConfig } from "framer-motion"
-import { Eye, EyeOff, ArrowLeft, Loader2, Key } from "lucide-react"
+import { useNavigate, Link } from "react-router-dom"
+import { motion, MotionConfig } from "framer-motion"
+import { Eye, EyeOff, ArrowLeft, Loader2, Mail, Lock } from "lucide-react"
 import { toast } from "sonner"
 import { authService } from "../services/auth"
-import { ledger, ledgerFont } from "../lib/ledgerTheme"
+import { ledgerFont } from "../lib/ledgerTheme"
 import { LedgerStampMark } from "../lib/ledgerMarks"
-import { LoginHeroPanel } from "../lib/LoginHeroPanel"
 
-const inputStyle = {
-  fontFamily: ledgerFont.body,
-  background: "#FFFFFF",
-  border: `1px solid ${ledger.border}`,
-  color: ledger.text,
+// ── Abstract Building Vector Illustration ─────────────────────────────────
+function BuildingAbstractIllustration({ className = "" }) {
+  return (
+    <svg viewBox="0 0 500 400" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+      {/* Ground Line */}
+      <line x1="10" y1="390" x2="490" y2="390" stroke="#1E293B" strokeWidth="5" strokeLinecap="round" />
+
+      {/* Far Left Building */}
+      <path d="M 30 390 L 30 270 L 110 200 L 110 390 Z" fill="#F1F5F9" stroke="#1E293B" strokeWidth="3.5" strokeLinejoin="round" />
+      <path d="M 110 390 L 110 200 L 180 160 L 180 390 Z" fill="#FFFFFF" stroke="#1E293B" strokeWidth="3.5" strokeLinejoin="round" />
+
+      {/* Mid Left Building with Diagonal Texture */}
+      <path d="M 180 390 L 180 160 L 260 190 L 260 390 Z" fill="#EFF6FF" stroke="#1E293B" strokeWidth="3.5" strokeLinejoin="round" />
+      <line x1="195" y1="185" x2="250" y2="370" stroke="#93C5FD" strokeWidth="2.5" strokeDasharray="5 5" />
+
+      {/* Main Tall Center Skyscraper */}
+      <path d="M 260 390 L 260 70 L 350 15 L 350 390 Z" fill="#FFFFFF" stroke="#1E293B" strokeWidth="4" strokeLinejoin="round" />
+      <path d="M 350 390 L 350 15 L 450 85 L 450 390 Z" fill="#DBEAFE" stroke="#1E293B" strokeWidth="4" strokeLinejoin="round" />
+
+      {/* Architectural Window Slats on Main Building */}
+      <line x1="275" y1="100" x2="335" y2="80" stroke="#2563EB" strokeWidth="3" strokeLinecap="round" />
+      <line x1="275" y1="135" x2="335" y2="115" stroke="#2563EB" strokeWidth="3" strokeLinecap="round" />
+      <line x1="275" y1="170" x2="335" y2="150" stroke="#2563EB" strokeWidth="3" strokeLinecap="round" />
+      <line x1="275" y1="205" x2="335" y2="185" stroke="#2563EB" strokeWidth="3" strokeLinecap="round" />
+      <line x1="275" y1="240" x2="335" y2="220" stroke="#2563EB" strokeWidth="3" strokeLinecap="round" />
+      <line x1="275" y1="275" x2="335" y2="255" stroke="#2563EB" strokeWidth="3" strokeLinecap="round" />
+      <line x1="275" y1="310" x2="335" y2="290" stroke="#2563EB" strokeWidth="3" strokeLinecap="round" />
+      <line x1="275" y1="345" x2="335" y2="325" stroke="#2563EB" strokeWidth="3" strokeLinecap="round" />
+
+      {/* Accent Nodes */}
+      <circle cx="350" cy="15" r="4" fill="#2563EB" />
+    </svg>
+  )
 }
 
 export default function Login() {
   const navigate = useNavigate()
+  const [activeTab, setActiveTab] = useState("login") // "login" or "forgot"
+
+  // Login form states
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [success, setSuccess] = useState(false)
 
-  // Reset Password (OTP Flow) states
-  const [showResetModal, setShowResetModal] = useState(false)
+  // Forgot password OTP states
   const [forgotStep, setForgotStep] = useState(1) // 1: Email, 2: OTP, 3: New Password
   const [resetEmail, setResetEmail] = useState("")
   const [resetOtp, setResetOtp] = useState("")
   const [resetNewPassword, setResetNewPassword] = useState("")
   const [resetConfirmPassword, setResetConfirmPassword] = useState("")
-  const [showResetNewPass, setShowResetNewPass] = useState(false)
   const [isResetting, setIsResetting] = useState(false)
 
-  const handleSubmit = async (e) => {
+  const handleLoginSubmit = async (e) => {
     e.preventDefault()
 
     if (!username.trim() || !password) {
@@ -47,20 +74,19 @@ export default function Login() {
       const result = await authService.login(username.trim().toLowerCase(), password)
 
       if (result.ok && result.success) {
-        toast.success(result.message || "Logged in successfully!")
-        setSuccess(true)
+        toast.success(result.message || "Signed in successfully!")
         setTimeout(() => {
           setIsLoading(false)
           navigate("/dashboard")
-        }, 800)
+        }, 500)
       } else {
         setIsLoading(false)
         const errorMsg = result.error?.message || "Invalid credentials"
-        toast.error(`${errorMsg} (Status: ${result.status})`)
+        toast.error(`${errorMsg}`)
       }
     } catch (err) {
       setIsLoading(false)
-      toast.error("Network connection error. Is the backend running?")
+      toast.error("Network connection error. Please verify server status.")
     }
   }
 
@@ -74,7 +100,7 @@ export default function Login() {
     try {
       const res = await authService.forgotPassword(resetEmail.trim())
       if (res.ok && res.success) {
-        toast.success(res.message || "OTP code sent to email!")
+        toast.success(res.message || "OTP code sent to your email!")
         setForgotStep(2)
       } else {
         toast.error(res.message || res.error?.message || "Failed to send OTP")
@@ -119,7 +145,7 @@ export default function Login() {
       return
     }
     if (resetNewPassword !== resetConfirmPassword) {
-      toast.error("New passwords do not match")
+      toast.error("Passwords do not match")
       return
     }
 
@@ -128,7 +154,7 @@ export default function Login() {
       const res = await authService.resetPasswordOTP(resetEmail.trim(), resetOtp.trim(), resetNewPassword)
       if (res.ok && res.success) {
         toast.success("Password reset successfully! You can now sign in.")
-        setShowResetModal(false)
+        setActiveTab("login")
         setForgotStep(1)
         setResetEmail("")
         setResetOtp("")
@@ -146,355 +172,255 @@ export default function Login() {
 
   return (
     <MotionConfig reducedMotion="user">
-    <div
-      className="h-screen w-screen flex items-center justify-center p-4 relative overflow-hidden"
-      style={{ background: ledger.ground, fontFamily: ledgerFont.body }}
-    >
-      {/* MAIN CONTAINER CARD */}
-      <motion.div
-        initial={{ opacity: 0, y: 15 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: "easeOut" }}
-        className="relative z-10 w-full max-w-4xl h-[90vh] max-h-[560px] rounded-[8px] p-2 flex flex-col md:flex-row gap-2 overflow-hidden"
-        style={{ background: ledger.surface, border: `1px solid ${ledger.borderBright}`, boxShadow: "0 32px 80px -24px rgba(16,24,40,0.28)" }}
-      >
-        {/* LEFT COLUMN: abstract brand panel */}
-        <div className="hidden md:block md:w-[46%] lg:w-[48%] rounded-[6px] overflow-hidden shrink-0">
-          <LoginHeroPanel />
-        </div>
-
-        {/* RIGHT COLUMN: the blank entry page — a ruled paper form panel */}
-        <div
-          className="w-full md:w-[54%] lg:w-[52%] flex flex-col justify-between p-5 sm:p-6 lg:p-8 h-full overflow-y-auto rounded-[6px]"
-          style={{ background: ledger.ground }}
+      <div className="min-h-screen w-screen flex items-center justify-center p-4 sm:p-6 bg-[#F4F6F9] text-slate-900 selection:bg-blue-600 selection:text-white">
+        
+        {/* COMPACT SPLIT CARD CONTAINER */}
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+          className="w-full max-w-4xl min-h-[500px] rounded-3xl bg-white border border-slate-200/90 shadow-2xl overflow-hidden flex flex-col md:flex-row"
         >
-          {/* Top Row: Back Navigation & Logo */}
-          <div className="flex items-center justify-between w-full">
-            <button
-              onClick={() => navigate("/")}
-              className="group inline-flex items-center gap-1.5 text-xs font-semibold cursor-pointer"
-              style={{ color: ledger.textMuted }}
-            >
-              <ArrowLeft className="size-3.5 group-hover:-translate-x-0.5 transition-transform" />
-              <span>Back</span>
-            </button>
-
-            <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-[4px]" style={{ background: ledger.surfaceRaised, border: `1px solid ${ledger.borderBright}` }}>
-                <LedgerStampMark className="size-4" color={ledger.accent} />
-              </span>
-              <span className="text-sm font-semibold tracking-tight" style={{ fontFamily: ledgerFont.display, color: ledger.text }}>OneTrack</span>
-            </div>
-
-            <div className="w-10 opacity-0 pointer-events-none" />
-          </div>
-
-          {/* Middle Row: Content & Form */}
-          <div className="my-auto max-w-sm w-full mx-auto space-y-6 py-4">
-            {/* Headings */}
-            <div className="text-center space-y-1">
-              <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight leading-none" style={{ fontFamily: ledgerFont.display, color: ledger.text }}>
-                Welcome Back
-              </h2>
-              <p className="text-[11px] font-normal leading-relaxed" style={{ color: ledger.textMuted }}>
-                Enter your system credentials to access your account
+          {/* LEFT SIDE: ABSTRACT BUILDING VECTOR & QUOTE HIGHLIGHT */}
+          <div className="w-full md:w-[48%] p-6 sm:p-8 bg-[#F1F5F9] border-r border-slate-200/80 flex flex-col justify-between relative overflow-hidden">
+            {/* Top Platform Statement */}
+            <div className="relative z-10 space-y-3">
+              <span className="text-3xl text-blue-600 font-serif leading-none block font-bold select-none">“</span>
+              <p className="text-sm sm:text-base font-bold text-slate-900 leading-relaxed tracking-tight" style={{ fontFamily: ledgerFont.display }}>
+                Every public tender entered in one unified workspace. Sequential stage gating, automated EMD tracking, and strict role authorization enforced across GeM & CPPP portals.
               </p>
+
+              <div className="flex items-center gap-2.5 pt-1">
+                <div className="size-8 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-[10px]">
+                  OT
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900">OneTrack Governance</h4>
+                  <p className="text-[10px] font-medium text-slate-500">Enterprise Operations Platform</p>
+                </div>
+              </div>
             </div>
 
-            {/* Form */}
-            <form onSubmit={handleSubmit} className="space-y-3.5">
-              {/* Username Input */}
-              <div className="space-y-1">
-                <label htmlFor="username" className="block text-xs font-semibold" style={{ color: ledger.textMuted }}>
-                  Username or Email Address
-                </label>
-                <input
-                  id="username"
-                  type="text"
-                  required
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Enter username or email address"
-                  className="w-full focus:outline-none focus:ring-2 rounded-[4px] px-3.5 py-2.5 text-xs font-medium transition-all"
-                  style={{ ...inputStyle, "--tw-ring-color": ledger.accent }}
-                />
-              </div>
-
-              {/* Password Input */}
-              <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <label htmlFor="password" className="block text-xs font-semibold" style={{ color: ledger.textMuted }}>
-                    Password
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setShowResetModal(true)}
-                    className="text-[11px] font-bold hover:underline cursor-pointer"
-                    style={{ color: ledger.accentDeep }}
-                  >
-                    Reset Password?
-                  </button>
-                </div>
-                <div className="relative">
-                  <input
-                    id="password"
-                    type={showPassword ? "text" : "password"}
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter password"
-                    className="w-full focus:outline-none focus:ring-2 rounded-[4px] pl-3.5 pr-9 py-2.5 text-xs font-medium transition-all"
-                    style={{ ...inputStyle, "--tw-ring-color": ledger.accent }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 transition-colors cursor-pointer"
-                    style={{ color: ledger.textMuted }}
-                  >
-                    {showPassword ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* Action Button */}
-              <div className="pt-2">
-                <button
-                  type="submit"
-                  disabled={isLoading || success}
-                  className="w-full py-3 rounded-[4px] font-semibold text-xs tracking-wide transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 active:scale-[0.99]"
-                  style={{ background: ledger.accent, color: "#FFFFFF", boxShadow: `0 1px 0 ${ledger.accentDeep}` }}
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="size-3.5 animate-spin" />
-                      Signing In...
-                    </>
-                  ) : success ? (
-                    "Welcome Back!"
-                  ) : (
-                    "Sign In"
-                  )}
-                </button>
-              </div>
-            </form>
+            {/* Bottom Abstract Building Line-Art Vector */}
+            <div className="relative z-10 mt-6 w-full max-w-xs mx-auto">
+              <BuildingAbstractIllustration className="w-full h-auto drop-shadow-sm" />
+            </div>
           </div>
 
-          {/* Bottom Row: Sign Up Prompt */}
-          <div className="text-center text-xs" style={{ color: ledger.textMuted }}>
-            <span>Accessing public workspace? </span>
-            <button
-              type="button"
-              onClick={() => navigate("/")}
-              className="font-bold hover:underline cursor-pointer"
-              style={{ color: ledger.accentDeep }}
-            >
-              Go to Landing Page
-            </button>
-          </div>
-        </div>
-      </motion.div>
+          {/* RIGHT SIDE: SIGN IN / RESET PASSWORD FORM */}
+          <div className="w-full md:w-[52%] p-6 sm:p-9 flex flex-col justify-between bg-[#FBFDFD]">
+            <div>
+              {/* Header Bar */}
+              <div className="flex items-center justify-between mb-6">
+                <Link to="/" className="inline-flex items-center gap-2 group">
+                  <span className="flex size-8 items-center justify-center rounded-xl bg-blue-100 border border-blue-200 text-blue-600">
+                    <LedgerStampMark className="size-4" color="#2563eb" />
+                  </span>
+                  <span className="text-lg font-extrabold tracking-tight text-slate-900" style={{ fontFamily: ledgerFont.display }}>
+                    OneTrack
+                  </span>
+                </Link>
 
-      {/* RESET PASSWORD MODAL (From Login Form) */}
-      <AnimatePresence>
-        {showResetModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            {/* Backdrop */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => {
-                setShowResetModal(false)
-                setForgotStep(1)
-              }}
-              className="absolute inset-0 backdrop-blur-xs"
-              style={{ background: "rgba(15,23,42,0.55)" }}
-            />
+                <Link to="/" className="inline-flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-blue-600 transition-colors">
+                  <ArrowLeft className="size-3.5" />
+                  <span>Home</span>
+                </Link>
+              </div>
 
-            {/* Modal Card */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.96 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              className="relative z-10 w-full max-w-md rounded-[8px] p-6 space-y-5"
-              style={{ background: ledger.ground, border: `1px solid ${ledger.border}`, boxShadow: "0 32px 80px -24px rgba(16,24,40,0.28)" }}
-            >
-              <div className="space-y-1">
-                <h3 className="text-xl font-semibold flex items-center gap-2" style={{ fontFamily: ledgerFont.display, color: ledger.text }}>
-                  <Key className="size-5" style={{ color: ledger.accentDeep }} />
-                  Forgot Password OTP Reset
-                </h3>
-                <p className="text-xs leading-normal" style={{ color: ledger.textMuted }}>
-                  {forgotStep === 1 && "Step 1/3: Enter your registered email address to receive a 6-digit OTP code."}
-                  {forgotStep === 2 && `Step 2/3: Enter the 6-digit OTP code sent to ${resetEmail}.`}
-                  {forgotStep === 3 && "Step 3/3: Set a new secure password for your OneTrack account."}
+              {/* Form Title Block */}
+              <div className="space-y-1 mb-6">
+                <h1 className="text-2xl font-extrabold tracking-tight text-slate-900" style={{ fontFamily: ledgerFont.display }}>
+                  {activeTab === "login" ? "Sign In" : "Reset Password"}
+                </h1>
+                <p className="text-xs text-slate-500 font-medium">
+                  {activeTab === "login"
+                    ? "Please enter your credentials to access your workspace"
+                    : "Enter your registered email to receive a 6-digit OTP code"}
                 </p>
               </div>
 
-              {/* Step 1: Send OTP */}
-              {forgotStep === 1 && (
-                <form onSubmit={handleSendOTP} className="space-y-4">
+              {/* TAB 1: SIGN IN FORM */}
+              {activeTab === "login" && (
+                <form onSubmit={handleLoginSubmit} className="space-y-4">
                   <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider" style={{ color: ledger.textMuted }}>Registered Email</label>
-                    <input
-                      type="email"
-                      required
-                      value={resetEmail}
-                      onChange={(e) => setResetEmail(e.target.value)}
-                      placeholder="e.g. biswabhusans@globx.co.in"
-                      className="w-full focus:outline-none focus:ring-2 rounded-[4px] px-3.5 py-2.5 text-xs font-medium transition-all"
-                      style={{ ...inputStyle, "--tw-ring-color": ledger.accent }}
-                    />
-                  </div>
-
-                  <div className="flex gap-2 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowResetModal(false)}
-                      className="flex-1 py-2.5 rounded-[4px] font-semibold text-xs transition-colors cursor-pointer"
-                      style={{ background: "#FFFFFF", border: `1px solid ${ledger.border}`, color: ledger.text }}
-                    >
-                      Cancel
-                    </button>
-
-                    <button
-                      type="submit"
-                      disabled={isResetting}
-                      className="flex-1 py-2.5 rounded-[4px] font-semibold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                      style={{ background: ledger.accent, color: "#FFFFFF" }}
-                    >
-                      {isResetting ? (
-                        <>
-                          <Loader2 className="size-3.5 animate-spin" />
-                          Sending OTP...
-                        </>
-                      ) : (
-                        "Send OTP Code"
-                      )}
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {/* Step 2: Verify OTP */}
-              {forgotStep === 2 && (
-                <form onSubmit={handleVerifyOTP} className="space-y-4">
-                  <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider" style={{ color: ledger.textMuted }}>6-Digit Verification Code</label>
-                    <input
-                      type="text"
-                      maxLength={6}
-                      required
-                      value={resetOtp}
-                      onChange={(e) => setResetOtp(e.target.value)}
-                      placeholder="Enter 6-digit OTP code"
-                      className="w-full text-center tracking-widest text-lg font-bold focus:outline-none focus:ring-2 rounded-[4px] px-3.5 py-2"
-                      style={{ ...inputStyle, fontFamily: ledgerFont.mono, "--tw-ring-color": ledger.accent }}
-                    />
-                  </div>
-
-                  <div className="flex gap-2 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => setForgotStep(1)}
-                      className="flex-1 py-2.5 rounded-[4px] font-semibold text-xs transition-colors cursor-pointer"
-                      style={{ background: "#FFFFFF", border: `1px solid ${ledger.border}`, color: ledger.text }}
-                    >
-                      Back
-                    </button>
-
-                    <button
-                      type="submit"
-                      disabled={isResetting}
-                      className="flex-1 py-2.5 rounded-[4px] font-semibold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                      style={{ background: ledger.accent, color: "#FFFFFF" }}
-                    >
-                      {isResetting ? (
-                        <>
-                          <Loader2 className="size-3.5 animate-spin" />
-                          Verifying...
-                        </>
-                      ) : (
-                        "Verify OTP"
-                      )}
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {/* Step 3: New Password */}
-              {forgotStep === 3 && (
-                <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
-                  <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider" style={{ color: ledger.textMuted }}>New Password</label>
+                    <label className="block text-xs font-bold text-slate-800">
+                      Email or Username <span className="text-red-500">*</span>
+                    </label>
                     <div className="relative">
+                      <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 size-4 text-slate-400" />
                       <input
-                        type={showResetNewPass ? "text" : "password"}
+                        type="text"
                         required
-                        value={resetNewPassword}
-                        onChange={(e) => setResetNewPassword(e.target.value)}
-                        placeholder="Minimum 8 characters"
-                        className="w-full focus:outline-none focus:ring-2 rounded-[4px] pl-3.5 pr-9 py-2.5 text-xs font-medium transition-all"
-                        style={{ ...inputStyle, "--tw-ring-color": ledger.accent }}
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        placeholder="hello@globx.co.in"
+                        className="w-full bg-white border border-slate-300 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 transition-all"
                       />
-                      <button
-                        type="button"
-                        onClick={() => setShowResetNewPass(!showResetNewPass)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 transition-colors cursor-pointer"
-                        style={{ color: ledger.textMuted }}
-                      >
-                        {showResetNewPass ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-                      </button>
                     </div>
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider" style={{ color: ledger.textMuted }}>Confirm New Password</label>
-                    <input
-                      type="password"
-                      required
-                      value={resetConfirmPassword}
-                      onChange={(e) => setResetConfirmPassword(e.target.value)}
-                      placeholder="Confirm new password"
-                      className="w-full focus:outline-none focus:ring-2 rounded-[4px] px-3.5 py-2.5 text-xs font-medium transition-all"
-                      style={{ ...inputStyle, "--tw-ring-color": ledger.accent }}
-                    />
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold text-slate-800">
+                        Password <span className="text-red-500">*</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab("forgot")}
+                        className="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer"
+                      >
+                        Forgot password?
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 size-4 text-slate-400" />
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        required
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Enter password"
+                        className="w-full bg-white border border-slate-300 rounded-xl pl-10 pr-10 py-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 transition-all"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      >
+                        {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="flex gap-2 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => setForgotStep(2)}
-                      className="flex-1 py-2.5 rounded-[4px] font-semibold text-xs transition-colors cursor-pointer"
-                      style={{ background: "#FFFFFF", border: `1px solid ${ledger.border}`, color: ledger.text }}
-                    >
-                      Back
-                    </button>
-
+                  <div className="pt-2">
                     <button
                       type="submit"
-                      disabled={isResetting}
-                      className="flex-1 py-2.5 rounded-[4px] font-semibold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                      style={{ background: ledger.accent, color: "#FFFFFF" }}
+                      disabled={isLoading}
+                      className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                     >
-                      {isResetting ? (
+                      {isLoading ? (
                         <>
                           <Loader2 className="size-3.5 animate-spin" />
-                          Updating...
+                          Signing in...
                         </>
                       ) : (
-                        "Update Password"
+                        "Sign In"
                       )}
                     </button>
                   </div>
                 </form>
               )}
-            </motion.div>
+
+              {/* TAB 2: RESET OTP */}
+              {activeTab === "forgot" && (
+                <div className="space-y-3">
+                  {forgotStep === 1 && (
+                    <form onSubmit={handleSendOTP} className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-800 mb-1">Registered Work Email</label>
+                        <input
+                          type="email"
+                          required
+                          value={resetEmail}
+                          onChange={(e) => setResetEmail(e.target.value)}
+                          placeholder="name@globx.co.in"
+                          className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2 text-xs text-slate-900 focus:outline-none focus:border-blue-600"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={isResetting}
+                        className="w-full py-2.5 rounded-xl bg-blue-600 text-white font-bold text-xs"
+                      >
+                        {isResetting ? <Loader2 className="size-3.5 animate-spin mx-auto" /> : "Send 6-Digit OTP"}
+                      </button>
+                    </form>
+                  )}
+
+                  {forgotStep === 2 && (
+                    <form onSubmit={handleVerifyOTP} className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-800 mb-1">Enter 6-Digit Code</label>
+                        <input
+                          type="text"
+                          maxLength={6}
+                          required
+                          value={resetOtp}
+                          onChange={(e) => setResetOtp(e.target.value)}
+                          placeholder="123456"
+                          className="w-full text-center text-base font-mono font-bold tracking-widest bg-white border border-slate-300 rounded-xl px-3 py-2 text-blue-600 focus:outline-none focus:border-blue-600"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setForgotStep(1)}
+                          className="w-1/3 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold"
+                        >
+                          Back
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={isResetting}
+                          className="w-2/3 py-2 rounded-xl bg-blue-600 text-white font-bold text-xs"
+                        >
+                          {isResetting ? <Loader2 className="size-3.5 animate-spin mx-auto" /> : "Verify Code"}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {forgotStep === 3 && (
+                    <form onSubmit={handleResetPasswordSubmit} className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-800 mb-1">New Password</label>
+                        <input
+                          type="password"
+                          required
+                          value={resetNewPassword}
+                          onChange={(e) => setResetNewPassword(e.target.value)}
+                          placeholder="Minimum 8 characters"
+                          className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2 text-xs text-slate-900 focus:outline-none focus:border-blue-600"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-800 mb-1">Confirm Password</label>
+                        <input
+                          type="password"
+                          required
+                          value={resetConfirmPassword}
+                          onChange={(e) => setResetConfirmPassword(e.target.value)}
+                          placeholder="Re-enter password"
+                          className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2 text-xs text-slate-900 focus:outline-none focus:border-blue-600"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={isResetting}
+                        className="w-full py-2.5 rounded-xl bg-blue-600 text-white font-bold text-xs"
+                      >
+                        {isResetting ? <Loader2 className="size-3.5 animate-spin mx-auto" /> : "Update Password"}
+                      </button>
+                    </form>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Bottom Back To Sign In Link */}
+            {activeTab === "forgot" && (
+              <div className="pt-4 mt-4 border-t border-slate-200/80 text-center text-xs font-semibold text-slate-600">
+                <button
+                  onClick={() => setActiveTab("login")}
+                  className="font-bold text-blue-600 hover:underline cursor-pointer"
+                >
+                  ← Back to Sign In
+                </button>
+              </div>
+            )}
           </div>
-        )}
-      </AnimatePresence>
-    </div>
+        </motion.div>
+      </div>
     </MotionConfig>
   )
 }

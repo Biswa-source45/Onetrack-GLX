@@ -117,9 +117,15 @@ func (h *BidHandler) UpdateBid(c *gin.Context) {
 		return
 	}
 	actorID := c.GetString("user_id")
-	if err := h.svc.UpdateBid(c.Request.Context(), id, &req, actorID); err != nil {
+	rolesVal, _ := c.Get("roles")
+	actorRoles, _ := rolesVal.([]string)
+	if err := h.svc.UpdateBid(c.Request.Context(), id, &req, actorID, actorRoles); err != nil {
 		if errors.Is(err, domain.ErrDuplicateIdentifier) {
 			response.Conflict(c, err.Error())
+			return
+		}
+		if errors.Is(err, domain.ErrForbidden) {
+			response.Forbidden(c, err.Error())
 			return
 		}
 		if errors.Is(err, domain.ErrValidation) {
@@ -237,7 +243,12 @@ func (h *BidHandler) AddMember(c *gin.Context) {
 func (h *BidHandler) RemoveMember(c *gin.Context) {
 	bidID := c.Param("id")
 	userID := c.Param("user_id")
-	if err := h.svc.RemoveMember(c.Request.Context(), bidID, userID); err != nil {
+	actorID := c.GetString("user_id")
+	if err := h.svc.RemoveMember(c.Request.Context(), bidID, userID, actorID); err != nil {
+		if errors.Is(err, domain.ErrValidation) {
+			response.BadRequest(c, err.Error(), nil)
+			return
+		}
 		response.InternalError(c, err.Error())
 		return
 	}

@@ -448,6 +448,18 @@ func (r *postgresUserRepo) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		// Ignore if column doesn't exist or is not nullable
 	}
+	// account_manager_id / presales_id (added in migration 000034) reference
+	// auth.users with no ON DELETE clause, so left unhandled they block the
+	// final DELETE below with a foreign-key violation the moment the target
+	// user has ever been assigned as either on any tender.
+	_, err = tx.Exec(ctx, `UPDATE bid.bid_workspaces SET account_manager_id = NULL WHERE account_manager_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to clear account_manager_id in bid_workspaces: %w", err)
+	}
+	_, err = tx.Exec(ctx, `UPDATE bid.bid_workspaces SET presales_id = NULL WHERE presales_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to clear presales_id in bid_workspaces: %w", err)
+	}
 
 	// 2. Reassign NOT NULL references in bid_stage_history
 	_, err = tx.Exec(ctx, `UPDATE bid.bid_stage_history SET transitioned_by = $1 WHERE transitioned_by = $2`, fallbackAdminID, id)
@@ -465,22 +477,22 @@ func (r *postgresUserRepo) Delete(ctx context.Context, id string) error {
 		// Ignore if table/col missing
 	}
 
-	// 4. Tasks schema references
-	_, err = tx.Exec(ctx, `UPDATE task.tasks SET assigned_to = NULL WHERE assigned_to = $1`, id)
+	// 4. bid.bid_checklists (the live checklist table) references auth.users
+	// via done_by with no ON DELETE clause.
+	//
+	// NOTE: this block used to also touch task.tasks / task.task_activities /
+	// task.task_checklists, "ignoring" the error if those tables were
+	// missing. Migration 000024 dropped the entire task schema, so those
+	// statements have failed on every single call since — and in Postgres, a
+	// failed statement aborts the whole transaction even when the caller
+	// discards the error, so every statement after them (including the
+	// account_manager_id/presales_id/done_by clears and the final DELETE
+	// below) was silently failing too. Removed rather than special-cased,
+	// since the schema they targeted no longer exists anywhere in this
+	// codebase.
+	_, err = tx.Exec(ctx, `UPDATE bid.bid_checklists SET done_by = NULL WHERE done_by = $1`, id)
 	if err != nil {
-		// Ignore if table missing
-	}
-	_, err = tx.Exec(ctx, `UPDATE task.tasks SET created_by = $1 WHERE created_by = $2`, fallbackAdminID, id)
-	if err != nil {
-		// Ignore if table missing
-	}
-	_, err = tx.Exec(ctx, `UPDATE task.task_activities SET performed_by = $1 WHERE performed_by = $2`, fallbackAdminID, id)
-	if err != nil {
-		// Ignore if table missing
-	}
-	_, err = tx.Exec(ctx, `UPDATE task.task_checklists SET done_by = NULL WHERE done_by = $1`, id)
-	if err != nil {
-		// Ignore if table missing
+		return fmt.Errorf("failed to clear done_by in bid_checklists: %w", err)
 	}
 
 	// 5. Additional V2 tables

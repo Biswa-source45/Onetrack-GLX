@@ -4,9 +4,10 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   X, Loader2, Building2, FileText, DollarSign,
   ChevronLeft, Zap, PenLine, ShieldCheck, ChevronDown, Check,
-  Plus, Trash2, HelpCircle, CheckSquare, Award, ArrowRight, ArrowLeft
+  Plus, Trash2, HelpCircle, CheckSquare, Award, ArrowRight, ArrowLeft, Shuffle
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { ALERT_NOTE_COLORS, randomAlertNoteColor } from '../../lib/tenderFormat'
 
 import { Button }    from '@/components/ui/button'
 import { Input }     from '@/components/ui/input'
@@ -20,6 +21,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { createBid } from '../../services/bids'
 import { tokenStorage } from '../../services/auth'
 import { useBidStore } from '../../store/useBidStore'
@@ -27,12 +29,12 @@ import { useBidStore } from '../../store/useBidStore'
 const STANDARD_PORTAL_SOURCES = ['GeM', 'CPPP', 'eProcure']
 const PORTAL_SOURCES = [...STANDARD_PORTAL_SOURCES, 'Other']
 const BID_TYPES      = ['BID', 'BID_TO_RA']
-const EMD_TYPES      = ['ONLINE', 'DD']
 const SCOPE_TYPES    = ['Supply', 'Implementation', 'Support', 'N/A']
-const CATEGORY_OPTIONS = [
+const STANDARD_CATEGORY_OPTIONS = [
   'End computing', 'IT infra', 'Non-IT infra', 'Security', 'Cloud',
-  'Servilance', 'Software', 'Manpower-augmentation',
+  'Surveillance', 'Software', 'Manpower-augmentation',
 ]
+const CATEGORY_OPTIONS = [...STANDARD_CATEGORY_OPTIONS, 'Other']
 
 const BIDDER_SUGGESTIONS = [
   'Experience Certificate',
@@ -91,25 +93,27 @@ export function AddTenderPage() {
     gem_bid_no:                  '',
     organization_name:           '',
     department_name:             '',
+    location:                    '',
     portal_source:               'GeM',
     bid_type:                    'BID',
     category:                    '',
     quantity:                    '',
     estimated_value:             '',
     emd_amount:                  '',
-    emd_type:                    'ONLINE',
-    emd_exempted:                false,
     emd_not_applicable:          false,
-    emd_exemption_type:          '',
+    emd_exemption_types:         [],
     emd_exemption_reason:        '',
     oem_required:                true,
     bg_required:                 false,
     bg_rate:                     '',
+    bg_duration_months:          '',
     start_date:                  '',
     end_date:                    '',
     target_month_date:           '',
     bid_owner_id:                currentUser?.id ?? '',
     reporting_manager_id:        '',
+    account_manager_id:          '',
+    presales_id:                 '',
     remarks:                     '',
     scope_type:                  'Supply',
     // EMD bank/online payment details
@@ -128,9 +132,34 @@ export function AddTenderPage() {
   const [newBidderItem, setNewBidderItem] = useState('')
   const [newOemItem, setNewOemItem] = useState('')
 
+  // Products/Services Asked in the RFP — freeform rows, OEM is optional per row
+  const [products, setProducts] = useState([{ id: 1, product: '', description: '', qty: '', oem: '' }])
+  const addProductRow = () => setProducts(prev => [...prev, { id: Date.now(), product: '', description: '', qty: '', oem: '' }])
+  const updateProductRow = (id, field, value) => setProducts(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p))
+  const removeProductRow = (id) => setProducts(prev => prev.length > 1 ? prev.filter(p => p.id !== id) : prev)
+
   const [errors, setErrors]   = useState({})
   const [loading, setLoading] = useState(false)
   const [otherPortalSource, setOtherPortalSource] = useState(false)
+  const [otherCategory, setOtherCategory] = useState(false)
+  // Online/DD are independent raw-capture toggles — a tender document can
+  // offer either, both, or neither (if fully exempt). Kept outside `form` so
+  // unticking one can clear just its own fields without touching the other.
+  const [emdOnlineOn, setEmdOnlineOn] = useState(false)
+  const [emdDdOn, setEmdDdOn] = useState(false)
+
+  // Optional "Additional Info / Challenge" note — a colored label + free
+  // text surfaced in the identification alert/mail so a known issue gets
+  // noticed immediately rather than buried in a plain remarks field.
+  const [showAlertNote, setShowAlertNote] = useState(false)
+  const [alertNoteText, setAlertNoteText] = useState('')
+  const [alertNoteLabel, setAlertNoteLabel] = useState('')
+  const [alertNoteColor, setAlertNoteColor] = useState(() => randomAlertNoteColor())
+
+  // Account Manager is required (approving authority); Pre-Sales is optional —
+  // both filtered to users holding that role as primary or secondary.
+  const accountManagers = users.filter(u => Array.isArray(u.roles) && u.roles.includes('ACCOUNT_MANAGER'))
+  const presalesUsers = users.filter(u => Array.isArray(u.roles) && u.roles.includes('PRE_SALES'))
 
   // Load users for owner selector
   useEffect(() => {
@@ -148,50 +177,58 @@ export function AddTenderPage() {
     setForm((f) => {
       let updated = { ...f, [field]: value }
 
-      if (field === 'emd_exempted') {
-        if (value) {
-          updated.emd_type = 'EXEMPTED'
-          updated.emd_amount = ''
-          updated.emd_not_applicable = false
-        } else {
-          updated.emd_type = 'ONLINE'
-          updated.emd_exemption_type = ''
-          updated.emd_exemption_reason = ''
-        }
-      } else if (field === 'emd_not_applicable') {
-        if (value) {
-          updated.emd_type = 'NOT_APPLICABLE'
-          updated.emd_amount = ''
-          updated.emd_exempted = false
-          updated.emd_exemption_type = ''
-          updated.emd_exemption_reason = ''
-        } else {
-          updated.emd_type = 'ONLINE'
-        }
-      } else if (field === 'emd_type') {
-        if (value === 'EXEMPTED') {
-          updated.emd_exempted = true
-          updated.emd_not_applicable = false
-          updated.emd_amount = ''
-        } else if (value === 'NOT_APPLICABLE') {
-          updated.emd_not_applicable = true
-          updated.emd_exempted = false
-          updated.emd_amount = ''
-          updated.emd_exemption_type = ''
-          updated.emd_exemption_reason = ''
-        } else {
-          updated.emd_exempted = false
-          updated.emd_not_applicable = false
-          updated.emd_exemption_type = ''
-          updated.emd_exemption_reason = ''
-        }
-      } else if (field === 'emd_exemption_type') {
-        if (value !== 'OTHER') updated.emd_exemption_reason = ''
+      // EMD capture at add-time is raw data straight off the tender document:
+      // Online, DD, and exemption criteria are all independent — a document
+      // can offer any combination. "No EMD" is the only field that clears
+      // everything else, since it means none of the rest applies at all.
+      if (field === 'emd_not_applicable' && value) {
+        updated.emd_amount = ''
+        updated.emd_exemption_types = []
+        updated.emd_exemption_reason = ''
+        updated.emd_bank_name = ''
+        updated.emd_account_number = ''
+        updated.emd_ifsc_code = ''
+        updated.emd_branch = ''
+        updated.emd_beneficiary = ''
+        updated.emd_payable_at = ''
       }
 
       return updated
     })
+    if (field === 'emd_not_applicable' && value) {
+      setEmdOnlineOn(false)
+      setEmdDdOn(false)
+    }
     setErrors((e) => ({ ...e, [field]: undefined }))
+  }
+
+  const toggleEmdOnline = () => {
+    setEmdOnlineOn((prev) => {
+      const next = !prev
+      if (!next) setForm((f) => ({ ...f, emd_bank_name: '', emd_account_number: '', emd_ifsc_code: '', emd_branch: '' }))
+      return next
+    })
+    setErrors((e) => ({ ...e, emd_mode: undefined, emd_bank_name: undefined, emd_account_number: undefined, emd_ifsc_code: undefined }))
+  }
+
+  const toggleEmdDd = () => {
+    setEmdDdOn((prev) => {
+      const next = !prev
+      if (!next) setForm((f) => ({ ...f, emd_beneficiary: '', emd_payable_at: '' }))
+      return next
+    })
+    setErrors((e) => ({ ...e, emd_mode: undefined, emd_beneficiary: undefined, emd_payable_at: undefined }))
+  }
+
+  const toggleExemptionType = (type) => {
+    setForm((f) => {
+      const has = f.emd_exemption_types.includes(type)
+      const next = has ? f.emd_exemption_types.filter((t) => t !== type) : [...f.emd_exemption_types, type]
+      const updated = { ...f, emd_exemption_types: next }
+      if (!next.includes('OTHER')) updated.emd_exemption_reason = ''
+      return updated
+    })
+    setErrors((e) => ({ ...e, emd_mode: undefined, emd_exemption_reason: undefined }))
   }
 
   function validateStep(currentStep) {
@@ -199,26 +236,30 @@ export function AddTenderPage() {
     if (currentStep === 1) {
       if (!form.title.trim()) e.title = 'Tender title is required'
       if (!form.bid_type) e.bid_type = 'Bid type is required'
-      // EMD bank/DD mandatory fields
-      if (form.emd_not_applicable) {
-        // No EMD clause on this tender at all — nothing further to validate.
-      } else if (!form.emd_exempted) {
-        if (form.emd_type === 'ONLINE') {
-          if (!form.emd_bank_name.trim()) e.emd_bank_name = 'Bank name is required for Online EMD'
+      // EMD is raw data off the tender document: Online, DD, and exemption
+      // criteria are independent — tick whichever the document actually
+      // offers. The Account Manager decides which one to go with, later, in
+      // Primary Review.
+      if (!form.emd_not_applicable) {
+        if (emdOnlineOn) {
+          if (!form.emd_bank_name.trim()) e.emd_bank_name = 'Bank name is required'
           if (!form.emd_account_number.trim()) e.emd_account_number = 'Account number is required'
           if (!form.emd_ifsc_code.trim()) e.emd_ifsc_code = 'IFSC code is required'
-        } else if (form.emd_type === 'DD') {
-          if (!form.emd_beneficiary.trim()) e.emd_beneficiary = 'Beneficiary is required for DD EMD'
+        }
+        if (emdDdOn) {
+          if (!form.emd_beneficiary.trim()) e.emd_beneficiary = 'Beneficiary is required'
           if (!form.emd_payable_at.trim()) e.emd_payable_at = 'Payable at location is required'
         }
-      } else {
-        if (!form.emd_exemption_type) e.emd_exemption_type = 'Select MSME, Startup, or Other'
-        else if (form.emd_exemption_type === 'OTHER' && !form.emd_exemption_reason.trim()) {
-          e.emd_exemption_reason = 'Please specify the reason for exemption'
+        if (!emdOnlineOn && !emdDdOn && form.emd_exemption_types.length === 0) {
+          e.emd_mode = 'Tick at least one: Online, DD, or an exemption criterion the tender document allows'
+        }
+        if (form.emd_exemption_types.includes('OTHER') && !form.emd_exemption_reason.trim()) {
+          e.emd_exemption_reason = 'Please specify the Other exemption criterion'
         }
       }
     } else if (currentStep === 2) {
       if (!form.bid_owner_id && !currentUser?.id) e.bid_owner_id = 'Bid owner is required'
+      if (!form.account_manager_id) e.account_manager_id = 'Account Manager is required — they are the approving authority for this tender'
     }
     return e
   }
@@ -251,14 +292,23 @@ export function AddTenderPage() {
     setLoading(true)
     try {
       const activeOwnerId = form.bid_owner_id || currentUser?.id || ''
+      const cleanProducts = products
+        .filter(p => p.product.trim() || p.description.trim())
+        .map(({ id, ...rest }) => rest)
 
       const payload = {
         ...form,
         bid_owner_id:    activeOwnerId,
+        presales_id:     form.presales_id || undefined,
         quantity: form.quantity ? Number(form.quantity) : undefined,
         estimated_value: form.estimated_value ? Number(form.estimated_value) : undefined,
         emd_amount:      form.emd_amount ? Number(form.emd_amount) : undefined,
         bg_rate:         form.bg_required && form.bg_rate ? Number(form.bg_rate) : undefined,
+        bg_duration_months: form.bg_required && form.bg_duration_months ? Number(form.bg_duration_months) : undefined,
+        requested_products: cleanProducts.length > 0 ? JSON.stringify(cleanProducts) : undefined,
+        alert_note: (showAlertNote && alertNoteText.trim())
+          ? JSON.stringify({ text: alertNoteText.trim(), label: alertNoteLabel.trim(), color: alertNoteColor })
+          : undefined,
         start_date:      form.start_date ? new Date(form.start_date).toISOString() : undefined,
         end_date:        form.end_date ? new Date(form.end_date).toISOString() : undefined,
         opening_date:    form.start_date ? new Date(form.start_date).toISOString() : undefined,
@@ -396,7 +446,31 @@ export function AddTenderPage() {
                     <h3 className="text-sm font-semibold text-foreground">Section 1: Basic Specifications & Financial Scope</h3>
                   </div>
 
+                  {/* BUBBLE: Account & Tender Identity */}
+                  <div className="space-y-4 border border-border/80 rounded-xl p-4 bg-muted/5">
+                    <div className="flex items-center gap-2 border-b border-border/60 pb-2">
+                      <Building2 className="size-4 text-primary" />
+                      <h4 className="text-xs font-bold text-foreground uppercase tracking-wider">Account & Tender Identity</h4>
+                    </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Account Name (the procuring authority / client organization) */}
+                    <Field label="Account Name" tooltip="The procuring authority / client organization for this tender.">
+                      <Input value={form.organization_name} onChange={(e) => set('organization_name', e.target.value)}
+                        placeholder="e.g. NIC Delhi" className={inputCls()} />
+                    </Field>
+
+                    {/* Department / Ministry */}
+                    <Field label="Department / Ministry">
+                      <Input value={form.department_name} onChange={(e) => set('department_name', e.target.value)}
+                        placeholder="e.g. Ministry of Electronics & IT" className={inputCls()} />
+                    </Field>
+
+                    {/* Location */}
+                    <Field label="Location">
+                      <Input value={form.location} onChange={(e) => set('location', e.target.value)}
+                        placeholder="e.g. New Delhi" className={inputCls()} />
+                    </Field>
+
                     {/* Tender Title */}
                     <div className="sm:col-span-2">
                       <Field label="Tender Title" error={errors.title} required tooltip="The primary title of the tender.">
@@ -408,6 +482,12 @@ export function AddTenderPage() {
                         />
                       </Field>
                     </div>
+
+                    {/* BID / RFP Number */}
+                    <Field label="BID Number/RFP Number" tooltip="The BID number or RFP number as listed on the source portal.">
+                      <Input value={form.gem_bid_no} onChange={(e) => set('gem_bid_no', e.target.value)}
+                        placeholder="e.g. GEM/2026/B/87654 or RFP/2026/012" className={inputCls()} />
+                    </Field>
 
                     {/* High Level Scope */}
                     <div className="sm:col-span-2">
@@ -430,12 +510,6 @@ export function AddTenderPage() {
                     <Field label="End Date">
                       <Input type="datetime-local" value={form.end_date} onChange={(e) => set('end_date', e.target.value)}
                         className={inputCls()} />
-                    </Field>
-
-                    {/* BID / RFP Number */}
-                    <Field label="BID Number/RFP Number" tooltip="The BID number or RFP number as listed on the source portal.">
-                      <Input value={form.gem_bid_no} onChange={(e) => set('gem_bid_no', e.target.value)}
-                        placeholder="e.g. GEM/2026/B/87654 or RFP/2026/012" className={inputCls()} />
                     </Field>
 
                     {/* Portal Source */}
@@ -498,30 +572,35 @@ export function AddTenderPage() {
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="outline" size="sm" className="w-full h-9 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5">
-                            <span>{form.category || 'Select category...'}</span>
+                            <span>{otherCategory ? 'Other' : (form.category || 'Select category...')}</span>
                             <ChevronDown className="size-3 text-muted-foreground ml-auto" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent className="w-[220px]">
                           {CATEGORY_OPTIONS.map((c) => (
-                            <DropdownMenuItem key={c} onSelect={() => set('category', c)}>
+                            <DropdownMenuItem key={c} onSelect={() => {
+                              if (c === 'Other') {
+                                setOtherCategory(true)
+                                set('category', '')
+                              } else {
+                                setOtherCategory(false)
+                                set('category', c)
+                              }
+                            }}>
                               {c}
                             </DropdownMenuItem>
                           ))}
                         </DropdownMenuContent>
                       </DropdownMenu>
-                    </Field>
-
-                    {/* Authority Organization */}
-                    <Field label="Authority / Client Organization">
-                      <Input value={form.organization_name} onChange={(e) => set('organization_name', e.target.value)}
-                        placeholder="e.g. NIC Delhi" className={inputCls()} />
-                    </Field>
-
-                    {/* Department / Ministry */}
-                    <Field label="Department / Ministry">
-                      <Input value={form.department_name} onChange={(e) => set('department_name', e.target.value)}
-                        placeholder="e.g. Ministry of Electronics & IT" className={inputCls()} />
+                      {otherCategory && (
+                        <Input
+                          value={form.category}
+                          onChange={(e) => set('category', e.target.value)}
+                          placeholder="Enter category name"
+                          className={`${inputCls()} mt-2`}
+                          autoFocus
+                        />
+                      )}
                     </Field>
 
                     {/* Scope Type */}
@@ -554,45 +633,90 @@ export function AddTenderPage() {
                       <Input type="number" value={form.estimated_value} onChange={(e) => set('estimated_value', e.target.value)}
                         placeholder="e.g. 5000000" className={inputCls()} />
                     </Field>
+                  </div>
+                  </div>
 
+                  {/* BUBBLE: Products/Services Asked in the RFP */}
+                  <div className="space-y-4 border border-border/80 rounded-xl p-4 bg-muted/5">
+                    <div className="flex items-center justify-between border-b border-border/60 pb-2">
+                      <div className="flex items-center gap-2">
+                        <CheckSquare className="size-4 text-primary" />
+                        <h4 className="text-xs font-bold text-foreground uppercase tracking-wider">Products/Services Asked in the RFP</h4>
+                      </div>
+                      <Button type="button" variant="outline" size="sm" onClick={addProductRow} className="h-7 text-xs gap-1">
+                        <Plus className="size-3.5" /> Add Row
+                      </Button>
+                    </div>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Product/Service</TableHead>
+                          <TableHead>Description</TableHead>
+                          <TableHead className="w-24">Quantity</TableHead>
+                          <TableHead>OEM (Optional)</TableHead>
+                          <TableHead className="w-10" />
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {products.map((p) => (
+                          <TableRow key={p.id}>
+                            <TableCell className="min-w-[160px]">
+                              <Input value={p.product} onChange={(e) => updateProductRow(p.id, 'product', e.target.value)}
+                                placeholder="e.g. Enterprise Firewall" className="h-8 text-xs bg-background" />
+                            </TableCell>
+                            <TableCell className="min-w-[200px]">
+                              <Input value={p.description} onChange={(e) => updateProductRow(p.id, 'description', e.target.value)}
+                                placeholder="Brief description" className="h-8 text-xs bg-background" />
+                            </TableCell>
+                            <TableCell className="w-24">
+                              <Input type="number" min="1" value={p.qty} onChange={(e) => updateProductRow(p.id, 'qty', e.target.value)}
+                                placeholder="Qty" className="h-8 text-xs bg-background" />
+                            </TableCell>
+                            <TableCell className="min-w-[140px]">
+                              <Input value={p.oem} onChange={(e) => updateProductRow(p.id, 'oem', e.target.value)}
+                                placeholder="OEM name" className="h-8 text-xs bg-background" />
+                            </TableCell>
+                            <TableCell>
+                              <button type="button" onClick={() => removeProductRow(p.id)} disabled={products.length === 1}
+                                className="text-muted-foreground hover:text-destructive p-1 disabled:opacity-30 disabled:cursor-not-allowed">
+                                <Trash2 className="size-3.5" />
+                              </button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                    <p className="text-[11px] text-muted-foreground italic">Add every product or service the RFP is asking for — each line becomes selectable later during Pricing.</p>
+                  </div>
+
+                  {/* BUBBLE: Financials — EMD & Bank Guarantee */}
+                  <div className="space-y-4 border border-border/80 rounded-xl p-4 bg-muted/5">
+                    <div className="flex items-center gap-2 border-b border-border/60 pb-2">
+                      <DollarSign className="size-4 text-emerald-600" />
+                      <h4 className="text-xs font-bold text-foreground uppercase tracking-wider">Financials — EMD &amp; Bank Guarantee</h4>
+                    </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="flex items-end gap-3 w-full">
                       <div className="flex-1">
                         <Field label="EMD Amount (₹)">
                           <Input type="number" value={form.emd_amount} onChange={(e) => set('emd_amount', e.target.value)}
-                            placeholder="e.g. 100000" className={`${inputCls()} ${(form.emd_exempted || form.emd_not_applicable) ? 'opacity-50' : ''}`}
-                            disabled={form.emd_exempted || form.emd_not_applicable} />
+                            placeholder="e.g. 100000" className={`${inputCls()} ${form.emd_not_applicable ? 'opacity-50' : ''}`}
+                            disabled={form.emd_not_applicable} />
                         </Field>
                       </div>
-                      {!form.emd_exempted && (
-                        <div className="h-9 flex items-center shrink-0">
-                          <label className="flex items-center gap-2 cursor-pointer select-none">
-                            <div
-                              onClick={() => set('emd_not_applicable', !form.emd_not_applicable)}
-                              className={`w-7 h-4 rounded-full transition-colors relative cursor-pointer
-                                ${form.emd_not_applicable ? 'bg-primary' : 'bg-muted-foreground/30'}`}
-                            >
-                              <span className={`absolute top-0.5 size-3 rounded-full bg-white shadow transition-transform
-                                ${form.emd_not_applicable ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                            </div>
-                            <span className="text-[11px] font-medium text-muted-foreground">No EMD</span>
-                          </label>
-                        </div>
-                      )}
-                      {!form.emd_not_applicable && (
-                        <div className="h-9 flex items-center shrink-0">
-                          <label className="flex items-center gap-2 cursor-pointer select-none">
-                            <div
-                              onClick={() => set('emd_exempted', !form.emd_exempted)}
-                              className={`w-7 h-4 rounded-full transition-colors relative cursor-pointer
-                                ${form.emd_exempted ? 'bg-primary' : 'bg-muted-foreground/30'}`}
-                            >
-                              <span className={`absolute top-0.5 size-3 rounded-full bg-white shadow transition-transform
-                                ${form.emd_exempted ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                            </div>
-                            <span className="text-[11px] font-medium text-muted-foreground">Exempted</span>
-                          </label>
-                        </div>
-                      )}
+                      <div className="h-9 flex items-center shrink-0">
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                          <div
+                            onClick={() => set('emd_not_applicable', !form.emd_not_applicable)}
+                            className={`w-7 h-4 rounded-full transition-colors relative cursor-pointer
+                              ${form.emd_not_applicable ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+                          >
+                            <span className={`absolute top-0.5 size-3 rounded-full bg-white shadow transition-transform
+                              ${form.emd_not_applicable ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                          </div>
+                          <span className="text-[11px] font-medium text-muted-foreground">No EMD</span>
+                        </label>
+                      </div>
                     </div>
 
                     {/* No EMD */}
@@ -604,149 +728,129 @@ export function AddTenderPage() {
                       </div>
                     )}
 
-                    {/* EMD Exemption Basis */}
-                    {form.emd_exempted && (
-                      <div className="sm:col-span-2 space-y-2 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800">
-                        <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-200">
-                          EMD Exemption Basis <span className="text-red-500">*</span>
+                    {!form.emd_not_applicable && (
+                      <div className="sm:col-span-2 p-3 rounded-lg bg-slate-50 dark:bg-slate-900/30 border border-slate-200 dark:border-slate-800">
+                        <p className="text-xs text-slate-700 dark:text-slate-300">
+                          Tick whichever payment modes and exemption criteria the tender document actually offers — a document can list Online, DD, both, or neither if fully exempt. The Account Manager picks the one to actually go with during Primary Review.
                         </p>
-                        <div className="flex flex-wrap items-center gap-4">
-                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-foreground">
-                            <input
-                              type="radio"
-                              name="emd_exemption_type"
-                              checked={form.emd_exemption_type === 'MSME'}
-                              onChange={() => set('emd_exemption_type', 'MSME')}
-                              className="accent-primary"
-                            />
-                            MSME
-                          </label>
-                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-foreground">
-                            <input
-                              type="radio"
-                              name="emd_exemption_type"
-                              checked={form.emd_exemption_type === 'STARTUP'}
-                              onChange={() => set('emd_exemption_type', 'STARTUP')}
-                              className="accent-primary"
-                            />
-                            Startup
-                          </label>
-                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-foreground">
-                            <input
-                              type="checkbox"
-                              checked={form.emd_exemption_type === 'OTHER'}
-                              onChange={() => set('emd_exemption_type', form.emd_exemption_type === 'OTHER' ? '' : 'OTHER')}
-                              className="accent-primary"
-                            />
-                            Other
-                          </label>
-                        </div>
-                        {errors.emd_exemption_type && (
-                          <p className="text-[11px] text-red-500">{errors.emd_exemption_type}</p>
-                        )}
-                        {form.emd_exemption_type === 'OTHER' && (
-                          <Input
-                            value={form.emd_exemption_reason}
-                            onChange={(e) => set('emd_exemption_reason', e.target.value)}
-                            placeholder="Specify the reason for EMD exemption"
-                            className={inputCls(errors.emd_exemption_reason)}
-                          />
+                      </div>
+                    )}
+
+                    {errors.emd_mode && !form.emd_not_applicable && (
+                      <p className="sm:col-span-2 text-[11px] text-red-500">{errors.emd_mode}</p>
+                    )}
+
+                    {/* EMD via Online — independent checkbox, raw off the tender document */}
+                    {!form.emd_not_applicable && (
+                      <div className="sm:col-span-2 space-y-3">
+                        <label className="flex items-center gap-2.5 cursor-pointer select-none p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
+                          <input type="checkbox" checked={emdOnlineOn} onChange={toggleEmdOnline} className="accent-primary size-3.5 shrink-0" />
+                          <span className="text-xs font-medium text-blue-800 dark:text-blue-200">
+                            <strong>EMD via Online Payment</strong> — tick if the tender document offers this route.
+                          </span>
+                        </label>
+                        {emdOnlineOn && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <Field label="Bank Name" error={errors.emd_bank_name} required>
+                              <Input
+                                value={form.emd_bank_name}
+                                onChange={(e) => set('emd_bank_name', e.target.value)}
+                                placeholder="e.g. State Bank of India"
+                                className={inputCls(errors.emd_bank_name)}
+                              />
+                            </Field>
+                            <Field label="Account Number" error={errors.emd_account_number} required>
+                              <Input
+                                value={form.emd_account_number}
+                                onChange={(e) => set('emd_account_number', e.target.value)}
+                                placeholder="e.g. 012345678901"
+                                className={inputCls(errors.emd_account_number)}
+                              />
+                            </Field>
+                            <Field label="IFSC Code" error={errors.emd_ifsc_code} required>
+                              <Input
+                                value={form.emd_ifsc_code}
+                                onChange={(e) => set('emd_ifsc_code', e.target.value.toUpperCase())}
+                                placeholder="e.g. SBIN0001234"
+                                className={inputCls(errors.emd_ifsc_code)}
+                              />
+                            </Field>
+                            <Field label="Branch (If Required)">
+                              <Input
+                                value={form.emd_branch}
+                                onChange={(e) => set('emd_branch', e.target.value)}
+                                placeholder="e.g. New Delhi Main Branch"
+                                className={inputCls()}
+                              />
+                            </Field>
+                          </div>
                         )}
                       </div>
                     )}
 
-                    {/* EMD Mode */}
-                    <Field label="EMD Mode">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild disabled={form.emd_exempted || form.emd_not_applicable}>
-                          <Button variant="outline" size="sm" className="w-full h-9 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5 disabled:opacity-50">
-                            <span>{form.emd_not_applicable ? 'NOT APPLICABLE' : form.emd_exempted ? 'EXEMPTED' : (form.emd_type === 'ONLINE' ? 'Online Payment' : form.emd_type)}</span>
-                            <ChevronDown className="size-3 text-muted-foreground ml-auto" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent className="w-[180px]">
-                          {EMD_TYPES.map((t) => (
-                            <DropdownMenuItem key={t} onSelect={() => set('emd_type', t)}>
-                              {t === 'ONLINE' ? 'Online Payment' : 'DD (Demand Draft)'}
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </Field>
-
-                    {/* Dynamic EMD Detail Fields */}
-                    {!form.emd_exempted && form.emd_type === 'ONLINE' && (
-                      <>
-                        <div className="sm:col-span-2">
-                          <div className="flex items-center gap-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 mb-3">
-                            <svg className="size-4 text-blue-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
-                            <p className="text-xs font-medium text-blue-800 dark:text-blue-200">
-                              <strong>EMD via Online Payment</strong> — Provide the bank account where the EMD amount should be remitted. Finance team will be alerted with these details.
-                            </p>
+                    {/* EMD via DD — independent checkbox, raw off the tender document */}
+                    {!form.emd_not_applicable && (
+                      <div className="sm:col-span-2 space-y-3">
+                        <label className="flex items-center gap-2.5 cursor-pointer select-none p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                          <input type="checkbox" checked={emdDdOn} onChange={toggleEmdDd} className="accent-primary size-3.5 shrink-0" />
+                          <span className="text-xs font-medium text-amber-800 dark:text-amber-200">
+                            <strong>EMD via Demand Draft (DD)</strong> — tick if the tender document offers this route.
+                          </span>
+                        </label>
+                        {emdDdOn && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <Field label="Beneficiary" error={errors.emd_beneficiary} required>
+                              <Input
+                                value={form.emd_beneficiary}
+                                onChange={(e) => set('emd_beneficiary', e.target.value)}
+                                placeholder="e.g. The Accounts Officer, NIC Delhi"
+                                className={inputCls(errors.emd_beneficiary)}
+                              />
+                            </Field>
+                            <Field label="Payable At" error={errors.emd_payable_at} required>
+                              <Input
+                                value={form.emd_payable_at}
+                                onChange={(e) => set('emd_payable_at', e.target.value)}
+                                placeholder="e.g. New Delhi"
+                                className={inputCls(errors.emd_payable_at)}
+                              />
+                            </Field>
                           </div>
-                        </div>
-                        <Field label="Bank Name" error={errors.emd_bank_name} required>
-                          <Input
-                            value={form.emd_bank_name}
-                            onChange={(e) => set('emd_bank_name', e.target.value)}
-                            placeholder="e.g. State Bank of India"
-                            className={inputCls(errors.emd_bank_name)}
-                          />
-                        </Field>
-                        <Field label="Account Number" error={errors.emd_account_number} required>
-                          <Input
-                            value={form.emd_account_number}
-                            onChange={(e) => set('emd_account_number', e.target.value)}
-                            placeholder="e.g. 012345678901"
-                            className={inputCls(errors.emd_account_number)}
-                          />
-                        </Field>
-                        <Field label="IFSC Code" error={errors.emd_ifsc_code} required>
-                          <Input
-                            value={form.emd_ifsc_code}
-                            onChange={(e) => set('emd_ifsc_code', e.target.value.toUpperCase())}
-                            placeholder="e.g. SBIN0001234"
-                            className={inputCls(errors.emd_ifsc_code)}
-                          />
-                        </Field>
-                        <Field label="Branch (If Required)">
-                          <Input
-                            value={form.emd_branch}
-                            onChange={(e) => set('emd_branch', e.target.value)}
-                            placeholder="e.g. New Delhi Main Branch"
-                            className={inputCls()}
-                          />
-                        </Field>
-                      </>
+                        )}
+                      </div>
                     )}
 
-                    {!form.emd_exempted && form.emd_type === 'DD' && (
-                      <>
-                        <div className="sm:col-span-2">
-                          <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 mb-3">
-                            <svg className="size-4 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                            <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
-                              <strong>EMD via Demand Draft (DD)</strong> — Provide the DD beneficiary and payable location. Finance team will be alerted to prepare the DD accordingly.
-                            </p>
-                          </div>
+                    {/* EMD Exemption criteria — multi-select, independent of Online/DD */}
+                    {!form.emd_not_applicable && (
+                      <div className="sm:col-span-2 space-y-2 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800">
+                        <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-200">
+                          Exemption Criteria Listed In The Tender (tick all that apply)
+                        </p>
+                        <div className="flex flex-wrap items-center gap-4">
+                          {['MSME', 'STARTUP', 'OTHER'].map((t) => (
+                            <label key={t} className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-foreground">
+                              <input
+                                type="checkbox"
+                                checked={form.emd_exemption_types.includes(t)}
+                                onChange={() => toggleExemptionType(t)}
+                                className="accent-primary"
+                              />
+                              {t === 'OTHER' ? 'Other' : t === 'STARTUP' ? 'Startup' : 'MSME'}
+                            </label>
+                          ))}
                         </div>
-                        <Field label="Beneficiary" error={errors.emd_beneficiary} required>
+                        {form.emd_exemption_types.includes('OTHER') && (
                           <Input
-                            value={form.emd_beneficiary}
-                            onChange={(e) => set('emd_beneficiary', e.target.value)}
-                            placeholder="e.g. The Accounts Officer, NIC Delhi"
-                            className={inputCls(errors.emd_beneficiary)}
+                            value={form.emd_exemption_reason}
+                            onChange={(e) => set('emd_exemption_reason', e.target.value)}
+                            placeholder="Specify the Other exemption criterion"
+                            className={inputCls(errors.emd_exemption_reason)}
                           />
-                        </Field>
-                        <Field label="Payable At" error={errors.emd_payable_at} required>
-                          <Input
-                            value={form.emd_payable_at}
-                            onChange={(e) => set('emd_payable_at', e.target.value)}
-                            placeholder="e.g. New Delhi"
-                            className={inputCls(errors.emd_payable_at)}
-                          />
-                        </Field>
-                      </>
+                        )}
+                        {errors.emd_exemption_reason && (
+                          <p className="text-[11px] text-red-500">{errors.emd_exemption_reason}</p>
+                        )}
+                      </div>
                     )}
 
                     {/* BG Required Toggle & Rate */}
@@ -773,9 +877,16 @@ export function AddTenderPage() {
                               placeholder="BG Rate (%) e.g. 2.5" className={inputCls()} />
                           </div>
                         )}
+                        {form.bg_required && (
+                          <div className="flex-1">
+                            <Input type="number" min="1" value={form.bg_duration_months} onChange={(e) => set('bg_duration_months', e.target.value)}
+                              placeholder="BG Duration (months) e.g. 12" className={inputCls()} />
+                          </div>
+                        )}
                       </div>
                     </div>
 
+                  </div>
                   </div>
                 </div>
               )}
@@ -839,6 +950,59 @@ export function AddTenderPage() {
                       </DropdownMenu>
                     </Field>
 
+                    {/* Account Manager selection — required, the approving authority for this tender */}
+                    <Field label="Account Manager" error={errors.account_manager_id} required tooltip="The approving authority for this tender — owns the Primary Review Go/No-Go decision.">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm" className={`w-full h-9 text-xs font-normal justify-between bg-background text-foreground hover:bg-muted/50 gap-1.5 ${errors.account_manager_id ? 'border-destructive' : 'border-input'}`}>
+                            <span>{form.account_manager_id ? (accountManagers.find(u => u.id === form.account_manager_id)?.full_name ?? 'Select Account Manager...') : 'Select Account Manager...'}</span>
+                            <ChevronDown className="size-3 text-muted-foreground ml-auto" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="max-h-60 overflow-y-auto w-[320px]">
+                          <DropdownMenuLabel>Select Account Manager</DropdownMenuLabel>
+                          <DropdownMenuSeparator />
+                          {usersLoading ? (
+                            <DropdownMenuItem disabled>Loading users…</DropdownMenuItem>
+                          ) : accountManagers.length === 0 ? (
+                            <DropdownMenuItem disabled>No users hold the Account Manager role yet</DropdownMenuItem>
+                          ) : (
+                            accountManagers.map((u) => (
+                              <DropdownMenuItem key={u.id} onSelect={() => set('account_manager_id', u.id)}>
+                                {u.full_name}
+                              </DropdownMenuItem>
+                            ))
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </Field>
+
+                    {/* Pre-Sales selection — optional, can also be assigned later during Primary Review */}
+                    <Field label="Pre-Sales" tooltip="Optional. Reviews OEM authorization for the proposed products. Can also be assigned later during Primary Review.">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm" className="w-full h-9 text-xs font-normal justify-between bg-background text-foreground hover:bg-muted/50 gap-1.5 border-input">
+                            <span>{form.presales_id ? (presalesUsers.find(u => u.id === form.presales_id)?.full_name ?? 'Select Pre-Sales...') : 'None selected'}</span>
+                            <ChevronDown className="size-3 text-muted-foreground ml-auto" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="max-h-60 overflow-y-auto w-[320px]">
+                          <DropdownMenuLabel>Select Pre-Sales</DropdownMenuLabel>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onSelect={() => set('presales_id', '')}>None</DropdownMenuItem>
+                          {presalesUsers.length === 0 ? (
+                            <DropdownMenuItem disabled>No users hold the Pre-Sales role yet</DropdownMenuItem>
+                          ) : (
+                            presalesUsers.map((u) => (
+                              <DropdownMenuItem key={u.id} onSelect={() => set('presales_id', u.id)}>
+                                {u.full_name}
+                              </DropdownMenuItem>
+                            ))
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </Field>
+
                     {/* Internal Remarks */}
                     <div className="sm:col-span-2">
                       <Field label="Remarks & Internal Notes">
@@ -849,6 +1013,61 @@ export function AddTenderPage() {
                           className="text-sm min-h-[60px] bg-background"
                         />
                       </Field>
+                    </div>
+
+                    {/* Additional Info / Challenge — optional, colored-label
+                        note surfaced in the identification alert/mail. */}
+                    <div className="sm:col-span-2">
+                      {!showAlertNote ? (
+                        <button
+                          type="button"
+                          onClick={() => setShowAlertNote(true)}
+                          className="text-xs font-semibold text-primary hover:underline flex items-center gap-1"
+                        >
+                          <Plus className="size-3.5" /> Add Additional Info / Challenge
+                        </button>
+                      ) : (
+                        <div className="space-y-2 p-3 rounded-lg border border-border/60 bg-muted/20">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs font-semibold text-foreground">Additional Info / Challenge</Label>
+                            <button
+                              type="button"
+                              onClick={() => { setShowAlertNote(false); setAlertNoteText(''); setAlertNoteLabel('') }}
+                              className="text-muted-foreground hover:text-foreground"
+                            >
+                              <X className="size-3.5" />
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              value={alertNoteLabel}
+                              onChange={(e) => setAlertNoteLabel(e.target.value)}
+                              placeholder="Label, e.g. Delivery Risk"
+                              className="text-xs h-8 bg-background flex-1"
+                            />
+                            <span
+                              className="text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-full text-white shrink-0 whitespace-nowrap"
+                              style={{ background: ALERT_NOTE_COLORS[alertNoteColor].solid }}
+                            >
+                              {alertNoteLabel.trim() || 'Attention'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setAlertNoteColor((c) => randomAlertNoteColor(c))}
+                              title="Shuffle color"
+                              className="p-1.5 rounded-md border border-border hover:bg-muted shrink-0"
+                            >
+                              <Shuffle className="size-3.5" />
+                            </button>
+                          </div>
+                          <Textarea
+                            value={alertNoteText}
+                            onChange={(e) => setAlertNoteText(e.target.value)}
+                            placeholder="Describe the challenge or issue to flag for reviewers..."
+                            className="text-sm min-h-[60px] bg-background"
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
 

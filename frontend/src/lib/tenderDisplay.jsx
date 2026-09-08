@@ -20,7 +20,7 @@ const STATUS_DISPLAY_LABELS = {
   LOST: 'Lost',
   CANCELLED: 'Cancelled',
   SUBMITTED: 'Submitted',
-  TECHNICAL_EVALUATION: 'Under Tech Eval',
+  TECHNICAL_EVALUATION: 'Submitted',
   ACTIVE: 'Active',
   ARCHIVED: 'Archived',
   CLOSED: 'Closed',

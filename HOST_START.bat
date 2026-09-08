@@ -39,25 +39,35 @@ powershell -Command "if (-not (Get-NetFirewallRule -DisplayName 'Onetrack API Po
 
 :: 3. Pull latest containers and launch compose stack
 echo [3/4] Pulling latest containers and starting services...
-docker compose pull
-docker compose up -d --remove-orphans
+docker compose pull >> onetrack_sync.log 2>&1
+docker compose up -d --remove-orphans >> onetrack_sync.log 2>&1
 
-:: 4. Display Status & Start 30-min Auto-Sync Loop
+:: 4. Detect this machine's LAN IP instead of a hardcoded address, so this
+::    banner is correct on whichever PC actually runs it. (On a multi-adapter
+::    PC this picks whichever IPv4 line ipconfig lists last — fine for the
+::    single-NIC office-PC case this script targets; check ipconfig by hand
+::    if this machine has more than one active adapter.)
+set "LOCAL_IP="
+for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4 Address"') do set "LOCAL_IP=%%a"
+set "LOCAL_IP=%LOCAL_IP: =%"
+if not defined LOCAL_IP set "LOCAL_IP=<check ipconfig>"
+
 echo.
 echo =======================================================
 echo  SUCCESS! ONETRACK ENTERPRISE IS LIVE ON LOCAL NETWORK
 echo =======================================================
-echo   Local LAN Access URL : http://192.168.1.8
+echo   Local LAN Access URL : http://%LOCAL_IP%
 echo   Frontend Web Server  : Port 80  (ACTIVE)
 echo   Backend API Server   : Port 8081 (ACTIVE)
 echo   Watchtower Auto-Sync : RUNNING (Checking GHCR updates)
+echo   Sync log             : %~dp0onetrack_sync.log
 echo =======================================================
 echo.
 
 :AUTO_SYNC_LOOP
-echo [%DATE% %TIME%] Auto-sync daemon active. Waiting 30 mins for next check...
-timeout /t 1800 /nobreak
-echo [%DATE% %TIME%] Pulling latest container updates from GitHub Container Registry...
-docker compose pull
-docker compose up -d --remove-orphans
+echo [%DATE% %TIME%] Auto-sync daemon active. Waiting 30 mins for next check... >> onetrack_sync.log
+timeout /t 1800 /nobreak >nul
+echo [%DATE% %TIME%] Pulling latest container updates from GitHub Container Registry... >> onetrack_sync.log
+docker compose pull >> onetrack_sync.log 2>&1
+docker compose up -d --remove-orphans >> onetrack_sync.log 2>&1
 goto AUTO_SYNC_LOOP

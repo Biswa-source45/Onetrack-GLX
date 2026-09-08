@@ -1,0 +1,3 @@
+# Host-level secrets file (see .env.example) — never commit the real one.
+/.env
+backend/.env

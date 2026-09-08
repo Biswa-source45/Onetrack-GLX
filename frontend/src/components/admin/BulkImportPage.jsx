@@ -22,7 +22,7 @@ const STAGE_LABELS = {
   DOCUMENT_CHECKLIST_PREPARATION: 'Document Checklist',
   EMD_PROCESSING: 'EMD Processing',
   INTERNAL_APPROVAL: 'Internal Approval',
-  GEM_SUBMISSION: 'GeM Submission',
+  GEM_SUBMISSION: 'Bid Submission',
   TECHNICAL_EVALUATION: 'Technical Evaluation',
   FINANCIAL_EVALUATION: 'Financial Evaluation',
   AWARD_HANDOVER: 'Award & Handover',

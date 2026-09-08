@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArrowLeft, Loader2, AlertCircle, Clock, Building2,
@@ -7,7 +7,7 @@ import {
   XCircle, Edit2, Save, X, MoreHorizontal, Calendar,
   FileText, Activity, History, UserPlus, Target, ChevronDown,
   RotateCcw, Trash2, Trophy, Search, ShieldCheck, Share2, Coins, Eye,
-  Send, Upload, Hourglass, Ban, ArrowRight, Layers, Lock, Check, Sparkles, AlertTriangle
+  Send, Upload, Hourglass, Ban, ArrowRight, Layers, Lock, Check, Sparkles, AlertTriangle, UserCheck, RefreshCw
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import {
   getBid, getBidStageHistory, transitionBidStage,
-  addBidMember, removeBidMember, recordBidOutcome, archiveBid, updateBid,
+  removeBidMember, recordBidOutcome, archiveBid, updateBid,
   softDeleteBid, restoreBid, permanentDeleteBid,
   STAGE_LABELS, STAGE_COLORS, STATUS_COLORS, statusStyle, STAGE_TRANSITIONS,
   WORKFLOW_STAGES_ORDERED,
@@ -34,9 +34,19 @@ import { ImportedPill } from './ImportedPill'
 import { usePermissions } from '../../hooks/usePermissions'
 import { tokenStorage } from '../../services/auth'
 import { ChecklistTab } from './ChecklistTab'
-import { listUsers } from '../../services/users'
 import { EditTenderDialog } from './EditTenderDialog'
 import { DynamicStageWorkspace, checkStageState } from './StageWorkspaces'
+
+// Module scope (not runtime-dependent) so the URL-backed tab state below can
+// validate against it before the component has even loaded a bid.
+const TABS = [
+  { id: 'overview', label: 'Overview', icon: FileText },
+  { id: 'stages', label: `Stage Lifecycle (${WORKFLOW_STAGES_ORDERED.length})`, icon: Layers },
+  { id: 'checklist', label: 'Checklist', icon: CheckSquare },
+  { id: 'history', label: 'Stage History', icon: History },
+  { id: 'members', label: 'Members', icon: Users },
+]
+const TAB_IDS = new Set(TABS.map(t => t.id))
 
 function isValidDate(dt) {
   if (!dt) return false
@@ -835,29 +845,12 @@ function StageHistoryTab({ bidId, bid }) {
 }
 
 // ── Members Tab ──────────────────────────────────────────────────────────────
+// Team panel, read-mostly: membership is driven by the tender's own structured
+// roles (Bid Owner, Reporting Manager, Account Manager, Pre-Sales — set from
+// Add/Edit Tender and Primary Review), not a free-form "add any user" control.
+// Removal is kept for correcting a mistaken assignment.
 function MembersTab({ bid, onRefresh }) {
   const { hasPermission } = usePermissions()
-  const [users, setUsers] = useState([])
-  const [selectedUser, setSelectedUser] = useState('')
-  const [role, setRole] = useState('MEMBER')
-  const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    listUsers({ limit: 100 }).then(r => {
-      if (r.ok) setUsers(Array.isArray(r.data?.users) ? r.data.users : [])
-    })
-  }, [])
-
-  async function handleAdd() {
-    if (!selectedUser) return
-    setLoading(true)
-    try {
-      const res = await addBidMember(bid.id, selectedUser, role)
-      if (res.ok) { toast.success('Member added'); onRefresh(); setSelectedUser('') }
-      else toast.error(res.error?.message ?? 'Failed to add member')
-    } catch { toast.error('Network error') }
-    finally { setLoading(false) }
-  }
 
   async function handleRemove(userId) {
     try {
@@ -867,54 +860,8 @@ function MembersTab({ bid, onRefresh }) {
     } catch { toast.error('Network error') }
   }
 
-  const ROLES = ['OWNER','MANAGER','MEMBER','REVIEWER','OBSERVER']
   return (
     <div className="space-y-4">
-      {hasPermission('bid.edit') && !['ARCHIVED', 'CANCELLED', 'WON', 'LOST'].includes(bid.bid_status) && (
-        <div className="rounded-lg border border-border p-4 space-y-3">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Add Member</p>
-          <div className="flex gap-2 flex-wrap">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="flex-1 min-w-[180px] h-8 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5">
-                  <span>{selectedUser ? (users.find(u => u.id === selectedUser)?.full_name ?? 'Select user...') : 'Select user...'}</span>
-                  <ChevronDown className="size-3 text-muted-foreground ml-auto" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="max-h-60 overflow-y-auto w-[220px]">
-                <DropdownMenuLabel>Select User</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {users.map((u) => (
-                  <DropdownMenuItem key={u.id} onSelect={() => setSelectedUser(u.id)}>
-                    {u.full_name} (@{u.username})
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="h-8 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5 min-w-[100px]">
-                  <span>{role}</span>
-                  <ChevronDown className="size-3 text-muted-foreground ml-auto" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent>
-                <DropdownMenuLabel>Select Role</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {ROLES.map((r) => (
-                  <DropdownMenuItem key={r} onSelect={() => setRole(r)}>
-                    {r}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button size="sm" className="h-8 gap-1" onClick={handleAdd} disabled={loading||!selectedUser}>
-              {loading?<Loader2 className="size-3.5 animate-spin"/>:<Plus className="size-3.5"/>}Add
-            </Button>
-          </div>
-        </div>
-      )}
       <div className="space-y-2">
         {(bid.members ?? []).length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No members yet.</p>}
         {(bid.members ?? []).map((m,i)=>(
@@ -930,10 +877,14 @@ function MembersTab({ bid, onRefresh }) {
               </div>
             </div>
             {hasPermission('bid.edit') && !['ARCHIVED', 'CANCELLED', 'WON', 'LOST'].includes(bid.bid_status) && (
-              <button onClick={()=>handleRemove(m.user_id)}
-                className="p-1 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors">
-                <X className="size-3.5"/>
-              </button>
+              ['OWNER', 'ACCOUNT_MANAGER'].includes(m.role) ? (
+                <span className="text-[10px] text-muted-foreground/70 italic px-1">Reassign via Edit Tender</span>
+              ) : (
+                <button onClick={()=>handleRemove(m.user_id)}
+                  className="p-1 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors">
+                  <X className="size-3.5"/>
+                </button>
+              )
             )}
           </motion.div>
         ))}
@@ -942,14 +893,29 @@ function MembersTab({ bid, onRefresh }) {
   )
 }
 
-// ── Stage Sections Tab (Interactive 12-Stage Lifecycle Grid & Workspace) ─────
-function StageSectionsTab({ bid, onRefresh, onAdvance }) {
+// ── Stage Sections Tab (Interactive Stage Lifecycle Grid & Workspace) ────────
+function StageSectionsTab({ bid, onRefresh, onAdvance, searchParams, setSearchParams }) {
   const currentIdx = WORKFLOW_STAGES_ORDERED.indexOf(bid.workflow_stage)
   const isTerminal = ['WON', 'LOST', 'CANCELLED', 'ARCHIVED'].includes(bid.bid_status)
-  
-  // Selected stage state (defaults to current active stage of the tender)
-  const [selectedStage, setSelectedStage] = useState(bid.workflow_stage)
+
+  // Selected stage backed by the URL (?stage=), defaulting to the tender's
+  // current workflow stage — so a refresh or a shared link lands back on
+  // the same stage instead of always resetting here.
+  const rawStage = searchParams.get('stage')
+  const selectedStage = WORKFLOW_STAGES_ORDERED.includes(rawStage) ? rawStage : bid.workflow_stage
+  const setSelectedStage = (stageKey) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', 'stages')
+    next.set('stage', stageKey)
+    setSearchParams(next, { replace: true })
+  }
   const selectedIdx = WORKFLOW_STAGES_ORDERED.indexOf(selectedStage)
+  const [refreshing, setRefreshing] = useState(false)
+  const handleStageRefresh = async () => {
+    setRefreshing(true)
+    try { if (onRefresh) await onRefresh() }
+    finally { setRefreshing(false) }
+  }
 
   const selectedGuide = STAGE_GUIDE[selectedStage] || {
     title: STAGE_LABELS[selectedStage] || selectedStage,
@@ -1021,9 +987,20 @@ function StageSectionsTab({ bid, onRefresh, onAdvance }) {
 
       {/* 12 Stage Selector Bar / Row */}
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Select Stage Section:</span>
-          <span className="text-xs text-primary font-medium">Stage {selectedIdx + 1} of {WORKFLOW_STAGES_ORDERED.length} Selected</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-primary font-medium">Stage {selectedIdx + 1} of {WORKFLOW_STAGES_ORDERED.length} Selected</span>
+            <button
+              type="button"
+              onClick={handleStageRefresh}
+              disabled={refreshing}
+              title="Refresh this stage's data without reloading the page"
+              className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         </div>
         
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
@@ -1162,10 +1139,26 @@ const STAGE_GUIDE = {
       'Identify the procuring authority and department',
       'Select appropriate bid type (BID / BID to RA)',
     ],
-    note: 'Advance to OEM Authorization Request once all basic information is captured (tenders are only added after eligibility has already been confirmed).',
+    note: 'Advance to Primary Review once all basic information is captured (tenders are only added after eligibility has already been confirmed).',
+  },
+  PRIMARY_REVIEW: {
+    title: '2. Primary Review',
+    GuideIcon: UserCheck,
+    color: 'text-rose-600',
+    bg: 'bg-rose-50 border-rose-200 dark:bg-rose-950/20 dark:border-rose-800',
+    description: 'The Account Manager reviews the tender and decides Go/No-Go, confirms the EMD mode, and assigns Pre-Sales if needed.',
+    responsible: 'Account Manager',
+    actions: [
+      'Review the tender scope, financials, and requested products',
+      'Decide Go (proceed) or No-Go (cancel with a reason)',
+      'Confirm the EMD mode (Online / DD) and exemption, if any',
+      'Assign Pre-Sales if not already chosen at creation',
+      'Mark Primary Review complete to unlock the rest of the pipeline',
+    ],
+    note: 'OEM Authorization, Pricing Request, Document Checklist Preparation, and EMD Processing all stay locked until this stage is complete.',
   },
   OEM_AUTHORIZATION_REQUEST: {
-    title: '2. OEM Authorization',
+    title: '3. OEM Authorization',
     GuideIcon: Building2,
     color: 'text-indigo-600',
     bg: 'bg-indigo-50 border-indigo-200 dark:bg-indigo-950/20 dark:border-indigo-800',
@@ -1181,7 +1174,7 @@ const STAGE_GUIDE = {
     note: 'Advance to Pricing Request once OEM authorization letters are received.',
   },
   PRICING_REQUEST: {
-    title: '3. Pricing Request',
+    title: '4. Pricing Request',
     GuideIcon: DollarSign,
     color: 'text-violet-600',
     bg: 'bg-violet-50 border-violet-200 dark:bg-violet-950/20 dark:border-violet-800',
@@ -1197,7 +1190,7 @@ const STAGE_GUIDE = {
     note: 'Advance to Document Checklist Preparation once commercial pricing is finalized.',
   },
   DOCUMENT_CHECKLIST_PREPARATION: {
-    title: '4. Document Checklist Preparation',
+    title: '5. Document Checklist Preparation',
     GuideIcon: CheckSquare,
     color: 'text-purple-600',
     bg: 'bg-purple-50 border-purple-200 dark:bg-purple-950/20 dark:border-purple-800',
@@ -1213,7 +1206,7 @@ const STAGE_GUIDE = {
     note: 'Advance to EMD Processing once all documents are compiled and checklist is complete.',
   },
   EMD_PROCESSING: {
-    title: '5. EMD Processing',
+    title: '6. EMD Processing',
     GuideIcon: Coins,
     color: 'text-amber-600',
     bg: 'bg-amber-50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800',
@@ -1229,7 +1222,7 @@ const STAGE_GUIDE = {
     note: 'Advance to Internal Approval once EMD is successfully submitted.',
   },
   INTERNAL_APPROVAL: {
-    title: '6. Internal Approval',
+    title: '7. Internal Approval',
     GuideIcon: Eye,
     color: 'text-yellow-600',
     bg: 'bg-yellow-50 border-yellow-200 dark:bg-yellow-950/20 dark:border-yellow-800',
@@ -1242,10 +1235,10 @@ const STAGE_GUIDE = {
       'Obtain management sign-off/approval',
       'Note approval details in remarks',
     ],
-    note: 'Advance to GeM Submission only after internal management approval is received.',
+    note: 'Advance to Bid Submission only after internal management approval is received.',
   },
   GEM_SUBMISSION: {
-    title: '7. GeM Portal Submission',
+    title: '8. Bid Submission',
     GuideIcon: Send,
     color: 'text-lime-700',
     bg: 'bg-lime-50 border-lime-200 dark:bg-lime-950/20 dark:border-lime-800',
@@ -1261,7 +1254,7 @@ const STAGE_GUIDE = {
     note: 'After successful submission, advance to Technical Evaluation stage.',
   },
   TECHNICAL_EVALUATION: {
-    title: '8. Technical Evaluation',
+    title: '9. Technical Evaluation',
     GuideIcon: ShieldCheck,
     color: 'text-teal-600',
     bg: 'bg-teal-50 border-teal-200 dark:bg-teal-950/20 dark:border-teal-800',
@@ -1277,7 +1270,7 @@ const STAGE_GUIDE = {
     note: 'Advance to Financial Evaluation after technical qualification is confirmed.',
   },
   FINANCIAL_EVALUATION: {
-    title: '9. Financial Evaluation',
+    title: '10. Financial Evaluation',
     GuideIcon: Activity,
     color: 'text-cyan-600',
     bg: 'bg-cyan-50 border-cyan-200 dark:bg-cyan-950/20 dark:border-cyan-800',
@@ -1293,7 +1286,7 @@ const STAGE_GUIDE = {
     note: 'Advance to Award & Handover if GlobX wins. Record outcome (WON/LOST) accordingly.',
   },
   AWARD_HANDOVER: {
-    title: '10. Award & Delivery Handover',
+    title: '11. Award & Delivery Handover',
     GuideIcon: Trophy,
     color: 'text-emerald-600',
     bg: 'bg-emerald-50 border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800',
@@ -1314,7 +1307,7 @@ function StageActionPanel({ bid, onSelectStage }) {
   const remarks = bid?.stage_remarks || {}
   const reviews = bid?.stage_reviews || {}
 
-  // Categorize all 12 stages into 3 buckets
+  // Categorize all stages (WORKFLOW_STAGES_ORDERED.length of them) into 3 buckets
   const completedStages = []
   const reviewStages = []
   const pendingStages = []
@@ -1916,7 +1909,19 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
   const [bid, setBid]               = useState(null)
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState(null)
-  const [activeTab, setActiveTab]   = useState('overview')
+  // Backed by the URL (?tab=&stage=) instead of local state, so refreshing
+  // the page or hitting Back lands back on the same page-tab and stage
+  // instead of always resetting to Overview / the tender's workflow stage.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const rawTab = searchParams.get('tab')
+  const activeTab = TAB_IDS.has(rawTab) ? rawTab : 'overview'
+  const setActiveTab = (tabId, stageKey) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', tabId)
+    if (tabId === 'stages' && stageKey) next.set('stage', stageKey)
+    else if (tabId !== 'stages') next.delete('stage')
+    setSearchParams(next, { replace: true })
+  }
   const [showTransition, setShowTransition] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
   const [showOutcome, setShowOutcome] = useState(false)
@@ -1950,14 +1955,6 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
     </div>
   )
   if (!bid) return null
-
-  const TABS = [
-    { id:'overview', label:'Overview', icon:FileText },
-    { id:'stages',   label:'Stage Lifecycle (12)', icon:Layers },
-    { id:'checklist',label:'Checklist',icon:CheckSquare },
-    { id:'history',  label:'Stage History', icon:History },
-    { id:'members',  label:'Members',  icon:Users },
-  ]
 
   const canTransition = hasPermission('bid.edit') && (STAGE_TRANSITIONS[bid.workflow_stage]?.length ?? 0) > 0
 
@@ -2157,7 +2154,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
         <motion.div key={activeTab} initial={{opacity:0,y:6}} animate={{opacity:1,y:0}} exit={{opacity:0}} transition={{duration:0.15}}>
           {activeTab === 'overview' && (
             <div className="space-y-5">
-              <StageActionPanel bid={bid} onSelectStage={(stageKey) => setActiveTab('stages')} />
+              <StageActionPanel bid={bid} onSelectStage={(stageKey) => setActiveTab('stages', stageKey)} />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="rounded-lg border border-border p-4 space-y-3 bg-card shadow-sm">
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
@@ -2166,8 +2163,11 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                   <div className="space-y-2 text-sm">
                     {[
                       ['Owner', bid.bid_owner?.full_name || 'Unassigned'],
-                      ['Organization Name', bid.organization_name || 'Not Specified'],
+                      ['Account Manager', bid.account_manager?.full_name || 'Unassigned'],
+                      ['Pre-Sales', bid.presales?.full_name || 'Not Assigned'],
+                      ['Account Name', bid.organization_name || 'Not Specified'],
                       ['Department', bid.department_name || 'Not Specified'],
+                      ['Location', bid.location || 'Not Specified'],
                       ['Category / Scope', bid.category || 'Not Specified'],
                       ['Portal Source', bid.portal_source || 'GeM'],
                       ['Bid Scope Type', bid.bid_type || 'CUSTOM_BID'],
@@ -2244,7 +2244,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
               <OutcomePanel bid={bid} />
             </div>
           )}
-          {activeTab === 'stages' && <StageSectionsTab bid={bid} onRefresh={loadBid} onAdvance={() => setShowTransition(true)} />}
+          {activeTab === 'stages' && <StageSectionsTab bid={bid} onRefresh={loadBid} onAdvance={() => setShowTransition(true)} searchParams={searchParams} setSearchParams={setSearchParams} />}
           {activeTab === 'checklist' && <ChecklistTab bid={bid} onRefresh={loadBid}/>}
           {activeTab === 'history' && <StageHistoryTab bidId={bid.id} bid={bid} />}
           {activeTab === 'members' && <MembersTab bid={bid} onRefresh={loadBid}/>}

@@ -15,9 +15,21 @@ import {
   addChecklist,
   deleteChecklist,
   reorderChecklists,
-  updateChecklist
+  updateChecklist,
+  updateBid
 } from '../../services/bids'
 import { logStageMicroEvent } from '../../services/auditLogger'
+
+// Cycled by OEM index so each OEM reads as a consistent color across every
+// checklist row it appears on, without needing to store a color per OEM.
+const OEM_PILL_COLORS = [
+  'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800',
+  'bg-violet-100 text-violet-700 border-violet-300 dark:bg-violet-950/60 dark:text-violet-300 dark:border-violet-800',
+  'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800',
+  'bg-rose-100 text-rose-700 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800',
+  'bg-cyan-100 text-cyan-700 border-cyan-300 dark:bg-cyan-950/60 dark:text-cyan-300 dark:border-cyan-800',
+  'bg-lime-100 text-lime-700 border-lime-300 dark:bg-lime-950/60 dark:text-lime-300 dark:border-lime-800',
+]
 
 export function ChecklistTab({ bid, onRefresh }) {
   const bidId = bid.id
@@ -32,6 +44,23 @@ export function ChecklistTab({ bid, onRefresh }) {
   const [draggedId, setDraggedId] = useState(null)
   const [editingId, setEditingId] = useState(null)
   const [editTitle, setEditTitle] = useState('')
+  const [oemPickerItem, setOemPickerItem] = useState(null)
+  const [oemPickerSelected, setOemPickerSelected] = useState({})
+
+  const oemList = Array.isArray(bid.oem_workspace) ? bid.oem_workspace
+    : (bid.oem_workspace && Array.isArray(bid.oem_workspace.oems) ? bid.oem_workspace.oems : [])
+
+  // An OEM document checklist item — MAF included. MAF's per-OEM receipt
+  // status lives in the matrix row's legacy top-level `maf` field rather
+  // than `docStatus` (which only exists for documents added after multi-OEM
+  // tracking did), so it needs its own read/write instead of going through
+  // `docStatus` like every other OEM document.
+  const isOemDocItem = (item) => item.checklist_group === 'OEM' || item.title.startsWith('[OEM]')
+  const isMafItem = (item) => /\bmaf\b/i.test(item.title)
+  const readOemDoc = (o, item) => isMafItem(item) ? o.maf === 'RECEIVED' : (o.docStatus || {})[item.id] === 'RECEIVED'
+  const writeOemDoc = (o, item, received) => isMafItem(item)
+    ? { ...o, maf: received ? 'RECEIVED' : 'NOT RECEIVED' }
+    : { ...o, docStatus: { ...(o.docStatus || {}), [item.id]: received ? 'RECEIVED' : 'NOT RECEIVED' } }
 
   // 1. Log checklist events to local stage history with username fallback
   function logChecklistHistory(actionText) {
@@ -70,6 +99,31 @@ export function ChecklistTab({ bid, onRefresh }) {
   const handleToggle = async (item) => {
     if (isLocked) return
 
+    // Bidirectional sync with the OEM Authorization Matrix: this item's
+    // per-OEM status (MAF included — it reads/writes through the matrix's
+    // legacy `maf` field via readOemDoc/writeOemDoc above) reflects
+    // RECEIVED/NOT RECEIVED per OEM row. With 2+ OEMs tracked, a single
+    // checkbox can't honestly represent "received" for all of them at once
+    // — a document arriving from one OEM doesn't mean it arrived from the
+    // others — so that case opens a picker instead of applying a blanket
+    // update. The reverse direction (matrix -> checklist) lives in
+    // Stage3Workspace's Save Matrix, and uses the same "all OEMs RECEIVED" rule.
+    const isOemItem = isOemDocItem(item)
+    if (isOemItem && oemList.length > 1) {
+      const seed = {}
+      oemList.forEach(o => { seed[o.id] = readOemDoc(o, item) })
+      setOemPickerSelected(seed)
+      setOemPickerItem(item)
+      return
+    }
+    // A document can't have arrived from an OEM whose authorization process
+    // was never started — block the single-OEM fast path the same way the
+    // picker blocks individual non-initiated rows below.
+    if (isOemItem && oemList.length === 1 && oemList[0].initiated !== 'YES') {
+      toast.error(`"${oemList[0].name}" has not been initiated yet — initiate it in the OEM Authorization stage first.`)
+      return
+    }
+
     const targetState = !item.is_done
     try {
       const res = await toggleChecklist(bidId, item.id, targetState)
@@ -86,6 +140,47 @@ export function ChecklistTab({ bid, onRefresh }) {
         toast.info(`Re-opened checklist item: "${cleanTitle}"`)
         logChecklistHistory(`Re-opened checklist item for review: "${cleanTitle}"`)
       }
+
+      if (isOemItem && oemList.length === 1) {
+        const nextOems = oemList.map(o => writeOemDoc(o, item, targetState))
+        updateBid(bidId, { oem_workspace: JSON.stringify(nextOems) }).catch(() => {})
+      }
+
+      loadChecklist()
+    } catch {
+      toast.error('Network error during checklist update')
+    }
+  }
+
+  // Confirm the per-OEM picker: apply the chosen RECEIVED/NOT RECEIVED state
+  // to only the OEMs it actually applies to, then derive the checklist
+  // item's own done state from whether every tracked OEM is now RECEIVED —
+  // matching the same rule Stage3Workspace's Save Matrix uses.
+  const handleOemPickerConfirm = async () => {
+    const item = oemPickerItem
+    if (!item) return
+    // Defensive re-check: a non-initiated OEM's checkbox is disabled in the
+    // picker UI, but never trust the client state alone for what gets
+    // persisted as RECEIVED.
+    const nextOems = oemList.map(o => writeOemDoc(o, item, o.initiated === 'YES' && !!oemPickerSelected[o.id]))
+    const shouldBeDone = nextOems.length > 0 && nextOems.every(o => readOemDoc(o, item))
+
+    try {
+      await updateBid(bidId, { oem_workspace: JSON.stringify(nextOems) })
+      const res = await toggleChecklist(bidId, item.id, shouldBeDone)
+      if (!res.ok) {
+        toast.error(res.error?.message ?? 'Failed to update checklist item')
+        return
+      }
+      const cleanTitle = item.title.replace(/^\[(Bidder|OEM)\]\s*/i, '')
+      const receivedNames = nextOems.filter(o => readOemDoc(o, item)).map(o => o.name)
+      logChecklistHistory(
+        shouldBeDone
+          ? `Verified & completed checklist item: "${cleanTitle}" (received from: ${receivedNames.join(', ') || 'none'})`
+          : `Updated OEM receipt status for checklist item: "${cleanTitle}" (received from: ${receivedNames.join(', ') || 'none'})`
+      )
+      toast.success(shouldBeDone ? `Completed checklist item: "${cleanTitle}"` : 'OEM receipt status updated')
+      setOemPickerItem(null)
       loadChecklist()
     } catch {
       toast.error('Network error during checklist update')
@@ -246,6 +341,8 @@ export function ChecklistTab({ bid, onRefresh }) {
   const renderItem = (item) => {
     const isItemDragged = item.id === draggedId
     const cleanTitle = item.title.replace(/^\[(Bidder|OEM)\]\s*/i, '')
+    const isOemItem = isOemDocItem(item)
+    const showOemPills = isOemItem && oemList.length > 1
 
     return (
       <motion.div
@@ -346,6 +443,27 @@ export function ChecklistTab({ bid, onRefresh }) {
                     </span>
                   )}
                 </div>
+
+                {/* Per-OEM receipt status — visible even while the item is
+                    still incomplete, so it's clear which OEM(s) are already
+                    in and which are still pending. */}
+                {showOemPills && (
+                  <div className="flex items-center gap-1 flex-wrap mt-1.5">
+                    {oemList.map((o, i) => {
+                      const received = readOemDoc(o, item)
+                      const color = OEM_PILL_COLORS[i % OEM_PILL_COLORS.length]
+                      return (
+                        <span
+                          key={o.id}
+                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${received ? color : 'bg-muted/50 text-muted-foreground border-border/60'}`}
+                          title={received ? `Received from ${o.name}` : `Not yet received from ${o.name}`}
+                        >
+                          {o.name}{received ? ' ✓' : ''}
+                        </span>
+                      )
+                    })}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -539,6 +657,76 @@ export function ChecklistTab({ bid, onRefresh }) {
                 </Button>
                 <Button variant="destructive" size="sm" onClick={handleDeleteItem}>
                   Confirm Delete
+                </Button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* OEM Receipt Picker — shown instead of a blanket toggle whenever 2+
+          OEMs are tracked, so one OEM's document arriving doesn't silently
+          mark it received for every OEM. */}
+      <AnimatePresence>
+        {oemPickerItem && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-foreground/25 backdrop-blur-xs"
+              onClick={() => setOemPickerItem(null)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="relative z-10 w-full max-w-sm bg-card border border-border rounded-xl shadow-xl p-5 space-y-4"
+            >
+              <div className="space-y-1">
+                <h4 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                  <Building2 className="size-4 text-violet-500" /> Which OEM(s)?
+                </h4>
+                <p className="text-xs text-muted-foreground leading-normal">
+                  "{oemPickerItem.title.replace(/^\[(Bidder|OEM)\]\s*/i, '')}" is tracked per OEM — select which OEM(s)
+                  it has actually been received from. The checklist item completes only once every OEM is checked.
+                </p>
+              </div>
+
+              <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                {oemList.map((o) => {
+                  const initiated = o.initiated === 'YES'
+                  return (
+                    <label key={o.id} className={`flex items-center gap-2 text-xs p-2 rounded-md border ${initiated ? 'cursor-pointer border-border/60 hover:bg-muted/40' : 'cursor-not-allowed border-border/40 bg-muted/20'}`}>
+                      <input
+                        type="checkbox"
+                        checked={initiated && !!oemPickerSelected[o.id]}
+                        disabled={!initiated}
+                        onChange={(e) => setOemPickerSelected(prev => ({ ...prev, [o.id]: e.target.checked }))}
+                        className="accent-primary disabled:opacity-40"
+                      />
+                      <span className={`font-medium ${initiated ? 'text-foreground' : 'text-muted-foreground'}`}>{o.name}</span>
+                      {!initiated && (
+                        <span className="ml-auto text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800">
+                          Not initiated
+                        </span>
+                      )}
+                    </label>
+                  )
+                })}
+                {oemList.every(o => o.initiated !== 'YES') && (
+                  <p className="text-[11px] text-amber-700 dark:text-amber-400 flex items-center gap-1 pt-1">
+                    <AlertTriangle className="size-3" /> No OEM has been initiated yet — initiate one in the OEM Authorization stage first.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <Button variant="outline" size="sm" onClick={() => setOemPickerItem(null)}>
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={handleOemPickerConfirm}>
+                  Save
                 </Button>
               </div>
             </motion.div>

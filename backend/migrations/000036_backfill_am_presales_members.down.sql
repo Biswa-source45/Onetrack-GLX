@@ -1,0 +1,3 @@
+-- No down migration: this only backfills rows that should have existed all
+-- along (per the tender's own account_manager_id/presales_id). Reverting it
+-- would re-introduce the bug it fixes, not restore prior state.

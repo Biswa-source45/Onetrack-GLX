@@ -136,6 +136,40 @@ export function escapeCSV(val) {
   return str
 }
 
+// Palette for the Add Tender "Additional Info / Challenge" note's color
+// label. Mirrored in the Go backend (bid_service.go's alertNoteColors) so
+// the same note renders identically in the mailed alert as it does here —
+// deliberately varied rather than one fixed accent, since the point of a
+// picker is that different challenges read as visually distinct at a glance.
+export const ALERT_NOTE_COLORS = {
+  amber: { bg: '#fffbeb', border: '#fde68a', text: '#92400e', solid: '#f59e0b' },
+  rose: { bg: '#fff1f2', border: '#fecdd3', text: '#9f1239', solid: '#f43f5e' },
+  violet: { bg: '#f5f3ff', border: '#ddd6fe', text: '#5b21b6', solid: '#8b5cf6' },
+  cyan: { bg: '#ecfeff', border: '#a5f3fc', text: '#155e75', solid: '#06b6d4' },
+  emerald: { bg: '#ecfdf5', border: '#a7f3d0', text: '#065f46', solid: '#10b981' },
+  fuchsia: { bg: '#fdf4ff', border: '#f5d0fe', text: '#86198f', solid: '#d946ef' },
+  orange: { bg: '#fff7ed', border: '#fed7aa', text: '#9a3412', solid: '#fb923c' },
+  indigo: { bg: '#eef2ff', border: '#c7d2fe', text: '#3730a3', solid: '#6366f1' },
+}
+export const ALERT_NOTE_COLOR_KEYS = Object.keys(ALERT_NOTE_COLORS)
+
+export function randomAlertNoteColor(excludeKey) {
+  const options = excludeKey ? ALERT_NOTE_COLOR_KEYS.filter(k => k !== excludeKey) : ALERT_NOTE_COLOR_KEYS
+  return options[Math.floor(Math.random() * options.length)] || ALERT_NOTE_COLOR_KEYS[0]
+}
+
+// HTML callout for an alert_note ({text,label,color}), shared by every
+// identification-mail builder that needs to render one. Mirrors the Go
+// backend's alertNoteHTML (bid_service.go) byte-for-byte in styling, since
+// the create-tender mail is built server-side and this one (Stage 1's
+// "notify Pre-Sales" mail) is built here — both must look the same.
+export function buildAlertNoteHtml(note) {
+  if (!note || !note.text) return ''
+  const c = ALERT_NOTE_COLORS[note.color] || ALERT_NOTE_COLORS.amber
+  const label = (note.label || '').trim() || 'Attention'
+  return `<div style="margin:12px 0 0 0;padding:10px 14px;border-radius:8px;background:${c.bg};border:1px solid ${c.border};border-left:4px solid ${c.solid};color:${c.text};font-size:12px;"><span style="display:inline-block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;background:${c.solid};color:#fff;padding:2px 8px;border-radius:999px;">${label}</span><div style="margin-top:6px;">${note.text}</div></div>`
+}
+
 export function getDerivedBidStatusAndOutcome(bid) {
   if (!bid) return { status: 'ACTIVE', outcome: null }
 

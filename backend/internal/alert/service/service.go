@@ -41,21 +41,22 @@ func (s *alertService) CreateAlert(ctx context.Context, alert *domain.Alert) err
 
 func (s *alertService) dispatchAlertEmails(ctx context.Context, alert *domain.Alert) {
 	recipients := []string{}
-	ccRecipients := []string{}
-
-	// Fetch sender user to add to CC if created_by is populated
-	if s.userRepo != nil && alert.CreatedBy != nil && *alert.CreatedBy != "" {
-		sender, err := s.userRepo.GetByID(ctx, *alert.CreatedBy)
-		if err == nil && sender != nil && sender.Email != nil && *sender.Email != "" {
-			ccRecipients = append(ccRecipients, *sender.Email)
-		}
-	}
+	// Set only for a direct-to-user alert, so the footer can name the actual
+	// recipient instead of falling back to "All Department Personnel" — that
+	// fallback is for role-broadcast alerts, not ones aimed at one person.
+	recipientName := ""
 
 	if s.userRepo != nil {
 		if alert.UserID != nil && *alert.UserID != "" {
 			u, err := s.userRepo.GetByID(ctx, *alert.UserID)
-			if err == nil && u.Email != nil && *u.Email != "" {
-				recipients = append(recipients, *u.Email)
+			if err == nil && u != nil {
+				if u.Email != nil && *u.Email != "" {
+					recipients = append(recipients, *u.Email)
+				}
+				recipientName = u.FullName
+				if recipientName == "" {
+					recipientName = u.Username
+				}
 			}
 		} else if alert.TargetRole != "" {
 			var roleToQuery string
@@ -88,12 +89,15 @@ func (s *alertService) dispatchAlertEmails(ctx context.Context, alert *domain.Al
 	}
 
 	// Log attempt
-	log.Printf("[AlertService] Dispatching alert '%s' to %d TO recipients, %d CC recipients (Role: %s)", alert.Title, len(recipients), len(ccRecipients), alert.TargetRole)
+	log.Printf("[AlertService] Dispatching alert '%s' to %d recipients (Role: %s)", alert.Title, len(recipients), alert.TargetRole)
 
-	if len(recipients) > 0 || len(ccRecipients) > 0 {
-		roleDisplay := alert.TargetRole
-		if roleDisplay == "" || roleDisplay == "ALL" {
-			roleDisplay = "All Department Personnel"
+	if len(recipients) > 0 {
+		roleDisplay := recipientName
+		if roleDisplay == "" {
+			roleDisplay = alert.TargetRole
+			if roleDisplay == "" || roleDisplay == "ALL" {
+				roleDisplay = "All Department Personnel"
+			}
 		}
 
 		formattedMessage := alert.Message
@@ -118,7 +122,7 @@ func (s *alertService) dispatchAlertEmails(ctx context.Context, alert *domain.Al
 			</div>
 		`, alert.Title, formattedMessage, roleDisplay)
 
-		_ = s.emailSvc.SendEmailWithCC(recipients, ccRecipients, fmt.Sprintf("[OneTrack Alert] %s", alert.Title), htmlBody)
+		_ = s.emailSvc.SendEmail(recipients, fmt.Sprintf("[OneTrack Alert] %s", alert.Title), htmlBody)
 	}
 }
 

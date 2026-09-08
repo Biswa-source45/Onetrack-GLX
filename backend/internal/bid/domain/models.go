@@ -15,21 +15,31 @@ var ErrValidation = errors.New("validation failed")
 // real-world key, so two records must never share one.
 var ErrDuplicateIdentifier = errors.New("tender identifier already exists")
 
+// ErrForbidden wraps authorization failures (actor lacks the required
+// tender-scoped relationship, e.g. reassigning Bid Owner) so handlers can
+// return 403 instead of a generic 400/500.
+var ErrForbidden = errors.New("forbidden")
+
 // CreationMode drives how the bid was initialized — not its lifecycle
 const (
 	CreationModeManual       = "MANUAL"
 	CreationModeIntelligence = "INTELLIGENCE"
 )
 
-// 10 Workflow stages matching OneTrack V2 GeM migration plan.
+// 11 Workflow stages matching OneTrack V2 GeM migration plan.
 // BID_DOCUMENTATION was removed — its only real function (stakeholder
 // notification) folded into DOCUMENT_CHECKLIST_PREPARATION, since document
 // tracking already lives there end-to-end.
 // ELIGIBILITY_ASSESSMENT was removed — tenders are only added to the system
 // after eligibility has already been determined, so a dedicated stage for it
 // was redundant.
+// PRIMARY_REVIEW was added — the Account Manager's Go/No-Go gate right after
+// Discovery. It locks OEM Authorization, Pricing Request, Document Checklist
+// Preparation, and EMD Processing until it's complete (see the frontend's
+// checkStageState in StageWorkspaces.jsx for the actual gate).
 const (
 	StageDiscovered              = "DISCOVERED"
+	StagePrimaryReview           = "PRIMARY_REVIEW"
 	StageOEMAuthorizationRequest = "OEM_AUTHORIZATION_REQUEST"
 	StagePricingRequest          = "PRICING_REQUEST"
 	StageDocumentChecklistPrep   = "DOCUMENT_CHECKLIST_PREPARATION"
@@ -47,6 +57,7 @@ const (
 
 var OrderedWorkflowStages = []string{
 	StageDiscovered,
+	StagePrimaryReview,
 	StageOEMAuthorizationRequest,
 	StagePricingRequest,
 	StageDocumentChecklistPrep,
@@ -107,6 +118,10 @@ type BidWorkspace struct {
 	EMDNotApplicable   bool     `json:"emd_not_applicable"`
 	EMDExemptionType   *string  `json:"emd_exemption_type,omitempty"`
 	EMDExemptionReason *string  `json:"emd_exemption_reason,omitempty"`
+	// EMDExemptionTypes is the raw, possibly-multiple set of exemption criteria
+	// the tender document allows (ticked at Add/Edit Tender time). Distinct from
+	// EMDExemptionType, which is the Account Manager's single final decision.
+	EMDExemptionTypes  []string `json:"emd_exemption_types"`
 	FinalBidValue      *float64 `json:"final_bid_value,omitempty"`
 	L1Price            *float64 `json:"l1_price,omitempty"`
 	QuotedPrice        *float64 `json:"quoted_price,omitempty"`
@@ -167,6 +182,15 @@ type BidWorkspace struct {
 	DurationMonths *int       `json:"duration_months,omitempty"`
 	BGRequired     bool       `json:"bg_required"`
 	Authority      *string    `json:"authority,omitempty"`
+
+	// Account Manager / Pre-Sales assignment + Primary Review stage
+	AccountManagerID  *string `json:"account_manager_id,omitempty"`
+	PresalesID        *string `json:"presales_id,omitempty"`
+	Location          *string `json:"location,omitempty"`
+	BGDurationMonths  *int    `json:"bg_duration_months,omitempty"`
+	RequestedProducts []byte  `json:"-"` // raw JSONB — Products/Services Asked in the RFP
+	PrimaryReview     []byte  `json:"-"` // raw JSONB — Stage 2 Primary Review workspace
+	AlertNote         []byte  `json:"-"` // raw JSONB — {text,label,color} additional info/challenge note
 
 	// Stage tracking
 	StageCompletions       []byte     `json:"-"` // raw JSONB
@@ -310,6 +334,7 @@ type CreateBidRequest struct {
 	EMDNotApplicable   *bool    `json:"emd_not_applicable"`
 	EMDExemptionType   *string  `json:"emd_exemption_type"`
 	EMDExemptionReason *string  `json:"emd_exemption_reason"`
+	EMDExemptionTypes  []string `json:"emd_exemption_types"`
 	// EMD bank / DD detail fields
 	EMDBankName               *string  `json:"emd_bank_name"`
 	EMDAccountNumber          *string  `json:"emd_account_number"`
@@ -327,6 +352,12 @@ type CreateBidRequest struct {
 	Authority                 *string  `json:"authority"`
 	BidOwnerID                string   `json:"bid_owner_id" binding:"required"`
 	ReportingManagerID        *string  `json:"reporting_manager_id"`
+	AccountManagerID          string   `json:"account_manager_id" binding:"required"`
+	PresalesID                *string  `json:"presales_id"`
+	Location                  *string  `json:"location"`
+	BGDurationMonths          *int     `json:"bg_duration_months"`
+	RequestedProducts         *string  `json:"requested_products"` // raw JSON string — [{product,description,qty,oem}]
+	AlertNote                 *string  `json:"alert_note"`         // raw JSON string — {text,label,color}
 	Remarks                   *string  `json:"remarks"`
 	Metadata                  *string  `json:"metadata"`          // raw JSON string
 	BidderChecklists          []string `json:"bidder_checklists"` // bidder doc checklist titles
@@ -363,6 +394,7 @@ type UpdateBidRequest struct {
 	EMDNotApplicable   *bool    `json:"emd_not_applicable"`
 	EMDExemptionType   *string  `json:"emd_exemption_type"`
 	EMDExemptionReason *string  `json:"emd_exemption_reason"`
+	EMDExemptionTypes  []string `json:"emd_exemption_types"`
 	// EMD bank / DD detail fields
 	EMDBankName               *string  `json:"emd_bank_name"`
 	EMDAccountNumber          *string  `json:"emd_account_number"`
@@ -379,7 +411,18 @@ type UpdateBidRequest struct {
 	ClosingDate               *string  `json:"closing_date,omitempty"`
 	DurationMonths            *int     `json:"duration_months"`
 	Authority                 *string  `json:"authority"`
+	// BidOwnerID reassigns the tender's owner. Restricted at the service layer
+	// to this tender's Account Manager / Reporting Manager (or an admin) — see
+	// bidService.UpdateBid.
+	BidOwnerID                *string  `json:"bid_owner_id"`
 	ReportingManagerID        *string  `json:"reporting_manager_id"`
+	AccountManagerID          *string  `json:"account_manager_id"`
+	PresalesID                *string  `json:"presales_id"`
+	Location                  *string  `json:"location"`
+	BGDurationMonths          *int     `json:"bg_duration_months"`
+	RequestedProducts         *string  `json:"requested_products"` // raw JSON string
+	PrimaryReview             *string  `json:"primary_review"`     // raw JSON string
+	AlertNote                 *string  `json:"alert_note"`         // raw JSON string — {text,label,color}
 	Remarks                   *string  `json:"remarks"`
 	TechComplianceStatus      *string  `json:"tech_compliance_status"`
 	QualificationStatus       *string  `json:"qualification_status"`
@@ -511,6 +554,7 @@ type BidResponse struct {
 	EMDNotApplicable          bool               `json:"emd_not_applicable"`
 	EMDExemptionType          *string            `json:"emd_exemption_type"`
 	EMDExemptionReason        *string            `json:"emd_exemption_reason"`
+	EMDExemptionTypes         []string           `json:"emd_exemption_types"`
 	EMDBankName               *string            `json:"emd_bank_name"`
 	EMDAccountNumber          *string            `json:"emd_account_number"`
 	EMDIFSCCode               *string            `json:"emd_ifsc_code"`
@@ -543,6 +587,13 @@ type BidResponse struct {
 	Metadata                  interface{}        `json:"metadata"`
 	BidOwner                  UserSummary        `json:"bid_owner"`
 	ReportingManager          *UserSummary       `json:"reporting_manager,omitempty"`
+	AccountManager            *UserSummary       `json:"account_manager,omitempty"`
+	Presales                  *UserSummary       `json:"presales,omitempty"`
+	Location                  *string            `json:"location,omitempty"`
+	BGDurationMonths          *int               `json:"bg_duration_months,omitempty"`
+	RequestedProducts         interface{}        `json:"requested_products"`
+	PrimaryReview             interface{}        `json:"primary_review"`
+	AlertNote                 interface{}        `json:"alert_note,omitempty"`
 	Members                   []MemberResponse   `json:"members"`
 	Checklists                []BidChecklistItem `json:"checklists"`
 	CreatedBy                 string             `json:"created_by"`
@@ -619,6 +670,8 @@ type BidListItem struct {
 	OEMRequired               bool         `json:"oem_required"`
 	BidOwner                  UserSummary  `json:"bid_owner"`
 	ReportingManager          *UserSummary `json:"reporting_manager,omitempty"`
+	AccountManager            *UserSummary `json:"account_manager,omitempty"`
+	Presales                  *UserSummary `json:"presales,omitempty"`
 	Remarks                   *string      `json:"remarks"`
 	Team                      *string      `json:"team,omitempty"`
 	ScopeType                 *string      `json:"scope_type,omitempty"`
@@ -700,6 +753,12 @@ type CreateBidParams struct {
 	CreationMode              string
 	BidOwnerID                string
 	ReportingManagerID        *string
+	AccountManagerID          string
+	PresalesID                *string
+	Location                  *string
+	BGDurationMonths          *int
+	RequestedProducts         []byte
+	AlertNote                 []byte
 	CreatedBy                 string
 	EstimatedValue            *float64
 	EMDAmount                 *float64
@@ -708,6 +767,7 @@ type CreateBidParams struct {
 	EMDNotApplicable          bool
 	EMDExemptionType          *string
 	EMDExemptionReason        *string
+	EMDExemptionTypes         []string
 	EMDBankName               *string
 	EMDAccountNumber          *string
 	EMDIFSCCode               *string

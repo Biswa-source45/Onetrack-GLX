@@ -26,9 +26,11 @@ func NewBidService(repo domain.BidRepository, alertSvc alertDomain.AlertService)
 
 func getRoleForStage(stage string) string {
 	switch stage {
+	case domain.StagePrimaryReview:
+		return "ACCOUNT_MANAGER"
 	case domain.StageDiscovered, domain.StageOEMAuthorizationRequest, domain.StagePricingRequest:
 		return "PRE_SALES"
-	case domain.StageDocumentChecklistPrep, domain.StageTechnicalEvaluation:
+	case domain.StageDocumentChecklistPrep, domain.StageTechnicalEvaluation, domain.StageGeMSubmission:
 		return "TECHNICAL"
 	case domain.StageEMDProcessing, domain.StageFinancialEvaluation:
 		return "FINANCE"
@@ -37,6 +39,18 @@ func getRoleForStage(stage string) string {
 	default:
 		return "ALL"
 	}
+}
+
+// hasAnyRole reports whether actorRoles contains any of the given roles.
+func hasAnyRole(actorRoles []string, roles ...string) bool {
+	for _, r := range actorRoles {
+		for _, want := range roles {
+			if r == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // validateEMDDetails enforces that the EMD bank/DD detail fields required for a
@@ -95,6 +109,158 @@ func validateEMDExemption(exempted bool, exemptionType string, exemptionReason *
 	default:
 		return fmt.Errorf("%w: emd_exemption_type required (MSME, STARTUP, or OTHER) when emd_exempted is true", domain.ErrValidation)
 	}
+}
+
+// str returns a pointer's trimmed value, or "" for nil — shared by every
+// alert-email summary builder below so an absent field never renders "<nil>".
+func str(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return strings.TrimSpace(*p)
+}
+
+// money formats a nullable currency amount, or "" for nil.
+func money(v *float64) string {
+	if v == nil {
+		return ""
+	}
+	return fmt.Sprintf("Rs. %.2f", *v)
+}
+
+// rowsToHTMLTable renders label/value pairs as the same two-column table used
+// by every tender-detail alert email, skipping rows with no value.
+func rowsToHTMLTable(rows [][2]string) string {
+	var b strings.Builder
+	b.WriteString(`<table style="border-collapse:collapse;width:100%;font-size:13px;margin-top:8px;">`)
+	for _, r := range rows {
+		if strings.TrimSpace(r[1]) == "" {
+			continue
+		}
+		fmt.Fprintf(&b, `<tr><td style="padding:4px 14px 4px 0;color:#64748b;font-weight:600;white-space:nowrap;vertical-align:top;">%s</td><td style="padding:4px 0;color:#0f172a;">%s</td></tr>`, r[0], r[1])
+	}
+	b.WriteString(`</table>`)
+	return b.String()
+}
+
+// alertNoteColors mirrors the frontend's ALERT_NOTE_COLORS palette
+// (AddTenderPage.jsx) — key -> [background, border, text, solid] — so a
+// note's chosen color renders identically in the mailed alert as it does in
+// the app. Deliberately more varied than a single fixed accent, since the
+// whole point of the picker is that different challenges read as visually
+// distinct at a glance.
+var alertNoteColors = map[string][4]string{
+	"amber":   {"#fffbeb", "#fde68a", "#92400e", "#f59e0b"},
+	"rose":    {"#fff1f2", "#fecdd3", "#9f1239", "#f43f5e"},
+	"violet":  {"#f5f3ff", "#ddd6fe", "#5b21b6", "#8b5cf6"},
+	"cyan":    {"#ecfeff", "#a5f3fc", "#155e75", "#06b6d4"},
+	"emerald": {"#ecfdf5", "#a7f3d0", "#065f46", "#10b981"},
+	"fuchsia": {"#fdf4ff", "#f5d0fe", "#86198f", "#d946ef"},
+	"orange":  {"#fff7ed", "#fed7aa", "#9a3412", "#fb923c"},
+	"indigo":  {"#eef2ff", "#c7d2fe", "#3730a3", "#6366f1"},
+}
+
+type alertNoteFields struct {
+	Text  string `json:"text"`
+	Label string `json:"label"`
+	Color string `json:"color"`
+}
+
+// alertNoteHTML renders the Add Tender "Additional Info / Challenge" note
+// (if one was set) as a colored callout below the detail table, so a
+// flagged challenge is visible at a glance in the identification email
+// rather than buried as one more plain row.
+func alertNoteHTML(raw *string) string {
+	if raw == nil || strings.TrimSpace(*raw) == "" {
+		return ""
+	}
+	var n alertNoteFields
+	if err := json.Unmarshal([]byte(*raw), &n); err != nil || strings.TrimSpace(n.Text) == "" {
+		return ""
+	}
+	c, ok := alertNoteColors[n.Color]
+	if !ok {
+		c = alertNoteColors["amber"]
+	}
+	label := strings.TrimSpace(n.Label)
+	if label == "" {
+		label = "Attention"
+	}
+	return fmt.Sprintf(
+		`<div style="margin:12px 0 0 0;padding:10px 14px;border-radius:8px;background:%s;border:1px solid %s;border-left:4px solid %s;color:%s;font-size:12px;"><span style="display:inline-block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;background:%s;color:#fff;padding:2px 8px;border-radius:999px;">%s</span><div style="margin-top:6px;">%s</div></div>`,
+		c[0], c[1], c[3], c[2], c[3], label, n.Text,
+	)
+}
+
+// tenderSummaryHTML renders a tender's key facts as an HTML table so the
+// tender-identification alert emails (Reporting Manager / Account Manager /
+// Pre-Sales, sent on creation) carry full detail dynamically, rather than the
+// one-line mention a recipient previously had to open the app to expand on.
+func tenderSummaryHTML(req *domain.CreateBidRequest, gemBidNoStr string) string {
+	bg := "Not Required"
+	if req.BGRequired != nil && *req.BGRequired {
+		bg = "Required"
+		if req.BGRate != nil {
+			bg += fmt.Sprintf(" — %.2f%%", *req.BGRate)
+		}
+		if req.BGDurationMonths != nil {
+			bg += fmt.Sprintf(", %d month(s)", *req.BGDurationMonths)
+		}
+	}
+	emd := "Not Applicable"
+	if req.EMDNotApplicable == nil || !*req.EMDNotApplicable {
+		emd = money(req.EMDAmount)
+	}
+	online := "No"
+	if str(req.EMDBankName) != "" {
+		online = "Yes — " + str(req.EMDBankName)
+	}
+	dd := "No"
+	if str(req.EMDBeneficiary) != "" {
+		dd = "Yes — " + str(req.EMDBeneficiary)
+	}
+
+	rows := [][2]string{
+		{"Tender Title", req.Title},
+		{"GeM / RFP No.", gemBidNoStr},
+		{"Account Name", str(req.OrganizationName)},
+		{"Department / Ministry", str(req.DepartmentName)},
+		{"Location", str(req.Location)},
+		{"Category", str(req.Category)},
+		{"High-Level Scope", str(req.HighLevelScope)},
+		{"Estimated Value", money(req.EstimatedValue)},
+		{"EMD Amount", emd},
+		{"EMD Online Available", online},
+		{"EMD DD Available", dd},
+		{"Exemptions Listed", strings.Join(req.EMDExemptionTypes, ", ")},
+		{"Bank Guarantee", bg},
+	}
+
+	return rowsToHTMLTable(rows) + alertNoteHTML(req.AlertNote)
+}
+
+// ownershipChangeSummaryHTML renders the same tender-detail table as
+// tenderSummaryHTML, but from the persisted BidWorkspace — used for the
+// "you're the new Bid Owner" alert email fired on a later reassignment,
+// where only the workspace row (not the original CreateBidRequest) is
+// available. title is passed separately since it may be changing in the
+// same request that reassigns the owner.
+func ownershipChangeSummaryHTML(bid *domain.BidWorkspace, title string) string {
+	gemBidNoStr := str(bid.GemBidNo)
+	if gemBidNoStr == "" {
+		gemBidNoStr = str(bid.BidNo)
+	}
+	rows := [][2]string{
+		{"Tender Title", title},
+		{"GeM / RFP No.", gemBidNoStr},
+		{"Account Name", str(bid.OrganizationName)},
+		{"Department / Ministry", str(bid.DepartmentName)},
+		{"Location", str(bid.Location)},
+		{"Category", str(bid.Category)},
+		{"High-Level Scope", str(bid.HighLevelScope)},
+		{"Estimated Value", money(bid.EstimatedValue)},
+	}
+	return rowsToHTMLTable(rows)
 }
 
 // validateEMDMutualExclusivity enforces that a tender is never simultaneously
@@ -167,10 +333,15 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 		CreationMode:       req.CreationMode,
 		BidOwnerID:         req.BidOwnerID,
 		ReportingManagerID: req.ReportingManagerID,
+		AccountManagerID:   req.AccountManagerID,
+		PresalesID:         req.PresalesID,
+		Location:           req.Location,
+		BGDurationMonths:   req.BGDurationMonths,
 		CreatedBy:          createdBy,
 		EstimatedValue:     req.EstimatedValue,
 		EMDAmount:          req.EMDAmount,
 		EMDType:            req.EMDType,
+		EMDExemptionTypes:  req.EMDExemptionTypes,
 		Category:           req.Category,
 		Quantity:           req.Quantity,
 		OurRank:            req.OurRank,
@@ -234,6 +405,12 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 	if req.Metadata != nil {
 		params.Metadata = []byte(*req.Metadata)
 	}
+	if req.RequestedProducts != nil {
+		params.RequestedProducts = []byte(*req.RequestedProducts)
+	}
+	if req.AlertNote != nil {
+		params.AlertNote = []byte(*req.AlertNote)
+	}
 
 	params.BGRate = req.BGRate
 	params.Team = req.Team
@@ -272,6 +449,13 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 		_ = s.repo.AddMember(ctx, id, *req.ReportingManagerID, "MANAGER", createdBy)
 	}
 
+	// Auto-add the Account Manager (required — the tender's approving authority)
+	// and Pre-Sales (optional) as members so they show up in the team panel.
+	_ = s.repo.AddMember(ctx, id, req.AccountManagerID, "ACCOUNT_MANAGER", createdBy)
+	if req.PresalesID != nil {
+		_ = s.repo.AddMember(ctx, id, *req.PresalesID, "PRESALES", createdBy)
+	}
+
 	// Dispatch alert & email notification for new tender creation
 	if s.alertSvc != nil {
 		bidIdCopy := id
@@ -282,19 +466,14 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 			gemBidNoStr = *req.BidNo
 		}
 
-		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
-			TargetRole: "PRE_SALES",
-			BidID:      &bidIdCopy,
-			CreatedBy:  &createdBy,
-			Type:       "TENDER_CREATED",
-			Title:      fmt.Sprintf("New Tender Identified: %s", req.Title),
-			Message:    fmt.Sprintf("Tender '%s' (GeM Bid No: %s) has been created and assigned for Stage 2 (Eligibility Assessment).", req.Title, gemBidNoStr),
-		})
+		// No broadcast-to-every-Pre-Sales-user alert here — only the Account
+		// Manager and (if chosen) the specific Pre-Sales person assigned to
+		// this tender are notified below, plus the Reporting Manager.
+		detailTable := tenderSummaryHTML(req, gemBidNoStr)
 
 		// Directly notify the Reporting Manager (in-app alert + email, via the
 		// same CreateAlert -> dispatchAlertEmails path) that they've been
-		// assigned to a newly discovered tender — distinct from the PRE_SALES
-		// broadcast above, which doesn't target any specific person.
+		// assigned to a newly discovered tender.
 		if req.ReportingManagerID != nil {
 			_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
 				UserID:    req.ReportingManagerID,
@@ -302,7 +481,29 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 				CreatedBy: &createdBy,
 				Type:      "TENDER_ASSIGNED_REPORTING_MANAGER",
 				Title:     fmt.Sprintf("New Tender Discovered: %s", req.Title),
-				Message:   fmt.Sprintf("You've been assigned as Reporting Manager for tender '%s' (GeM Bid No: %s). Please review.", req.Title, gemBidNoStr),
+				Message:   fmt.Sprintf("<p>You've been assigned as Reporting Manager for tender '%s'. Please review.</p>%s", req.Title, detailTable),
+			})
+		}
+
+		// Directly notify the Account Manager — they're the approving authority
+		// for this tender and own the Primary Review Go/No-Go decision next.
+		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+			UserID:    &req.AccountManagerID,
+			BidID:     &bidIdCopy,
+			CreatedBy: &createdBy,
+			Type:      "TENDER_ASSIGNED_ACCOUNT_MANAGER",
+			Title:     fmt.Sprintf("You're the Account Manager: %s", req.Title),
+			Message:   fmt.Sprintf("<p>Tender '%s' has been created and assigned to you as Account Manager. Please complete Primary Review (Go/No-Go).</p>%s", req.Title, detailTable),
+		})
+
+		if req.PresalesID != nil {
+			_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+				UserID:    req.PresalesID,
+				BidID:     &bidIdCopy,
+				CreatedBy: &createdBy,
+				Type:      "TENDER_ASSIGNED_PRESALES",
+				Title:     fmt.Sprintf("New Tender for Pre-Sales: %s", req.Title),
+				Message:   fmt.Sprintf("<p>You've been assigned as Pre-Sales for tender '%s'.</p>%s", req.Title, detailTable),
 			})
 		}
 
@@ -348,6 +549,22 @@ func (s *bidService) GetBid(ctx context.Context, id string) (*domain.BidResponse
 		}
 	}
 
+	var accountManager *domain.UserSummary
+	if bid.AccountManagerID != nil {
+		am, err := s.repo.GetUserSummary(ctx, *bid.AccountManagerID)
+		if err == nil {
+			accountManager = am
+		}
+	}
+
+	var presales *domain.UserSummary
+	if bid.PresalesID != nil {
+		ps, err := s.repo.GetUserSummary(ctx, *bid.PresalesID)
+		if err == nil {
+			presales = ps
+		}
+	}
+
 	members, err := s.repo.GetMembers(ctx, id)
 	if err != nil {
 		members = []domain.MemberResponse{}
@@ -377,7 +594,7 @@ func (s *bidService) GetBid(ctx context.Context, id string) (*domain.BidResponse
 		checklistItems = append(checklistItems, item)
 	}
 
-	return buildBidResponse(bid, owner, reportingManager, members, checklistItems), nil
+	return buildBidResponse(bid, owner, reportingManager, accountManager, presales, members, checklistItems), nil
 }
 
 func (s *bidService) GetChecklists(ctx context.Context, bidID string) ([]domain.BidChecklistItem, error) {
@@ -519,7 +736,15 @@ func (s *bidService) ListBids(ctx context.Context, params domain.ListBidsParams)
 		if owner == nil {
 			owner = &domain.UserSummary{ID: b.BidOwnerID}
 		}
-		items = append(items, buildBidListItem(&b, owner))
+		var accountManager *domain.UserSummary
+		if b.AccountManagerID != nil {
+			accountManager, _ = s.repo.GetUserSummary(ctx, *b.AccountManagerID)
+		}
+		var presales *domain.UserSummary
+		if b.PresalesID != nil {
+			presales, _ = s.repo.GetUserSummary(ctx, *b.PresalesID)
+		}
+		items = append(items, buildBidListItem(&b, owner, accountManager, presales))
 	}
 
 	return &domain.BidListResponse{
@@ -538,7 +763,7 @@ func (s *bidService) ListBids(ctx context.Context, params domain.ListBidsParams)
 	}, nil
 }
 
-func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.UpdateBidRequest, actorID string) error {
+func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.UpdateBidRequest, actorID string, actorRoles []string) error {
 	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
@@ -554,6 +779,37 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 	}
 	if err := s.ensureIdentifierFree(ctx, req.BidNo, id); err != nil {
 		return err
+	}
+
+	// Bid Owner reassignment is restricted to this tender's own Account
+	// Manager / Reporting Manager (or an admin) — not every bid.edit holder,
+	// and not the outgoing owner themself. A no-op resubmission of the same
+	// owner id is not a reassignment and skips both checks below.
+	ownerChangeRequested := req.BidOwnerID != nil && strings.TrimSpace(*req.BidOwnerID) != "" && *req.BidOwnerID != bid.BidOwnerID
+	if ownerChangeRequested {
+		isAdmin := hasAnyRole(actorRoles, "SUPER_ADMIN", "ADMIN")
+		isTenderAccountManager := bid.AccountManagerID != nil && *bid.AccountManagerID == actorID
+		isTenderReportingManager := bid.ReportingManagerID != nil && *bid.ReportingManagerID == actorID
+		if !isAdmin && !isTenderAccountManager && !isTenderReportingManager {
+			return fmt.Errorf("%w: only this tender's Account Manager or Reporting Manager can reassign the Bid Owner", domain.ErrForbidden)
+		}
+
+		// The Account Manager is the tender's approving authority (owns the
+		// Primary Review Go/No-Go and pricing sign-off) — letting them also be
+		// the Bid Owner they're reviewing breaks that separation of duties.
+		// Effective AM is the merged value: a reassignment landing in the same
+		// request as the owner change must be checked against the new AM, not
+		// the stale one.
+		effectiveAccountManagerID := ""
+		if bid.AccountManagerID != nil {
+			effectiveAccountManagerID = *bid.AccountManagerID
+		}
+		if req.AccountManagerID != nil && strings.TrimSpace(*req.AccountManagerID) != "" {
+			effectiveAccountManagerID = *req.AccountManagerID
+		}
+		if effectiveAccountManagerID != "" && effectiveAccountManagerID == *req.BidOwnerID {
+			return fmt.Errorf("%w: cannot assign this tender's Account Manager as Bid Owner — choose a different owner", domain.ErrValidation)
+		}
 	}
 
 	// Validate EMD detail fields against the merged (request-or-existing) state,
@@ -742,6 +998,32 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 		}
 	}
 
+	// Track Account Manager / Pre-Sales reassignment so a real-name change fires
+	// a fresh "you've been assigned" alert to the newly assigned person — the
+	// same pattern as the create-time assignment, just for a later reassignment.
+	newAccountManagerID := ""
+	if req.AccountManagerID != nil && (bid.AccountManagerID == nil || *req.AccountManagerID != *bid.AccountManagerID) {
+		newAccountManagerID = *req.AccountManagerID
+		changes = append(changes, "Account Manager reassigned")
+	}
+	newPresalesID := ""
+	if req.PresalesID != nil && *req.PresalesID != "" && (bid.PresalesID == nil || *req.PresalesID != *bid.PresalesID) {
+		newPresalesID = *req.PresalesID
+		changes = append(changes, "Pre-Sales assigned")
+	}
+	newReportingManagerID := ""
+	if req.ReportingManagerID != nil && *req.ReportingManagerID != "" && (bid.ReportingManagerID == nil || *req.ReportingManagerID != *bid.ReportingManagerID) {
+		newReportingManagerID = *req.ReportingManagerID
+		changes = append(changes, "Reporting Manager reassigned")
+	}
+	// newOwnerID mirrors ownerChangeRequested computed above (already validated
+	// for permission + the Account-Manager-can't-also-own-it rule).
+	newOwnerID := ""
+	if ownerChangeRequested {
+		newOwnerID = *req.BidOwnerID
+		changes = append(changes, fmt.Sprintf("Bid Owner: '%s' → '%s'", bid.BidOwnerID, newOwnerID))
+	}
+
 	// Automate transition to LOST when technical_result is DISQUALIFIED during Technical Evaluation stage
 	if req.TechnicalResult != nil && *req.TechnicalResult == "DISQUALIFIED" {
 		lost := "LOST"
@@ -764,8 +1046,136 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 		}
 	}
 
+	// Internal Approval readiness: once the last thing standing between this
+	// tender and Internal Approval is actually done, notify the Account
+	// Manager and Pre-Sales proactively rather than leaving it to be noticed
+	// manually. That "last thing" is Document Checklist Preparation when EMD
+	// isn't required, or EMD Processing itself when it is — exactly one of
+	// the two per tender. Fires only on the actual completion transition
+	// (not on every later resave of an already-complete tender), mirroring
+	// the DISQUALIFIED->LOST automation above.
+	notifyInternalApprovalReady := false
+	var handoffRemarks string
+	{
+		var existingCompletions map[string]bool
+		if len(bid.StageCompletions) > 0 {
+			_ = json.Unmarshal(bid.StageCompletions, &existingCompletions)
+		}
+		emdNotRequired := mergedEMDExempted || mergedEMDNotApplicable
+		checklistJustCompleted := req.StageCompletions != nil && req.StageCompletions[domain.StageDocumentChecklistPrep] &&
+			!existingCompletions[domain.StageDocumentChecklistPrep]
+		emdJustCompleted := req.StageCompletions != nil && req.StageCompletions[domain.StageEMDProcessing] &&
+			!existingCompletions[domain.StageEMDProcessing]
+		triggered := (emdNotRequired && checklistJustCompleted) || (!emdNotRequired && emdJustCompleted)
+		if triggered && (bid.AccountManagerID != nil || bid.PresalesID != nil) {
+			notifyInternalApprovalReady = true
+			if req.StageRemarks != nil {
+				if emdNotRequired {
+					handoffRemarks = req.StageRemarks[domain.StageDocumentChecklistPrep]
+				} else {
+					handoffRemarks = req.StageRemarks[domain.StageEMDProcessing]
+				}
+			}
+		}
+	}
+
 	if err := s.repo.Update(ctx, id, req); err != nil {
 		return err
+	}
+
+	// A reassignment via update needs the same team-panel membership
+	// CreateBid gives each structured role at creation time — otherwise a
+	// person assigned later (e.g. a new Bid Owner, or Primary Review's
+	// "Assign Pre-Sales") never shows up in the tender's Members tab, and the
+	// person they replaced lingers there forever. addMemberAndDropPrevious
+	// keeps the team panel in lockstep with the actual FK assignment instead
+	// of only ever growing.
+	addMemberAndDropPrevious := func(role, previousID, nextID string) {
+		if nextID == "" || nextID == previousID {
+			return
+		}
+		_ = s.repo.AddMember(ctx, id, nextID, role, actorID)
+		if previousID != "" {
+			_ = s.repo.RemoveMember(ctx, id, previousID)
+		}
+	}
+	previousAccountManagerID := ""
+	if bid.AccountManagerID != nil {
+		previousAccountManagerID = *bid.AccountManagerID
+	}
+	previousPresalesID := ""
+	if bid.PresalesID != nil {
+		previousPresalesID = *bid.PresalesID
+	}
+	previousReportingManagerID := ""
+	if bid.ReportingManagerID != nil {
+		previousReportingManagerID = *bid.ReportingManagerID
+	}
+	addMemberAndDropPrevious("OWNER", bid.BidOwnerID, newOwnerID)
+	addMemberAndDropPrevious("ACCOUNT_MANAGER", previousAccountManagerID, newAccountManagerID)
+	addMemberAndDropPrevious("PRESALES", previousPresalesID, newPresalesID)
+	addMemberAndDropPrevious("MANAGER", previousReportingManagerID, newReportingManagerID)
+
+	if s.alertSvc != nil {
+		bidIdCopy := id
+		if newOwnerID != "" {
+			_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+				UserID: &newOwnerID, BidID: &bidIdCopy, CreatedBy: &actorID,
+				Type:  "TENDER_OWNERSHIP_CHANGED",
+				Title: fmt.Sprintf("Tender Ownership Changed: %s", bid.Title),
+				Message: fmt.Sprintf(
+					"<p>You have been assigned as the new Bid Owner for tender '%s'. Please review the details below.</p>%s",
+					bid.Title, ownershipChangeSummaryHTML(bid, bid.Title),
+				),
+			})
+		}
+		if newAccountManagerID != "" {
+			_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+				UserID: &newAccountManagerID, BidID: &bidIdCopy, CreatedBy: &actorID,
+				Type:    "TENDER_ASSIGNED_ACCOUNT_MANAGER",
+				Title:   fmt.Sprintf("You're the Account Manager: %s", bid.Title),
+				Message: fmt.Sprintf("You've been assigned as Account Manager for tender '%s'. Please complete Primary Review (Go/No-Go).", bid.Title),
+			})
+		}
+		if newPresalesID != "" {
+			_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+				UserID: &newPresalesID, BidID: &bidIdCopy, CreatedBy: &actorID,
+				Type:    "TENDER_ASSIGNED_PRESALES",
+				Title:   fmt.Sprintf("New Tender for Pre-Sales: %s", bid.Title),
+				Message: fmt.Sprintf("You've been assigned as Pre-Sales for tender '%s'.", bid.Title),
+			})
+		}
+		if newReportingManagerID != "" {
+			_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+				UserID: &newReportingManagerID, BidID: &bidIdCopy, CreatedBy: &actorID,
+				Type:    "TENDER_ASSIGNED_REPORTING_MANAGER",
+				Title:   fmt.Sprintf("You're the Reporting Manager: %s", bid.Title),
+				Message: fmt.Sprintf("You've been assigned as Reporting Manager for tender '%s'. Please review.", bid.Title),
+			})
+		}
+		if notifyInternalApprovalReady {
+			remarksHTML := ""
+			if strings.TrimSpace(handoffRemarks) != "" {
+				remarksHTML = fmt.Sprintf(`<p style="margin:12px 0 0 0;padding:10px 14px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;color:#334155;font-size:13px;">%s</p>`, handoffRemarks)
+			}
+			message := fmt.Sprintf("<p>Tender '%s' is ready for Internal Approval sign-off.</p>%s", bid.Title, remarksHTML)
+			recipients := map[string]bool{}
+			if bid.AccountManagerID != nil {
+				recipients[*bid.AccountManagerID] = true
+			}
+			if bid.PresalesID != nil {
+				recipients[*bid.PresalesID] = true
+			}
+			for uid := range recipients {
+				uidCopy := uid
+				_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+					UserID: &uidCopy, BidID: &bidIdCopy, CreatedBy: &actorID,
+					Type:    "INTERNAL_APPROVAL_READY",
+					Title:   fmt.Sprintf("Ready for Internal Approval: %s", bid.Title),
+					Message: message,
+				})
+			}
+		}
 	}
 
 	if len(changes) > 0 {
@@ -956,8 +1366,47 @@ func (s *bidService) AddMember(ctx context.Context, bidID string, req *domain.Ad
 	return s.repo.AddMember(ctx, bidID, req.UserID, req.Role, actorID)
 }
 
-func (s *bidService) RemoveMember(ctx context.Context, bidID string, userID string) error {
-	return s.repo.RemoveMember(ctx, bidID, userID)
+func (s *bidService) RemoveMember(ctx context.Context, bidID string, userID string, actorID string) error {
+	bid, err := s.repo.GetByID(ctx, bidID)
+	if err != nil {
+		return err
+	}
+
+	// The Bid Owner and Account Manager are required on every tender (they
+	// gate ownership reporting and the Primary Review Go/No-Go respectively)
+	// — removing them here would desync the team panel from the FK column
+	// that actually drives the app. Reassign a replacement via Edit Tender
+	// instead, which keeps both in step (see UpdateBid's membership sync).
+	if userID == bid.BidOwnerID {
+		return fmt.Errorf("%w: cannot remove the Bid Owner — reassign a new owner via Edit Tender instead", domain.ErrValidation)
+	}
+	if bid.AccountManagerID != nil && userID == *bid.AccountManagerID {
+		return fmt.Errorf("%w: cannot remove the Account Manager — reassign via Edit Tender instead", domain.ErrValidation)
+	}
+
+	if err := s.repo.RemoveMember(ctx, bidID, userID); err != nil {
+		return err
+	}
+
+	// Reporting Manager / Pre-Sales are optional relationships — clear the
+	// matching FK when their member row is removed, so the removal actually
+	// takes effect instead of leaving the tender still assigned to someone no
+	// longer listed as a member.
+	cleared := ""
+	update := &domain.UpdateBidRequest{}
+	changed := false
+	if bid.ReportingManagerID != nil && userID == *bid.ReportingManagerID {
+		update.ReportingManagerID = &cleared
+		changed = true
+	}
+	if bid.PresalesID != nil && userID == *bid.PresalesID {
+		update.PresalesID = &cleared
+		changed = true
+	}
+	if changed {
+		_ = s.repo.Update(ctx, bidID, update)
+	}
+	return nil
 }
 
 func (s *bidService) RecordOutcome(ctx context.Context, id string, req *domain.RecordOutcomeRequest) error {
@@ -1008,7 +1457,7 @@ func (s *bidService) PermanentDeleteBid(ctx context.Context, id string) error {
 // Response builders
 // ────────────────────────────────────────
 
-func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, reportingManager *domain.UserSummary, members []domain.MemberResponse, checklists []domain.BidChecklistItem) *domain.BidResponse {
+func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, reportingManager *domain.UserSummary, accountManager *domain.UserSummary, presales *domain.UserSummary, members []domain.MemberResponse, checklists []domain.BidChecklistItem) *domain.BidResponse {
 	var competitorInfo interface{} = []interface{}{}
 	var metadata interface{} = map[string]interface{}{}
 
@@ -1042,6 +1491,21 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, repor
 		_ = json.Unmarshal(bid.OEMWorkspace, &oemWorkspace)
 	}
 
+	var requestedProducts interface{}
+	if len(bid.RequestedProducts) > 0 {
+		_ = json.Unmarshal(bid.RequestedProducts, &requestedProducts)
+	}
+
+	var primaryReview interface{}
+	if len(bid.PrimaryReview) > 0 {
+		_ = json.Unmarshal(bid.PrimaryReview, &primaryReview)
+	}
+
+	var alertNote interface{}
+	if len(bid.AlertNote) > 0 {
+		_ = json.Unmarshal(bid.AlertNote, &alertNote)
+	}
+
 	return &domain.BidResponse{
 		ID:                        bid.ID,
 		BidNo:                     bid.BidNo,
@@ -1060,6 +1524,7 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, repor
 		EMDNotApplicable:          bid.EMDNotApplicable,
 		EMDExemptionType:          bid.EMDExemptionType,
 		EMDExemptionReason:        bid.EMDExemptionReason,
+		EMDExemptionTypes:         bid.EMDExemptionTypes,
 		FinalBidValue:             bid.FinalBidValue,
 		L1Price:                   bid.L1Price,
 		QuotedPrice:               bid.QuotedPrice,
@@ -1086,6 +1551,13 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, repor
 		Metadata:                  metadata,
 		BidOwner:                  *owner,
 		ReportingManager:          reportingManager,
+		AccountManager:            accountManager,
+		Presales:                  presales,
+		Location:                  bid.Location,
+		BGDurationMonths:          bid.BGDurationMonths,
+		RequestedProducts:         requestedProducts,
+		PrimaryReview:             primaryReview,
+		AlertNote:                 alertNote,
 		Members:                   members,
 		Checklists:                checklists,
 		CreatedBy:                 bid.CreatedBy,
@@ -1170,7 +1642,7 @@ func calcDaysRemaining(archivedAt *time.Time) *int {
 	return &rem
 }
 
-func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary) domain.BidListItem {
+func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary, accountManager *domain.UserSummary, presales *domain.UserSummary) domain.BidListItem {
 	return domain.BidListItem{
 		ID:                        bid.ID,
 		BidNo:                     bid.BidNo,
@@ -1197,6 +1669,8 @@ func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary) domai
 		HighLevelScope:            bid.HighLevelScope,
 		OEMRequired:               bid.OEMRequired,
 		BidOwner:                  *owner,
+		AccountManager:            accountManager,
+		Presales:                  presales,
 		Remarks:                   bid.Remarks,
 		Team:                      bid.Team,
 		ScopeType:                 bid.ScopeType,
