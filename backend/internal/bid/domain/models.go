@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/onetrack/backend/internal/platform/pagination"
 )
 
 // ErrValidation wraps request-validation failures so handlers can distinguish
@@ -19,6 +21,13 @@ var ErrDuplicateIdentifier = errors.New("tender identifier already exists")
 // tender-scoped relationship, e.g. reassigning Bid Owner) so handlers can
 // return 403 instead of a generic 400/500.
 var ErrForbidden = errors.New("forbidden")
+
+// ErrInvalidCursor is returned when a paginated audit-log request carries a
+// cursor that doesn't decode — e.g. hand-edited or stale across a restart —
+// so handlers can return 400 instead of a misleading 500. Aliased to the
+// shared pagination package's sentinel so errors.Is matches regardless of
+// which layer actually decoded the cursor.
+var ErrInvalidCursor = pagination.ErrInvalidCursor
 
 // CreationMode drives how the bid was initialized — not its lifecycle
 const (
@@ -296,6 +305,44 @@ type BidStageHistory struct {
 	EventType        *string         `json:"event_type,omitempty"`
 	Details          json.RawMessage `json:"details,omitempty"`
 	CreatedAt        time.Time       `json:"created_at"`
+
+	// BidTitle is a write-only snapshot of the tender's title at the moment
+	// this entry is recorded. Denormalized (not read back via this struct)
+	// so the entry stays readable even after the tender itself is gone —
+	// see bid_stage_history.bid_id's ON DELETE SET NULL in migration 000039.
+	BidTitle string `json:"-"`
+}
+
+// FieldDiff is one changed field captured by a TENDER_EDITED audit entry.
+type FieldDiff struct {
+	Field string `json:"field"`
+	Old   string `json:"old"`
+	New   string `json:"new"`
+}
+
+// AuditLogQuery drives keyset ("cursor") pagination over the audit trail.
+// Keyset pagination is used instead of OFFSET because OFFSET gets slower as
+// a table grows and can skip or repeat rows when new entries are inserted
+// between page loads — both real risks once every tender edit, not just
+// stage transitions, writes a row here. Cursor is opaque to callers: it's
+// whatever NextCursor came back on the previous page, empty for the first.
+type AuditLogQuery struct {
+	Limit  int
+	Cursor string
+}
+
+// AuditLogPage is one page of the global or per-person audit feed.
+type AuditLogPage struct {
+	Items      []GlobalAuditItem `json:"items"`
+	NextCursor string             `json:"next_cursor,omitempty"`
+	HasMore    bool               `json:"has_more"`
+}
+
+// StageHistoryPage is one page of a single tender's history tab.
+type StageHistoryPage struct {
+	Items      []StageHistoryResponse `json:"items"`
+	NextCursor string                  `json:"next_cursor,omitempty"`
+	HasMore    bool                    `json:"has_more"`
 }
 
 // AddMicroEventRequest is the client-facing payload for POST /bids/:id/history —
@@ -507,14 +554,16 @@ type UserSummary struct {
 }
 
 type GlobalAuditItem struct {
-	ID               string      `json:"id"`
-	BidID            string      `json:"bid_id"`
-	BidTitle         string      `json:"bid_title"`
-	FromStage        *string     `json:"from_stage,omitempty"`
-	ToStage          string      `json:"to_stage"`
-	TransitionReason *string     `json:"transition_reason,omitempty"`
-	TransitionedBy   UserSummary `json:"transitioned_by"`
-	CreatedAt        time.Time   `json:"created_at"`
+	ID               string          `json:"id"`
+	BidID            *string         `json:"bid_id"`
+	BidTitle         string          `json:"bid_title"`
+	FromStage        *string         `json:"from_stage,omitempty"`
+	ToStage          string          `json:"to_stage"`
+	TransitionReason *string         `json:"transition_reason,omitempty"`
+	EventType        *string         `json:"event_type,omitempty"`
+	Details          json.RawMessage `json:"details,omitempty"`
+	TransitionedBy   UserSummary     `json:"transitioned_by"`
+	CreatedAt        time.Time       `json:"created_at"`
 }
 
 type MemberResponse struct {
@@ -827,4 +876,12 @@ type ListBidsParams struct {
 type IdentifierMatch struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
+}
+
+// FieldSuggestion is one remembered value for a "Field Memory" field
+// (organization_name, department_name, location, oem, ...), ranked by how
+// often and how recently it's been used. See bid.field_suggestions.
+type FieldSuggestion struct {
+	Value      string `json:"value"`
+	UsageCount int    `json:"usage_count"`
 }

@@ -22,10 +22,16 @@ type BidRepository interface {
 	RemoveMember(ctx context.Context, bidID string, userID string) error
 	GetMembers(ctx context.Context, bidID string) ([]MemberResponse, error)
 
-	// Stage history
+	// Stage history / Action Ledger. GetStageHistory and GetGlobalAuditLogs
+	// both return fully user-resolved rows (no N+1 GetUserSummary calls from
+	// the service layer) and page via AuditLogQuery's keyset cursor — each
+	// returns (items, nextCursor, hasMore).
 	AddStageHistory(ctx context.Context, history *BidStageHistory) error
-	GetStageHistory(ctx context.Context, bidID string) ([]BidStageHistory, error)
-	GetGlobalAuditLogs(ctx context.Context, limit int) ([]GlobalAuditItem, error)
+	GetStageHistory(ctx context.Context, bidID string, q AuditLogQuery) ([]StageHistoryResponse, string, bool, error)
+	// GetGlobalAuditLogs returns the audit feed, optionally scoped to one
+	// actor (userID) for the per-person "Activity Log" view — empty userID
+	// returns every actor's entries.
+	GetGlobalAuditLogs(ctx context.Context, q AuditLogQuery, userID string) ([]GlobalAuditItem, string, bool, error)
 	// GetTenderPerformanceMatrix returns per-owner stats. ownerID scopes the
 	// result to a single owner when non-empty; empty returns every owner.
 	GetTenderPerformanceMatrix(ctx context.Context, ownerID string) ([]TenderOwnerPerformanceStat, error)
@@ -42,6 +48,13 @@ type BidRepository interface {
 	DeleteChecklist(ctx context.Context, checklistID string) error
 	ReorderChecklists(ctx context.Context, items []ReorderChecklistItem) error
 	ToggleChecklist(ctx context.Context, checklistID string, isDone bool, doneBy string) error
+
+	// Field Memory — non-AI autocomplete. entries maps a field key
+	// ("organization_name", "oem", ...) to every raw value typed for it in
+	// one save; RecordFieldSuggestions upserts each, deduped case/whitespace-
+	// insensitively, incrementing usage_count on a repeat.
+	RecordFieldSuggestions(ctx context.Context, entries map[string][]string) error
+	ListFieldSuggestions(ctx context.Context, fieldKey string, limit int) ([]FieldSuggestion, error)
 }
 
 type BidService interface {
@@ -53,9 +66,11 @@ type BidService interface {
 	// this specific tender's Account Manager or Reporting Manager.
 	UpdateBid(ctx context.Context, id string, req *UpdateBidRequest, actorID string, actorRoles []string) error
 	TransitionStage(ctx context.Context, id string, req *TransitionStageRequest, actorID string) (*TransitionResult, error)
-	GetStageHistory(ctx context.Context, id string) ([]StageHistoryResponse, error)
+	GetStageHistory(ctx context.Context, id string, q AuditLogQuery) (*StageHistoryPage, error)
 	AddMicroEvent(ctx context.Context, bidID string, req *AddMicroEventRequest, actorID string) (*StageHistoryResponse, error)
-	GetGlobalAuditLogs(ctx context.Context, limit int) ([]GlobalAuditItem, error)
+	// GetGlobalAuditLogs powers both the global "Database Audit Trail" panel
+	// (userID empty) and the per-person "Activity Log" (userID set).
+	GetGlobalAuditLogs(ctx context.Context, q AuditLogQuery, userID string) (*AuditLogPage, error)
 	// GetTenderPerformanceMatrix returns per-owner stats, scoped to ownerID
 	// when non-empty (used to restrict individual-contributor roles to their
 	// own row) or every owner when empty (management roles).
@@ -67,10 +82,10 @@ type BidService interface {
 	// removed, so the team panel and the tender's actual assignment can't
 	// drift apart the way they used to.
 	RemoveMember(ctx context.Context, bidID string, userID string, actorID string) error
-	RecordOutcome(ctx context.Context, id string, req *RecordOutcomeRequest) error
-	ArchiveBid(ctx context.Context, id string) error
-	RestoreBid(ctx context.Context, id string) error
-	PermanentDeleteBid(ctx context.Context, id string) error
+	RecordOutcome(ctx context.Context, id string, req *RecordOutcomeRequest, actorID string) error
+	ArchiveBid(ctx context.Context, id string, actorID string) error
+	RestoreBid(ctx context.Context, id string, actorID string) error
+	PermanentDeleteBid(ctx context.Context, id string, actorID string) error
 
 	// Bid-scoped checklists
 	GetChecklists(ctx context.Context, bidID string) ([]BidChecklistItem, error)
@@ -79,6 +94,10 @@ type BidService interface {
 	DeleteChecklist(ctx context.Context, bidID string, checklistID string) error
 	ReorderChecklists(ctx context.Context, bidID string, req *ReorderChecklistRequest) ([]BidChecklistItem, error)
 	ToggleChecklist(ctx context.Context, bidID string, checklistID string, isDone bool, actorID string) (*BidChecklistItem, error)
+
+	// ListFieldSuggestions returns the remembered values for one Field Memory
+	// field key, ranked by usage. fieldKey is required.
+	ListFieldSuggestions(ctx context.Context, fieldKey string) ([]FieldSuggestion, error)
 }
 
 type TransitionResult struct {

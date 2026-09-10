@@ -833,12 +833,15 @@ function useStageCompletedBy(bidId, stageKey, enabled) {
   useEffect(() => {
     if (!enabled) { setCompletedBy(null); return }
     let cancelled = false
-    getBidStageHistory(bidId).then((res) => {
+    // limit: 200 — this scans for one specific event, not a page to render,
+    // so it needs a generous window rather than the default page size.
+    getBidStageHistory(bidId, { limit: 200 }).then((res) => {
       if (cancelled || !res.ok) return
+      // res.data is newest-first (server-paginated, see getBidStageHistory).
       const entries = (res.data || []).filter(
         (h) => h.to_stage === stageKey && h.event_type === 'STAGE_CHANGE'
       )
-      const last = entries[entries.length - 1]
+      const last = entries[0]
       if (last?.transitioned_by) {
         setCompletedBy({
           name: last.transitioned_by.full_name || last.transitioned_by.username || 'someone',
@@ -3325,7 +3328,8 @@ export function Stage6Workspace({ bid, onRefresh }) {
   const [emdHistoryReload, setEmdHistoryReload] = useState(0)
   useEffect(() => {
     let cancelled = false
-    getBidStageHistory(bid.id).then((res) => {
+    // limit: 200 — collects every matching alert, not a page to render.
+    getBidStageHistory(bid.id, { limit: 200 }).then((res) => {
       if (cancelled || !res.ok) return
       const entries = (res.data || [])
         .filter((h) => h.to_stage === 'EMD_PROCESSING' && (h.event_type === 'ALERT' || h.event_type === 'REMINDER'))
@@ -3591,14 +3595,17 @@ function useInternalApprovals(bidId, bid) {
   const [reload, setReload] = useState(0)
   useEffect(() => {
     let cancelled = false
-    getBidStageHistory(bidId).then((res) => {
+    // limit: 200 — scans for the latest approval per role, not a page to render.
+    getBidStageHistory(bidId, { limit: 200 }).then((res) => {
       if (cancelled || !res.ok) return
       const next = { ACCOUNT_MANAGER: null, PRESALES: null }
+      // res.data is newest-first — only fill a role from its first (i.e.
+      // most recent) matching entry, so an older approval can't overwrite it.
       ;(res.data || [])
         .filter((h) => h.to_stage === 'INTERNAL_APPROVAL' && h.event_type === 'APPROVAL')
         .forEach((h) => {
           const role = h.details?.role
-          if (role === 'ACCOUNT_MANAGER' || role === 'PRESALES') {
+          if ((role === 'ACCOUNT_MANAGER' || role === 'PRESALES') && !next[role]) {
             next[role] = {
               name: h.transitioned_by?.full_name || h.transitioned_by?.username || 'someone',
               comment: h.details?.comment || h.transition_reason || '',

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -434,9 +435,16 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 		return nil, fmt.Errorf("create bid: %w", err)
 	}
 
+	// Field Memory: remember every free-text value typed on this tender so
+	// it can be suggested next time. Best-effort — never blocks tender creation.
+	if entries := fieldSuggestionEntries(req.OrganizationName, req.DepartmentName, req.Location, req.EMDBankName, req.EMDBeneficiary, req.EMDPayableAt, req.RequestedProducts); len(entries) > 0 {
+		_ = s.repo.RecordFieldSuggestions(ctx, entries)
+	}
+
 	// Record initial stage history
 	_ = s.repo.AddStageHistory(ctx, &domain.BidStageHistory{
 		BidID:          id,
+		BidTitle:       req.Title,
 		ToStage:        domain.StageDiscovered,
 		TransitionedBy: createdBy,
 	})
@@ -1037,6 +1045,7 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 			}
 			_ = s.repo.AddStageHistory(ctx, &domain.BidStageHistory{
 				BidID:            id,
+				BidTitle:         bid.Title,
 				FromStage:        &prevStage,
 				ToStage:          "LOST",
 				TransitionReason: &reason,
@@ -1081,6 +1090,37 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 
 	if err := s.repo.Update(ctx, id, req); err != nil {
 		return err
+	}
+
+	// Field Memory: remember every free-text value typed on this update too —
+	// most Account Name / OEM / EMD bank edits happen here, not on create.
+	if entries := fieldSuggestionEntries(req.OrganizationName, req.DepartmentName, req.Location, req.EMDBankName, req.EMDBeneficiary, req.EMDPayableAt, req.RequestedProducts); len(entries) > 0 {
+		_ = s.repo.RecordFieldSuggestions(ctx, entries)
+	}
+
+	// Action Ledger: this is the one save path AddTenderPage, EditTenderDialog
+	// and the inline spreadsheet edit all funnel through, so diffing here
+	// covers every surface at once instead of three separate call sites.
+	// diffBidFields compares against bid — the state loaded before Update —
+	// so this reflects exactly what this request changed.
+	if diffs := diffBidFields(bid, req); len(diffs) > 0 {
+		if detailsJSON, err := json.Marshal(diffs); err == nil {
+			eventType := "TENDER_EDITED"
+			fieldNames := make([]string, len(diffs))
+			for i, d := range diffs {
+				fieldNames[i] = d.Field
+			}
+			reason := "Changed: " + strings.Join(fieldNames, ", ")
+			_ = s.repo.AddStageHistory(ctx, &domain.BidStageHistory{
+				BidID:            id,
+				BidTitle:         bid.Title,
+				ToStage:          "FIELD_EDIT",
+				EventType:        &eventType,
+				TransitionReason: &reason,
+				Details:          detailsJSON,
+				TransitionedBy:   actorID,
+			})
+		}
 	}
 
 	// A reassignment via update needs the same team-panel membership
@@ -1186,6 +1226,7 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 		}
 		_ = s.repo.AddStageHistory(ctx, &domain.BidStageHistory{
 			BidID:            id,
+			BidTitle:         bid.Title,
 			FromStage:        &bid.WorkflowStage,
 			ToStage:          toStage,
 			TransitionReason: &reason,
@@ -1196,8 +1237,12 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 	return nil
 }
 
-func (s *bidService) GetGlobalAuditLogs(ctx context.Context, limit int) ([]domain.GlobalAuditItem, error) {
-	return s.repo.GetGlobalAuditLogs(ctx, limit)
+func (s *bidService) GetGlobalAuditLogs(ctx context.Context, q domain.AuditLogQuery, userID string) (*domain.AuditLogPage, error) {
+	items, nextCursor, hasMore, err := s.repo.GetGlobalAuditLogs(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &domain.AuditLogPage{Items: items, NextCursor: nextCursor, HasMore: hasMore}, nil
 }
 
 func (s *bidService) GetTenderPerformanceMatrix(ctx context.Context, ownerID string) ([]domain.TenderOwnerPerformanceStat, error) {
@@ -1291,30 +1336,12 @@ func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain
 	}, nil
 }
 
-func (s *bidService) GetStageHistory(ctx context.Context, id string) ([]domain.StageHistoryResponse, error) {
-	history, err := s.repo.GetStageHistory(ctx, id)
+func (s *bidService) GetStageHistory(ctx context.Context, id string, q domain.AuditLogQuery) (*domain.StageHistoryPage, error) {
+	items, nextCursor, hasMore, err := s.repo.GetStageHistory(ctx, id, q)
 	if err != nil {
 		return nil, err
 	}
-
-	result := make([]domain.StageHistoryResponse, 0, len(history))
-	for _, h := range history {
-		actor, _ := s.repo.GetUserSummary(ctx, h.TransitionedBy)
-		if actor == nil {
-			actor = &domain.UserSummary{ID: h.TransitionedBy}
-		}
-		result = append(result, domain.StageHistoryResponse{
-			ID:               h.ID,
-			FromStage:        h.FromStage,
-			ToStage:          h.ToStage,
-			TransitionReason: h.TransitionReason,
-			TransitionedBy:   *actor,
-			EventType:        h.EventType,
-			Details:          h.Details,
-			CreatedAt:        h.CreatedAt,
-		})
-	}
-	return result, nil
+	return &domain.StageHistoryPage{Items: items, NextCursor: nextCursor, HasMore: hasMore}, nil
 }
 
 // AddMicroEvent persists a granular audit event (pricing change, alert sent,
@@ -1358,12 +1385,34 @@ func (s *bidService) AddMicroEvent(ctx context.Context, bidID string, req *domai
 	}, nil
 }
 
+// logAction is the shared Action Ledger write path for actions that aren't a
+// real workflow-stage transition or a field edit — archive, restore,
+// permanent delete, recording an outcome, adding/removing a team member.
+// Best-effort, same as every other AddStageHistory call site: it never
+// blocks the action it's describing.
+func (s *bidService) logAction(ctx context.Context, bidID, bidTitle, eventType, actorID, reason string) {
+	et := eventType
+	r := reason
+	_ = s.repo.AddStageHistory(ctx, &domain.BidStageHistory{
+		BidID:            bidID,
+		BidTitle:         bidTitle,
+		ToStage:          eventType,
+		EventType:        &et,
+		TransitionReason: &r,
+		TransitionedBy:   actorID,
+	})
+}
+
 func (s *bidService) AddMember(ctx context.Context, bidID string, req *domain.AddMemberRequest, actorID string) error {
-	_, err := s.repo.GetByID(ctx, bidID)
+	bid, err := s.repo.GetByID(ctx, bidID)
 	if err != nil {
 		return err
 	}
-	return s.repo.AddMember(ctx, bidID, req.UserID, req.Role, actorID)
+	if err := s.repo.AddMember(ctx, bidID, req.UserID, req.Role, actorID); err != nil {
+		return err
+	}
+	s.logAction(ctx, bidID, bid.Title, "MEMBER_ADDED", actorID, req.Role+" added to the tender team")
+	return nil
 }
 
 func (s *bidService) RemoveMember(ctx context.Context, bidID string, userID string, actorID string) error {
@@ -1406,26 +1455,35 @@ func (s *bidService) RemoveMember(ctx context.Context, bidID string, userID stri
 	if changed {
 		_ = s.repo.Update(ctx, bidID, update)
 	}
+	s.logAction(ctx, bidID, bid.Title, "MEMBER_REMOVED", actorID, "Removed from the tender team")
 	return nil
 }
 
-func (s *bidService) RecordOutcome(ctx context.Context, id string, req *domain.RecordOutcomeRequest) error {
-	_, err := s.repo.GetByID(ctx, id)
+func (s *bidService) RecordOutcome(ctx context.Context, id string, req *domain.RecordOutcomeRequest, actorID string) error {
+	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	return s.repo.UpdateOutcome(ctx, id, req)
+	if err := s.repo.UpdateOutcome(ctx, id, req); err != nil {
+		return err
+	}
+	s.logAction(ctx, id, bid.Title, "OUTCOME_RECORDED", actorID, "Outcome recorded: "+req.BidOutcome)
+	return nil
 }
 
-func (s *bidService) ArchiveBid(ctx context.Context, id string) error {
-	_, err := s.repo.GetByID(ctx, id)
+func (s *bidService) ArchiveBid(ctx context.Context, id string, actorID string) error {
+	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	return s.repo.SoftDelete(ctx, id)
+	if err := s.repo.SoftDelete(ctx, id); err != nil {
+		return err
+	}
+	s.logAction(ctx, id, bid.Title, "TENDER_ARCHIVED", actorID, "Moved to the Tender Bin")
+	return nil
 }
 
-func (s *bidService) RestoreBid(ctx context.Context, id string) error {
+func (s *bidService) RestoreBid(ctx context.Context, id string, actorID string) error {
 	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
@@ -1442,14 +1500,24 @@ func (s *bidService) RestoreBid(ctx context.Context, id string) error {
 		return err
 	}
 
-	return s.repo.Restore(ctx, id)
+	if err := s.repo.Restore(ctx, id); err != nil {
+		return err
+	}
+	s.logAction(ctx, id, bid.Title, "TENDER_RESTORED", actorID, "Restored from the Tender Bin")
+	return nil
 }
 
-func (s *bidService) PermanentDeleteBid(ctx context.Context, id string) error {
-	_, err := s.repo.GetByID(ctx, id)
+func (s *bidService) PermanentDeleteBid(ctx context.Context, id string, actorID string) error {
+	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
+	// Logged before the delete, not after: bid_stage_history.bid_id now sets
+	// itself to NULL (not cascade-deletes) when the tender it references is
+	// removed — see migration 000039 — but the FK still requires bid_id to
+	// point at a row that exists at INSERT time. bid_title is captured here
+	// too, so this entry stays readable once the tender itself is gone.
+	s.logAction(ctx, id, bid.Title, "TENDER_DELETED", actorID, "Permanently deleted")
 	return s.repo.PermanentDelete(ctx, id)
 }
 
@@ -1704,4 +1772,124 @@ func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary, accou
 		ArchivedAt:                bid.ArchivedAt,
 		DaysRemaining:             calcDaysRemaining(bid.ArchivedAt),
 	}
+}
+
+// ────────────────────────────────────────
+// Field Memory — non-AI autocomplete
+// ────────────────────────────────────────
+
+// fieldSuggestionEntries collects every non-empty free-text value from one
+// tender save into the {field_key: values} shape RecordFieldSuggestions
+// expects. Shared by CreateBid and UpdateBid so there's exactly one place
+// that decides which fields feed the suggestion memory.
+func fieldSuggestionEntries(orgName, deptName, location, emdBankName, emdBeneficiary, emdPayableAt, requestedProducts *string) map[string][]string {
+	entries := map[string][]string{}
+	add := func(fieldKey string, v *string) {
+		if v != nil && strings.TrimSpace(*v) != "" {
+			entries[fieldKey] = append(entries[fieldKey], *v)
+		}
+	}
+	add("organization_name", orgName)
+	add("department_name", deptName)
+	add("location", location)
+	add("emd_bank_name", emdBankName)
+	add("emd_beneficiary", emdBeneficiary)
+	add("emd_payable_at", emdPayableAt)
+
+	if requestedProducts != nil {
+		if oems := extractOEMNames(*requestedProducts); len(oems) > 0 {
+			entries["oem"] = oems
+		}
+	}
+	return entries
+}
+
+// extractOEMNames pulls the "oem" value out of each product row in the
+// requested_products JSON ([{product,description,qty,oem}]). Malformed JSON
+// simply yields no suggestions — this must never fail the save it rides on.
+func extractOEMNames(rawJSON string) []string {
+	var products []struct {
+		OEM string `json:"oem"`
+	}
+	if err := json.Unmarshal([]byte(rawJSON), &products); err != nil {
+		return nil
+	}
+	var names []string
+	for _, p := range products {
+		if strings.TrimSpace(p.OEM) != "" {
+			names = append(names, p.OEM)
+		}
+	}
+	return names
+}
+
+// ────────────────────────────────────────
+// Action Ledger — tender edit diffing
+// ────────────────────────────────────────
+
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+func derefFloat(p *float64) float64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+func derefInt(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+func fmtStrDiff(v string) string   { return v }
+func fmtFloatDiff(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
+func fmtIntDiff(v int) string      { return strconv.Itoa(v) }
+
+// diffField appends a FieldDiff when the request explicitly sent a value for
+// this field (newP != nil — UpdateBidRequest is a partial PATCH, so nil means
+// "not part of this update", not "clear it") and that value differs from what
+// was already stored.
+func diffField[T comparable](diffs *[]domain.FieldDiff, field string, oldVal T, newP *T, format func(T) string) {
+	if newP == nil || oldVal == *newP {
+		return
+	}
+	*diffs = append(*diffs, domain.FieldDiff{Field: field, Old: format(oldVal), New: format(*newP)})
+}
+
+// diffBidFields compares a tender's pre-update state against an UpdateBidRequest
+// on a curated list of human-meaningful fields — not every column, so the
+// resulting audit entry stays readable instead of drowning in JSONB/internal
+// bookkeeping fields nobody reviewing history cares about.
+func diffBidFields(bid *domain.BidWorkspace, req *domain.UpdateBidRequest) []domain.FieldDiff {
+	var diffs []domain.FieldDiff
+	diffField(&diffs, "title", bid.Title, req.Title, fmtStrDiff)
+	diffField(&diffs, "organization_name", derefStr(bid.OrganizationName), req.OrganizationName, fmtStrDiff)
+	diffField(&diffs, "department_name", derefStr(bid.DepartmentName), req.DepartmentName, fmtStrDiff)
+	diffField(&diffs, "location", derefStr(bid.Location), req.Location, fmtStrDiff)
+	diffField(&diffs, "category", derefStr(bid.Category), req.Category, fmtStrDiff)
+	diffField(&diffs, "bid_type", derefStr(bid.BidType), req.BidType, fmtStrDiff)
+	diffField(&diffs, "authority", derefStr(bid.Authority), req.Authority, fmtStrDiff)
+	diffField(&diffs, "our_rank", derefStr(bid.OurRank), req.OurRank, fmtStrDiff)
+	diffField(&diffs, "remarks", derefStr(bid.Remarks), req.Remarks, fmtStrDiff)
+	diffField(&diffs, "estimated_value", derefFloat(bid.EstimatedValue), req.EstimatedValue, fmtFloatDiff)
+	diffField(&diffs, "emd_amount", derefFloat(bid.EMDAmount), req.EMDAmount, fmtFloatDiff)
+	diffField(&diffs, "quantity", derefInt(bid.Quantity), req.Quantity, fmtIntDiff)
+	diffField(&diffs, "bid_owner_id", bid.BidOwnerID, req.BidOwnerID, fmtStrDiff)
+	diffField(&diffs, "account_manager_id", derefStr(bid.AccountManagerID), req.AccountManagerID, fmtStrDiff)
+	diffField(&diffs, "reporting_manager_id", derefStr(bid.ReportingManagerID), req.ReportingManagerID, fmtStrDiff)
+	diffField(&diffs, "presales_id", derefStr(bid.PresalesID), req.PresalesID, fmtStrDiff)
+	return diffs
+}
+
+func (s *bidService) ListFieldSuggestions(ctx context.Context, fieldKey string) ([]domain.FieldSuggestion, error) {
+	fieldKey = strings.TrimSpace(fieldKey)
+	if fieldKey == "" {
+		return nil, fmt.Errorf("%w: field is required", domain.ErrValidation)
+	}
+	return s.repo.ListFieldSuggestions(ctx, fieldKey, 500)
 }

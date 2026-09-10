@@ -142,19 +142,64 @@ func (h *BidHandler) UpdateBid(c *gin.Context) {
 	response.Success(c, http.StatusOK, "Bid updated successfully", nil)
 }
 
+// GetGlobalAuditLogs serves both the global "Database Audit Trail" panel and
+// the per-person "Activity Log" (?user_id=) off the same paginated feed.
+// ?limit= and ?cursor= (opaque, from a previous page's meta.next_cursor)
+// page it — the whole point being that a caller can never pull the entire
+// table in one response.
 func (h *BidHandler) GetGlobalAuditLogs(c *gin.Context) {
-	limit := parseIntQuery(c, "limit", 100)
-	logs, err := h.svc.GetGlobalAuditLogs(c.Request.Context(), limit)
+	userID := c.Query("user_id")
+	// Reading a colleague's own action history — not just the tender-scoped
+	// global trail everyone with bid.view already sees — is restricted to
+	// Super Admin, Admin, and Manager, matching the same gate the frontend
+	// already applies to the rest of User Management.
+	if userID != "" {
+		rolesVal, _ := c.Get("roles")
+		roles, _ := rolesVal.([]string)
+		allowed := false
+		for _, r := range roles {
+			if personaLogRoles[r] {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			response.Forbidden(c, "Only Super Admin, Admin, or Manager can view another user's activity log")
+			return
+		}
+	}
+
+	q := domain.AuditLogQuery{
+		Limit:  parseIntQuery(c, "limit", 30),
+		Cursor: c.Query("cursor"),
+	}
+	page, err := h.svc.GetGlobalAuditLogs(c.Request.Context(), q, userID)
 	if err != nil {
+		if errors.Is(err, domain.ErrInvalidCursor) {
+			response.BadRequest(c, "Invalid or expired cursor", nil)
+			return
+		}
 		response.InternalError(c, err.Error())
 		return
 	}
-	response.Success(c, http.StatusOK, "Audit history retrieved successfully", logs)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    page.Items,
+		"meta": gin.H{
+			"next_cursor": page.NextCursor,
+			"has_more":    page.HasMore,
+		},
+	})
 }
+
+// personaLogRoles gates the per-person Activity Log. Deliberately narrower
+// than managementRoles below (no Account Manager) — seeing a colleague's
+// full action history is a people-management capability, not a sales one.
+var personaLogRoles = map[string]bool{"SUPER_ADMIN": true, "ADMIN": true, "MANAGER": true}
 
 // managementRoles can see every owner's row in the performance matrix;
 // everyone else (Bid Executive, Pre-Sales, Finance, ...) only sees their own.
-var managementRoles = map[string]bool{"SUPER_ADMIN": true, "ADMIN": true, "MANAGER": true}
+var managementRoles = map[string]bool{"SUPER_ADMIN": true, "ADMIN": true, "MANAGER": true, "ACCOUNT_MANAGER": true}
 
 func (h *BidHandler) GetTenderPerformanceMatrix(c *gin.Context) {
 	ownerID := ""
@@ -197,14 +242,32 @@ func (h *BidHandler) TransitionStage(c *gin.Context) {
 	response.Success(c, http.StatusOK, "Bid stage transitioned successfully", result)
 }
 
+// GetStageHistory serves one tender's History tab, paginated the same way
+// as GetGlobalAuditLogs (?limit=, ?cursor=) so a heavily-edited tender can't
+// pull its whole history into one response either.
 func (h *BidHandler) GetStageHistory(c *gin.Context) {
 	id := c.Param("id")
-	history, err := h.svc.GetStageHistory(c.Request.Context(), id)
+	q := domain.AuditLogQuery{
+		Limit:  parseIntQuery(c, "limit", 30),
+		Cursor: c.Query("cursor"),
+	}
+	page, err := h.svc.GetStageHistory(c.Request.Context(), id, q)
 	if err != nil {
+		if errors.Is(err, domain.ErrInvalidCursor) {
+			response.BadRequest(c, "Invalid or expired cursor", nil)
+			return
+		}
 		response.NotFound(c, "Bid not found")
 		return
 	}
-	response.Success(c, http.StatusOK, "Stage history retrieved", history)
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    page.Items,
+		"meta": gin.H{
+			"next_cursor": page.NextCursor,
+			"has_more":    page.HasMore,
+		},
+	})
 }
 
 func (h *BidHandler) AddMicroEvent(c *gin.Context) {
@@ -262,7 +325,8 @@ func (h *BidHandler) RecordOutcome(c *gin.Context) {
 		response.BadRequest(c, err.Error(), nil)
 		return
 	}
-	if err := h.svc.RecordOutcome(c.Request.Context(), id, &req); err != nil {
+	actorID := c.GetString("user_id")
+	if err := h.svc.RecordOutcome(c.Request.Context(), id, &req, actorID); err != nil {
 		response.NotFound(c, "Bid not found")
 		return
 	}
@@ -271,7 +335,8 @@ func (h *BidHandler) RecordOutcome(c *gin.Context) {
 
 func (h *BidHandler) ArchiveBid(c *gin.Context) {
 	id := c.Param("id")
-	if err := h.svc.ArchiveBid(c.Request.Context(), id); err != nil {
+	actorID := c.GetString("user_id")
+	if err := h.svc.ArchiveBid(c.Request.Context(), id, actorID); err != nil {
 		response.NotFound(c, "Bid not found")
 		return
 	}
@@ -280,7 +345,8 @@ func (h *BidHandler) ArchiveBid(c *gin.Context) {
 
 func (h *BidHandler) RestoreBid(c *gin.Context) {
 	id := c.Param("id")
-	if err := h.svc.RestoreBid(c.Request.Context(), id); err != nil {
+	actorID := c.GetString("user_id")
+	if err := h.svc.RestoreBid(c.Request.Context(), id, actorID); err != nil {
 		// A restore can fail because another tender took this one's identifier
 		// while it sat in the bin. That is a conflict, not a missing record, and
 		// the user needs to be told which tender is in the way.
@@ -296,7 +362,8 @@ func (h *BidHandler) RestoreBid(c *gin.Context) {
 
 func (h *BidHandler) PermanentDeleteBid(c *gin.Context) {
 	id := c.Param("id")
-	if err := h.svc.PermanentDeleteBid(c.Request.Context(), id); err != nil {
+	actorID := c.GetString("user_id")
+	if err := h.svc.PermanentDeleteBid(c.Request.Context(), id, actorID); err != nil {
 		response.NotFound(c, "Bid not found")
 		return
 	}
@@ -388,6 +455,22 @@ func (h *BidHandler) ToggleChecklist(c *gin.Context) {
 		return
 	}
 	response.Success(c, http.StatusOK, "Checklist updated", item)
+}
+
+// ListFieldSuggestions serves Field Memory autocomplete: the remembered
+// values for one field (?field=organization_name), ranked by usage.
+func (h *BidHandler) ListFieldSuggestions(c *gin.Context) {
+	field := c.Query("field")
+	suggestions, err := h.svc.ListFieldSuggestions(c.Request.Context(), field)
+	if err != nil {
+		if errors.Is(err, domain.ErrValidation) {
+			response.BadRequest(c, err.Error(), nil)
+			return
+		}
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Field suggestions retrieved", suggestions)
 }
 
 func parseIntQuery(c *gin.Context, key string, def int) int {

@@ -39,6 +39,17 @@ func (s *alertService) CreateAlert(ctx context.Context, alert *domain.Alert) err
 	return nil
 }
 
+// SendNotificationEmail reuses the exact recipient-resolution and HTML
+// template dispatchAlertEmails already has, without writing an in-app row —
+// see the interface doc comment for when to reach for this instead of
+// CreateAlert.
+func (s *alertService) SendNotificationEmail(ctx context.Context, alert *domain.Alert) error {
+	if s.emailSvc != nil {
+		go s.dispatchAlertEmails(context.Background(), alert)
+	}
+	return nil
+}
+
 func (s *alertService) dispatchAlertEmails(ctx context.Context, alert *domain.Alert) {
 	recipients := []string{}
 	// Set only for a direct-to-user alert, so the footer can name the actual

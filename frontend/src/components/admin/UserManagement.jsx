@@ -22,6 +22,7 @@ import { CreateUserSheet }        from './CreateUserSheet'
 import { EditUserDialog }         from './EditUserDialog'
 import { RolesPermissionsDialog } from './RolesPermissionsDialog'
 import { ForceResetDialog }       from './ForceResetDialog'
+import { ActivityLogDialog }      from './ActivityLogDialog'
 import { ALL_ROLES, ROLE_LABELS } from './RoleBadge'
 
 const LIMIT = 20
@@ -75,6 +76,7 @@ export function UserManagement() {
   const [editUser, setEditUser]           = useState(null) // user object | null
   const [rolesUser, setRolesUser]         = useState(null)
   const [resetUser, setResetUser]         = useState(null)
+  const [activityLogUser, setActivityLogUser] = useState(null)
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
   const fetchUsers = useCallback(async (options = {}) => {
@@ -276,9 +278,11 @@ export function UserManagement() {
         canEdit={canEdit}
         canDeactivate={canDeactivate}
         canAssignRole={canAssignRole}
+        canViewActivityLog={isManagementRole}
         onEdit={(user) => setEditUser(user)}
         onRoles={(user) => setRolesUser(user)}
         onForceReset={(user) => setResetUser(user)}
+        onViewActivityLog={(user) => setActivityLogUser(user)}
         onRefresh={handleRefresh}
       />
 
@@ -315,6 +319,14 @@ export function UserManagement() {
           onOpenChange={(v) => !v && setResetUser(null)}
           user={resetUser}
           onDone={handleRefresh}
+        />
+      )}
+
+      {isManagementRole && (
+        <ActivityLogDialog
+          open={!!activityLogUser}
+          onOpenChange={(v) => !v && setActivityLogUser(null)}
+          user={activityLogUser}
         />
       )}
     </div>

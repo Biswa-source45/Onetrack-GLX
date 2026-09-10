@@ -12,6 +12,24 @@
         ],
         "createdAt": "2026-08-30T15:05:15.502Z",
         "reason": "pre-existing stage-funnel gradient palette, not touched by this QA/bug-fix pass; out of scope"
+      },
+      {
+        "rule": "design-system-color",
+        "value": "#10b981",
+        "createdAt": "2026-09-08T11:00:45.357Z",
+        "reason": "AnalyticsPage.jsx is explicitly out of scope for DESIGN.md (Ledger world = Landing/Login only per context.mjs); this file already uses literal hex colors throughout (STAGE_COLORS etc) as its established convention"
+      },
+      {
+        "rule": "design-system-color",
+        "value": "#f59e0b",
+        "createdAt": "2026-09-08T11:00:45.476Z",
+        "reason": "Same as #10b981 — literal hex is this file's existing convention, file is out of DESIGN.md scope"
+      },
+      {
+        "rule": "design-system-color",
+        "value": "#f97316",
+        "createdAt": "2026-09-09T06:03:10.573Z",
+        "reason": "New aging-bucket color (30-60 Days) in shared pipelineMetrics.js — same out-of-DESIGN.md-scope literal-hex convention as #10b981/#f59e0b already suppressed for this dashboard/analytics area"
       }
     ]
   }

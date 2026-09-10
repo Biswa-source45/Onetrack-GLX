@@ -5,8 +5,8 @@ import {
   Layers, LogOut, Key, CheckCircle, Eye, EyeOff, Loader2,
   Users, LayoutDashboard, Menu, X, ChevronRight,
   FileText, TrendingUp, Activity, BarChart2, ShieldCheck, Bell,
-  Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Trash2, Pencil,
-  FileSpreadsheet, Archive, Ban } from 'lucide-react'
+  Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Pencil,
+  FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button }    from '@/components/ui/button'
@@ -19,6 +19,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { authService, tokenStorage } from '../services/auth'
 import { getMyProfile, updateUserProfile } from '../services/users'
 import { getAlerts } from '../services/alerts'
+import { getOpenTicketCount } from '../services/tickets'
 import { usePermissions } from '../hooks/usePermissions'
 import { UserManagement } from './admin/UserManagement'
 import { UserAvatar }     from './admin/UserAvatar'
@@ -30,6 +31,14 @@ import { formatCurrency } from '../lib/tenderFormat'
 import { StageBadge, StatusBadge } from '../lib/tenderDisplay'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { computePipelineSummary, getEffectiveStage } from '../lib/pipelineMetrics'
+import { openMasterSheetDrill } from '../lib/masterSheetDrill'
+import { PipelineKpiBand } from './analytics/PipelineKpiBand'
+import { dimOtherSlices } from '../lib/chartUtils'
+import {
+  ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis,
+  Tooltip as RechartsTooltip, CartesianGrid
+} from 'recharts'
 
 // ── Navigation items (each gated by a permission check) ──────────────────────
 const NAV_ITEMS = [
@@ -44,17 +53,24 @@ const NAV_ITEMS = [
       { id: 'tenders-owned', label: 'Owned Tenders', icon: UserCheck, path: '/dashboard/tenders/owned' }
     ]
   },
-  { 
-    id: 'analytics',  
-    label: 'Analytics',        
-    icon: BarChart2,       
+  {
+    id: 'analytics',
+    label: 'Analytics',
+    icon: BarChart2,
     permission: 'bid.view',
+    // Finance gets its own EMD-focused Overview instead — stage funnels and
+    // win/loss analytics aren't part of their job.
+    excludeRole: 'FINANCE',
     children: [
       { id: 'analytics-tenders', label: 'Tender Analytics', icon: Activity, path: '/dashboard/analytics/tenders' },
       { id: 'analytics-matrix', label: 'Owner Matrix', icon: Users, path: '/dashboard/analytics/performance-matrix' }
     ]
   },
   { id: 'alerts',     label: 'Alerts',           icon: Bell,            permission: 'bid.view' },
+  // Feedback (submit) and Tickets (triage) are mutually exclusive: Super
+  // Admin is who Feedback Loop notifies, not who it collects from.
+  { id: 'feedback',   label: 'Feedback',         icon: MessageSquarePlus, permission: null, excludeRole: 'SUPER_ADMIN' },
+  { id: 'tickets',    label: 'Tickets',          icon: Ticket,          permission: null, role: 'SUPER_ADMIN' },
   { id: 'users',      label: 'Users',            managementLabel: 'User Management', icon: Users, permission: 'user.view' },
   { id: 'bulk-import', label: 'Bulk Import',     icon: FileSpreadsheet, permission: null, role: 'SUPER_ADMIN', path: '/dashboard/bulk-import' },
 ]
@@ -195,8 +211,8 @@ export function OverviewPanel() {
   const { user, onOpenProfile } = useOutletContext()
   const navigate = useNavigate()
   const [bids, setBids] = useState([])
-  const [binCount, setBinCount] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [lastUpdated, setLastUpdated] = useState(null)
 
   // Tender Performance Matrix (real-time, dedicated endpoint)
   const [perfMatrix, setPerfMatrix]         = useState([])
@@ -214,22 +230,19 @@ export function OverviewPanel() {
   // { title, subtitle, bids }.
   const [emdDrill, setEmdDrill] = useState(null)
 
+  // Hover state for the compact Pipeline Overview aging donut
+  const [dashAgingIndex, setDashAgingIndex] = useState(null)
+
   const fetchBids = async () => {
     setLoading(true)
     try {
       // Page through everything: metrics below are computed from the full list,
       // so a single capped page would under-report every total.
-      const [r, binRes] = await Promise.all([
-        listAllBids(),
-        listAllBids({ in_bin: true })
-      ])
+      const r = await listAllBids()
       if (r.ok && r.data) {
         const rawList = Array.isArray(r.data) ? r.data : (r.data?.bids || [])
         setBids(rawList)
-      }
-      if (binRes.ok && binRes.data) {
-        const binList = Array.isArray(binRes.data) ? binRes.data : (binRes.data?.bids || [])
-        setBinCount(binList.length)
+        setLastUpdated(new Date())
       }
     } catch {
       toast.error('Failed to load tenders analytics')
@@ -267,8 +280,12 @@ export function OverviewPanel() {
     return () => clearInterval(interval)
   }, [fetchMatrix])
 
-  // Management Role Gating: Only Super Admin, Admin, and Manager get full BI Analytics
-  const isManagement = user?.roles?.some(r => ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(r))
+  // Management Role Gating: Super Admin, Admin, Manager, and Account Manager get full BI Analytics
+  const isManagement = user?.roles?.some(r => ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ACCOUNT_MANAGER'].includes(r))
+  // Finance gets its own financial-operations Overview instead of either of
+  // the above — EMD given/returned/pending, not win-rate or stage funnels,
+  // which aren't part of their job.
+  const isFinance = user?.roles?.includes('FINANCE')
 
   // Filter logic
   const filteredBids = bids.filter(b => {
@@ -319,18 +336,28 @@ export function OverviewPanel() {
     b.bid_status === 'LOST' || b.bid_outcome === 'LOST' || b.workflow_stage === 'LOST' || b.technical_result === 'DISQUALIFIED'
   ).length
 
-  const cancelledBids = filteredBids.filter(b =>
-    b.bid_status === 'CANCELLED' || b.bid_outcome === 'CANCELLED' || b.workflow_stage === 'CANCELLED'
-  ).length
+  const cancelledBids = filteredBids.filter(b => getEffectiveStage(b) === 'CANCELLED').length
 
   // Closed = assessed then dropped without ever bidding. Counted separately so
   // it neither inflates the live pipeline nor the loss rate.
   const closedBids = filteredBids.filter(b => b.bid_status === 'CLOSED').length
 
-  // Financial BI metrics
+  // Financial BI metrics. Total Won Order Value deliberately keeps its own
+  // 2-field chain (final_bid_value || estimated_value, no quoted_price) —
+  // this is the original, established "money actually won" figure and stays
+  // untouched; the Pipeline Overview section below shows a second, 3-field
+  // "PO Value Won" figure (from the shared pipelineMetrics module, matching
+  // Analytics exactly) with its own label so the two are never confused.
   const totalWonValue = filteredBids
     .filter(b => b.bid_status === 'WON' || b.bid_outcome === 'WON' || b.workflow_stage === 'WON')
     .reduce((sum, b) => sum + (b.final_bid_value || b.estimated_value || 0), 0)
+
+  // Single source of truth for participated/active/submitted/won/aging/
+  // category — see pipelineMetrics.js. Also backs the new Pipeline Overview
+  // section further down, so this page and Analytics can never disagree
+  // about what these numbers mean again.
+  const pipelineSummary = computePipelineSummary(filteredBids, lastUpdated ? lastUpdated.getTime() : null)
+  const totalParticipatedValue = pipelineSummary.totalPipelineValue
 
   // EMD is counted as deposited ONLY if not exempted/not-applicable, amount > 0, and bid reached/passed EMD_PROCESSING stage (or emd_ready/emd_returned is true)
   const emdDepositedBids = filteredBids.filter(b => {
@@ -355,6 +382,13 @@ export function OverviewPanel() {
   // Same buckets as the two sums above, kept as arrays for the drill-down dialog.
   const emdReturnedBids = emdDepositedBids.filter(b => b.emd_returned)
   const emdPendingBids  = emdDepositedBids.filter(b => !b.emd_returned)
+
+  // Finance-specific: tenders sitting in EMD Processing right now — the
+  // deposit still needs to be arranged, separate from "already deposited."
+  const emdProcessingBids = filteredBids.filter(b =>
+    b.workflow_stage === 'EMD_PROCESSING' && !b.emd_exempted && !b.emd_not_applicable
+  )
+  const emdProcessingValue = emdProcessingBids.reduce((sum, b) => sum + Number(b.emd_amount || 0), 0)
 
   // Stage Funnel Analytics Data
   const stageGroups = [
@@ -389,7 +423,6 @@ export function OverviewPanel() {
     { label:'Lost Bids',         value: lostBids,          icon: XCircle,      color:'text-orange-600', bg:'bg-orange-50',  border:'border-orange-200', onClick: () => navigate('/dashboard/tenders?status=LOST') },
     { label:'Cancelled',         value: cancelledBids,     icon: Ban,          color:'text-red-600',    bg:'bg-red-50',     border:'border-red-200', onClick: () => navigate('/dashboard/tenders?status=CANCELLED') },
     { label:'Closed (No Bid)',   value: closedBids,        icon: Archive,      color:'text-zinc-600',   bg:'bg-zinc-100',   border:'border-zinc-300', onClick: () => navigate('/dashboard/tenders?status=CLOSED') },
-    { label:'Tender Bin',        value: binCount,          icon: Trash2,       color:'text-rose-700',   bg:'bg-rose-100/60', border:'border-rose-300', onClick: () => navigate('/dashboard/tenders?bin=true') },
   ]
 
   // Win rate is won / actually-bid. Tenders closed without ever being bid were
@@ -408,11 +441,13 @@ export function OverviewPanel() {
               Welcome back{user?.full_name ? `, ${user.full_name.split(' ')[0]}` : ''}
             </h1>
             <Badge variant="outline" className="text-xs bg-primary/5 text-primary border-primary/20 font-mono">
-              {isManagement ? 'Management BI Analytics' : 'Executive Operational Overview'}
+              {isFinance ? 'Financial Operations Overview' : isManagement ? 'Management BI Analytics' : 'Executive Operational Overview'}
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">
-            {isManagement 
+            {isFinance
+              ? 'EMD deposits, refunds, and what still needs to come back.'
+              : isManagement
               ? 'Real-time enterprise tender analytics, stage distribution & performance matrix.'
               : 'Operational tender workspace overview & quick activity panel.'}
           </p>
@@ -426,8 +461,188 @@ export function OverviewPanel() {
         </div>
       </div>
 
-      {/* ── MANAGEMENT ONLY BI ANALYTICS SUITE ──────────────────────────────── */}
-      {isManagement ? (
+      {/* ── FINANCE-ONLY OPERATIONS OVERVIEW ────────────────────────────────── */}
+      {isFinance ? (
+        <>
+          {/* Financial Filtration Toolbar — same filters/state the BI suite
+              uses, so "filtration works the same way" here too. */}
+          <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-xs">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Filter className="size-4 text-primary" />
+                <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Financial Filtration</span>
+              </div>
+              {(startDateFilter || endDateFilter || executiveFilter || searchQuery) && (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => { setStartDateFilter(''); setEndDateFilter(''); setExecutiveFilter(''); setSearchQuery(''); }}
+                  className="text-xs text-muted-foreground hover:text-foreground h-7"
+                >
+                  Clear Filters
+                </Button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div>
+                <Label className="text-[11px] text-muted-foreground mb-1 block">Start Date</Label>
+                <Input type="date" value={startDateFilter} onChange={e => setStartDateFilter(e.target.value)} className="h-8 text-xs pr-2" />
+              </div>
+              <div>
+                <Label className="text-[11px] text-muted-foreground mb-1 block">End Date</Label>
+                <Input type="date" value={endDateFilter} onChange={e => setEndDateFilter(e.target.value)} className="h-8 text-xs pr-2" />
+              </div>
+              <div>
+                <Label className="text-[11px] text-muted-foreground mb-1 block">Bid Executive (Owner)</Label>
+                <select
+                  value={executiveFilter}
+                  onChange={e => setExecutiveFilter(e.target.value)}
+                  className="w-full h-8 text-xs rounded-md border border-input bg-background px-2.5 py-1 text-foreground shadow-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="">All Executives</option>
+                  {uniqueExecs.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <Label className="text-[11px] text-muted-foreground mb-1 block">Search Tender / Bid No</Label>
+                <div className="relative">
+                  <Search className="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    type="text" placeholder="Search title, organisation..."
+                    value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                    className="h-8 text-xs pl-8"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* EMD tiles — Processing Now / Deposited / Returned / Pending Refund.
+              Deposited/Returned/Pending reuse the exact buckets the
+              Management BI suite computes above (emdDepositedBids etc.),
+              so the two views can never disagree about what these numbers mean. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <button type="button"
+              onClick={() => navigate('/dashboard/tenders?stage=EMD_PROCESSING')}
+              className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2 w-full text-left cursor-pointer hover:border-primary/40 hover:shadow-md transition-all">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">EMD Processing Now</span>
+                <div className="size-8 rounded-lg bg-violet-50 border border-violet-200 flex items-center justify-center">
+                  <Hourglass className="size-4 text-violet-600" />
+                </div>
+              </div>
+              <div>
+                <p className="text-2xl font-bold font-heading text-violet-600">{emdProcessingBids.length}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Tenders needing EMD arranged now · {formatCurrency(emdProcessingValue)}</p>
+              </div>
+            </button>
+
+            <div className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">EMD Deposited</span>
+                <div className="size-8 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center">
+                  <IndianRupee className="size-4 text-blue-600" />
+                </div>
+              </div>
+              <div>
+                <p className="text-2xl font-bold font-heading text-blue-600">{formatCurrency(totalEMDDeposited)}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">{emdDepositedBids.length} tender(s) — total EMD submitted</p>
+              </div>
+            </div>
+
+            <button type="button"
+              onClick={() => setEmdDrill({ title: 'EMD Returned', subtitle: 'Tenders whose EMD has been refunded', bids: emdReturnedBids })}
+              className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2 w-full text-left cursor-pointer hover:border-primary/40 hover:shadow-md transition-all">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">EMD Returned</span>
+                <div className="size-8 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center">
+                  <CheckCircle className="size-4 text-teal-600" />
+                </div>
+              </div>
+              <div>
+                <p className="text-2xl font-bold font-heading text-teal-600">{formatCurrency(totalEMDReturned)}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">{emdReturnedBids.length} tender(s) refunded — click to view</p>
+              </div>
+            </button>
+
+            <button type="button"
+              onClick={() => setEmdDrill({ title: 'EMD Pending Refund', subtitle: 'Tenders whose EMD has not been refunded yet', bids: emdPendingBids })}
+              className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2 w-full text-left cursor-pointer hover:border-primary/40 hover:shadow-md transition-all">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">EMD Pending Refund</span>
+                <div className="size-8 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-center">
+                  <Clock className="size-4 text-amber-600" />
+                </div>
+              </div>
+              <div>
+                <p className="text-2xl font-bold font-heading text-amber-600">{formatCurrency(pendingEMDReturn)}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">{emdPendingBids.length} tender(s) waiting — click to view</p>
+              </div>
+            </button>
+          </div>
+
+          <Dialog open={!!emdDrill} onOpenChange={(o) => !o && setEmdDrill(null)}>
+            <DialogContent className="sm:max-w-3xl">
+              <DialogHeader>
+                <div className="flex items-start justify-between gap-3 pr-6">
+                  <div>
+                    <DialogTitle>{emdDrill?.title}</DialogTitle>
+                    <DialogDescription>{emdDrill?.bids.length ?? 0} tender(s) — {emdDrill?.subtitle}</DialogDescription>
+                  </div>
+                  {emdDrill && emdDrill.bids.length > 0 && (
+                    <Button
+                      variant="outline" size="sm" className="gap-1.5 shrink-0"
+                      onClick={() => { openMasterSheetDrill(navigate, emdDrill); setEmdDrill(null) }}
+                    >
+                      <FileSpreadsheet className="size-3.5" />
+                      See Full Data
+                    </Button>
+                  )}
+                </div>
+              </DialogHeader>
+              {emdDrill && emdDrill.bids.length === 0 ? (
+                <div className="py-10 text-center text-muted-foreground">
+                  <Archive className="size-8 mx-auto opacity-40 mb-2" />
+                  <p className="text-sm">No tenders in this bucket yet.</p>
+                </div>
+              ) : (
+                <div className="max-h-[60vh] overflow-y-auto -mx-2 px-2">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Title</TableHead>
+                        <TableHead>GeM / Bid No</TableHead>
+                        <TableHead>Organization</TableHead>
+                        <TableHead>Owner</TableHead>
+                        <TableHead>EMD Amount</TableHead>
+                        <TableHead>Stage</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {emdDrill?.bids.map((b) => (
+                        <TableRow key={b.id} className="cursor-pointer hover:bg-muted/40"
+                          onClick={() => { setEmdDrill(null); navigate(`/dashboard/tenders/${b.id}`) }}>
+                          <TableCell className="font-medium text-foreground max-w-[220px] truncate">{b.title}</TableCell>
+                          <TableCell className="font-mono text-xs">{b.gem_bid_no || b.bid_no || '—'}</TableCell>
+                          <TableCell className="max-w-[160px] truncate">{b.organization_name || '—'}</TableCell>
+                          <TableCell>{b.bid_owner?.full_name || b.bid_owner?.username || '—'}</TableCell>
+                          <TableCell className="font-mono">{formatCurrency(b.emd_amount)}</TableCell>
+                          <TableCell>{b.workflow_stage ? <StageBadge stage={b.workflow_stage} /> : <StatusBadge status={b.bid_status} />}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
+        </>
+      ) : (
+      /* ── MANAGEMENT ONLY BI ANALYTICS SUITE ──────────────────────────────── */
+      isManagement ? (
         <>
           {/* 8-Card Enterprise Analytics Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
@@ -624,7 +839,20 @@ export function OverviewPanel() {
           </div>
 
           {/* Financial BI Metrics Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+            <div className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total Participated Value</span>
+                <div className="size-8 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center">
+                  <IndianRupee className="size-4 text-indigo-600" />
+                </div>
+              </div>
+              <div>
+                <p className="text-2xl font-bold font-heading text-indigo-600">{formatCurrency(totalParticipatedValue)}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Value of all tenders pursued — excludes cancelled & no-bid</p>
+              </div>
+            </div>
+
             <div className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total Won Order Value</span>
@@ -682,11 +910,147 @@ export function OverviewPanel() {
             </button>
           </div>
 
+          {/* Pipeline Overview — condensed version of the Analytics tab's Pipeline
+              Summary, so the two pages read as one system. Full charts (stage
+              exposure, category, top 10, milestone arc) stay Analytics-only. */}
+          <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <h3 className="font-heading font-semibold text-base text-foreground flex items-center gap-2">
+                <TrendingUp className="size-4 text-primary" />
+                Pipeline Overview
+              </h3>
+              <button onClick={() => navigate('/dashboard/analytics/tenders')} className="text-xs text-primary hover:underline flex items-center gap-1">
+                View full Analytics <ChevronRight className="size-3.5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <PipelineKpiBand
+                label="Total Pipeline ₹"
+                value={formatCurrency(pipelineSummary.totalPipelineValue)}
+                tone="navy"
+                explain="Value of every tender we chose to pursue — excludes cancelled tenders and ones we never bid on. Click to see the tenders."
+                onClick={() => openMasterSheetDrill(navigate, { title: 'Total Pipeline', subtitle: 'Every tender we chose to pursue', bids: pipelineSummary.totalPipelineBids })}
+              />
+              <PipelineKpiBand
+                label="Active Pipeline ₹"
+                value={formatCurrency(pipelineSummary.activePipelineValue)}
+                tone="blue"
+                explain={`Value of the ${pipelineSummary.activeBids.length} tenders still unresolved right now. Click to see the tenders.`}
+                onClick={() => openMasterSheetDrill(navigate, { title: 'Active Pipeline', subtitle: 'Tenders still unresolved right now', bids: pipelineSummary.activeBids })}
+              />
+              <PipelineKpiBand
+                label="Submitted Pipeline ₹"
+                value={formatCurrency(pipelineSummary.submittedPipelineValue)}
+                tone="brightBlue"
+                explain="Cumulative value of every tender we actually filed a bid for, regardless of outcome — can exceed Total Pipeline. Click to see the tenders."
+                onClick={() => openMasterSheetDrill(navigate, { title: 'Submitted Pipeline', subtitle: 'Every tender we actually filed a bid for', bids: pipelineSummary.submittedBidsList })}
+              />
+              <PipelineKpiBand
+                label="PO Value Won ₹"
+                value={formatCurrency(pipelineSummary.wonVal)}
+                tone="emerald"
+                explain="Contract value of tenders actually awarded to us — uses a different value field than Total Won Order Value above (adds quoted_price), matching the Analytics tab exactly. Click to see the tenders."
+                onClick={() => openMasterSheetDrill(navigate, { title: 'PO Value Won', subtitle: 'Tenders actually awarded to us', bids: pipelineSummary.wonBids })}
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground -mt-1">
+              PO Value Won above uses a different value field than "Total Won Order Value" in the cards above — hover its ⓘ for details.
+            </p>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Compact Tender Aging donut */}
+              <div className="border border-border rounded-lg p-3.5">
+                <p className="text-xs font-semibold text-foreground mb-2">Tender Aging (Active Only)</p>
+                {pipelineSummary.activeBids.length === 0 ? (
+                  <div className="h-[140px] flex items-center justify-center text-xs text-muted-foreground">No unresolved tenders</div>
+                ) : (
+                  <div className="flex items-center gap-3">
+                    <div className="h-[140px] w-[140px] shrink-0">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <RechartsTooltip
+                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px', color: '#fff' }}
+                            formatter={(val, name, props) => [`${props.payload.count} tenders · ${formatCurrency(val)}`, name]}
+                          />
+                          <Pie
+                            data={pipelineSummary.agingBuckets}
+                            cx="50%" cy="50%" innerRadius={32} outerRadius={60} paddingAngle={2}
+                            dataKey="count" nameKey="label"
+                            onMouseEnter={(_, i) => setDashAgingIndex(i)}
+                            onMouseLeave={() => setDashAgingIndex(null)}
+                            onClick={(entry) => entry.bids.length > 0 && openMasterSheetDrill(navigate, { title: `Tender Aging — ${entry.label}`, subtitle: 'Unresolved tenders in this age bucket', bids: entry.bids })}
+                          >
+                            {pipelineSummary.agingBuckets.map((entry, index) => (
+                              <Cell key={index} fill={entry.fill} stroke="var(--card)" strokeWidth={2} fillOpacity={dimOtherSlices(index, dashAgingIndex)} />
+                            ))}
+                          </Pie>
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="space-y-1 flex-1 min-w-0">
+                      {pipelineSummary.agingBuckets.map((bucket) => (
+                        <button
+                          type="button" key={bucket.key}
+                          disabled={bucket.bids.length === 0}
+                          onClick={() => openMasterSheetDrill(navigate, { title: `Tender Aging — ${bucket.label}`, subtitle: 'Unresolved tenders in this age bucket', bids: bucket.bids })}
+                          className={`w-full flex items-center justify-between text-left text-[11px] px-1.5 py-1 rounded ${bucket.bids.length === 0 ? 'opacity-50' : 'hover:bg-muted/50 cursor-pointer'}`}
+                        >
+                          <span className="flex items-center gap-1.5 truncate">
+                            <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: bucket.fill }} />
+                            {bucket.label}
+                          </span>
+                          <span className="font-mono text-muted-foreground shrink-0">{bucket.count}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Compact Monthly Creation volume */}
+              <div className="border border-border rounded-lg p-3.5">
+                <p className="text-xs font-semibold text-foreground mb-2">Monthly Creation Volume</p>
+                {pipelineSummary.monthlyTrend.length === 0 ? (
+                  <div className="h-[140px] flex items-center justify-center text-xs text-muted-foreground">No data yet</div>
+                ) : (
+                  <div className="h-[140px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={pipelineSummary.monthlyTrend} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                        <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+                        <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+                        <RechartsTooltip
+                          contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px', color: '#fff' }}
+                          formatter={(val) => [`${val} tenders`, 'Created']}
+                        />
+                        <Bar dataKey="count" fill="#6366f1" radius={[3, 3, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
           <Dialog open={!!emdDrill} onOpenChange={(o) => !o && setEmdDrill(null)}>
             <DialogContent className="sm:max-w-3xl">
               <DialogHeader>
-                <DialogTitle>{emdDrill?.title}</DialogTitle>
-                <DialogDescription>{emdDrill?.bids.length ?? 0} tender(s) — {emdDrill?.subtitle}</DialogDescription>
+                <div className="flex items-start justify-between gap-3 pr-6">
+                  <div>
+                    <DialogTitle>{emdDrill?.title}</DialogTitle>
+                    <DialogDescription>{emdDrill?.bids.length ?? 0} tender(s) — {emdDrill?.subtitle}</DialogDescription>
+                  </div>
+                  {emdDrill && emdDrill.bids.length > 0 && (
+                    <Button
+                      variant="outline" size="sm" className="gap-1.5 shrink-0"
+                      onClick={() => { openMasterSheetDrill(navigate, emdDrill); setEmdDrill(null) }}
+                    >
+                      <FileSpreadsheet className="size-3.5" />
+                      See Full Data
+                    </Button>
+                  )}
+                </div>
               </DialogHeader>
               {emdDrill && emdDrill.bids.length === 0 ? (
                 <div className="py-10 text-center text-muted-foreground">
@@ -864,7 +1228,7 @@ export function OverviewPanel() {
           </div>
         </>
       ) : (
-        /* ── NON-MANAGEMENT OPERATIONAL OVERVIEW (Finance, Bid Exec, Pre-Sales, etc) ──── */
+        /* ── NON-MANAGEMENT, NON-FINANCE OPERATIONAL OVERVIEW (Bid Exec, Pre-Sales, etc) ──── */
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="rounded-xl border border-border bg-card p-4 space-y-1">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Active Tenders</span>
@@ -883,7 +1247,7 @@ export function OverviewPanel() {
             <p className="text-2xl font-bold font-heading text-teal-600">{wonBids}</p>
           </div>
         </div>
-      )}
+      ))}
 
       {/* Quick Actions & Recent Tenders Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -1226,6 +1590,7 @@ export default function Dashboard() {
   const [isChangingPassword, setIsChangingPassword] = useState(false)
   const [showSuccessDialog, setShowSuccessDialog] = useState(false)
   const [unreadAlertsCount, setUnreadAlertsCount] = useState(0)
+  const [openTicketsCount, setOpenTicketsCount] = useState(0)
 
   const { hasPermission, hasRole } = usePermissions()
 
@@ -1246,6 +1611,25 @@ export default function Dashboard() {
     const interval = setInterval(fetchAlertsCount, 30000)
     return () => clearInterval(interval)
   }, [fetchAlertsCount])
+
+  // Feedback Loop — only Super Admin triages, so only Super Admin polls the
+  // open-ticket count. Same "poll every 30s, pulsing badge" pattern as Alerts.
+  const isSuperAdminForTickets = hasRole('SUPER_ADMIN')
+  const fetchTicketsCount = useCallback(async () => {
+    if (!isSuperAdminForTickets) return
+    try {
+      const res = await getOpenTicketCount()
+      if (res.ok) setOpenTicketsCount(res.data?.open_count || 0)
+    } catch {
+      // Silently catch background errors
+    }
+  }, [isSuperAdminForTickets])
+
+  useEffect(() => {
+    fetchTicketsCount()
+    const interval = setInterval(fetchTicketsCount, 30000)
+    return () => clearInterval(interval)
+  }, [fetchTicketsCount])
 
   // Load user on mount
   useEffect(() => {
@@ -1313,6 +1697,10 @@ export default function Dashboard() {
     ? 'tenders'
     : location.pathname.includes('/alerts')
     ? 'alerts'
+    : location.pathname.includes('/tickets')
+    ? 'tickets'
+    : location.pathname.includes('/feedback')
+    ? 'feedback'
     : location.pathname.includes('/users')
     ? 'users'
     : location.pathname.includes('/bulk-import')
@@ -1327,7 +1715,8 @@ export default function Dashboard() {
   const visibleNavItems = NAV_ITEMS
     .filter((item) =>
       (item.permission === null || hasPermission(item.permission)) &&
-      (!item.role || hasRole(item.role))
+      (!item.role || hasRole(item.role)) &&
+      (!item.excludeRole || !hasRole(item.excludeRole))
     )
     .map((item) =>
       item.managementLabel && isManagementRole
@@ -1404,6 +1793,7 @@ export default function Dashboard() {
               const active = activeSection === item.id
               const Icon = item.icon
               const isAlerts = item.id === 'alerts'
+              const isTickets = item.id === 'tickets'
               const hasChildren = item.children && item.children.length > 0
 
               return (
@@ -1427,6 +1817,11 @@ export default function Dashboard() {
                     {isAlerts && unreadAlertsCount > 0 && (
                       <span className="flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold shrink-0 ml-1 shadow-xs animate-pulse">
                         {unreadAlertsCount > 99 ? '99+' : unreadAlertsCount}
+                      </span>
+                    )}
+                    {isTickets && openTicketsCount > 0 && (
+                      <span className="flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold shrink-0 ml-1 shadow-xs animate-pulse">
+                        {openTicketsCount > 99 ? '99+' : openTicketsCount}
                       </span>
                     )}
                     {hasChildren && (
@@ -1493,6 +1888,7 @@ export default function Dashboard() {
                     const active = activeSection === item.id
                     const Icon = item.icon
                     const isAlerts = item.id === 'alerts'
+                    const isTickets = item.id === 'tickets'
                     const hasChildren = item.children && item.children.length > 0
 
                     return (
@@ -1517,6 +1913,11 @@ export default function Dashboard() {
                           {isAlerts && unreadAlertsCount > 0 && (
                             <span className="flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold shrink-0 ml-1 shadow-xs animate-pulse">
                               {unreadAlertsCount > 99 ? '99+' : unreadAlertsCount}
+                            </span>
+                          )}
+                          {isTickets && openTicketsCount > 0 && (
+                            <span className="flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold shrink-0 ml-1 shadow-xs animate-pulse">
+                              {openTicketsCount > 99 ? '99+' : openTicketsCount}
                             </span>
                           )}
                           {hasChildren && (
@@ -1569,7 +1970,7 @@ export default function Dashboard() {
         {/* ── Main Content ─────────────────────────────────────────────────── */}
         <div className="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden bg-background">
           <main className="w-full min-w-0 p-6 md:p-6">
-            <Outlet context={{ user, onOpenProfile: () => setShowProfileModal(true), unreadAlertsCount, refreshAlertsCount: fetchAlertsCount }} />
+            <Outlet context={{ user, onOpenProfile: () => setShowProfileModal(true), unreadAlertsCount, refreshAlertsCount: fetchAlertsCount, openTicketsCount, refreshTicketsCount: fetchTicketsCount }} />
           </main>
         </div>
       </div>

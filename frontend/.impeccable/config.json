@@ -1,0 +1,62 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-color",
+        "value": "#f43f5e",
+        "createdAt": "2026-09-01T08:07:52.100Z",
+        "reason": "DESIGN.md explicitly scopes its ledger palette to landing/login pages only (line 3: 'for the landing and login pages only'); AnalyticsPage.jsx is a pre-existing, unrelated admin surface that already mixes amber/purple/blue/emerald/slate role-badge literals — rose-500 for the new ACCOUNT_MANAGER badge matches that file's own pre-existing convention, not a departure from it"
+      },
+      {
+        "rule": "ai-color-palette",
+        "value": "*",
+        "files": [
+          "src/components/Dashboard.jsx"
+        ],
+        "createdAt": "2026-09-01T09:08:38.046Z",
+        "reason": "Both flagged lines (funnel stageGroups violet/indigo/purple colors) are pre-existing code from before this session — my edit only changed stage-range label text and which stage keys belong to each bucket, to account for the newly inserted PRIMARY_REVIEW stage; did not choose or touch these colors"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "plus jakarta sans",
+        "createdAt": "2026-09-03T06:58:51.258Z",
+        "reason": "Deliberate craft-pass font swap for the Ledger world's display face (Zilla Slab -> Plus Jakarta Sans), documented in index.html's direction-contract comment and requested by the user for a more modern enterprise-SaaS feel."
+      },
+      {
+        "rule": "overused-font",
+        "value": "plus jakarta sans",
+        "createdAt": "2026-09-03T07:26:08.571Z",
+        "reason": "Deliberate craft-pass font swap (Zilla Slab -> Plus Jakarta Sans) for the Ledger world's display face, validated by a ui-ux-pro-max design-system query for 'enterprise SaaS B2B tender government trust' which specifically surfaced this face as the fit. Requested by the user for a more modern enterprise feel; disclosed to user already."
+      },
+      {
+        "rule": "design-system-color",
+        "value": "*",
+        "files": [
+          "src/lib/tenderFormat.js"
+        ],
+        "createdAt": "2026-09-07T10:41:04.476Z",
+        "reason": "Dedicated multi-color palette for the Add Tender note-label picker (user-requested 'random color label' feature) - deliberately outside the site's single-accent design system since the whole point is several visually distinct, shuffle-able hues"
+      },
+      {
+        "rule": "design-system-radius",
+        "value": "9999px",
+        "createdAt": "2026-09-09T09:56:15.281Z",
+        "reason": "pre-existing scrollbar-thumb/track pill radius in App.css, predates this session, unrelated to Feedback Loop work"
+      },
+      {
+        "rule": "design-system-color",
+        "value": "rgba(139, 92, 246, 0.12)",
+        "createdAt": "2026-09-09T10:23:44.079Z",
+        "reason": "pre-existing login-page glow-spot gradient in index.css, predates this session, unrelated to Feedback Loop work"
+      },
+      {
+        "rule": "design-system-color",
+        "value": "rgba(6, 182, 212, 0.08)",
+        "createdAt": "2026-09-09T10:23:44.213Z",
+        "reason": "pre-existing login-page glow-spot gradient in index.css, predates this session, unrelated to Feedback Loop work"
+      }
+    ]
+  }
+}

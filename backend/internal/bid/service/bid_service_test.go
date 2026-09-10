@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -20,6 +21,9 @@ type fakeBidRepo struct {
 	lastUpdate    *domain.UpdateBidRequest
 	addedMembers  []memberCall
 	removedMembers []string
+
+	lastFieldSuggestions map[string][]string
+	addedHistory         []*domain.BidStageHistory
 }
 
 type memberCall struct {
@@ -65,13 +69,14 @@ func (f *fakeBidRepo) GetMembers(ctx context.Context, bidID string) ([]domain.Me
 	return nil, nil
 }
 func (f *fakeBidRepo) AddStageHistory(ctx context.Context, history *domain.BidStageHistory) error {
+	f.addedHistory = append(f.addedHistory, history)
 	return nil
 }
-func (f *fakeBidRepo) GetStageHistory(ctx context.Context, bidID string) ([]domain.BidStageHistory, error) {
-	return nil, nil
+func (f *fakeBidRepo) GetStageHistory(ctx context.Context, bidID string, q domain.AuditLogQuery) ([]domain.StageHistoryResponse, string, bool, error) {
+	return nil, "", false, nil
 }
-func (f *fakeBidRepo) GetGlobalAuditLogs(ctx context.Context, limit int) ([]domain.GlobalAuditItem, error) {
-	return nil, nil
+func (f *fakeBidRepo) GetGlobalAuditLogs(ctx context.Context, q domain.AuditLogQuery, userID string) ([]domain.GlobalAuditItem, string, bool, error) {
+	return nil, "", false, nil
 }
 func (f *fakeBidRepo) GetTenderPerformanceMatrix(ctx context.Context, ownerID string) ([]domain.TenderOwnerPerformanceStat, error) {
 	return nil, nil
@@ -107,6 +112,13 @@ func (f *fakeBidRepo) ReorderChecklists(ctx context.Context, items []domain.Reor
 func (f *fakeBidRepo) ToggleChecklist(ctx context.Context, checklistID string, isDone bool, doneBy string) error {
 	return nil
 }
+func (f *fakeBidRepo) RecordFieldSuggestions(ctx context.Context, entries map[string][]string) error {
+	f.lastFieldSuggestions = entries
+	return nil
+}
+func (f *fakeBidRepo) ListFieldSuggestions(ctx context.Context, fieldKey string, limit int) ([]domain.FieldSuggestion, error) {
+	return nil, nil
+}
 
 // fakeAlertSvc records every alert CreateAlert was called with, so the test
 // can assert on what was (or wasn't) sent.
@@ -116,6 +128,9 @@ type fakeAlertSvc struct {
 
 func (f *fakeAlertSvc) CreateAlert(ctx context.Context, alert *alertDomain.Alert) error {
 	f.created = append(f.created, alert)
+	return nil
+}
+func (f *fakeAlertSvc) SendNotificationEmail(ctx context.Context, alert *alertDomain.Alert) error {
 	return nil
 }
 func (f *fakeAlertSvc) GetUserAlerts(ctx context.Context, userID, userRole string) ([]alertDomain.Alert, error) {
@@ -379,3 +394,353 @@ func TestUpdateBid_OwnerReassignment(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// TestExtractOEMNames covers the JSON-parsing edge cases Field Memory relies
+// on: OEM values pulled out of requested_products must survive blank OEMs,
+// whitespace-only OEMs, and malformed JSON (which must yield no names, not
+// an error that could block saving the tender).
+func TestExtractOEMNames(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+		want []string
+	}{
+		{
+			name: "extracts oem from each product row",
+			json: `[{"product":"Firewall","oem":"Fortinet"},{"product":"Switch","oem":"Cisco"}]`,
+			want: []string{"Fortinet", "Cisco"},
+		},
+		{
+			name: "skips rows with a blank or whitespace-only oem",
+			json: `[{"product":"Firewall","oem":""},{"product":"Switch","oem":"   "},{"product":"AP","oem":"Aruba"}]`,
+			want: []string{"Aruba"},
+		},
+		{
+			name: "malformed JSON yields no names, not an error",
+			json: `not-json`,
+			want: nil,
+		},
+		{
+			name: "empty array yields no names",
+			json: `[]`,
+			want: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractOEMNames(tc.json)
+			if len(got) != len(tc.want) {
+				t.Fatalf("extractOEMNames(%q) = %v, want %v", tc.json, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("extractOEMNames(%q)[%d] = %q, want %q", tc.json, i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestFieldSuggestionEntries covers the map-building step: nil and blank
+// fields must be skipped so RecordFieldSuggestions never writes empty rows.
+func TestFieldSuggestionEntries(t *testing.T) {
+	products := `[{"product":"Firewall","oem":"Fortinet"}]`
+	blank := "   "
+
+	entries := fieldSuggestionEntries(
+		strPtr("Bharat Electronics Ltd"),
+		nil,          // department_name omitted entirely
+		&blank,       // location present but blank
+		strPtr("SBI"),
+		nil,
+		nil,
+		&products,
+	)
+
+	want := map[string][]string{
+		"organization_name": {"Bharat Electronics Ltd"},
+		"emd_bank_name":      {"SBI"},
+		"oem":                {"Fortinet"},
+	}
+	if len(entries) != len(want) {
+		t.Fatalf("fieldSuggestionEntries() = %+v, want %+v", entries, want)
+	}
+	for key, vals := range want {
+		got, ok := entries[key]
+		if !ok || len(got) != len(vals) || got[0] != vals[0] {
+			t.Fatalf("fieldSuggestionEntries()[%q] = %v, want %v", key, got, vals)
+		}
+	}
+	if _, present := entries["department_name"]; present {
+		t.Fatalf("expected nil department_name to be skipped, got entry: %v", entries["department_name"])
+	}
+	if _, present := entries["location"]; present {
+		t.Fatalf("expected blank location to be skipped, got entry: %v", entries["location"])
+	}
+}
+
+// TestUpdateBid_RecordsFieldSuggestions covers the write hook itself: a
+// successful UpdateBid must feed Field Memory with whatever free-text fields
+// were actually present on the request.
+func TestUpdateBid_RecordsFieldSuggestions(t *testing.T) {
+	bid := &domain.BidWorkspace{
+		ID:               "bid-1",
+		Title:            "Test Tender",
+		WorkflowStage:    domain.StageDiscovered,
+		CreationMode:     domain.CreationModeManual,
+		BidOwnerID:       "owner-1",
+		AccountManagerID: strPtr("am-1"),
+		EMDNotApplicable: true,
+		StageCompletions: []byte(`{}`),
+	}
+	repo := &fakeBidRepo{bid: bid}
+	svc := NewBidService(repo, &fakeAlertSvc{})
+
+	products := `[{"product":"Firewall","oem":"Fortinet"}]`
+	req := &domain.UpdateBidRequest{
+		OrganizationName:  strPtr("Bharat Electronics Ltd"),
+		Location:          strPtr("New Delhi"),
+		RequestedProducts: &products,
+	}
+	if err := svc.UpdateBid(context.Background(), "bid-1", req, "actor-1", nil); err != nil {
+		t.Fatalf("UpdateBid: %v", err)
+	}
+
+	if repo.lastFieldSuggestions == nil {
+		t.Fatalf("expected RecordFieldSuggestions to be called")
+	}
+	if got := repo.lastFieldSuggestions["organization_name"]; len(got) != 1 || got[0] != "Bharat Electronics Ltd" {
+		t.Fatalf("organization_name entries = %v", got)
+	}
+	if got := repo.lastFieldSuggestions["location"]; len(got) != 1 || got[0] != "New Delhi" {
+		t.Fatalf("location entries = %v", got)
+	}
+	if got := repo.lastFieldSuggestions["oem"]; len(got) != 1 || got[0] != "Fortinet" {
+		t.Fatalf("oem entries = %v", got)
+	}
+}
+
+// TestUpdateBid_NoFieldSuggestionsWhenNothingFreeTextChanges covers the
+// opposite path: an update touching none of the Field Memory fields (e.g.
+// only a stage transition) must not call RecordFieldSuggestions at all.
+func TestUpdateBid_NoFieldSuggestionsWhenNothingFreeTextChanges(t *testing.T) {
+	bid := &domain.BidWorkspace{
+		ID:               "bid-1",
+		Title:            "Test Tender",
+		WorkflowStage:    domain.StageDiscovered,
+		CreationMode:     domain.CreationModeManual,
+		BidOwnerID:       "owner-1",
+		AccountManagerID: strPtr("am-1"),
+		EMDNotApplicable: true,
+		StageCompletions: []byte(`{}`),
+	}
+	repo := &fakeBidRepo{bid: bid}
+	svc := NewBidService(repo, &fakeAlertSvc{})
+
+	req := &domain.UpdateBidRequest{Remarks: strPtr("internal note only")}
+	if err := svc.UpdateBid(context.Background(), "bid-1", req, "actor-1", nil); err != nil {
+		t.Fatalf("UpdateBid: %v", err)
+	}
+	if repo.lastFieldSuggestions != nil {
+		t.Fatalf("expected RecordFieldSuggestions not to be called, got: %v", repo.lastFieldSuggestions)
+	}
+}
+
+// ────────────────────────────────────────
+// Action Ledger
+// ────────────────────────────────────────
+
+// TestDiffBidFields is a pure unit test of the diffing logic every
+// TENDER_EDITED entry is built from: a field absent from the request must
+// never appear (PATCH semantics — nil means "not part of this update", not
+// "clear it"), and a field present but unchanged must not appear either, so
+// the resulting audit entry only ever lists what actually changed.
+func TestDiffBidFields(t *testing.T) {
+	bid := &domain.BidWorkspace{
+		Title:            "Old Title",
+		OrganizationName: strPtr("Old Org"),
+		EstimatedValue:   floatPtr(100000),
+		Quantity:         intPtr(5),
+		BidOwnerID:       "owner-1",
+	}
+
+	t.Run("changed fields are captured with old and new values", func(t *testing.T) {
+		req := &domain.UpdateBidRequest{
+			Title:            strPtr("New Title"),
+			OrganizationName: strPtr("New Org"),
+			EstimatedValue:   floatPtr(150000),
+		}
+		diffs := diffBidFields(bid, req)
+		want := map[string][2]string{
+			"title":             {"Old Title", "New Title"},
+			"organization_name": {"Old Org", "New Org"},
+			"estimated_value":   {"100000", "150000"},
+		}
+		if len(diffs) != len(want) {
+			t.Fatalf("diffBidFields() = %+v, want %d entries", diffs, len(want))
+		}
+		for _, d := range diffs {
+			exp, ok := want[d.Field]
+			if !ok || d.Old != exp[0] || d.New != exp[1] {
+				t.Fatalf("unexpected diff entry %+v", d)
+			}
+		}
+	})
+
+	t.Run("a field absent from the request produces no diff", func(t *testing.T) {
+		req := &domain.UpdateBidRequest{Remarks: strPtr("unrelated note")}
+		diffs := diffBidFields(bid, req)
+		for _, d := range diffs {
+			if d.Field == "title" || d.Field == "organization_name" || d.Field == "estimated_value" {
+				t.Fatalf("expected untouched field %q to be absent, got %+v", d.Field, diffs)
+			}
+		}
+	})
+
+	t.Run("a field present but unchanged produces no diff", func(t *testing.T) {
+		req := &domain.UpdateBidRequest{
+			Title:    strPtr("Old Title"), // identical to bid.Title
+			Quantity: intPtr(5),           // identical to bid.Quantity
+		}
+		diffs := diffBidFields(bid, req)
+		if len(diffs) != 0 {
+			t.Fatalf("expected no diffs for unchanged values, got %+v", diffs)
+		}
+	})
+}
+
+func newLedgerTestBid() *domain.BidWorkspace {
+	return &domain.BidWorkspace{
+		ID:               "bid-1",
+		Title:            "Test Tender",
+		WorkflowStage:    domain.StageDiscovered,
+		CreationMode:     domain.CreationModeManual,
+		BidOwnerID:       "owner-1",
+		AccountManagerID: strPtr("am-1"),
+		EMDNotApplicable: true,
+		StageCompletions: []byte(`{}`),
+	}
+}
+
+func lastEventType(repo *fakeBidRepo) string {
+	if len(repo.addedHistory) == 0 {
+		return ""
+	}
+	h := repo.addedHistory[len(repo.addedHistory)-1]
+	if h.EventType == nil {
+		return ""
+	}
+	return *h.EventType
+}
+
+// TestUpdateBid_LogsFieldEdits covers the write hook that closes the "editing
+// a tender leaves no trace" gap: a save that changes a curated field must
+// write one TENDER_EDITED entry carrying the diff, with the tender's title
+// denormalized onto it (so it survives even if the tender is later deleted).
+func TestUpdateBid_LogsFieldEdits(t *testing.T) {
+	repo := &fakeBidRepo{bid: newLedgerTestBid()}
+	svc := NewBidService(repo, &fakeAlertSvc{})
+
+	req := &domain.UpdateBidRequest{Location: strPtr("New Delhi")}
+	if err := svc.UpdateBid(context.Background(), "bid-1", req, "actor-1", nil); err != nil {
+		t.Fatalf("UpdateBid: %v", err)
+	}
+
+	if lastEventType(repo) != "TENDER_EDITED" {
+		t.Fatalf("expected a TENDER_EDITED entry, got history: %+v", repo.addedHistory)
+	}
+	last := repo.addedHistory[len(repo.addedHistory)-1]
+	if last.BidTitle != "Test Tender" {
+		t.Fatalf("expected bid_title to be denormalized onto the entry, got %q", last.BidTitle)
+	}
+	if last.TransitionedBy != "actor-1" {
+		t.Fatalf("expected actor-1 as the entry's actor, got %q", last.TransitionedBy)
+	}
+	var diffs []domain.FieldDiff
+	if err := json.Unmarshal(last.Details, &diffs); err != nil {
+		t.Fatalf("details did not unmarshal as []FieldDiff: %v", err)
+	}
+	if len(diffs) != 1 || diffs[0].Field != "location" || diffs[0].New != "New Delhi" {
+		t.Fatalf("unexpected diff payload: %+v", diffs)
+	}
+}
+
+// TestArchiveRestoreDeleteBid_LogActions covers the three destructive
+// actions that were previously completely silent — none of them even
+// accepted an actor id before this change.
+func TestArchiveRestoreDeleteBid_LogActions(t *testing.T) {
+	t.Run("ArchiveBid logs TENDER_ARCHIVED", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newLedgerTestBid()}
+		svc := NewBidService(repo, &fakeAlertSvc{})
+		if err := svc.ArchiveBid(context.Background(), "bid-1", "actor-1"); err != nil {
+			t.Fatalf("ArchiveBid: %v", err)
+		}
+		if lastEventType(repo) != "TENDER_ARCHIVED" {
+			t.Fatalf("expected TENDER_ARCHIVED, got history: %+v", repo.addedHistory)
+		}
+	})
+
+	t.Run("RestoreBid logs TENDER_RESTORED", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newLedgerTestBid()}
+		svc := NewBidService(repo, &fakeAlertSvc{})
+		if err := svc.RestoreBid(context.Background(), "bid-1", "actor-1"); err != nil {
+			t.Fatalf("RestoreBid: %v", err)
+		}
+		if lastEventType(repo) != "TENDER_RESTORED" {
+			t.Fatalf("expected TENDER_RESTORED, got history: %+v", repo.addedHistory)
+		}
+	})
+
+	t.Run("PermanentDeleteBid logs TENDER_DELETED before deleting", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newLedgerTestBid()}
+		svc := NewBidService(repo, &fakeAlertSvc{})
+		if err := svc.PermanentDeleteBid(context.Background(), "bid-1", "actor-1"); err != nil {
+			t.Fatalf("PermanentDeleteBid: %v", err)
+		}
+		if lastEventType(repo) != "TENDER_DELETED" {
+			t.Fatalf("expected TENDER_DELETED, got history: %+v", repo.addedHistory)
+		}
+		last := repo.addedHistory[len(repo.addedHistory)-1]
+		if last.BidTitle != "Test Tender" {
+			t.Fatalf("expected bid_title captured before delete, got %q", last.BidTitle)
+		}
+	})
+}
+
+// TestRecordOutcome_LogsAction covers the outcome-recording path.
+func TestRecordOutcome_LogsAction(t *testing.T) {
+	repo := &fakeBidRepo{bid: newLedgerTestBid()}
+	svc := NewBidService(repo, &fakeAlertSvc{})
+
+	req := &domain.RecordOutcomeRequest{BidOutcome: "WON"}
+	if err := svc.RecordOutcome(context.Background(), "bid-1", req, "actor-1"); err != nil {
+		t.Fatalf("RecordOutcome: %v", err)
+	}
+	if lastEventType(repo) != "OUTCOME_RECORDED" {
+		t.Fatalf("expected OUTCOME_RECORDED, got history: %+v", repo.addedHistory)
+	}
+}
+
+// TestAddRemoveMember_LogActions covers team membership changes.
+func TestAddRemoveMember_LogActions(t *testing.T) {
+	repo := &fakeBidRepo{bid: newLedgerTestBid()}
+	svc := NewBidService(repo, &fakeAlertSvc{})
+
+	if err := svc.AddMember(context.Background(), "bid-1", &domain.AddMemberRequest{UserID: "member-1", Role: "MEMBER"}, "actor-1"); err != nil {
+		t.Fatalf("AddMember: %v", err)
+	}
+	if lastEventType(repo) != "MEMBER_ADDED" {
+		t.Fatalf("expected MEMBER_ADDED, got history: %+v", repo.addedHistory)
+	}
+
+	if err := svc.RemoveMember(context.Background(), "bid-1", "member-1", "actor-1"); err != nil {
+		t.Fatalf("RemoveMember: %v", err)
+	}
+	if lastEventType(repo) != "MEMBER_REMOVED" {
+		t.Fatalf("expected MEMBER_REMOVED, got history: %+v", repo.addedHistory)
+	}
+}
+
+func floatPtr(f float64) *float64 { return &f }
+func intPtr(i int) *int           { return &i }

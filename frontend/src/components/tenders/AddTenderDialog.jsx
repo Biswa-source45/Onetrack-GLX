@@ -11,6 +11,8 @@ import { Input }    from '@/components/ui/input'
 import { Label }    from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { FieldMemoryInput } from '@/components/ui/field-memory-input'
+import { useBidStore } from '../../store/useBidStore'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -282,6 +284,10 @@ function ManualForm({ onClose, onCreated, onBack }) {
 
       const res = await createBid(payload)
       if (res.ok) {
+        const learnFieldValue = useBidStore.getState().learnFieldValue
+        learnFieldValue('organization_name', form.organization_name)
+        learnFieldValue('department_name', form.department_name)
+
         onCreated(res.data)
       } else {
         toast.error(res.error?.message ?? 'Failed to create tender')
@@ -399,11 +405,11 @@ function ManualForm({ onClose, onCreated, onBack }) {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Organization Name">
-              <Input value={form.organization_name} onChange={(e) => set('organization_name', e.target.value)}
+              <FieldMemoryInput fieldKey="organization_name" value={form.organization_name} onChange={(v) => set('organization_name', v)}
                 placeholder="e.g. National Informatics Centre" className={inputCls()} />
             </Field>
             <Field label="Department / Ministry">
-              <Input value={form.department_name} onChange={(e) => set('department_name', e.target.value)}
+              <FieldMemoryInput fieldKey="department_name" value={form.department_name} onChange={(v) => set('department_name', v)}
                 placeholder="e.g. MeitY" className={inputCls()} />
             </Field>
           </div>

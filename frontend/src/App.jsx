@@ -16,6 +16,8 @@ import { UserManagement } from "./components/admin/UserManagement"
 import { BulkImportPage } from "./components/admin/BulkImportPage"
 import { AlertsPage } from "./components/alerts/AlertsPage"
 import { AnalyticsPage } from "./components/analytics/AnalyticsPage"
+import { FeedbackPage } from "./components/feedback/FeedbackPage"
+import { TicketsPage } from "./components/feedback/TicketsPage"
 
 // Auth Guard to protect routes
 function AuthGuard() {
@@ -40,6 +42,14 @@ function PermissionGuard({ permission, fallback = "/dashboard" }) {
 function RoleGuard({ role, fallback = "/dashboard" }) {
   const { hasRole } = usePermissions()
   return hasRole(role) ? <Outlet /> : <Navigate to={fallback} replace />
+}
+
+// Inverse of RoleGuard — blocks one role from a route instead of requiring
+// one. Feedback (submit) uses this: Super Admin is who it notifies, not
+// who submits, so they're routed away even if they type the URL directly.
+function ExcludeRoleGuard({ role, fallback = "/dashboard" }) {
+  const { hasRole } = usePermissions()
+  return !hasRole(role) ? <Outlet /> : <Navigate to={fallback} replace />
 }
 
 export default function App() {
@@ -83,15 +93,31 @@ export default function App() {
                 <Route path="tenders" element={<TendersPage initialScope="all" />} />
                 <Route path="tenders/owned" element={<TendersPage initialScope="owned" />} />
                 <Route path="tenders/master" element={<MasterSheetPage />} />
+                <Route path="tenders/master/:drillId" element={<MasterSheetPage />} />
                 <Route path="tenders/:bidId" element={<TenderDetailPage />} />
                 <Route path="alerts" element={<AlertsPage />} />
               </Route>
 
-              {/* Analytics sub-routes */}
-              <Route element={<PermissionGuard permission="bid.view" />}>
-                <Route path="analytics" element={<Navigate to="/dashboard/analytics/tenders" replace />} />
-                <Route path="analytics/tenders" element={<AnalyticsPage defaultTab="tender-analytics" />} />
-                <Route path="analytics/performance-matrix" element={<AnalyticsPage defaultTab="owner-matrix" />} />
+              {/* Feedback Loop — Feedback is open to every authenticated
+                  user except Super Admin (who only ever receives feedback,
+                  never submits it); Tickets triage is Super Admin only,
+                  same RoleGuard Bulk Import already uses. */}
+              <Route element={<ExcludeRoleGuard role="SUPER_ADMIN" />}>
+                <Route path="feedback" element={<FeedbackPage />} />
+              </Route>
+              <Route element={<RoleGuard role="SUPER_ADMIN" />}>
+                <Route path="tickets" element={<TicketsPage />} />
+              </Route>
+
+              {/* Analytics sub-routes — Finance gets its own EMD-focused
+                  Overview instead, so they're routed away even if they type
+                  the URL directly, same as Feedback is for Super Admin. */}
+              <Route element={<ExcludeRoleGuard role="FINANCE" />}>
+                <Route element={<PermissionGuard permission="bid.view" />}>
+                  <Route path="analytics" element={<Navigate to="/dashboard/analytics/tenders" replace />} />
+                  <Route path="analytics/tenders" element={<AnalyticsPage defaultTab="tender-analytics" />} />
+                  <Route path="analytics/performance-matrix" element={<AnalyticsPage defaultTab="owner-matrix" />} />
+                </Route>
               </Route>
 
               {/* Admin sub-routes */}

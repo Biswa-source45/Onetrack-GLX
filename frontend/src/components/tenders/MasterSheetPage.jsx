@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Download, Loader2, RefreshCw, LayoutList } from 'lucide-react'
+import { useNavigate, useParams, Link } from 'react-router-dom'
+import { Download, Loader2, RefreshCw, LayoutList, ArrowLeft, SearchX } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,7 @@ import {
 } from '../../lib/tenderFormat'
 import { StageBadge } from '../../lib/tenderDisplay'
 import { statusStyle, STAGE_LABELS } from '../../services/bids'
+import { readMasterSheetDrill } from '../../lib/masterSheetDrill'
 
 const PAGE_SIZE = 100
 
@@ -128,6 +129,7 @@ function StatusPill({ status }) {
 export function MasterSheetPage() {
   const navigate = useNavigate()
   const { hasPermission } = usePermissions()
+  const { drillId } = useParams()
 
   const [bids, setBids] = useState([])
   const [meta, setMeta] = useState({})
@@ -138,6 +140,15 @@ export function MasterSheetPage() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState(null)
+
+  // Drill-through mode (route has :drillId) — a specific, small set of
+  // tenders someone clicked through to from a KPI card / chart segment /
+  // dialog. sessionStorage only carries the tender IDs, never full objects,
+  // so this always fetches fresh, live data instead of a stale snapshot.
+  const [drillInfo, setDrillInfo] = useState(null)
+  const [drillBids, setDrillBids] = useState([])
+  const [drillLoading, setDrillLoading] = useState(true)
+  const [drillNotFound, setDrillNotFound] = useState(false)
 
   const sentinelRef = useRef(null)
   const requestSeq = useRef(0)
@@ -165,7 +176,9 @@ export function MasterSheetPage() {
   }, [])
 
   // Initial load, and reload from scratch whenever the pill filter changes.
+  // Skipped entirely in drill mode — that has its own effect below.
   useEffect(() => {
+    if (drillId) return
     let cancelled = false
     setLoadingFirst(true)
     setBids([])
@@ -176,12 +189,13 @@ export function MasterSheetPage() {
       if (!cancelled) setLoadingFirst(false)
     })()
     return () => { cancelled = true }
-  }, [pillFilter, loadPage])
+  }, [drillId, pillFilter, loadPage])
 
   // Infinite scroll: observe a sentinel just past the last row: fetch the next
   // page as soon as it enters the viewport, so the table just keeps flowing.
+  // No-op in drill mode — the drilled set is already fully loaded in one shot.
   useEffect(() => {
-    if (!sentinelRef.current) return
+    if (drillId || !sentinelRef.current) return
     const el = sentinelRef.current
     const obs = new IntersectionObserver(
       (entries) => {
@@ -195,17 +209,53 @@ export function MasterSheetPage() {
     )
     obs.observe(el)
     return () => obs.disconnect()
-  }, [page, totalPages, loadingFirst, loadingMore, pillFilter, loadPage])
+  }, [drillId, page, totalPages, loadingFirst, loadingMore, pillFilter, loadPage])
+
+  // Drill mode: look up the sessionStorage entry the drill link left behind,
+  // then fetch every bid fresh and keep only the ones in that ID set — never
+  // trust a stale snapshot from the moment the user clicked.
+  useEffect(() => {
+    if (!drillId) return
+    let cancelled = false
+    setDrillLoading(true)
+    setDrillNotFound(false)
+    const info = readMasterSheetDrill(drillId)
+    if (!info) {
+      setDrillNotFound(true)
+      setDrillLoading(false)
+      return
+    }
+    setDrillInfo(info);
+    (async () => {
+      const res = await listAllBids({})
+      if (cancelled) return
+      if (!res.ok) {
+        setError(res.error?.message || 'Failed to load tenders')
+        setDrillLoading(false)
+        return
+      }
+      const all = Array.isArray(res.data) ? res.data : res.data?.bids || []
+      const idSet = new Set(info.ids)
+      setDrillBids(all.filter(b => idSet.has(b.id)))
+      setDrillLoading(false)
+    })()
+    return () => { cancelled = true }
+  }, [drillId])
 
   const allLoaded = page >= totalPages && !loadingFirst
 
   async function handleExport() {
     setExporting(true)
-    const toastId = toast.loading(pillFilter ? `Exporting ${PILLS.find(p => p.key === pillFilter)?.label} tenders…` : 'Exporting all tenders…')
+    const toastId = toast.loading(
+      drillId ? `Exporting ${drillInfo?.title || 'filtered'} tenders…` :
+      pillFilter ? `Exporting ${PILLS.find(p => p.key === pillFilter)?.label} tenders…` : 'Exporting all tenders…'
+    )
     try {
-      const res = await listAllBids(pillFilter ? { bid_status: pillFilter } : {})
-      if (!res.ok) throw new Error(res.error?.message || 'Export failed')
-      const rows = Array.isArray(res.data) ? res.data : res.data?.bids || []
+      const rows = drillId ? drillBids : await (async () => {
+        const res = await listAllBids(pillFilter ? { bid_status: pillFilter } : {})
+        if (!res.ok) throw new Error(res.error?.message || 'Export failed')
+        return Array.isArray(res.data) ? res.data : res.data?.bids || []
+      })()
       if (rows.length === 0) {
         toast.info('Nothing to export for this filter', { id: toastId })
         return
@@ -220,7 +270,7 @@ export function MasterSheetPage() {
       const a = document.createElement('a')
       const stamp = new Date().toISOString().slice(0, 10)
       a.href = url
-      a.download = `master_sheet_${pillFilter || 'all'}_${stamp}.csv`
+      a.download = `master_sheet_${drillId ? (drillInfo?.title || 'filtered').replace(/[^a-z0-9]+/gi, '_').toLowerCase() : (pillFilter || 'all')}_${stamp}.csv`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -233,22 +283,52 @@ export function MasterSheetPage() {
     }
   }
 
+  if (drillId && drillNotFound) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3 text-center">
+        <SearchX className="size-10 text-muted-foreground/50" />
+        <div>
+          <p className="font-heading text-lg font-semibold text-foreground">This drill-down link has expired</p>
+          <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+            The filtered view it pointed to only lives for this browser tab. Reopen it from the Dashboard or Analytics page.
+          </p>
+        </div>
+        <Link to="/dashboard/tenders/master">
+          <Button variant="outline" size="sm" className="gap-1.5 mt-2">
+            <LayoutList className="size-3.5" />
+            Open the full Master Sheet instead
+          </Button>
+        </Link>
+      </div>
+    )
+  }
+
+  const rows = drillId ? drillBids : bids
+  const rowsLoading = drillId ? drillLoading : loadingFirst
+
   return (
     <div className="space-y-4">
       {/* ── Header ───────────────────────────────────────────────────────── */}
       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <div>
+          {drillId && (
+            <Link to="/dashboard/tenders/master" className="inline-flex items-center gap-1 text-xs text-primary hover:underline mb-1">
+              <ArrowLeft className="size-3" /> Back to full sheet
+            </Link>
+          )}
           <h2 className="font-heading text-xl font-semibold text-foreground flex items-center gap-2">
             <LayoutList className="size-5 text-primary" />
-            Master Sheet
+            {drillId ? (drillInfo?.title || 'Filtered View') : 'Master Sheet'}
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Every tender, one continuous sheet — scroll for more, no pages.
-            {meta.total != null && ` ${bids.length} of ${meta.total} loaded.`}
+            {drillId
+              ? `${drillInfo?.subtitle || 'Filtered set of tenders'} · ${drillLoading ? 'loading…' : `${drillBids.length} tender${drillBids.length !== 1 ? 's' : ''}`}`
+              : <>Every tender, one continuous sheet — scroll for more, no pages.
+                 {meta.total != null && ` ${bids.length} of ${meta.total} loaded.`}</>}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting || (drillId && drillBids.length === 0)} className="gap-1.5">
             {exporting ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
             Export as Excel
           </Button>
@@ -256,24 +336,26 @@ export function MasterSheetPage() {
       </div>
 
       {/* ── Filter pills ─────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {PILLS.map((p) => (
-          <button
-            key={p.key || 'total'}
-            onClick={() => setPillFilter(p.key)}
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
-              pillFilter === p.key
-                ? 'bg-primary text-primary-foreground border-primary'
-                : 'bg-card text-foreground border-border hover:border-primary/40'
-            }`}
-          >
-            {p.label}
-            <span className={`ml-1.5 ${pillFilter === p.key ? 'opacity-80' : 'text-muted-foreground'}`}>
-              {meta[p.metaKey] ?? '—'}
-            </span>
-          </button>
-        ))}
-      </div>
+      {!drillId && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {PILLS.map((p) => (
+            <button
+              key={p.key || 'total'}
+              onClick={() => setPillFilter(p.key)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                pillFilter === p.key
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'bg-card text-foreground border-border hover:border-primary/40'
+              }`}
+            >
+              {p.label}
+              <span className={`ml-1.5 ${pillFilter === p.key ? 'opacity-80' : 'text-muted-foreground'}`}>
+                {meta[p.metaKey] ?? '—'}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive flex items-center justify-between">
@@ -302,7 +384,7 @@ export function MasterSheetPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {bids.map((bid) => (
+            {rows.map((bid) => (
               <tr
                 key={bid.id}
                 onClick={() => hasPermission('bid.view') && navigate(`/dashboard/tenders/${bid.id}`)}
@@ -330,36 +412,38 @@ export function MasterSheetPage() {
               </tr>
             ))}
 
-            {(loadingFirst || loadingMore) && (
+            {(rowsLoading || loadingMore) && (
               <tr>
                 <td colSpan={COLUMNS.length} className="p-4 text-center text-muted-foreground">
                   <Loader2 className="size-4 animate-spin inline mr-2" />
-                  {loadingFirst ? 'Loading tenders…' : 'Loading more…'}
+                  {rowsLoading ? 'Loading tenders…' : 'Loading more…'}
                 </td>
               </tr>
             )}
 
-            {!loadingFirst && bids.length === 0 && !error && (
+            {!rowsLoading && rows.length === 0 && !error && (
               <tr>
                 <td colSpan={COLUMNS.length} className="p-8 text-center text-muted-foreground">
-                  No tenders match this filter.
+                  {drillId ? 'No tenders matched this drill-down set.' : 'No tenders match this filter.'}
                 </td>
               </tr>
             )}
 
-            {/* Scroll sentinel: triggers the next page fetch when it scrolls into view. */}
-            <tr>
-              <td colSpan={COLUMNS.length} className="p-0">
-                <div ref={sentinelRef} className="h-px" />
-              </td>
-            </tr>
+            {/* Scroll sentinel: triggers the next page fetch when it scrolls into view. Not used in drill mode. */}
+            {!drillId && (
+              <tr>
+                <td colSpan={COLUMNS.length} className="p-0">
+                  <div ref={sentinelRef} className="h-px" />
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
 
-      {allLoaded && bids.length > 0 && (
+      {((drillId && !drillLoading) || (!drillId && allLoaded)) && rows.length > 0 && (
         <p className="text-center text-xs text-muted-foreground py-2">
-          — end of list — {bids.length} tender{bids.length !== 1 ? 's' : ''}
+          — end of list — {rows.length} tender{rows.length !== 1 ? 's' : ''}
         </p>
       )}
     </div>

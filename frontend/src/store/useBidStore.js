@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { listBids } from '../services/bids'
+import { listBids, listFieldSuggestions } from '../services/bids'
 import { listUsers } from '../services/users'
 import { tokenStorage } from '../services/auth'
 
@@ -55,6 +55,12 @@ export const useBidStore = create((set, get) => ({
   // Cache users in store to prevent multiple separate API requests
   users: [],
   usersLoading: false,
+
+  // Field Memory — one suggestion list per field key ("organization_name",
+  // "oem", ...), fetched once and cached; components filter it client-side
+  // on every keystroke instead of hitting the network per character typed.
+  fieldSuggestions: {},
+  fieldSuggestionsLoading: {},
 
   setScope: (scope, ownerId = '') => {
     const finalOwnerId = scope === 'owned' ? (ownerId || tokenStorage.getUser()?.id || '') : ''
@@ -171,5 +177,38 @@ export const useBidStore = create((set, get) => ({
     } finally {
       set({ usersLoading: false })
     }
-  }
+  },
+
+  loadFieldSuggestions: async (fieldKey, force = false) => {
+    if (!fieldKey) return
+    const { fieldSuggestions, fieldSuggestionsLoading } = get()
+    if (fieldSuggestionsLoading[fieldKey]) return
+    if (fieldSuggestions[fieldKey] && !force) return // already loaded
+
+    set({ fieldSuggestionsLoading: { ...get().fieldSuggestionsLoading, [fieldKey]: true } })
+    try {
+      const res = await listFieldSuggestions(fieldKey)
+      const arr = res.ok && Array.isArray(res.data) ? res.data : []
+      set({ fieldSuggestions: { ...get().fieldSuggestions, [fieldKey]: arr } })
+    } catch (err) {
+      console.error(`Failed to load field suggestions for "${fieldKey}"`, err)
+    } finally {
+      set({ fieldSuggestionsLoading: { ...get().fieldSuggestionsLoading, [fieldKey]: false } })
+    }
+  },
+
+  // Optimistically add a freshly-typed value to a field's cached suggestion
+  // list so it appears on the very next tender's form without waiting for a
+  // refetch — the same value the backend is in the middle of recording.
+  learnFieldValue: (fieldKey, rawValue) => {
+    const value = (rawValue || '').trim()
+    if (!fieldKey || value.length < 2) return
+    const { fieldSuggestions } = get()
+    const list = fieldSuggestions[fieldKey] || []
+    const existing = list.find((s) => s.value.toLowerCase() === value.toLowerCase())
+    const next = existing
+      ? list.map((s) => (s === existing ? { ...s, value, usage_count: s.usage_count + 1 } : s))
+      : [...list, { value, usage_count: 1 }]
+    set({ fieldSuggestions: { ...fieldSuggestions, [fieldKey]: next } })
+  },
 }))

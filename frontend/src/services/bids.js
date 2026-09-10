@@ -75,9 +75,13 @@ export async function transitionBidStage(id, target_stage, reason = '') {
   return { ok: res.ok, status: res.status, ...data }
 }
 
-// ── Get Stage History ────────────────────────────────────────────────────────
-export async function getBidStageHistory(id) {
-  const res = await apiFetch(`${BASE}/bids/${id}/stage-history`)
+// ── Get Stage History (paginated — newest first) ─────────────────────────────
+// cursor is opaque, taken from a previous page's meta.next_cursor; omit for
+// the first page.
+export async function getBidStageHistory(id, { limit = 30, cursor = '' } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (cursor) params.set('cursor', cursor)
+  const res = await apiFetch(`${BASE}/bids/${id}/stage-history?${params.toString()}`)
   const data = await res.json()
   return { ok: res.ok, status: res.status, ...data }
 }
@@ -94,9 +98,15 @@ export async function addBidMicroEvent(id, payload) {
   return { ok: res.ok, status: res.status, ...data }
 }
 
-// ── Get Global Audit History (Database-backed) ─────────────────────────────
-export async function getGlobalAuditHistory(limit = 100) {
-  const res = await apiFetch(`${BASE}/bids/audit-history?limit=${limit}`)
+// ── Get Global / Per-Person Audit History (paginated — newest first) ────────
+// Pass userId to scope the feed to one person's actions (the Activity Log
+// dialog) — server-gated to Super Admin / Admin / Manager; omit for the
+// global "Database Audit Trail" panel.
+export async function getGlobalAuditHistory({ limit = 30, cursor = '', userId = '' } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (cursor) params.set('cursor', cursor)
+  if (userId) params.set('user_id', userId)
+  const res = await apiFetch(`${BASE}/bids/audit-history?${params.toString()}`)
   const data = await res.json()
   return { ok: res.ok, status: res.status, ...data }
 }
@@ -413,6 +423,15 @@ export async function bulkImportTenders(file, { dryRun = true, format = 'gbx' } 
     method: 'POST',
     body: form,
   })
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, ...data }
+}
+
+// ── Field Memory — autocomplete suggestions ─────────────────────────────────
+// GET /api/v1/bids/field-suggestions?field=organization_name
+// Returns [{value, usage_count}], ranked by usage then recency.
+export async function listFieldSuggestions(field) {
+  const res = await apiFetch(`${BASE}/bids/field-suggestions?field=${encodeURIComponent(field)}`)
   const data = await res.json()
   return { ok: res.ok, status: res.status, ...data }
 }

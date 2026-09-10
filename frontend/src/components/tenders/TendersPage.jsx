@@ -28,6 +28,7 @@ import {
 
 import {
   listBids, getBid, updateBid, transitionBidStage, restoreBid, permanentDeleteBid, getGlobalAuditHistory, getTenderPerformanceMatrix, STAGE_LABELS, statusStyle, STAGE_TRANSITIONS, listAllBids } from '../../services/bids'
+import { dateGroupLabel } from '../../lib/dateGroups'
 import { ImportedPill } from './ImportedPill'
 import { usePermissions } from '../../hooks/usePermissions'
 import { useBidStore } from '../../store/useBidStore'
@@ -284,13 +285,23 @@ export function TendersPage({ initialScope = 'all' }) {
   const [showAuditPanel, setShowAuditPanel] = useState(false)
   const [sheetAuditLog, setSheetAuditLog] = useState([])
   const [loadingAudit, setLoadingAudit] = useState(false)
+  // Server-paginated, 30/page — every tender edit writes here now too, not
+  // just stage transitions, so this panel can no longer assume "100 is
+  // basically everything." loadingMoreAudit/hasMoreAudit/auditCursor drive
+  // the scroll-triggered "load more" sentinel in the panel below.
+  const [loadingMoreAudit, setLoadingMoreAudit] = useState(false)
+  const [hasMoreAudit, setHasMoreAudit] = useState(false)
+  const [auditCursor, setAuditCursor] = useState('')
+  const auditSentinelRef = useRef(null)
 
   const fetchAuditLogs = useCallback(async () => {
     setLoadingAudit(true)
     try {
-      const res = await getGlobalAuditHistory(100)
+      const res = await getGlobalAuditHistory({ limit: 30 })
       if (res.ok && Array.isArray(res.data)) {
         setSheetAuditLog(res.data)
+        setAuditCursor(res.meta?.next_cursor || '')
+        setHasMoreAudit(!!res.meta?.has_more)
       }
     } catch (err) {
       console.error('Failed to load audit history:', err)
@@ -299,11 +310,42 @@ export function TendersPage({ initialScope = 'all' }) {
     }
   }, [])
 
+  const loadMoreAuditLogs = useCallback(async () => {
+    if (loadingMoreAudit || !hasMoreAudit) return
+    setLoadingMoreAudit(true)
+    try {
+      const res = await getGlobalAuditHistory({ limit: 30, cursor: auditCursor })
+      if (res.ok && Array.isArray(res.data)) {
+        setSheetAuditLog((prev) => {
+          const seen = new Set(prev.map((e) => e.id))
+          return [...prev, ...res.data.filter((e) => !seen.has(e.id))]
+        })
+        setAuditCursor(res.meta?.next_cursor || '')
+        setHasMoreAudit(!!res.meta?.has_more)
+      }
+    } catch (err) {
+      console.error('Failed to load more audit history:', err)
+    } finally {
+      setLoadingMoreAudit(false)
+    }
+  }, [auditCursor, hasMoreAudit, loadingMoreAudit])
+
   useEffect(() => {
     if (showAuditPanel) {
       fetchAuditLogs()
     }
   }, [showAuditPanel, fetchAuditLogs])
+
+  useEffect(() => {
+    const el = auditSentinelRef.current
+    if (!el || !showAuditPanel || !hasMoreAudit) return
+    const observer = new IntersectionObserver(
+      (entries) => { if (entries[0].isIntersecting) loadMoreAuditLogs() },
+      { root: el.closest('.overflow-y-auto'), rootMargin: '150px' }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [showAuditPanel, hasMoreAudit, loadMoreAuditLogs])
 
   const toggleSheetEditable = () => {
     const nextState = !sheetEditable
@@ -1947,44 +1989,62 @@ export function TendersPage({ initialScope = 'all' }) {
                           <History className="size-8 mx-auto mb-2 text-indigo-200" />
                           No system logs recorded yet.<br />Edit tender fields to create audit entries.
                         </div>
-                      ) : sheetAuditLog.map(entry => {
+                      ) : sheetAuditLog.map((entry, i) => {
                         const user = entry.transitioned_by || {}
                         const userName = user.full_name || user.username || 'System'
                         const userRole = user.role || 'USER'
                         const dateStr = entry.created_at ? new Date(entry.created_at) : new Date()
+                        const dayLabel = entry.created_at ? dateGroupLabel(dateStr) : null
+                        const prevEntry = sheetAuditLog[i - 1]
+                        const isNewDay = dayLabel && (!prevEntry?.created_at || dateGroupLabel(new Date(prevEntry.created_at)) !== dayLabel)
 
                         return (
-                          <div key={entry.id} className="px-3.5 py-2.5 text-[11px] space-y-1.5 hover:bg-indigo-100/50 dark:hover:bg-indigo-900/20 transition-colors">
-                            <div className="flex items-center justify-between">
-                              <span className="font-semibold text-indigo-900 dark:text-indigo-300 truncate max-w-[170px]" title={entry.bid_title}>
-                                {entry.bid_title}
-                              </span>
-                              <span className="text-muted-foreground text-[10px] shrink-0 ml-1">
-                                {dateStr.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
-                              </span>
-                            </div>
-
-                            <div className="text-[11px] font-medium text-foreground bg-background/90 border border-indigo-100 dark:border-indigo-900/50 rounded-lg p-2 leading-snug shadow-2xs">
-                              {entry.transition_reason || (
-                                <span className="text-indigo-600 dark:text-indigo-400 font-semibold">
-                                  Stage: {entry.from_stage ? `${entry.from_stage} → ` : ''}{entry.to_stage}
+                          <div key={entry.id}>
+                            {isNewDay && (
+                              <div className="sticky top-0 z-10 flex justify-center py-1.5 bg-indigo-50/95 dark:bg-indigo-950/80 backdrop-blur-sm">
+                                <span className="text-[9px] font-semibold text-indigo-700 dark:text-indigo-300 bg-white dark:bg-indigo-900/60 px-2 py-0.5 rounded-full border border-indigo-200 dark:border-indigo-800">
+                                  {dayLabel}
                                 </span>
-                              )}
-                            </div>
+                              </div>
+                            )}
+                            <div className="px-3.5 py-2.5 text-[11px] space-y-1.5 hover:bg-indigo-100/50 dark:hover:bg-indigo-900/20 transition-colors">
+                              <div className="flex items-center justify-between">
+                                <span className="font-semibold text-indigo-900 dark:text-indigo-300 truncate max-w-[170px]" title={entry.bid_title}>
+                                  {entry.bid_title}
+                                </span>
+                                <span className="text-muted-foreground text-[10px] shrink-0 ml-1">
+                                  {dateStr.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                </span>
+                              </div>
 
-                            <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-0.5">
-                              <div className="flex items-center gap-1">
+                              <div className="text-[11px] font-medium text-foreground bg-background/90 border border-indigo-100 dark:border-indigo-900/50 rounded-lg p-2 leading-snug shadow-2xs">
+                                {entry.transition_reason || (
+                                  <span className="text-indigo-600 dark:text-indigo-400 font-semibold">
+                                    Stage: {entry.from_stage ? `${entry.from_stage} → ` : ''}{entry.to_stage}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-1 text-[10px] text-muted-foreground pt-0.5">
                                 <span>By</span>
                                 <span className="font-semibold text-foreground">{userName}</span>
                                 <span className="text-[9px] uppercase font-mono bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 rounded px-1.5 py-0.2 font-semibold">
                                   {userRole}
                                 </span>
                               </div>
-                              <span>{dateStr.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}</span>
                             </div>
                           </div>
                         )
                       })}
+                      {hasMoreAudit && (
+                        <div ref={auditSentinelRef} className="flex items-center justify-center py-3">
+                          {loadingMoreAudit && (
+                            <span className="flex items-center gap-1.5 text-[10px] text-indigo-600 dark:text-indigo-400">
+                              <Loader2 className="size-3 animate-spin" /> Loading more…
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 )}

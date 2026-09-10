@@ -28,6 +28,12 @@ type AlertRepository interface {
 
 type AlertService interface {
 	CreateAlert(ctx context.Context, alert *Alert) error
+	// SendNotificationEmail dispatches only the email side of a notification
+	// — same recipient resolution and HTML template CreateAlert already
+	// uses, but never writes an in-app alert row. For notifications that
+	// have their own dedicated in-app surface (Feedback Loop's Tickets
+	// badge, say) so they don't also clutter the general Alerts inbox.
+	SendNotificationEmail(ctx context.Context, alert *Alert) error
 	GetUserAlerts(ctx context.Context, userID string, userRole string) ([]Alert, error)
 	MarkAsRead(ctx context.Context, alertID string, userID string) error
 	MarkAllAsRead(ctx context.Context, userID string, userRole string) error

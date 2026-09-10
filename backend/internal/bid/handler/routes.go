@@ -27,6 +27,9 @@ func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, importHandl
 		bids.POST("/:id/history", authMiddleware.RequirePermission("bid.edit"), handler.AddMicroEvent)
 		bids.GET("/audit-history", authMiddleware.RequirePermission("bid.view"), handler.GetGlobalAuditLogs)
 		bids.GET("/performance-matrix", authMiddleware.RequirePermission("bid.view"), handler.GetTenderPerformanceMatrix)
+		// Field Memory — remembered values for a free-text field, e.g.
+		// /bids/field-suggestions?field=organization_name
+		bids.GET("/field-suggestions", authMiddleware.RequirePermission("bid.view"), handler.ListFieldSuggestions)
 
 		// Members
 		bids.POST("/:id/members", authMiddleware.RequirePermission("bid.edit"), handler.AddMember)

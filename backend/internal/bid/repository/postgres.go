@@ -12,7 +12,14 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onetrack/backend/internal/bid/domain"
+	"github.com/onetrack/backend/internal/platform/pagination"
 )
+
+// Audit trail keyset ("cursor") pagination — see internal/platform/pagination,
+// shared with the feedback module's ticket list.
+func encodeAuditCursor(createdAt time.Time, id string) string { return pagination.Encode(createdAt, id) }
+func decodeAuditCursor(cursor string) (time.Time, string, error) { return pagination.Decode(cursor) }
+func auditPageSize(limit int) int { return pagination.PageSize(limit, 30, 200) }
 
 type postgresBidRepo struct {
 	pool *pgxpool.Pool
@@ -910,37 +917,87 @@ func (r *postgresBidRepo) GetMembers(ctx context.Context, bidID string) ([]domai
 
 func (r *postgresBidRepo) AddStageHistory(ctx context.Context, h *domain.BidStageHistory) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO bid.bid_stage_history (bid_id, from_stage, to_stage, transition_reason, transitioned_by, event_type, details)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		h.BidID, h.FromStage, h.ToStage, h.TransitionReason, h.TransitionedBy, h.EventType, h.Details,
+		`INSERT INTO bid.bid_stage_history (bid_id, from_stage, to_stage, transition_reason, transitioned_by, event_type, details, bid_title)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		h.BidID, h.FromStage, h.ToStage, h.TransitionReason, h.TransitionedBy, h.EventType, h.Details, h.BidTitle,
 	)
 	return err
 }
 
-func (r *postgresBidRepo) GetStageHistory(ctx context.Context, bidID string) ([]domain.BidStageHistory, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, bid_id, from_stage, to_stage, transition_reason, transitioned_by, event_type, details, created_at
-		FROM bid.bid_stage_history
-		WHERE bid_id = $1
-		ORDER BY created_at ASC
-	`, bidID)
+// GetStageHistory returns one tender's history, newest first, resolving the
+// actor's name/role in the same query (no per-row GetUserSummary calls —
+// the previous N+1 pattern here meant a heavily-edited tender's History tab
+// fired one query per event; that no longer scales once plain field edits
+// start writing entries too).
+func (r *postgresBidRepo) GetStageHistory(ctx context.Context, bidID string, q domain.AuditLogQuery) ([]domain.StageHistoryResponse, string, bool, error) {
+	limit := auditPageSize(q.Limit)
+
+	query := `
+		SELECT h.id, h.from_stage, h.to_stage, h.transition_reason, h.event_type, h.details,
+		       h.transitioned_by, h.created_at,
+		       COALESCE(u.full_name, u.username, 'System User'), COALESCE(u.username, 'system'),
+		       COALESCE((
+		           SELECT r.name FROM auth.user_roles ur
+		           JOIN auth.roles r ON r.id = ur.role_id
+		           WHERE ur.user_id = u.id
+		           ORDER BY ur.is_primary DESC, ur.role_order ASC
+		           LIMIT 1
+		       ), 'USER')
+		FROM bid.bid_stage_history h
+		LEFT JOIN auth.users u ON u.id = h.transitioned_by
+		WHERE h.bid_id = $1`
+	args := []interface{}{bidID}
+
+	if q.Cursor != "" {
+		cursorTime, cursorID, err := decodeAuditCursor(q.Cursor)
+		if err != nil {
+			return nil, "", false, err
+		}
+		args = append(args, cursorTime, cursorID)
+		query += fmt.Sprintf(" AND (h.created_at, h.id) < ($%d, $%d)", len(args)-1, len(args))
+	}
+	args = append(args, limit+1)
+	query += fmt.Sprintf(" ORDER BY h.created_at DESC, h.id DESC LIMIT $%d", len(args))
+
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, "", false, err
 	}
 	defer rows.Close()
 
-	var history []domain.BidStageHistory
+	var items []domain.StageHistoryResponse
 	for rows.Next() {
-		var h domain.BidStageHistory
-		if err := rows.Scan(&h.ID, &h.BidID, &h.FromStage, &h.ToStage, &h.TransitionReason, &h.TransitionedBy, &h.EventType, &h.Details, &h.CreatedAt); err != nil {
-			return nil, err
+		var it domain.StageHistoryResponse
+		var actorID *string
+		var fullName, username, role string
+		if err := rows.Scan(&it.ID, &it.FromStage, &it.ToStage, &it.TransitionReason, &it.EventType, &it.Details,
+			&actorID, &it.CreatedAt, &fullName, &username, &role); err != nil {
+			return nil, "", false, err
 		}
-		history = append(history, h)
+		id := ""
+		if actorID != nil {
+			id = *actorID
+		}
+		it.TransitionedBy = domain.UserSummary{ID: id, FullName: fullName, Username: username, Role: role}
+		items = append(items, it)
 	}
-	if history == nil {
-		history = []domain.BidStageHistory{}
+	if err := rows.Err(); err != nil {
+		return nil, "", false, err
 	}
-	return history, nil
+
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	nextCursor := ""
+	if hasMore {
+		last := items[len(items)-1]
+		nextCursor = encodeAuditCursor(last.CreatedAt, last.ID)
+	}
+	if items == nil {
+		items = []domain.StageHistoryResponse{}
+	}
+	return items, nextCursor, hasMore, nil
 }
 
 func (r *postgresBidRepo) BulkInsertChecklists(ctx context.Context, bidID string, titles []string) error {
@@ -1084,13 +1141,17 @@ func (r *postgresBidRepo) GetUserSummary(ctx context.Context, userID string) (*d
 	return &u, nil
 }
 
-func (r *postgresBidRepo) GetGlobalAuditLogs(ctx context.Context, limit int) ([]domain.GlobalAuditItem, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-	rows, err := r.pool.Query(ctx, `
-		SELECT h.id, h.bid_id, COALESCE(b.title, 'Deleted Bid'), h.from_stage, h.to_stage,
-		       h.transition_reason, h.transitioned_by, h.created_at,
+// GetGlobalAuditLogs returns the audit feed newest-first, keyset-paginated,
+// optionally scoped to one actor (userID) for the per-person Activity Log.
+// bid_id and bid_title are read with COALESCE fallbacks because a
+// permanently-deleted tender's history rows survive it (bid_id goes NULL —
+// see migration 000039) but keep the title they were recorded with.
+func (r *postgresBidRepo) GetGlobalAuditLogs(ctx context.Context, q domain.AuditLogQuery, userID string) ([]domain.GlobalAuditItem, string, bool, error) {
+	limit := auditPageSize(q.Limit)
+
+	query := `
+		SELECT h.id, h.bid_id, COALESCE(h.bid_title, b.title, 'Deleted Bid'), h.from_stage, h.to_stage,
+		       h.transition_reason, h.event_type, h.details, h.transitioned_by, h.created_at,
 		       COALESCE(u.full_name, u.username, 'System User'), COALESCE(u.username, 'system'),
 		       COALESCE((
 		           SELECT r.name FROM auth.user_roles ur
@@ -1102,11 +1163,27 @@ func (r *postgresBidRepo) GetGlobalAuditLogs(ctx context.Context, limit int) ([]
 		FROM bid.bid_stage_history h
 		LEFT JOIN bid.bid_workspaces b ON b.id = h.bid_id
 		LEFT JOIN auth.users u ON u.id = h.transitioned_by
-		ORDER BY h.created_at DESC
-		LIMIT $1
-	`, limit)
+		WHERE 1=1`
+	args := []interface{}{}
+
+	if userID != "" {
+		args = append(args, userID)
+		query += fmt.Sprintf(" AND h.transitioned_by = $%d", len(args))
+	}
+	if q.Cursor != "" {
+		cursorTime, cursorID, err := decodeAuditCursor(q.Cursor)
+		if err != nil {
+			return nil, "", false, err
+		}
+		args = append(args, cursorTime, cursorID)
+		query += fmt.Sprintf(" AND (h.created_at, h.id) < ($%d, $%d)", len(args)-1, len(args))
+	}
+	args = append(args, limit+1)
+	query += fmt.Sprintf(" ORDER BY h.created_at DESC, h.id DESC LIMIT $%d", len(args))
+
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, "", false, err
 	}
 	defer rows.Close()
 
@@ -1115,18 +1192,31 @@ func (r *postgresBidRepo) GetGlobalAuditLogs(ctx context.Context, limit int) ([]
 		var item domain.GlobalAuditItem
 		var user domain.UserSummary
 		if err := rows.Scan(&item.ID, &item.BidID, &item.BidTitle, &item.FromStage, &item.ToStage,
-			&item.TransitionReason, &item.TransitionedBy.ID, &item.CreatedAt,
+			&item.TransitionReason, &item.EventType, &item.Details, &item.TransitionedBy.ID, &item.CreatedAt,
 			&user.FullName, &user.Username, &user.Role); err != nil {
-			return nil, err
+			return nil, "", false, err
 		}
 		user.ID = item.TransitionedBy.ID
 		item.TransitionedBy = user
 		logs = append(logs, item)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, "", false, err
+	}
+
+	hasMore := len(logs) > limit
+	if hasMore {
+		logs = logs[:limit]
+	}
+	nextCursor := ""
+	if hasMore {
+		last := logs[len(logs)-1]
+		nextCursor = encodeAuditCursor(last.CreatedAt, last.ID)
+	}
 	if logs == nil {
 		logs = []domain.GlobalAuditItem{}
 	}
-	return logs, nil
+	return logs, nextCursor, hasMore, nil
 }
 
 // ────────────────────────────────────────
@@ -1342,4 +1432,64 @@ func calcPages(total, limit int) int {
 		return 0
 	}
 	return int(math.Ceil(float64(total) / float64(limit)))
+}
+
+// fieldSuggestionMinLength keeps stray keystrokes and abbreviations that are
+// too short to be useful (a lone letter, "-") out of the suggestion memory.
+const fieldSuggestionMinLength = 2
+
+// RecordFieldSuggestions upserts each raw value into bid.field_suggestions,
+// deduped case/whitespace-insensitively per field_key. Called once per tender
+// save (not per keystroke) from the service layer, so it never sees a
+// half-typed draft value.
+func (r *postgresBidRepo) RecordFieldSuggestions(ctx context.Context, entries map[string][]string) error {
+	for fieldKey, values := range entries {
+		for _, raw := range values {
+			value := strings.TrimSpace(raw)
+			if len(value) < fieldSuggestionMinLength {
+				continue
+			}
+			normalized := strings.ToLower(value)
+			_, err := r.pool.Exec(ctx, `
+				INSERT INTO bid.field_suggestions (field_key, value, normalized_value, usage_count, last_used_at)
+				VALUES ($1, $2, $3, 1, NOW())
+				ON CONFLICT (field_key, normalized_value) DO UPDATE
+					SET value = EXCLUDED.value,
+						usage_count = bid.field_suggestions.usage_count + 1,
+						last_used_at = NOW()
+			`, fieldKey, value, normalized)
+			if err != nil {
+				return fmt.Errorf("record field suggestion (%s): %w", fieldKey, err)
+			}
+		}
+	}
+	return nil
+}
+
+// ListFieldSuggestions returns a field's remembered values, most useful
+// first: highest usage, then most recently used.
+func (r *postgresBidRepo) ListFieldSuggestions(ctx context.Context, fieldKey string, limit int) ([]domain.FieldSuggestion, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 500
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT value, usage_count FROM bid.field_suggestions
+		WHERE field_key = $1
+		ORDER BY usage_count DESC, last_used_at DESC
+		LIMIT $2
+	`, fieldKey, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list field suggestions: %w", err)
+	}
+	defer rows.Close()
+
+	suggestions := []domain.FieldSuggestion{}
+	for rows.Next() {
+		var s domain.FieldSuggestion
+		if err := rows.Scan(&s.Value, &s.UsageCount); err != nil {
+			return nil, fmt.Errorf("scan field suggestion: %w", err)
+		}
+		suggestions = append(suggestions, s)
+	}
+	return suggestions, rows.Err()
 }

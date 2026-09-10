@@ -13,6 +13,7 @@ import { Button }    from '@/components/ui/button'
 import { Input }     from '@/components/ui/input'
 import { Label }     from '@/components/ui/label'
 import { Textarea }  from '@/components/ui/textarea'
+import { FieldMemoryInput } from '@/components/ui/field-memory-input'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -80,7 +81,7 @@ export function AddTenderPage() {
   const navigate = useNavigate()
   const currentUser = tokenStorage.getUser()
 
-  const { users, usersLoading, loadUsers } = useBidStore()
+  const { users, usersLoading, loadUsers, learnFieldValue } = useBidStore()
 
   // Stepper state
   const [step, setStep] = useState(1)
@@ -325,6 +326,16 @@ export function AddTenderPage() {
 
       const res = await createBid(payload)
       if (res.ok) {
+        // Field Memory: make the values just typed available as suggestions
+        // right away, without waiting for a refetch of each field's list.
+        learnFieldValue('organization_name', form.organization_name)
+        learnFieldValue('department_name', form.department_name)
+        learnFieldValue('location', form.location)
+        learnFieldValue('emd_bank_name', form.emd_bank_name)
+        learnFieldValue('emd_beneficiary', form.emd_beneficiary)
+        learnFieldValue('emd_payable_at', form.emd_payable_at)
+        cleanProducts.forEach((p) => learnFieldValue('oem', p.oem))
+
         toast.success('Tender workspace created successfully!')
         navigate('/dashboard/tenders')
       } else {
@@ -455,19 +466,19 @@ export function AddTenderPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {/* Account Name (the procuring authority / client organization) */}
                     <Field label="Account Name" tooltip="The procuring authority / client organization for this tender.">
-                      <Input value={form.organization_name} onChange={(e) => set('organization_name', e.target.value)}
+                      <FieldMemoryInput fieldKey="organization_name" value={form.organization_name} onChange={(v) => set('organization_name', v)}
                         placeholder="e.g. NIC Delhi" className={inputCls()} />
                     </Field>
 
                     {/* Department / Ministry */}
                     <Field label="Department / Ministry">
-                      <Input value={form.department_name} onChange={(e) => set('department_name', e.target.value)}
+                      <FieldMemoryInput fieldKey="department_name" value={form.department_name} onChange={(v) => set('department_name', v)}
                         placeholder="e.g. Ministry of Electronics & IT" className={inputCls()} />
                     </Field>
 
                     {/* Location */}
                     <Field label="Location">
-                      <Input value={form.location} onChange={(e) => set('location', e.target.value)}
+                      <FieldMemoryInput fieldKey="location" value={form.location} onChange={(v) => set('location', v)}
                         placeholder="e.g. New Delhi" className={inputCls()} />
                     </Field>
 
@@ -673,7 +684,7 @@ export function AddTenderPage() {
                                 placeholder="Qty" className="h-8 text-xs bg-background" />
                             </TableCell>
                             <TableCell className="min-w-[140px]">
-                              <Input value={p.oem} onChange={(e) => updateProductRow(p.id, 'oem', e.target.value)}
+                              <FieldMemoryInput fieldKey="oem" value={p.oem} onChange={(v) => updateProductRow(p.id, 'oem', v)}
                                 placeholder="OEM name" className="h-8 text-xs bg-background" />
                             </TableCell>
                             <TableCell>
@@ -752,9 +763,10 @@ export function AddTenderPage() {
                         {emdOnlineOn && (
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <Field label="Bank Name" error={errors.emd_bank_name} required>
-                              <Input
+                              <FieldMemoryInput
+                                fieldKey="emd_bank_name"
                                 value={form.emd_bank_name}
-                                onChange={(e) => set('emd_bank_name', e.target.value)}
+                                onChange={(v) => set('emd_bank_name', v)}
                                 placeholder="e.g. State Bank of India"
                                 className={inputCls(errors.emd_bank_name)}
                               />
@@ -800,17 +812,19 @@ export function AddTenderPage() {
                         {emdDdOn && (
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <Field label="Beneficiary" error={errors.emd_beneficiary} required>
-                              <Input
+                              <FieldMemoryInput
+                                fieldKey="emd_beneficiary"
                                 value={form.emd_beneficiary}
-                                onChange={(e) => set('emd_beneficiary', e.target.value)}
+                                onChange={(v) => set('emd_beneficiary', v)}
                                 placeholder="e.g. The Accounts Officer, NIC Delhi"
                                 className={inputCls(errors.emd_beneficiary)}
                               />
                             </Field>
                             <Field label="Payable At" error={errors.emd_payable_at} required>
-                              <Input
+                              <FieldMemoryInput
+                                fieldKey="emd_payable_at"
                                 value={form.emd_payable_at}
-                                onChange={(e) => set('emd_payable_at', e.target.value)}
+                                onChange={(v) => set('emd_payable_at', v)}
                                 placeholder="e.g. New Delhi"
                                 className={inputCls(errors.emd_payable_at)}
                               />

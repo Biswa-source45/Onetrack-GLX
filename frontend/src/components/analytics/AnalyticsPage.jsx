@@ -6,11 +6,11 @@ import {
   Filter, RefreshCw, Award, XCircle, Clock, FileText,
   ShieldCheck, ArrowUpRight, ArrowDownRight, Eye, Sparkles, Activity,
   IndianRupee, AlertCircle, Building2, Calendar, PieChart as PieIcon,
-  TrendingDown, Info, HelpCircle, Layers, UserCheck, Plus
+  TrendingDown, HelpCircle, Layers, UserCheck, Plus
 } from 'lucide-react'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip,
-  Legend, PieChart, Pie, Cell, AreaChart, Area, CartesianGrid, Sector,
+  Legend, PieChart, Pie, Cell, AreaChart, Area, CartesianGrid,
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Line, ComposedChart,
   LineChart, ReferenceDot
 } from 'recharts'
@@ -26,10 +26,15 @@ import {
   CardDescription,
   CardContent
 } from '@/components/ui/card'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { getTenderPerformanceMatrix, listAllBids } from '../../services/bids'
 import { tokenStorage } from '../../services/auth'
 import { usePermissions } from '../../hooks/usePermissions'
 import { formatCurrency } from '../../lib/tenderFormat'
+import { getEffectiveStage, isParticipated, computePipelineSummary } from '../../lib/pipelineMetrics'
+import { openMasterSheetDrill } from '../../lib/masterSheetDrill'
+import { dimOtherSlices } from '../../lib/chartUtils'
+import { PipelineKpiBand } from './PipelineKpiBand'
 
 // Matches the real 11-stage pipeline (WORKFLOW_STAGES_ORDERED in services/bids.js)
 // exactly — this used to only have 'PREPARATION'/'APPROVAL' placeholder keys
@@ -52,7 +57,11 @@ const STAGE_COLORS = {
   AWARD_HANDOVER: '#06b6d4',                  // Cyan
   WON: '#10b981',                             // Emerald Green
   LOST: '#ef4444',                            // Rose Red
-  CANCELLED: '#6b7280'                        // Slate Gray
+  CANCELLED: '#6b7280',                       // Slate Gray
+  // Submitted, then closed with no WON/LOST ever recorded (mostly legacy
+  // bulk-imported tenders — see isParticipated in lib/pipelineMetrics.js).
+  // Distinct from CANCELLED's gray so the two don't visually merge into one blob.
+  CLOSED: '#b45309'                           // Amber-brown
 }
 
 const STAGE_LABELS = {
@@ -69,7 +78,8 @@ const STAGE_LABELS = {
   AWARD_HANDOVER: 'Award & Handover',
   WON: 'Won / Awarded Contracts',
   LOST: 'Lost Bids',
-  CANCELLED: 'Cancelled Tenders'
+  CANCELLED: 'Cancelled Tenders',
+  CLOSED: 'Closed — No Outcome Recorded'
 }
 
 const ROLE_BADGES = {
@@ -81,92 +91,10 @@ const ROLE_BADGES = {
   USER: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
 }
 
-// Resolves a bid's "effective" stage bucket for charting — mirrors the
-// precedence the backend itself uses (postgres.go's derived_status CASE and
-// the performance-matrix won/lost/cancelled FILTERs): bid_status/bid_outcome
-// win over the raw workflow_stage. This matters because RecordOutcome no
-// longer mutates workflow_stage (fixed in an earlier round to stop it
-// corrupting the stage pointer) — so a WON bid's workflow_stage is normally
-// still 'AWARD_HANDOVER' (or earlier), not the literal string 'WON'. Bucketing
-// straight off workflow_stage (as this used to) silently dropped won/lost
-// bids into their pipeline-stage bucket instead of "Won"/"Lost", which is
-// what made the stage charts and the milestone plot look inaccurate.
-function getEffectiveStage(b) {
-  if (b.bid_status === 'WON' || b.workflow_stage === 'WON' || b.bid_outcome === 'WON') return 'WON'
-  if (b.bid_status === 'LOST' || b.workflow_stage === 'LOST' || b.bid_outcome === 'LOST' || b.technical_result === 'DISQUALIFIED') return 'LOST'
-  if (b.bid_status === 'CANCELLED' || b.workflow_stage === 'CANCELLED' || b.bid_outcome === 'CANCELLED') return 'CANCELLED'
-  // Closed without ever being bid. Its workflow_stage is still DISCOVERED, so
-  // without this it would be charted as live pipeline.
-  if (b.bid_status === 'CLOSED') return 'CLOSED'
-  return b.workflow_stage || 'DISCOVERED'
-}
-
-// Custom 3D Pop-Out Active Shape Renderer for Pie Chart
-const render3DPieActiveShape = (props) => {
-  const {
-    cx, cy, midAngle, innerRadius, outerRadius, startAngle, endAngle,
-    fill, payload, percent, value
-  } = props
-
-  const RADIAN = Math.PI / 180
-  const sin = Math.sin(-RADIAN * midAngle)
-  const cos = Math.cos(-RADIAN * midAngle)
-
-  const sx = cx + (outerRadius + 6) * cos
-  const sy = cy + (outerRadius + 6) * sin
-  const mx = cx + (outerRadius + 18) * cos
-  const my = cy + (outerRadius + 18) * sin
-  const ex = mx + (cos >= 0 ? 1 : -1) * 16
-  const ey = my
-  const textAnchor = cos >= 0 ? 'start' : 'end'
-
-  return (
-    <g>
-      {/* Center Label */}
-      <text x={cx} y={cy - 6} textAnchor="middle" fill="#f8fafc" className="font-semibold text-xs font-heading">
-        {payload.name}
-      </text>
-      <text x={cx} y={cy + 12} textAnchor="middle" fill="#94a3b8" className="text-[10px] font-mono">
-        {`₹${value.toLocaleString()} Lakhs`}
-      </text>
-
-      {/* Main Slice Pop-out */}
-      <Sector
-        cx={cx}
-        cy={cy}
-        innerRadius={innerRadius}
-        outerRadius={outerRadius + 8}
-        startAngle={startAngle}
-        endAngle={endAngle}
-        fill={fill}
-      />
-
-      {/* Outer 3D Glow Ring */}
-      <Sector
-        cx={cx}
-        cy={cy}
-        startAngle={startAngle}
-        endAngle={endAngle}
-        innerRadius={outerRadius + 11}
-        outerRadius={outerRadius + 15}
-        fill={fill}
-        opacity={0.7}
-      />
-
-      {/* Callout Indicator Lines */}
-      <path d={`M${sx},${sy}L${mx},${my}L${ex},${ey}`} stroke={fill} fill="none" strokeWidth={2} />
-      <circle cx={ex} cy={ey} r={3} fill={fill} stroke="#fff" strokeWidth={1} />
-
-      {/* Value Tag Callout */}
-      <text x={ex + (cos >= 0 ? 1 : -1) * 8} y={ey} textAnchor={textAnchor} fill="#f1f5f9" fontSize={11} fontWeight={600}>
-        {`₹${value} Lakhs`}
-      </text>
-      <text x={ex + (cos >= 0 ? 1 : -1) * 8} y={ey} dy={14} textAnchor={textAnchor} fill="#94a3b8" fontSize={10}>
-        {`(${(percent * 100).toFixed(1)}% Share)`}
-      </text>
-    </g>
-  )
-}
+// Categories are freeform data (whatever the team has typed as `category`),
+// not a fixed enum like workflow stages — cycled by index rather than a
+// per-name color map.
+const CATEGORY_COLORS = ['#6366f1', '#14b8a6', '#f59e0b', '#ec4899', '#3b82f6', '#84cc16', '#f43f5e', '#8b5cf6']
 
 export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
   const navigate = useNavigate()
@@ -193,8 +121,10 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
   const [matrixStats, setMatrixStats] = useState([])
   const [selectedUserId, setSelectedUserId] = useState(null)
 
-  // Hover state for 3D Pop-out Pie Chart
-  const [activePieIndex, setActivePieIndex] = useState(0)
+  // Hover state for the stage exposure donut (null = no slice hovered, show all at full opacity)
+  const [activePieIndex, setActivePieIndex] = useState(null)
+  const [activeAgingIndex, setActiveAgingIndex] = useState(null)
+  const [activeCategoryIndex, setActiveCategoryIndex] = useState(null)
 
   // Sub-tab Scope for Tender Analytics: 'all' (Total Tender Analytics) vs 'owned' (Owned Tender Analytics)
   // Non-management roles are locked to 'owned' — they never get the 'all' view.
@@ -350,12 +280,25 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
   }, [scopedBids, searchQuery, categoryFilter, stageFilter])
 
   // Comprehensive Analytics & Visualizations Calculations
+  // Single source of truth for pipeline/active/submitted/won/aging/category —
+  // see pipelineMetrics.js. lastUpdated (set on mount and every 60s refresh)
+  // stands in for "now" so this stays a pure function of its inputs instead
+  // of reading the clock during render.
+  const pipelineSummary = useMemo(
+    () => computePipelineSummary(filteredBids, lastUpdated ? lastUpdated.getTime() : null),
+    [filteredBids, lastUpdated]
+  )
+
   const analyticsSummary = useMemo(() => {
     let totalVal = 0
-    let wonVal = 0
     let lostVal = 0
     const stageCounts = {}
     const stageValues = {}
+    // Same stage buckets, but only over tenders we actually pursued — this is
+    // what the exposure pie uses, so a giant "tenders we never bid on" slice
+    // can't dominate the chart.
+    const pStageCounts = {}
+    const pStageValues = {}
     const monthDataMap = {}
     const orgValueMap = {}
 
@@ -367,12 +310,16 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
       // (as this previously did) skewed every valuation total.
       const val = Number(b.final_bid_value || b.quoted_price || b.estimated_value || 0)
       totalVal += val
-      if (b.workflow_stage === 'WON' || b.bid_status === 'WON' || b.bid_outcome === 'WON') wonVal += val
       if (b.workflow_stage === 'LOST' || b.bid_status === 'LOST' || b.bid_outcome === 'LOST') lostVal += val
 
       const stage = getEffectiveStage(b)
       stageCounts[stage] = (stageCounts[stage] || 0) + 1
       stageValues[stage] = (stageValues[stage] || 0) + val
+
+      if (isParticipated(b)) {
+        pStageCounts[stage] = (pStageCounts[stage] || 0) + 1
+        pStageValues[stage] = (pStageValues[stage] || 0) + val
+      }
 
       // Monthly aggregation for timeline graph
       if (b.created_at) {
@@ -390,22 +337,24 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
       orgValueMap[org] = (orgValueMap[org] || 0) + val
     })
 
-    // Stage Valuation Pie Data (with percentage & labels)
-    const stagePieData = Object.keys(stageValues).map(stg => {
-      const valLakhs = Math.round(((stageValues[stg] || 0) / 100000) * 100) / 100
-      const totalValLakhs = Math.round((totalVal / 100000) * 100) / 100
+    // Stage Valuation Pie Data (with percentage & labels) — built only from
+    // participated tenders (see isParticipated), so tenders we never bid on
+    // don't drown out the real stage distribution.
+    const stagePieData = Object.keys(pStageValues).map(stg => {
+      const valLakhs = Math.round(((pStageValues[stg] || 0) / 100000) * 100) / 100
+      const totalValLakhs = Math.round((pipelineSummary.totalPipelineValue / 100000) * 100) / 100
       const percentShare = totalValLakhs > 0 ? ((valLakhs / totalValLakhs) * 100).toFixed(1) : '0'
 
       return {
         name: STAGE_LABELS[stg] || stg.replace(/_/g, ' '),
         rawStageKey: stg,
-        count: stageCounts[stg] || 0,
+        count: pStageCounts[stg] || 0,
         value: valLakhs, // In Lakhs
-        valueInCr: Math.round((stageValues[stg] / 10000000) * 100) / 100,
+        valueInCr: Math.round((pStageValues[stg] / 10000000) * 100) / 100,
         percentShare,
         fill: STAGE_COLORS[stg] || '#64748b'
       }
-    }).filter(item => item.value > 0)
+    }).filter(item => item.value > 0).sort((a, b) => b.value - a.value)
 
     const stageCountData = Object.keys(stageCounts).map(stg => ({
       name: STAGE_LABELS[stg] || stg.replace(/_/g, ' '),
@@ -469,26 +418,46 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
       .slice(0, 6)
 
     const totalCount = filteredBids.length
-    const wonCount = filteredBids.filter(b => b.workflow_stage === 'WON' || b.bid_status === 'WON' || b.bid_outcome === 'WON').length
     // Tenders closed without bidding were never in contention.
     const closedNoBid = filteredBids.filter(b => b.bid_status === 'CLOSED').length
     const contested = Math.max(0, totalCount - closedNoBid)
-    const winRate = contested > 0 ? ((wonCount / contested) * 100).toFixed(1) : '0'
+    const winRate = contested > 0 ? ((pipelineSummary.wonCount / contested) * 100).toFixed(1) : '0'
+
+    // Top 10 Active Opportunities — highest-value tenders still unresolved.
+    const evalLabel = (result, stageKey, currentStage) => {
+      if (result) return result.charAt(0) + result.slice(1).toLowerCase()
+      if (currentStage === stageKey) return 'In Progress'
+      const order = ['GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER', 'WON']
+      return order.indexOf(currentStage) > order.indexOf(stageKey) ? 'Cleared' : 'Awaiting'
+    }
+    const topActiveOpportunities = pipelineSummary.activeBids
+      .map(b => ({
+        id: b.id,
+        client: b.organization_name || 'Unspecified Org',
+        category: b.category || '—',
+        scope: b.title || '—',
+        value: Number(b.final_bid_value || b.quoted_price || b.estimated_value || 0),
+        stageKey: b.workflow_stage || 'DISCOVERED',
+        submission: b.submission_status || (b.submission_done ? 'Submitted' : 'Not Submitted'),
+        techEval: evalLabel(b.technical_result, 'TECHNICAL_EVALUATION', b.workflow_stage),
+        finEval: evalLabel(b.financial_evaluation_status, 'FINANCIAL_EVALUATION', b.workflow_stage)
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 10)
 
     return {
       totalVal,
-      wonVal,
       lostVal,
       totalCount,
-      wonCount,
       winRate,
       stageCountData,
       stagePieData,
       milestonePlotData,
       monthlyTrendData,
-      topOrgsData
+      topOrgsData,
+      topActiveOpportunities
     }
-  }, [filteredBids])
+  }, [filteredBids, pipelineSummary])
 
   // Single User Analytics Derived Details
   const userDetailedStats = useMemo(() => {
@@ -545,7 +514,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
               <p className="text-xs text-muted-foreground mt-0.5">
                 {activeTab === 'owner-matrix'
                   ? 'Real-time tender owner breakdown, stage matrix, & individual user portfolio inspection'
-                  : 'Real-time tender lifecycle analytics, 3D financial pie distribution, & tender plot diagram'}
+                  : 'Real-time pipeline valuation, stage exposure, tender aging, & top opportunities'}
               </p>
             </div>
           </div>
@@ -732,6 +701,44 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
             </div>
           </Card>
 
+          {/* Executive Pipeline KPI Banner */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Pipeline Summary</h2>
+              <span className="text-[10px] text-muted-foreground/70">— {analyticsSummary.totalCount} tenders in current view</span>
+            </div>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <PipelineKpiBand
+                label="Total Pipeline ₹"
+                value={formatCurrency(pipelineSummary.totalPipelineValue)}
+                tone="navy"
+                explain="Value of every tender we chose to pursue — excludes cancelled tenders and ones we never bid on. Click to see the tenders."
+                onClick={() => openMasterSheetDrill(navigate, { title: 'Total Pipeline', subtitle: 'Every tender we chose to pursue', bids: pipelineSummary.totalPipelineBids })}
+              />
+              <PipelineKpiBand
+                label="Active Pipeline ₹"
+                value={formatCurrency(pipelineSummary.activePipelineValue)}
+                tone="blue"
+                explain={`Value of the ${pipelineSummary.activeBids.length} tenders still unresolved right now — not yet won, lost, cancelled, or closed. Click to see the tenders.`}
+                onClick={() => openMasterSheetDrill(navigate, { title: 'Active Pipeline', subtitle: 'Tenders still unresolved right now', bids: pipelineSummary.activeBids })}
+              />
+              <PipelineKpiBand
+                label="Submitted Pipeline ₹"
+                value={formatCurrency(pipelineSummary.submittedPipelineValue)}
+                tone="brightBlue"
+                explain="Cumulative value of every tender we actually filed a bid for, regardless of the outcome — so it can exceed Total Pipeline (it includes bids later lost or cancelled). Click to see the tenders."
+                onClick={() => openMasterSheetDrill(navigate, { title: 'Submitted Pipeline', subtitle: 'Every tender we actually filed a bid for', bids: pipelineSummary.submittedBidsList })}
+              />
+              <PipelineKpiBand
+                label="PO Value Won ₹"
+                value={formatCurrency(pipelineSummary.wonVal)}
+                tone="emerald"
+                explain="Contract value of tenders actually awarded to us. Click to see the tenders."
+                onClick={() => openMasterSheetDrill(navigate, { title: 'PO Value Won', subtitle: 'Tenders actually awarded to us', bids: pipelineSummary.wonBids })}
+              />
+            </div>
+          </div>
+
           {/* Metric Summary Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card size="sm" className="p-4 space-y-2">
@@ -756,7 +763,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
                 {analyticsSummary.winRate}%
               </div>
               <p className="text-[11px] text-muted-foreground">
-                {analyticsSummary.wonCount} won out of {analyticsSummary.totalCount} total
+                {pipelineSummary.wonCount} won out of {analyticsSummary.totalCount} total
               </p>
             </Card>
 
@@ -766,7 +773,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
                 <IndianRupee className="size-4 text-emerald-500" />
               </div>
               <div className="text-2xl font-bold text-foreground font-heading">
-                {formatCurrency(analyticsSummary.wonVal)}
+                {formatCurrency(pipelineSummary.wonVal)}
               </div>
               <p className="text-[11px] text-emerald-500 flex items-center gap-1">
                 <ArrowUpRight className="size-3" /> Successfully Secured
@@ -830,7 +837,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
               </CardContent>
             </Card>
 
-            {/* Chart 2: Stage Financial Exposure — 3D Pie + Elaborate Stage Legend Breakdown */}
+            {/* Chart 2: Stage Financial Exposure — flat donut + Stage Legend Breakdown */}
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <div>
@@ -839,10 +846,10 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
                     Stage Financial Exposure Distribution (₹ Lakhs)
                   </CardTitle>
                   <CardDescription className="text-xs">
-                    Hover over pie slices or check the right legend breakdown for stage details
+                    Value of tenders we actually pursued, by current stage — cancelled and never-bid tenders excluded
                   </CardDescription>
                 </div>
-                <Badge variant="outline" className="text-[10px] border-emerald-500/30 text-emerald-500">Interactive 3D Pie</Badge>
+                <Badge variant="outline" className="text-[10px] border-emerald-500/30 text-emerald-500">{analyticsSummary.stagePieData.length} Stages</Badge>
               </CardHeader>
 
               <CardContent className="pt-2">
@@ -853,7 +860,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
-                    {/* Left: 3D Pie Chart */}
+                    {/* Left: Flat Donut Chart */}
                     <div className="h-[280px] w-full min-h-[260px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
@@ -862,23 +869,23 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
                             formatter={(val, name) => [`₹${val} Lakhs`, name]}
                           />
                           <Pie
-                            activeIndex={activePieIndex}
-                            activeShape={render3DPieActiveShape}
                             data={analyticsSummary.stagePieData}
                             cx="50%"
                             cy="50%"
-                            innerRadius={55}
-                            outerRadius={80}
-                            paddingAngle={3}
+                            innerRadius={62}
+                            outerRadius={95}
+                            paddingAngle={2}
                             dataKey="value"
                             onMouseEnter={(_, index) => setActivePieIndex(index)}
+                            onMouseLeave={() => setActivePieIndex(null)}
                           >
                             {analyticsSummary.stagePieData.map((entry, index) => (
                               <Cell
                                 key={`cell-pie-${index}`}
                                 fill={entry.fill}
-                                stroke="#0f172a"
+                                stroke="var(--card)"
                                 strokeWidth={2}
+                                fillOpacity={dimOtherSlices(index, activePieIndex)}
                               />
                             ))}
                           </Pie>
@@ -898,6 +905,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
                           <div
                             key={item.rawStageKey}
                             onMouseEnter={() => setActivePieIndex(idx)}
+                            onMouseLeave={() => setActivePieIndex(null)}
                             className={`p-2 rounded-lg border text-xs flex items-center justify-between cursor-pointer transition-all ${
                               activePieIndex === idx
                                 ? 'bg-primary/10 border-primary/30 shadow-xs'
@@ -924,6 +932,243 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
                         ))}
                       </div>
                     </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Chart: Tender Aging — how long unresolved tenders have sat open */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <div>
+                  <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                    <Clock className="size-4 text-amber-500" />
+                    Tender Aging
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Days since discovery, for the {pipelineSummary.activeBids.length} tenders still unresolved · click a bucket to see them
+                  </CardDescription>
+                </div>
+                <Badge variant="outline" className="text-[10px] border-amber-500/30 text-amber-600">Active Only</Badge>
+              </CardHeader>
+              <CardContent className="pt-2">
+                {pipelineSummary.activeBids.length === 0 ? (
+                  <div className="h-[260px] flex flex-col items-center justify-center text-xs text-muted-foreground">
+                    <AlertCircle className="size-6 mb-1 text-muted-foreground/60" />
+                    No unresolved tenders in the current view
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                    <div className="h-[240px] w-full min-h-[220px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <RechartsTooltip
+                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px', color: '#fff' }}
+                            formatter={(val, name, props) => [`${props.payload.count} tenders · ${formatCurrency(val)}`, name]}
+                          />
+                          <Pie
+                            data={pipelineSummary.agingBuckets}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={52}
+                            outerRadius={85}
+                            paddingAngle={2}
+                            dataKey="count"
+                            nameKey="label"
+                            onMouseEnter={(_, index) => setActiveAgingIndex(index)}
+                            onMouseLeave={() => setActiveAgingIndex(null)}
+                            onClick={(entry) => entry.bids.length > 0 && openMasterSheetDrill(navigate, { title: `Tender Aging — ${entry.label}`, subtitle: 'Unresolved tenders in this age bucket', bids: entry.bids })}
+                            cursor="pointer"
+                          >
+                            {pipelineSummary.agingBuckets.map((entry, index) => (
+                              <Cell
+                                key={`aging-cell-${index}`}
+                                fill={entry.fill}
+                                stroke="var(--card)"
+                                strokeWidth={2}
+                                fillOpacity={dimOtherSlices(index, activeAgingIndex)}
+                              />
+                            ))}
+                          </Pie>
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="space-y-2">
+                      {pipelineSummary.agingBuckets.map((bucket, idx) => (
+                        <button
+                          type="button"
+                          key={bucket.key}
+                          onMouseEnter={() => setActiveAgingIndex(idx)}
+                          onMouseLeave={() => setActiveAgingIndex(null)}
+                          onClick={() => bucket.bids.length > 0 && openMasterSheetDrill(navigate, { title: `Tender Aging — ${bucket.label}`, subtitle: 'Unresolved tenders in this age bucket', bids: bucket.bids })}
+                          disabled={bucket.bids.length === 0}
+                          className={`w-full p-2 rounded-lg border text-xs flex items-center justify-between transition-all text-left ${
+                            bucket.bids.length === 0 ? 'opacity-50 cursor-default' : 'cursor-pointer hover:border-primary/40'
+                          } ${activeAgingIndex === idx ? 'bg-primary/10 border-primary/30 shadow-xs' : 'border-border/60 bg-background'}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="size-3 rounded-full shrink-0 shadow-xs" style={{ backgroundColor: bucket.fill }} />
+                            <span className="font-semibold text-foreground text-[11px]">{bucket.label}</span>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold text-foreground text-[11px]">{bucket.count} tenders</p>
+                            <p className="text-[10px] text-muted-foreground">{formatCurrency(bucket.value)}</p>
+                          </div>
+                        </button>
+                      ))}
+                      <p className="text-[10px] text-muted-foreground pt-1">Older buckets flag tenders stuck in the pipeline — worth a status check.</p>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Chart: Pipeline by Category — where our live pipeline value is concentrated */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <div>
+                  <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                    <PieIcon className="size-4 text-indigo-500" />
+                    Pipeline by Category
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Total Pipeline value split by product category · click a slice to see them
+                  </CardDescription>
+                </div>
+                <Badge variant="outline" className="text-[10px] border-indigo-500/30 text-indigo-600">{pipelineSummary.categoryBreakdown.length} Categories</Badge>
+              </CardHeader>
+              <CardContent className="pt-2">
+                {pipelineSummary.categoryBreakdown.length === 0 ? (
+                  <div className="h-[260px] flex flex-col items-center justify-center text-xs text-muted-foreground">
+                    <AlertCircle className="size-6 mb-1 text-muted-foreground/60" />
+                    No pipeline data available
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                    <div className="h-[240px] w-full min-h-[220px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <RechartsTooltip
+                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px', color: '#fff' }}
+                            formatter={(val, name, props) => [`${props.payload.bids.length} tenders · ${formatCurrency(val)}`, name]}
+                          />
+                          <Pie
+                            data={pipelineSummary.categoryBreakdown}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={52}
+                            outerRadius={85}
+                            paddingAngle={2}
+                            dataKey="value"
+                            nameKey="name"
+                            onMouseEnter={(_, index) => setActiveCategoryIndex(index)}
+                            onMouseLeave={() => setActiveCategoryIndex(null)}
+                            onClick={(entry) => openMasterSheetDrill(navigate, { title: `Pipeline by Category — ${entry.name}`, subtitle: 'Participated tenders in this category', bids: entry.bids })}
+                            cursor="pointer"
+                          >
+                            {pipelineSummary.categoryBreakdown.map((entry, index) => (
+                              <Cell
+                                key={`category-cell-${index}`}
+                                fill={CATEGORY_COLORS[index % CATEGORY_COLORS.length]}
+                                stroke="var(--card)"
+                                strokeWidth={2}
+                                fillOpacity={dimOtherSlices(index, activeCategoryIndex)}
+                              />
+                            ))}
+                          </Pie>
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                      {pipelineSummary.categoryBreakdown.map((entry, idx) => (
+                        <button
+                          type="button"
+                          key={entry.name}
+                          onMouseEnter={() => setActiveCategoryIndex(idx)}
+                          onMouseLeave={() => setActiveCategoryIndex(null)}
+                          onClick={() => openMasterSheetDrill(navigate, { title: `Pipeline by Category — ${entry.name}`, subtitle: 'Participated tenders in this category', bids: entry.bids })}
+                          className={`w-full p-2 rounded-lg border text-xs flex items-center justify-between cursor-pointer transition-all text-left hover:border-primary/40 ${
+                            activeCategoryIndex === idx ? 'bg-primary/10 border-primary/30 shadow-xs' : 'border-border/60 bg-background'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="size-3 rounded-full shrink-0 shadow-xs" style={{ backgroundColor: CATEGORY_COLORS[idx % CATEGORY_COLORS.length] }} />
+                            <span className="font-semibold text-foreground text-[11px]">{entry.name}</span>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold text-foreground text-[11px]">{formatCurrency(entry.value)}</p>
+                            <p className="text-[10px] text-muted-foreground">{entry.bids.length} tenders</p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Table: Top 10 Active Opportunities by value */}
+            <Card className="lg:col-span-2">
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <div>
+                  <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                    <TrendingUp className="size-4 text-primary" />
+                    Top 10 Active Opportunities
+                  </CardTitle>
+                  <CardDescription className="text-xs">Highest-value unresolved tenders, ranked by participate value</CardDescription>
+                </div>
+                <Badge variant="outline" className="text-[10px]">By Value</Badge>
+              </CardHeader>
+              <CardContent className="pt-2">
+                {analyticsSummary.topActiveOpportunities.length === 0 ? (
+                  <div className="h-[160px] flex flex-col items-center justify-center text-xs text-muted-foreground">
+                    <AlertCircle className="size-6 mb-1 text-muted-foreground/60" />
+                    No unresolved tenders in the current view
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-border text-left text-muted-foreground">
+                          <th className="py-2 pr-3 font-semibold">Client / Department</th>
+                          <th className="py-2 pr-3 font-semibold">Category</th>
+                          <th className="py-2 pr-3 font-semibold">Scope</th>
+                          <th className="py-2 pr-3 font-semibold text-right">Value</th>
+                          <th className="py-2 pr-3 font-semibold">Stage</th>
+                          <th className="py-2 pr-3 font-semibold">
+                            <span className="inline-flex items-center gap-1">
+                              Submission
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button type="button" aria-label="What does Submission mean?"><HelpCircle className="size-3 text-muted-foreground/60" /></button>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">Whether we've filed the bid with the buyer yet.</TooltipContent>
+                              </Tooltip>
+                            </span>
+                          </th>
+                          <th className="py-2 pr-3 font-semibold">Tech Eval</th>
+                          <th className="py-2 font-semibold">Fin Eval</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {analyticsSummary.topActiveOpportunities.map(opp => (
+                          <tr key={opp.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30 transition-colors">
+                            <td className="py-2 pr-3 font-medium text-foreground max-w-[180px] truncate" title={opp.client}>{opp.client}</td>
+                            <td className="py-2 pr-3 text-muted-foreground">{opp.category}</td>
+                            <td className="py-2 pr-3 text-muted-foreground max-w-[220px] truncate" title={opp.scope}>{opp.scope}</td>
+                            <td className="py-2 pr-3 text-right font-mono tabular-nums font-semibold text-foreground">{formatCurrency(opp.value)}</td>
+                            <td className="py-2 pr-3">
+                              <Badge variant="outline" className="text-[9px] px-1.5 py-0" style={{ borderColor: STAGE_COLORS[opp.stageKey], color: STAGE_COLORS[opp.stageKey] }}>
+                                {STAGE_LABELS[opp.stageKey] || opp.stageKey.replace(/_/g, ' ')}
+                              </Badge>
+                            </td>
+                            <td className="py-2 pr-3 text-muted-foreground">{opp.submission}</td>
+                            <td className="py-2 pr-3 text-muted-foreground">{opp.techEval}</td>
+                            <td className="py-2 text-muted-foreground">{opp.finEval}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </CardContent>

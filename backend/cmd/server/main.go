@@ -20,6 +20,9 @@ import (
 	bidHandler "github.com/onetrack/backend/internal/bid/handler"
 	bidRepo "github.com/onetrack/backend/internal/bid/repository"
 	bidService "github.com/onetrack/backend/internal/bid/service"
+	feedbackHandler "github.com/onetrack/backend/internal/feedback/handler"
+	feedbackRepo "github.com/onetrack/backend/internal/feedback/repository"
+	feedbackService "github.com/onetrack/backend/internal/feedback/service"
 	"github.com/onetrack/backend/internal/middleware"
 	"github.com/onetrack/backend/internal/platform/config"
 	"github.com/onetrack/backend/internal/platform/database"
@@ -111,6 +114,14 @@ func main() {
 	bidHdlr := bidHandler.NewBidHandler(bidSvc)
 	bidImportHdlr := bidHandler.NewBulkImportHandler(dbPool)
 	bidHandler.RegisterBidRoutes(v1, bidHdlr, bidImportHdlr, authMiddleware)
+
+	// Initialize feedback module — reuses the bid repository's Field Memory
+	// (RecordFieldSuggestions) to remember custom "Other" categories, and
+	// alertSvc for the same in-app + email notification tender alerts use.
+	feedbackRepository := feedbackRepo.NewPostgresTicketRepository(dbPool)
+	feedbackSvc := feedbackService.NewTicketService(feedbackRepository, alertSvc, bidRepository)
+	feedbackHdlr := feedbackHandler.NewTicketHandler(feedbackSvc)
+	feedbackHandler.RegisterTicketRoutes(v1, feedbackHdlr, authMiddleware)
 
 	// Start server
 	srv := &http.Server{

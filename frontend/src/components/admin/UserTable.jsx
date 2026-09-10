@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { toast } from 'sonner'
 import {
   MoreHorizontal, Pencil, Shield, KeyRound, Power, PowerOff,
-  ChevronLeft, ChevronRight, Trash2, AlertTriangle
+  ChevronLeft, ChevronRight, Trash2, AlertTriangle, History
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -83,7 +83,7 @@ function DeleteConfirmDialog({ user, onClose, onConfirm, loading }) {
 }
 
 // ── Row Actions Menu ──────────────────────────────────────────────────────────
-function RowActions({ user, canEdit, canDeactivate, canAssignRole, onEdit, onRoles, onForceReset, onStatusChange, onDelete }) {
+function RowActions({ user, canEdit, canDeactivate, canAssignRole, canViewActivityLog, onEdit, onRoles, onForceReset, onViewActivityLog, onStatusChange, onDelete }) {
   const [open, setOpen] = useState(false)
   const currentUser = tokenStorage.getUser()
   const isSelf = currentUser?.id === user.id || currentUser?.username === user.username
@@ -117,6 +117,15 @@ function RowActions({ user, canEdit, canDeactivate, canAssignRole, onEdit, onRol
               >
                 <Pencil className="size-3.5 text-muted-foreground" />
                 Edit Profile
+              </button>
+            )}
+            {canViewActivityLog && (
+              <button
+                className="flex w-full items-center gap-2 px-3 py-2 hover:bg-muted transition-colors text-left"
+                onClick={() => handleAction(() => onViewActivityLog(user))}
+              >
+                <History className="size-3.5 text-muted-foreground" />
+                Activity Log
               </button>
             )}
             {canAssignRole && (
@@ -193,9 +202,11 @@ export function UserTable({
   canEdit = false,
   canDeactivate = false,
   canAssignRole = false,
+  canViewActivityLog = false,
   onEdit,
   onRoles,
   onForceReset,
+  onViewActivityLog,
   onRefresh,
 }) {
   const [togglingId, setTogglingId] = useState(null)
@@ -238,7 +249,7 @@ export function UserTable({
     }
   }
 
-  const hasActions = canEdit || canDeactivate || canAssignRole
+  const hasActions = canEdit || canDeactivate || canAssignRole || canViewActivityLog
   const start = (page - 1) * limit + 1
   const end   = Math.min(page * limit, total)
 
@@ -375,9 +386,11 @@ export function UserTable({
                         canEdit={canEdit}
                         canDeactivate={canDeactivate}
                         canAssignRole={canAssignRole}
+                        canViewActivityLog={canViewActivityLog}
                         onEdit={() => onEdit?.(user)}
                         onRoles={() => onRoles?.(user)}
                         onForceReset={() => onForceReset?.(user)}
+                        onViewActivityLog={() => onViewActivityLog?.(user)}
                         onStatusChange={handleStatusChange}
                         onDelete={() => setDeleteTarget(user)}
                       />

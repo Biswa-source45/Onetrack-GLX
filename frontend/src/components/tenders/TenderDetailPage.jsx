@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -287,6 +287,19 @@ function getEventTypeBadge(type) {
       return { label: 'Bid Result / Outcome', class: 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200' }
     case 'OEM':
       return { label: 'OEM Coordination', class: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-950/60 dark:text-cyan-300 border-cyan-200' }
+    case 'TENDER_EDITED':
+      return { label: 'Tender Edited', class: 'bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300 border-sky-200' }
+    case 'TENDER_ARCHIVED':
+      return { label: 'Moved to Bin', class: 'bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-300 border-orange-200' }
+    case 'TENDER_RESTORED':
+      return { label: 'Restored', class: 'bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300 border-teal-200' }
+    case 'TENDER_DELETED':
+      return { label: 'Permanently Deleted', class: 'bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300 border-red-200' }
+    case 'OUTCOME_RECORDED':
+      return { label: 'Bid Result / Outcome', class: 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200' }
+    case 'MEMBER_ADDED':
+    case 'MEMBER_REMOVED':
+      return { label: 'Team Change', class: 'bg-violet-100 text-violet-800 dark:bg-violet-950/60 dark:text-violet-300 border-violet-200' }
     case 'STAGE_CHANGE':
     default:
       return { label: 'Stage Transition', class: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200' }
@@ -482,6 +495,27 @@ function StageDetailCard({ entry, isLatest, bid }) {
         </div>
       )}
 
+      {/* Field-level diff — TENDER_EDITED entries carry [{field, old, new}] */}
+      {entry.event_type === 'TENDER_EDITED' && Array.isArray(entry.details) && entry.details.length > 0 && (
+        <div className="pt-3 border-t border-border/60 space-y-1.5">
+          <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">What Changed</span>
+          <div className="space-y-1.5">
+            {entry.details.map((d, i) => (
+              <div key={i} className="bg-sky-50/60 dark:bg-sky-950/20 p-2.5 rounded-md border border-sky-200 dark:border-sky-900/50 text-xs">
+                <span className="font-mono text-[10px] font-semibold text-sky-700 dark:text-sky-300 uppercase tracking-wide block mb-1">
+                  {d.field.replace(/_/g, ' ')}
+                </span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-muted-foreground line-through decoration-destructive/50">{d.old || '(empty)'}</span>
+                  <ArrowRight className="size-3 text-muted-foreground shrink-0" />
+                  <span className="font-semibold text-foreground">{d.new || '(empty)'}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Reason / Micro-Log Summary */}
       <div className="pt-3 border-t border-border/60 space-y-1">
         <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">Micro Event / Transition Summary</span>
@@ -493,8 +527,9 @@ function StageDetailCard({ entry, isLatest, bid }) {
         </div>
       </div>
 
-      {/* Micro Details Payload Inspector */}
-      {entry.details && typeof entry.details === 'object' && (
+      {/* Micro Details Payload Inspector — skipped for TENDER_EDITED, which
+          already gets the friendlier "What Changed" rendering above. */}
+      {entry.event_type !== 'TENDER_EDITED' && entry.details && typeof entry.details === 'object' && (
         <div className="pt-2 border-t border-border/60 space-y-1">
           <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">Recorded Payload Metadata</span>
           <div className="bg-slate-950 text-slate-100 p-2.5 rounded-md font-mono text-[11px] overflow-x-auto border border-slate-800">
@@ -522,35 +557,53 @@ function StageHistoryTab({ bidId, bid }) {
     'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER'
   ]
 
+  // Server-paginated (newest first, 30/page) so a heavily-audited tender —
+  // now that field edits, archive/restore, outcomes and team changes all
+  // write here too, not just stage transitions — never has to load its
+  // entire history in one response. loadingMore/hasMore/cursor drive the
+  // "load on scroll" sentinel below.
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [cursor, setCursor] = useState('')
+  const [hasMore, setHasMore] = useState(false)
+  const sentinelRef = useRef(null)
+
+  function deriveEventType(item) {
+    let derivedType = item.event_type || item.eventType
+    if (!derivedType) {
+      if (item.to_stage === 'CHECKLIST_UPDATE' || item.transition_reason?.toLowerCase().includes('checklist')) {
+        derivedType = 'CHECKLIST'
+      } else if (item.transition_reason?.toLowerCase().includes('pricing') || item.transition_reason?.toLowerCase().includes('quote')) {
+        derivedType = 'PRICING'
+      } else if (item.transition_reason?.toLowerCase().includes('oem')) {
+        derivedType = 'OEM'
+      } else if (item.transition_reason?.toLowerCase().includes('alert') || item.transition_reason?.toLowerCase().includes('mail')) {
+        derivedType = 'ALERT'
+      } else if (item.transition_reason?.toLowerCase().includes('outcome')) {
+        derivedType = 'OUTCOME'
+      } else {
+        derivedType = 'STAGE_CHANGE'
+      }
+    }
+    return { ...item, event_type: derivedType }
+  }
+
   useEffect(() => {
-    function loadHistory() {
-      getBidStageHistory(bidId).then(r => {
-        let backendData = r.ok ? (r.data ?? []) : []
+    let cancelled = false
+    function loadFirstPage() {
+      setLoading(true)
+      getBidStageHistory(bidId, { limit: 30 }).then(r => {
+        if (cancelled) return
+        const backendData = r.ok ? (r.data ?? []) : []
         const localHistoryKey = `onetrack_checklist_history_${bidId}`
         const localEvents = JSON.parse(localStorage.getItem(localHistoryKey) || '[]')
 
-        // Combine and derive event_type for legacy events if missing
-        const combined = [...backendData, ...localEvents].map(item => {
-          let derivedType = item.event_type || item.eventType
-          if (!derivedType) {
-            if (item.to_stage === 'CHECKLIST_UPDATE' || item.transition_reason?.toLowerCase().includes('checklist')) {
-              derivedType = 'CHECKLIST'
-            } else if (item.transition_reason?.toLowerCase().includes('pricing') || item.transition_reason?.toLowerCase().includes('quote')) {
-              derivedType = 'PRICING'
-            } else if (item.transition_reason?.toLowerCase().includes('oem')) {
-              derivedType = 'OEM'
-            } else if (item.transition_reason?.toLowerCase().includes('alert') || item.transition_reason?.toLowerCase().includes('mail')) {
-              derivedType = 'ALERT'
-            } else if (item.transition_reason?.toLowerCase().includes('outcome')) {
-              derivedType = 'OUTCOME'
-            } else {
-              derivedType = 'STAGE_CHANGE'
-            }
-          }
-          return { ...item, event_type: derivedType }
-        }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        const combined = [...backendData, ...localEvents]
+          .map(deriveEventType)
+          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
 
         setHistory(combined)
+        setCursor(r.meta?.next_cursor || '')
+        setHasMore(!!r.meta?.has_more)
         if (combined.length > 0) {
           setSelectedIndex(0)
         }
@@ -558,10 +611,42 @@ function StageHistoryTab({ bidId, bid }) {
       })
     }
 
-    loadHistory()
-    window.addEventListener('onetrack_history_updated', loadHistory)
-    return () => window.removeEventListener('onetrack_history_updated', loadHistory)
+    loadFirstPage()
+    window.addEventListener('onetrack_history_updated', loadFirstPage)
+    return () => { cancelled = true; window.removeEventListener('onetrack_history_updated', loadFirstPage) }
   }, [bidId])
+
+  const loadMore = useCallback(() => {
+    if (loadingMore || !hasMore) return
+    setLoadingMore(true)
+    getBidStageHistory(bidId, { limit: 30, cursor }).then(r => {
+      if (r.ok) {
+        const nextPage = (r.data ?? []).map(deriveEventType)
+        setHistory(prev => {
+          const seen = new Set(prev.map(h => h.id))
+          return [...prev, ...nextPage.filter(h => !seen.has(h.id))]
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        })
+        setCursor(r.meta?.next_cursor || '')
+        setHasMore(!!r.meta?.has_more)
+      }
+      setLoadingMore(false)
+    })
+  }, [bidId, cursor, hasMore, loadingMore])
+
+  // Scroll-triggered loading: fetch the next page once the sentinel at the
+  // bottom of the timeline scrolls into view, instead of ever pulling the
+  // whole history into one response.
+  useEffect(() => {
+    const el = sentinelRef.current
+    if (!el || !hasMore) return
+    const observer = new IntersectionObserver(
+      (entries) => { if (entries[0].isIntersecting) loadMore() },
+      { rootMargin: '300px' }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [hasMore, loadMore])
 
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="size-6 animate-spin text-primary"/></div>
 
@@ -681,6 +766,7 @@ function StageHistoryTab({ bidId, bid }) {
         {[
           { id: 'ALL', label: `All Events (${history.length})` },
           { id: 'STAGE_CHANGE', label: 'Stage Transitions' },
+          { id: 'TENDER_EDITED', label: 'Tender Edits' },
           { id: 'OEM', label: 'OEM Matrix' },
           { id: 'PRICING', label: 'Pricing & Quotes' },
           { id: 'CHECKLIST', label: 'Checklist Audit' },
@@ -832,6 +918,19 @@ function StageHistoryTab({ bidId, bid }) {
                 )
               })}
             </div>
+
+            {/* Scroll-triggered "load more" — the sentinel scrolling into
+                view fetches the next page; nothing renders it if the
+                current page is the whole history. */}
+            {hasMore && (
+              <div ref={sentinelRef} className="flex items-center justify-center py-4">
+                {loadingMore && (
+                  <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <Loader2 className="size-3.5 animate-spin" /> Loading earlier events…
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Right Column: Audit Inspector Detail Card (Sticky) */}
