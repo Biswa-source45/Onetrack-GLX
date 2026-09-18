@@ -462,10 +462,11 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 		_ = s.repo.AddMember(ctx, id, *req.ReportingManagerID, "MANAGER", createdBy)
 	}
 
-	// Auto-add the Account Manager (required — the tender's approving authority)
-	// and Pre-Sales (optional) as members so they show up in the team panel.
-	_ = s.repo.AddMember(ctx, id, req.AccountManagerID, "ACCOUNT_MANAGER", createdBy)
-	if req.PresalesID != nil {
+	// Auto-add the Account Manager and Pre-Sales as members so they show up in the team panel.
+	if req.AccountManagerID != nil && *req.AccountManagerID != "" {
+		_ = s.repo.AddMember(ctx, id, *req.AccountManagerID, "ACCOUNT_MANAGER", createdBy)
+	}
+	if req.PresalesID != nil && *req.PresalesID != "" {
 		_ = s.repo.AddMember(ctx, id, *req.PresalesID, "PRESALES", createdBy)
 	}
 
@@ -498,16 +499,18 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 			})
 		}
 
-		// Directly notify the Account Manager — they're the approving authority
+		// Directly notify the Account Manager (if assigned) — they're the approving authority
 		// for this tender and own the Primary Review Go/No-Go decision next.
-		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
-			UserID:    &req.AccountManagerID,
-			BidID:     &bidIdCopy,
-			CreatedBy: &createdBy,
-			Type:      "TENDER_ASSIGNED_ACCOUNT_MANAGER",
-			Title:     fmt.Sprintf("You're the Account Manager: %s", req.Title),
-			Message:   fmt.Sprintf("<p>Tender '%s' has been created and assigned to you as Account Manager. Please complete Primary Review (Go/No-Go).</p>%s", req.Title, detailTable),
-		})
+		if req.AccountManagerID != nil && *req.AccountManagerID != "" {
+			_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+				UserID:    req.AccountManagerID,
+				BidID:     &bidIdCopy,
+				CreatedBy: &createdBy,
+				Type:      "TENDER_ASSIGNED_ACCOUNT_MANAGER",
+				Title:     fmt.Sprintf("You're the Account Manager: %s", req.Title),
+				Message:   fmt.Sprintf("<p>Tender '%s' has been created and assigned to you as Account Manager. Please complete Primary Review (Go/No-Go).</p>%s", req.Title, detailTable),
+			})
+		}
 
 		if req.PresalesID != nil {
 			_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
@@ -1026,7 +1029,11 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 	newAccountManagerID := ""
 	if req.AccountManagerID != nil && (bid.AccountManagerID == nil || *req.AccountManagerID != *bid.AccountManagerID) {
 		newAccountManagerID = *req.AccountManagerID
-		changes = append(changes, "Account Manager reassigned")
+		if newAccountManagerID != "" {
+			changes = append(changes, "Account Manager reassigned")
+		} else {
+			changes = append(changes, "Account Manager unassigned")
+		}
 	}
 	newPresalesID := ""
 	if req.PresalesID != nil && *req.PresalesID != "" && (bid.PresalesID == nil || *req.PresalesID != *bid.PresalesID) {
@@ -1144,11 +1151,17 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 	// person they replaced lingers there forever. addMemberAndDropPrevious
 	// keeps the team panel in lockstep with the actual FK assignment instead
 	// of only ever growing.
-	addMemberAndDropPrevious := func(role, previousID, nextID string) {
-		if nextID == "" || nextID == previousID {
+	syncRoleMember := func(role, previousID string, newIDPtr *string) {
+		if newIDPtr == nil {
 			return
 		}
-		_ = s.repo.AddMember(ctx, id, nextID, role, actorID)
+		nextID := strings.TrimSpace(*newIDPtr)
+		if nextID == previousID {
+			return
+		}
+		if nextID != "" {
+			_ = s.repo.AddMember(ctx, id, nextID, role, actorID)
+		}
 		if previousID != "" {
 			_ = s.repo.RemoveMember(ctx, id, previousID)
 		}
@@ -1165,10 +1178,15 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 	if bid.ReportingManagerID != nil {
 		previousReportingManagerID = *bid.ReportingManagerID
 	}
-	addMemberAndDropPrevious("OWNER", bid.BidOwnerID, newOwnerID)
-	addMemberAndDropPrevious("ACCOUNT_MANAGER", previousAccountManagerID, newAccountManagerID)
-	addMemberAndDropPrevious("PRESALES", previousPresalesID, newPresalesID)
-	addMemberAndDropPrevious("MANAGER", previousReportingManagerID, newReportingManagerID)
+	if newOwnerID != "" && newOwnerID != bid.BidOwnerID {
+		_ = s.repo.AddMember(ctx, id, newOwnerID, "OWNER", actorID)
+		if bid.BidOwnerID != "" {
+			_ = s.repo.RemoveMember(ctx, id, bid.BidOwnerID)
+		}
+	}
+	syncRoleMember("ACCOUNT_MANAGER", previousAccountManagerID, req.AccountManagerID)
+	syncRoleMember("PRESALES", previousPresalesID, req.PresalesID)
+	syncRoleMember("MANAGER", previousReportingManagerID, req.ReportingManagerID)
 
 	if s.alertSvc != nil {
 		bidIdCopy := id

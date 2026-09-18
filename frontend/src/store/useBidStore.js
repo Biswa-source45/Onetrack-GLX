@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { listBids, listFieldSuggestions } from '../services/bids'
 import { listUsers, getStageRestrictions } from '../services/users'
+import { getSystemConfigs } from '../services/systemConfig'
 import { tokenStorage } from '../services/auth'
 
 // Resolves a quick end-date filter key ('today' | 'week' | 'month') into a
@@ -231,4 +232,34 @@ export const useBidStore = create((set, get) => ({
       console.error('Failed to load stage restrictions', err)
     }
   },
+
+  // Dynamic system configurations (e.g. stage2_require_am_presales)
+  systemConfigs: { stage2_require_am_presales: true },
+  systemConfigsLoaded: false,
+
+  loadSystemConfigs: async (force = false) => {
+    const { systemConfigsLoaded } = get()
+    if (systemConfigsLoaded && !force) return
+    try {
+      const res = await getSystemConfigs()
+      if (res.ok && res.data) {
+        set({ systemConfigs: { ...get().systemConfigs, ...res.data }, systemConfigsLoaded: true })
+      }
+    } catch (err) {
+      console.error('Failed to load system configs', err)
+    }
+  },
+
+  setSystemConfigLocal: (key, value) => {
+    const { systemConfigs } = get()
+    set({ systemConfigs: { ...systemConfigs, [key]: value } })
+  },
 }))
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('onetrack_config_updated', (e) => {
+    if (e.detail?.key !== undefined) {
+      useBidStore.getState().setSystemConfigLocal(e.detail.key, e.detail.value)
+    }
+  })
+}

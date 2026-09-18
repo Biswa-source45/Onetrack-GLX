@@ -6,7 +6,7 @@ import {
   Users, LayoutDashboard, Menu, X, ChevronRight,
   FileText, TrendingUp, Activity, BarChart2, ShieldCheck, Bell,
   Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Pencil,
-  FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass, ScrollText } from 'lucide-react'
+  FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass, ScrollText, Settings } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button }    from '@/components/ui/button'
@@ -75,6 +75,7 @@ const NAV_ITEMS = [
   { id: 'users',      label: 'Users',            managementLabel: 'User Management', icon: Users, permission: 'user.view' },
   { id: 'system-logs', label: 'System Logs',     icon: ScrollText,      permission: null, role: 'SUPER_ADMIN', path: '/dashboard/system-logs' },
   { id: 'bulk-import', label: 'Bulk Import',     icon: FileSpreadsheet, permission: null, role: 'SUPER_ADMIN', path: '/dashboard/bulk-import' },
+  { id: 'settings',    label: 'Settings',        icon: Settings,        permission: null, role: 'SUPER_ADMIN', path: '/dashboard/settings' },
 ]
 
 function isChildActive(child, pathname) {
@@ -1715,6 +1716,8 @@ export default function Dashboard() {
     ? 'system-logs'
     : location.pathname.includes('/bulk-import')
     ? 'bulk-import'
+    : location.pathname.includes('/settings')
+    ? 'settings'
     : 'overview'
 
   // Roles that run the system see management-facing wording; everyone else

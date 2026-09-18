@@ -719,7 +719,13 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 		}
 	}
 	if req.AccountManagerID != nil {
-		addSet("account_manager_id", *req.AccountManagerID)
+		if strings.TrimSpace(*req.AccountManagerID) == "" {
+			sets = append(sets, fmt.Sprintf("account_manager_id = $%d", idx))
+			args = append(args, nil)
+			idx++
+		} else {
+			addSet("account_manager_id", *req.AccountManagerID)
+		}
 	}
 	if req.PresalesID != nil {
 		if strings.TrimSpace(*req.PresalesID) == "" {

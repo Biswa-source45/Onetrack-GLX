@@ -399,7 +399,7 @@ type CreateBidRequest struct {
 	Authority                 *string  `json:"authority"`
 	BidOwnerID                string   `json:"bid_owner_id" binding:"required"`
 	ReportingManagerID        *string  `json:"reporting_manager_id"`
-	AccountManagerID          string   `json:"account_manager_id" binding:"required"`
+	AccountManagerID          *string  `json:"account_manager_id"`
 	PresalesID                *string  `json:"presales_id"`
 	Location                  *string  `json:"location"`
 	BGDurationMonths          *int     `json:"bg_duration_months"`
@@ -802,7 +802,7 @@ type CreateBidParams struct {
 	CreationMode              string
 	BidOwnerID                string
 	ReportingManagerID        *string
-	AccountManagerID          string
+	AccountManagerID          *string
 	PresalesID                *string
 	Location                  *string
 	BGDurationMonths          *int

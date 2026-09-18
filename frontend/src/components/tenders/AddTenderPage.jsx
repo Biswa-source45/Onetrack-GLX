@@ -79,7 +79,7 @@ export function AddTenderPage() {
   const navigate = useNavigate()
   const currentUser = tokenStorage.getUser()
 
-  const { users, usersLoading, loadUsers, learnFieldValue } = useBidStore()
+  const { users, usersLoading, loadUsers, learnFieldValue, systemConfigs, loadSystemConfigs } = useBidStore()
 
   // Stepper state
   const [step, setStep] = useState(1)
@@ -158,10 +158,13 @@ export function AddTenderPage() {
   const accountManagers = users.filter(u => Array.isArray(u.roles) && u.roles.includes('ACCOUNT_MANAGER'))
   const presalesUsers = users.filter(u => Array.isArray(u.roles) && u.roles.includes('PRE_SALES'))
 
-  // Load users for owner selector
+  // Load users and system configurations
   useEffect(() => {
     loadUsers()
-  }, [loadUsers])
+    loadSystemConfigs()
+  }, [loadUsers, loadSystemConfigs])
+
+  const requireAmPresales = systemConfigs?.stage2_require_am_presales !== false
 
   // Pre-fill bid owner if users loaded
   useEffect(() => {
@@ -256,7 +259,9 @@ export function AddTenderPage() {
       }
     } else if (currentStep === 2) {
       if (!form.bid_owner_id && !currentUser?.id) e.bid_owner_id = 'Bid owner is required'
-      if (!form.account_manager_id) e.account_manager_id = 'Account Manager is required — they are the approving authority for this tender'
+      if (requireAmPresales && !form.account_manager_id) {
+        e.account_manager_id = 'Account Manager is required — they are the approving authority for this tender'
+      }
     }
     return e
   }
@@ -919,18 +924,30 @@ export function AddTenderPage() {
                       </DropdownMenu>
                     </Field>
 
-                    {/* Account Manager selection — required, the approving authority for this tender */}
-                    <Field label="Account Manager" error={errors.account_manager_id} required tooltip="The approving authority for this tender — owns the Primary Review Go/No-Go decision.">
+                    {/* Account Manager selection — required in strict mode, optional in self-managed mode */}
+                    <Field
+                      label={requireAmPresales ? 'Account Manager' : 'Account Manager (Optional)'}
+                      error={errors.account_manager_id}
+                      required={requireAmPresales}
+                      tooltip={requireAmPresales
+                        ? "The approving authority for this tender — owns the Primary Review Go/No-Go decision."
+                        : "Optional. When unassigned, Primary Review is self-managed by the Bid Owner & Reporting Manager."}
+                    >
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="outline" size="sm" className={`w-full h-9 text-xs font-normal justify-between bg-background text-foreground hover:bg-muted/50 gap-1.5 ${errors.account_manager_id ? 'border-destructive' : 'border-input'}`}>
-                            <span>{form.account_manager_id ? (accountManagers.find(u => u.id === form.account_manager_id)?.full_name ?? 'Select Account Manager...') : 'Select Account Manager...'}</span>
+                            <span>{form.account_manager_id ? (accountManagers.find(u => u.id === form.account_manager_id)?.full_name ?? 'Select Account Manager...') : (requireAmPresales ? 'Select Account Manager...' : 'None (Self-Managed Mode)')}</span>
                             <ChevronDown className="size-3 text-muted-foreground ml-auto" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent className="max-h-60 overflow-y-auto w-[320px]">
                           <DropdownMenuLabel>Select Account Manager</DropdownMenuLabel>
                           <DropdownMenuSeparator />
+                          {!requireAmPresales && (
+                            <DropdownMenuItem onSelect={() => set('account_manager_id', '')}>
+                              <span className="text-muted-foreground italic">None (Self-Managed Mode)</span>
+                            </DropdownMenuItem>
+                          )}
                           {usersLoading ? (
                             <DropdownMenuItem disabled>Loading users…</DropdownMenuItem>
                           ) : accountManagers.length === 0 ? (

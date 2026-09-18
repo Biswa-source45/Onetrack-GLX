@@ -126,6 +126,9 @@ function Field({ label, error, children, required }) {
 export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, originY }) {
   const spring = useMacOSDialog(open, originX, originY)
   const { user, isAdmin } = usePermissions()
+  const { systemConfigs, loadSystemConfigs } = useBidStore()
+  useEffect(() => { loadSystemConfigs() }, [loadSystemConfigs])
+  const requireAmPresales = systemConfigs?.stage2_require_am_presales !== false
 
   // Bid Owner reassignment is restricted to this tender's own Account Manager
   // / Reporting Manager (or an admin) — mirrors the backend check in
@@ -390,7 +393,7 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
     const e = {}
     if (!form.title.trim())      e.title = 'Tender title is required'
     if (!form.bid_owner_id)      e.bid_owner_id = 'Bid owner is required'
-    if (!form.account_manager_id) e.account_manager_id = 'Account Manager is required — they are the approving authority for this tender'
+    // Account Manager is non-mandatory in Edit Tender
     // EMD is raw data off the tender document (mirrors AddTenderPage): Online,
     // DD, and exemption criteria are independent — tick whichever the
     // document actually offers.
@@ -441,8 +444,9 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
         opening_date:    form.opening_date ? new Date(form.opening_date).toISOString() : null,
         closing_date:    form.closing_date ? new Date(form.closing_date).toISOString() : null,
         target_month_date: form.target_month_date ? new Date(form.target_month_date).toISOString() : null,
-        reporting_manager_id: form.reporting_manager_id || null,
-        presales_id:     form.presales_id || null,
+        account_manager_id: form.account_manager_id || '',
+        reporting_manager_id: form.reporting_manager_id || '',
+        presales_id:     form.presales_id || '',
         requested_products: JSON.stringify(cleanProducts),
         // Always sent (not just when set) so removing the note in the UI
         // actually clears it on save, the same way an emptied products list
@@ -957,17 +961,20 @@ export function EditTenderDialog({ open, onClose, bid, onUpdated, originX, origi
                       </DropdownMenu>
                     </Field>
 
-                    <Field label="Account Manager" error={errors.account_manager_id} required>
+                    <Field label="Account Manager (Optional)" error={errors.account_manager_id}>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild disabled={usersLoading}>
                           <Button variant="outline" size="sm" className={`w-full h-8 text-xs font-normal justify-between bg-background text-foreground hover:bg-muted/50 gap-1.5 ${errors.account_manager_id ? 'border-destructive' : 'border-input'}`}>
-                            <span>{form.account_manager_id ? (accountManagers.find((u) => u.id === form.account_manager_id)?.full_name ?? users.find((u) => u.id === form.account_manager_id)?.full_name ?? 'Select account manager...') : 'Select account manager...'}</span>
+                            <span>{form.account_manager_id ? (accountManagers.find((u) => u.id === form.account_manager_id)?.full_name ?? users.find((u) => u.id === form.account_manager_id)?.full_name ?? 'Select account manager...') : 'None (Unassigned)'}</span>
                             <ChevronDown className="size-3 text-muted-foreground ml-auto" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent className="max-h-60 overflow-y-auto w-[220px]">
                           <DropdownMenuLabel>Select Account Manager</DropdownMenuLabel>
                           <DropdownMenuSeparator />
+                          <DropdownMenuItem onSelect={() => set('account_manager_id', '')}>
+                            <span className="text-muted-foreground italic">None (Unassigned)</span>
+                          </DropdownMenuItem>
                           {accountManagers.length === 0 ? (
                             <DropdownMenuItem disabled>No users hold the Account Manager role yet</DropdownMenuItem>
                           ) : (

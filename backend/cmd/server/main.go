@@ -28,6 +28,9 @@ import (
 	"github.com/onetrack/backend/internal/platform/database"
 	emailService "github.com/onetrack/backend/internal/platform/email"
 	redisClient "github.com/onetrack/backend/internal/platform/redis"
+	systemconfigHandler "github.com/onetrack/backend/internal/systemconfig/handler"
+	systemconfigRepo "github.com/onetrack/backend/internal/systemconfig/repository"
+	systemconfigService "github.com/onetrack/backend/internal/systemconfig/service"
 	systemlogHandler "github.com/onetrack/backend/internal/systemlog/handler"
 	systemlogRepo "github.com/onetrack/backend/internal/systemlog/repository"
 	systemlogService "github.com/onetrack/backend/internal/systemlog/service"
@@ -106,6 +109,12 @@ func main() {
 	systemlogSvc := systemlogService.NewService(systemlogRepository)
 	systemlogHdlr := systemlogHandler.NewHandler(systemlogSvc)
 	systemlogHandler.RegisterRoutes(v1, systemlogHdlr, authMiddleware)
+
+	// Initialize System Config module
+	systemconfigRepository := systemconfigRepo.NewPostgresRepository(dbPool)
+	systemconfigSvc := systemconfigService.NewService(systemconfigRepository, systemlogSvc)
+	systemconfigHdlr := systemconfigHandler.NewHandler(systemconfigSvc)
+	systemconfigHandler.RegisterRoutes(v1, systemconfigHdlr, authMiddleware)
 
 	// Initialize user module
 	userRepository := userRepo.NewPostgresUserRepository(dbPool)
