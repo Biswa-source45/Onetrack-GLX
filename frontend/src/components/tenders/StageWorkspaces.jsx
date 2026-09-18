@@ -5,7 +5,7 @@ import {
   AlertCircle, CheckCircle2, Send, Upload, Hourglass, Trophy,
   XCircle, Plus, Trash2, ArrowRight, DollarSign, Building2,
   Lock, Sparkles, UserCheck, Bell, Calculator, ExternalLink, RefreshCw, Edit2, Loader2, AlertTriangle,
-  Calendar, Clock, History, MessageSquare, Eye, ChevronRight, Ban, Users
+  Calendar, Clock, History, MessageSquare, Eye, ChevronRight, Ban, Users, UserPlus
 } from 'lucide-react'
 import { toast } from 'sonner'
 import confetti from 'canvas-confetti'
@@ -318,30 +318,25 @@ export function checkStageState(bid, stageKey) {
     : null
 
   // Stage 1 (DISCOVERED) is completed by default upon tender creation unless explicitly set to false
-  // NOTE: the terminal-state fallback below only backfills stages *before* the
-  // current one (stageIdx < currentIdx) — never the current stage itself. A WON
-  // or LOST outcome recorded at Financial Evaluation sets bid_status to that
-  // terminal value immediately, while workflow_stage advances to Award &
-  // Handover for its own separate closing checklist (PO/BG/Delivery/EMD or the
-  // EMD Return workspace) — using <= here would have force-completed that
-  // stage before its real closing action ever ran.
+  // Stage 2 (PRIMARY_REVIEW) is completed if explicitly marked, or if the tender has already progressed past it (currentIdx > 1)
   const isCompleted = completions[stageKey] === true || (
     stageKey === 'DISCOVERED' && completions['DISCOVERED'] !== false
+  ) || (
+    stageKey === 'PRIMARY_REVIEW' && (completions['PRIMARY_REVIEW'] === true || currentIdx > 1)
   ) || isEmdExempt || (isTerminal && stageIdx < currentIdx && completions[stageKey] !== false)
 
   const isCurrent = stageIdx === currentIdx && !isTerminal && !isEmdExempt
 
   // Stage Locking:
   // 1. OEM Authorization / Pricing Request / Document Checklist Prep / EMD
-  //    Processing are locked until the Account Manager completes Primary
-  //    Review — but NOT sequentially gated against each other (they stay
-  //    parallel-accessible once unlocked, matching how the team actually
-  //    works them).
-  // 2. From Bid Submission onwards, every prior stage must actually be
-  //    complete (looked up by name, not a hardcoded index, so inserting a
-  //    stage earlier in the pipeline can't silently shift this boundary).
+  //    Processing are gated by Primary Review — UNLESS:
+  //    - Primary Review is explicitly done
+  //    - The tender has ALREADY progressed past Stage 2 in its lifecycle (currentIdx > 1)
+  //    - Or the tender was created without an Account Manager and has moved on
+  // 2. From Bid Submission onwards, prior stages must be complete, with defensive
+  //    fallbacks for legacy tenders already in flight.
   let isLocked = false
-  const primaryReviewDone = completions['PRIMARY_REVIEW'] === true
+  const primaryReviewDone = completions['PRIMARY_REVIEW'] === true || currentIdx > 1 || (!bid?.account_manager && !bid?.account_manager_id && currentIdx !== 1)
   if (!isTerminal && STAGES_GATED_BY_PRIMARY_REVIEW.includes(stageKey) && !primaryReviewDone) {
     isLocked = true
   }
@@ -349,7 +344,11 @@ export function checkStageState(bid, stageKey) {
   if (!isLocked && stageIdx >= gemSubmissionIdx && !isTerminal) {
     for (let i = 0; i < stageIdx; i++) {
       const priorKey = WORKFLOW_STAGES_ORDERED[i]
-      const priorDone = completions[priorKey] === true || priorKey === 'DISCOVERED' || (priorKey === 'EMD_PROCESSING' && !!(bid?.emd_exempted || bid?.emd_not_applicable))
+      const priorDone = completions[priorKey] === true ||
+        priorKey === 'DISCOVERED' ||
+        (priorKey === 'PRIMARY_REVIEW' && (completions['PRIMARY_REVIEW'] === true || currentIdx > 1 || (!bid?.account_manager && !bid?.account_manager_id))) ||
+        (priorKey === 'EMD_PROCESSING' && !!(bid?.emd_exempted || bid?.emd_not_applicable)) ||
+        (i < currentIdx && (!bid?.account_manager && !bid?.account_manager_id))
       if (!priorDone) {
         isLocked = true
         break
@@ -987,7 +986,7 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
     onRefresh()
   }
 
-  const showTabs = !!bid.presales || !requireAmPresales
+  const showTabs = true
 
   return (
     <div className="space-y-6">
@@ -1022,19 +1021,17 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
         />
       </div>
 
-      {showTabs && (
-        <div className="flex gap-1 border-b border-border/60">
-          <button onClick={() => setActiveTab('account_manager')}
-            className={`px-3 py-2 text-xs font-semibold uppercase tracking-wider border-b-2 transition-colors ${activeTab === 'account_manager' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
-            {bid.account_manager ? 'Account Manager' : (requireAmPresales ? 'Account Manager' : 'Review & Approvals')}
-          </button>
-          <button onClick={() => setActiveTab('presales')}
-            className={`px-3 py-2 text-xs font-semibold uppercase tracking-wider border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === 'presales' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
-            {bid.presales ? 'Pre-Sales' : 'Candidate OEM Mapping'}
-            {presalesCompleted && <CheckCircle2 className="size-3.5 text-emerald-500" />}
-          </button>
-        </div>
-      )}
+      <div className="flex gap-1 border-b border-border/60">
+        <button onClick={() => setActiveTab('account_manager')}
+          className={`px-3 py-2 text-xs font-semibold uppercase tracking-wider border-b-2 transition-colors ${activeTab === 'account_manager' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
+          {bid.account_manager ? 'Account Manager Review' : (requireAmPresales ? 'Primary Review & Approvals' : 'Review & Approvals')}
+        </button>
+        <button onClick={() => setActiveTab('presales')}
+          className={`px-3 py-2 text-xs font-semibold uppercase tracking-wider border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === 'presales' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
+          {bid.presales ? `Pre-Sales (${bid.presales.full_name})` : 'Candidate OEM Mapping'}
+          {presalesCompleted && <CheckCircle2 className="size-3.5 text-emerald-500" />}
+        </button>
+      </div>
 
       {(!showTabs || activeTab === 'account_manager') && (
         <div className="space-y-4">
@@ -1096,12 +1093,33 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
           {products.length > 0 && (
             <div className="p-4 rounded-xl border border-border bg-card space-y-3">
               <div className="flex items-center justify-between flex-wrap gap-2">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Finalize Product OEMs</h4>
-                {primaryReview.amOemFinalizedAt && (
-                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                    Finalized {fmtDate(primaryReview.amOemFinalizedAt)}
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Finalize Product OEMs</h4>
+                  {primaryReview.amOemFinalizedAt && (
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                      Finalized {fmtDate(primaryReview.amOemFinalizedAt)}
+                    </span>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={!canManageAM}
+                  onClick={() => {
+                    const filled = products.map((p, i) => {
+                      if (amPicks[i] && amPicks[i].trim()) return amPicks[i]
+                      const cands = normalizeOemCandidates(primaryReview.presalesProducts?.[i])
+                      const suggested = cands.find(c => c.suggested)?.oem || cands[0]?.oem
+                      return (p.oem || '').trim() || suggested || ''
+                    })
+                    setAmPicks(filled)
+                    toast.info('Auto-filled OEM selections from RFP & candidate suggestions')
+                  }}
+                  className="h-7 text-xs gap-1.5 border-dashed"
+                >
+                  <Sparkles className="size-3 text-amber-500" /> Auto-fill from RFP/Candidates
+                </Button>
               </div>
               <div className="space-y-3">
                 {products.map((p, i) => {
@@ -1186,10 +1204,24 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
         <div className="space-y-4">
           <div className="p-4 rounded-xl border border-border bg-card space-y-3">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Map Each Product to an OEM</h4>
-              {presalesCompleted && (
-                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">Marked Complete</span>
-              )}
+              <div className="flex items-center gap-2">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Map Each Product to an OEM</h4>
+                {!bid.presales && (
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-300 dark:border-blue-800">
+                    Self-Managed OEM Mapping
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {!bid.presales && canManageAM && (
+                  <Button size="sm" variant="outline" onClick={() => setShowAssignPresalesModal(true)} className="h-7 text-xs gap-1">
+                    <UserPlus className="size-3.5" /> Assign Pre-Sales (Optional)
+                  </Button>
+                )}
+                {presalesCompleted && (
+                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">Marked Complete</span>
+                )}
+              </div>
             </div>
             {products.length === 0 ? (
               <p className="text-xs text-muted-foreground italic">No products were added to this tender at creation time.</p>
@@ -1241,10 +1273,10 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
               </div>
             )}
             <div className="flex gap-2 justify-end pt-1">
-              <span title={!canManagePresales ? 'Only the assigned Pre-Sales user (or an Admin) can act here' : undefined}>
+              <span title={!canManagePresales ? (bid?.presales ? 'Only the assigned Pre-Sales user (or an Admin) can act here' : 'Only the Bid Owner, Reporting Manager, or an Admin can act here') : undefined}>
                 <Button size="sm" variant="outline" disabled={!canManagePresales || products.length === 0} onClick={handleSaveOems} className="text-xs">Save</Button>
               </span>
-              <span title={!canManagePresales ? 'Only the assigned Pre-Sales user (or an Admin) can act here' : undefined}>
+              <span title={!canManagePresales ? (bid?.presales ? 'Only the assigned Pre-Sales user (or an Admin) can act here' : 'Only the Bid Owner, Reporting Manager, or an Admin can act here') : undefined}>
                 <Button size="sm" disabled={!canManagePresales} onClick={handleTogglePresalesComplete}
                   className={`text-xs gap-1.5 ${presalesCompleted ? '' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
                   variant={presalesCompleted ? 'outline' : 'default'}>
@@ -1533,6 +1565,7 @@ export function Stage3Workspace({ bid, onRefresh }) {
   // than lower with the rest of the UI state — while the matrix is open for
   // editing, a background refresh must not clobber in-progress row edits.
   const [isEditing, setIsEditing] = useState(false)
+  const { user: currentUser } = usePermissions()
 
   // Initialize: DB value (bid.oem_workspace) takes priority, then localStorage cache
   const [oems, setOems] = useState(() => {
@@ -1606,10 +1639,15 @@ export function Stage3Workspace({ bid, onRefresh }) {
   // is missing, so it settles after one write instead of looping.
   useEffect(() => {
     const pr = (bid.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
-    const picks = [...new Set(Object.values(pr.amOemSelections || {}).filter(Boolean))]
+    const picks = [...new Set([
+      ...Object.values(pr.amOemSelections || {}),
+      ...Object.values(pr.presalesProducts || {}).flatMap(v => normalizeOemCandidates(v).map(c => c.oem)),
+      ...(bid.requested_products || []).map(p => (p.oem || '').trim()),
+    ].map(s => (s || '').trim()).filter(Boolean))]
+
     if (!picks.length) return
-    const existingNames = new Set(oems.map(o => o.name.trim().toLowerCase()))
-    const missing = picks.filter(n => !existingNames.has(n.trim().toLowerCase()) && !dismissedNames.has(n.trim().toLowerCase()))
+    const existingNames = new Set(oems.map(o => (o.name || '').trim().toLowerCase()))
+    const missing = picks.filter(n => !existingNames.has(n.toLowerCase()) && !dismissedNames.has(n.toLowerCase()))
     if (!missing.length) return
     const newRows = missing.map(n => makeOemRow(n, 'presales', ''))
     const rows = [...oems, ...newRows]
@@ -1620,16 +1658,34 @@ export function Stage3Workspace({ bid, onRefresh }) {
       fromStage: 'OEM_AUTHORIZATION_REQUEST',
       toStage: 'OEM_AUTHORIZATION_REQUEST',
       eventType: 'OEM',
-      transitionReason: `Auto-created ${newRows.length} OEM row(s) from the Account Manager's finalized selections`,
+      transitionReason: `Auto-created ${newRows.length} OEM row(s) from product OEM definitions`,
       details: { oems: missing },
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bid.primary_review, bid.id, oems, dismissedNames])
+  }, [bid.primary_review, bid.requested_products, bid.id, oems, dismissedNames])
 
   const [showModal, setShowModal] = useState(false)
+  const [showAddOemDlg, setShowAddOemDlg] = useState(false)
+  const [newOemName, setNewOemName] = useState('')
+  const [newOemContact, setNewOemContact] = useState('')
   const [activeFollowUpOem, setActiveFollowUpOem] = useState(null)
   const stageCompleted = bid?.stage_completions?.OEM_AUTHORIZATION_REQUEST === true
   const completedBy = useStageCompletedBy(bid.id, 'OEM_AUTHORIZATION_REQUEST', stageCompleted)
+
+  const handleAddOemSubmit = async () => {
+    const name = newOemName.trim()
+    if (!name) { toast.error('OEM name is required'); return }
+    const row = makeOemRow(name, 'manual', currentUser?.full_name || '')
+    if (newOemContact.trim()) {
+      row.contactName = newOemContact.trim()
+    }
+    const updated = [...oems, row]
+    await saveOems(updated)
+    setNewOemName('')
+    setNewOemContact('')
+    setShowAddOemDlg(false)
+    toast.success(`Added OEM: ${name}`)
+  }
 
   // Awaitable — a caller that immediately follows a save with onRefresh()
   // (a GET) must wait for this PATCH to actually land first, or the GET can
@@ -1761,14 +1817,11 @@ export function Stage3Workspace({ bid, onRefresh }) {
   // actually "confirmed" by a Pre-Sales mapping in the first place.
   const presalesConfirmedNames = useMemo(() => {
     const pr = (bid.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
-    // presalesProducts values are now arrays of {oem,remarks,suggested}
-    // candidates (previously a single string) — flatten through the shared
-    // normalizer rather than Object.values() directly, which would put
-    // whole candidate arrays into the Set instead of OEM name strings. An
-    // Account-Manager-finalized pick counts as confirmed too.
     const cands = Object.values(pr.presalesProducts || {}).flatMap(v => normalizeOemCandidates(v).map(c => c.oem))
-    return new Set([...cands, ...Object.values(pr.amOemSelections || {})].filter(Boolean))
-  }, [bid.primary_review])
+    const rfpOems = (bid.requested_products || []).map(p => (p.oem || '').trim())
+    const all = [...cands, ...Object.values(pr.amOemSelections || {}), ...rfpOems].map(s => (s || '').trim().toLowerCase()).filter(Boolean)
+    return new Set(all)
+  }, [bid.primary_review, bid.requested_products])
 
   const totalOEMs = oems.length
   const totalFollowUpsCount = useMemo(() => {
@@ -1799,6 +1852,14 @@ export function Stage3Workspace({ bid, onRefresh }) {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setShowAddOemDlg(true)}
+            className="gap-1.5 border-purple-300 text-purple-900 dark:text-purple-200 hover:bg-purple-100 dark:hover:bg-purple-900/40 text-xs font-medium"
+          >
+            <Plus className="size-3.5" /> Add OEM Row
+          </Button>
           {isEditing ? (
             <Button size="sm" onClick={handleSaveMatrix} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm text-xs font-semibold">
               <CheckCircle2 className="size-4" /> Save Matrix
@@ -1921,7 +1982,7 @@ export function Stage3Workspace({ bid, onRefresh }) {
                         ) : (
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-xs font-extrabold text-foreground">{o.name}</span>
-                            {o.origin === 'presales' && presalesConfirmedNames.size > 0 && !presalesConfirmedNames.has(o.name) && (
+                            {o.origin === 'presales' && presalesConfirmedNames.size > 0 && !presalesConfirmedNames.has((o.name || '').trim().toLowerCase()) && (
                               <span
                                 className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800"
                                 title="No longer matches any current Pre-Sales product→OEM mapping — rename this row or leave it if it's still valid."
@@ -2108,6 +2169,49 @@ export function Stage3Workspace({ bid, onRefresh }) {
           onComplete={onRefresh}
         />
       )}
+
+      {showAddOemDlg && (
+        <Dialog open={showAddOemDlg} onOpenChange={setShowAddOemDlg}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-sm font-bold">Add OEM to Matrix</DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">
+                Add an OEM row directly to the authorization matrix to track MAF, compliance, and follow-ups.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
+              <div className="space-y-1">
+                <Label className="text-xs">OEM / Brand Name *</Label>
+                <Input
+                  value={newOemName}
+                  onChange={e => setNewOemName(e.target.value)}
+                  placeholder="e.g. Cisco, HP, Dell, Fortinet"
+                  className="h-8 text-xs bg-background"
+                  onKeyDown={e => { if (e.key === 'Enter') handleAddOemSubmit() }}
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Contact Person / Email (Optional)</Label>
+                <Input
+                  value={newOemContact}
+                  onChange={e => setNewOemContact(e.target.value)}
+                  placeholder="e.g. John Doe (john@oem.com)"
+                  className="h-8 text-xs bg-background"
+                />
+              </div>
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button type="button" variant="outline" size="sm" onClick={() => setShowAddOemDlg(false)} className="text-xs">
+                Cancel
+              </Button>
+              <Button type="button" size="sm" onClick={handleAddOemSubmit} className="text-xs bg-purple-600 hover:bg-purple-700 text-white">
+                Add to Matrix
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }
@@ -2121,12 +2225,14 @@ function computeL1PricingSummary(pricingData, fallbackMarginPct = 2.45) {
   const marginPct = pricingData?.marginPct ?? fallbackMarginPct
   const allQuotes = pricingData?.quotes || []
   const l1Quote = allQuotes.length > 0 ? allQuotes.reduce((best, q) => {
-    const tot = q.items.reduce((s, i) => s + (Number(i.basicPrice) || 0) * (Number(i.qty) || 1), 0)
-    const bTot = best.items.reduce((s, i) => s + (Number(i.basicPrice) || 0) * (Number(i.qty) || 1), 0)
+    const qItems = Array.isArray(q?.items) ? q.items : []
+    const bestItems = Array.isArray(best?.items) ? best.items : []
+    const tot = qItems.reduce((s, i) => s + (Number(i?.basicPrice) || 0) * (Number(i?.qty) || 1), 0)
+    const bTot = bestItems.reduce((s, i) => s + (Number(i?.basicPrice) || 0) * (Number(i?.qty) || 1), 0)
     return tot < bTot ? q : best
   }, allQuotes[0]) : null
 
-  if (!l1Quote || !l1Quote.items || l1Quote.items.length === 0) {
+  if (!l1Quote || !Array.isArray(l1Quote.items) || l1Quote.items.length === 0) {
     return { l1Quote, l1Calculations: null }
   }
 
@@ -2220,7 +2326,9 @@ export function Stage4Workspace({ bid, onRefresh }) {
   // Executive's job. Account Manager only approves — their own "Approve
   // Pricing" action below is gated separately by canApprovePricing and isn't
   // affected by this flag.
-  const isReadOnly = (hasRole('PRE_SALES') || hasRole('ACCOUNT_MANAGER')) && !hasRole('MANAGER') && !hasRole('BID_EXECUTIVE') && !isAdmin
+  const isTenderBidOwner = !!currentUser?.id && (currentUser.id === bid?.bid_owner?.id || currentUser.id === bid?.bid_owner_id)
+  const isTenderReportingManager = !!currentUser?.id && (currentUser.id === bid?.reporting_manager?.id || currentUser.id === bid?.reporting_manager_id)
+  const isReadOnly = (hasRole('PRE_SALES') || hasRole('ACCOUNT_MANAGER')) && !hasRole('MANAGER') && !hasRole('BID_EXECUTIVE') && !isAdmin && !isTenderBidOwner && !isTenderReportingManager
 
   const { users, loadUsers } = useBidStore()
   useEffect(() => { loadUsers() }, [loadUsers])
