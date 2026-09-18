@@ -259,9 +259,7 @@ export function AddTenderPage() {
       }
     } else if (currentStep === 2) {
       if (!form.bid_owner_id && !currentUser?.id) e.bid_owner_id = 'Bid owner is required'
-      if (requireAmPresales && !form.account_manager_id) {
-        e.account_manager_id = 'Account Manager is required — they are the approving authority for this tender'
-      }
+      // Account Manager is optional even when Stage 2 config is enabled
     }
     return e
   }
@@ -924,30 +922,26 @@ export function AddTenderPage() {
                       </DropdownMenu>
                     </Field>
 
-                    {/* Account Manager selection — required in strict mode, optional in self-managed mode */}
+                    {/* Account Manager selection — optional */}
                     <Field
-                      label={requireAmPresales ? 'Account Manager' : 'Account Manager (Optional)'}
+                      label="Account Manager (Optional)"
                       error={errors.account_manager_id}
-                      required={requireAmPresales}
-                      tooltip={requireAmPresales
-                        ? "The approving authority for this tender — owns the Primary Review Go/No-Go decision."
-                        : "Optional. When unassigned, Primary Review is self-managed by the Bid Owner & Reporting Manager."}
+                      required={false}
+                      tooltip="Optional. When unassigned, Primary Review can be handled by the Bid Owner, Reporting Manager, or Manager."
                     >
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="outline" size="sm" className={`w-full h-9 text-xs font-normal justify-between bg-background text-foreground hover:bg-muted/50 gap-1.5 ${errors.account_manager_id ? 'border-destructive' : 'border-input'}`}>
-                            <span>{form.account_manager_id ? (accountManagers.find(u => u.id === form.account_manager_id)?.full_name ?? 'Select Account Manager...') : (requireAmPresales ? 'Select Account Manager...' : 'None (Self-Managed Mode)')}</span>
+                            <span>{form.account_manager_id ? (accountManagers.find(u => u.id === form.account_manager_id)?.full_name ?? 'Select Account Manager...') : 'None (Unassigned)'}</span>
                             <ChevronDown className="size-3 text-muted-foreground ml-auto" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent className="max-h-60 overflow-y-auto w-[320px]">
                           <DropdownMenuLabel>Select Account Manager</DropdownMenuLabel>
                           <DropdownMenuSeparator />
-                          {!requireAmPresales && (
-                            <DropdownMenuItem onSelect={() => set('account_manager_id', '')}>
-                              <span className="text-muted-foreground italic">None (Self-Managed Mode)</span>
-                            </DropdownMenuItem>
-                          )}
+                          <DropdownMenuItem onSelect={() => set('account_manager_id', '')}>
+                            <span className="text-muted-foreground italic">None (Unassigned)</span>
+                          </DropdownMenuItem>
                           {usersLoading ? (
                             <DropdownMenuItem disabled>Loading users…</DropdownMenuItem>
                           ) : accountManagers.length === 0 ? (
