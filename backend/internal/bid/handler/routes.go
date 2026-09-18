@@ -30,6 +30,20 @@ func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, importHandl
 		// Field Memory — remembered values for a free-text field, e.g.
 		// /bids/field-suggestions?field=organization_name
 		bids.GET("/field-suggestions", authMiddleware.RequirePermission("bid.view"), handler.ListFieldSuggestions)
+	}
+
+	// Stage-Level Access Control lives in the bid module (the restriction
+	// logic and enforcement checks belong next to workflow-stage semantics)
+	// but is exposed under /users since it's a User Management action, not
+	// a tender one — the same URL shape the frontend's admin dialog expects.
+	// :id (not :userId) — gin's router requires every route sharing the
+	// /users/:PARAM prefix to use the same wildcard name; the user module
+	// already registered /users/:id elsewhere in this same API group.
+	userStages := router.Group("/users/:id/stage-restrictions")
+	userStages.Use(authMiddleware.Authenticate())
+	{
+		userStages.GET("", handler.GetStageRestrictions)
+		userStages.PUT("", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "MANAGER"), handler.SetStageRestrictions)
 
 		// Members
 		bids.POST("/:id/members", authMiddleware.RequirePermission("bid.edit"), handler.AddMember)

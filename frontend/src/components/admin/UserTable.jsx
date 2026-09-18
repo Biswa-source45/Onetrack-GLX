@@ -2,13 +2,19 @@ import React, { useState } from 'react'
 import { toast } from 'sonner'
 import {
   MoreHorizontal, Pencil, Shield, KeyRound, Power, PowerOff,
-  ChevronLeft, ChevronRight, Trash2, AlertTriangle, History
+  ChevronLeft, ChevronRight, Trash2, AlertTriangle, History, ShieldAlert
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu'
 
 import { UserAvatar } from './UserAvatar'
 import { RoleBadge } from './RoleBadge'
@@ -83,98 +89,78 @@ function DeleteConfirmDialog({ user, onClose, onConfirm, loading }) {
 }
 
 // ── Row Actions Menu ──────────────────────────────────────────────────────────
-function RowActions({ user, canEdit, canDeactivate, canAssignRole, canViewActivityLog, onEdit, onRoles, onForceReset, onViewActivityLog, onStatusChange, onDelete }) {
-  const [open, setOpen] = useState(false)
+// Radix DropdownMenu (portal-rendered to <body>) instead of a hand-rolled
+// absolutely-positioned div: every table on this app wraps in an
+// overflow-x-auto container, which per the CSS spec silently clips vertical
+// overflow too — a plain absolute-positioned menu on a row near the bottom
+// of the table got cut off. The portal escapes that entirely, and Radix
+// already handles outside-click, Escape, and edge-flipping for free.
+function RowActions({ user, canEdit, canDeactivate, canAssignRole, canViewActivityLog, canManageStageAccess, onEdit, onRoles, onForceReset, onViewActivityLog, onStageAccess, onStatusChange, onDelete }) {
   const currentUser = tokenStorage.getUser()
   const isSelf = currentUser?.id === user.id || currentUser?.username === user.username
   const isSadmin = user.username === 'Sadmin'
-
-  function handleAction(fn) {
-    setOpen(false)
-    fn()
-  }
+  // Stage-Level Access Control only ever governs Bid Executives — the menu
+  // item is simply absent for every other role, not just disabled.
+  const showStageAccess = canManageStageAccess && (user.roles || []).includes('BID_EXECUTIVE')
 
   return (
-    <div className="relative">
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={() => setOpen((v) => !v)}
-        aria-label="User actions"
-      >
-        <MoreHorizontal className="size-4" />
-      </Button>
-
-      {open && (
-        <>
-          {/* click-away backdrop */}
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-8 z-20 w-52 rounded-lg border border-border bg-popover shadow-lg py-1 text-sm text-popover-foreground">
-            {canEdit && (
-              <button
-                className="flex w-full items-center gap-2 px-3 py-2 hover:bg-muted transition-colors text-left"
-                onClick={() => handleAction(onEdit)}
-              >
-                <Pencil className="size-3.5 text-muted-foreground" />
-                Edit Profile
-              </button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon-sm" aria-label="User actions">
+          <MoreHorizontal className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        {canEdit && (
+          <DropdownMenuItem onSelect={onEdit} className="gap-2">
+            <Pencil className="size-3.5 text-muted-foreground" />
+            Edit Profile
+          </DropdownMenuItem>
+        )}
+        {canViewActivityLog && (
+          <DropdownMenuItem onSelect={() => onViewActivityLog(user)} className="gap-2">
+            <History className="size-3.5 text-muted-foreground" />
+            Activity Log
+          </DropdownMenuItem>
+        )}
+        {canAssignRole && (
+          <DropdownMenuItem onSelect={onRoles} className="gap-2">
+            <Shield className="size-3.5 text-muted-foreground" />
+            Roles &amp; Permissions
+          </DropdownMenuItem>
+        )}
+        {showStageAccess && (
+          <DropdownMenuItem onSelect={() => onStageAccess(user)} className="gap-2">
+            <ShieldAlert className="size-3.5 text-muted-foreground" />
+            Stage Access
+          </DropdownMenuItem>
+        )}
+        {canEdit && (
+          <DropdownMenuItem onSelect={onForceReset} className="gap-2">
+            <KeyRound className="size-3.5 text-muted-foreground" />
+            Force Password Reset
+          </DropdownMenuItem>
+        )}
+        {canDeactivate && !isSelf && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => onStatusChange(user, !user.is_active)}
+              className={`gap-2 ${user.is_active ? 'text-amber-600 focus:text-amber-600' : 'text-emerald-700 focus:text-emerald-700'}`}
+            >
+              {user.is_active ? <PowerOff className="size-3.5" /> : <Power className="size-3.5" />}
+              {user.is_active ? 'Deactivate' : 'Activate'}
+            </DropdownMenuItem>
+            {!isSadmin && (
+              <DropdownMenuItem onSelect={onDelete} className="gap-2 text-destructive focus:text-destructive">
+                <Trash2 className="size-3.5" />
+                Delete User
+              </DropdownMenuItem>
             )}
-            {canViewActivityLog && (
-              <button
-                className="flex w-full items-center gap-2 px-3 py-2 hover:bg-muted transition-colors text-left"
-                onClick={() => handleAction(() => onViewActivityLog(user))}
-              >
-                <History className="size-3.5 text-muted-foreground" />
-                Activity Log
-              </button>
-            )}
-            {canAssignRole && (
-              <button
-                className="flex w-full items-center gap-2 px-3 py-2 hover:bg-muted transition-colors text-left"
-                onClick={() => handleAction(onRoles)}
-              >
-                <Shield className="size-3.5 text-muted-foreground" />
-                Roles &amp; Permissions
-              </button>
-            )}
-            {canEdit && (
-              <button
-                className="flex w-full items-center gap-2 px-3 py-2 hover:bg-muted transition-colors text-left"
-                onClick={() => handleAction(onForceReset)}
-              >
-                <KeyRound className="size-3.5 text-muted-foreground" />
-                Force Password Reset
-              </button>
-            )}
-            {canDeactivate && !isSelf && (
-              <>
-                <Separator className="my-1" />
-                <button
-                  className={`flex w-full items-center gap-2 px-3 py-2 hover:bg-muted transition-colors text-left
-                    ${user.is_active ? 'text-amber-600' : 'text-emerald-700'}`}
-                  onClick={() => handleAction(() => onStatusChange(user, !user.is_active))}
-                >
-                  {user.is_active
-                    ? <PowerOff className="size-3.5" />
-                    : <Power className="size-3.5" />
-                  }
-                  {user.is_active ? 'Deactivate' : 'Activate'}
-                </button>
-                {!isSadmin && (
-                  <button
-                    className="flex w-full items-center gap-2 px-3 py-2 hover:bg-muted transition-colors text-left text-destructive"
-                    onClick={() => handleAction(onDelete)}
-                  >
-                    <Trash2 className="size-3.5" />
-                    Delete User
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        </>
-      )}
-    </div>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -203,10 +189,12 @@ export function UserTable({
   canDeactivate = false,
   canAssignRole = false,
   canViewActivityLog = false,
+  canManageStageAccess = false,
   onEdit,
   onRoles,
   onForceReset,
   onViewActivityLog,
+  onStageAccess,
   onRefresh,
 }) {
   const [togglingId, setTogglingId] = useState(null)
@@ -249,7 +237,7 @@ export function UserTable({
     }
   }
 
-  const hasActions = canEdit || canDeactivate || canAssignRole || canViewActivityLog
+  const hasActions = canEdit || canDeactivate || canAssignRole || canViewActivityLog || canManageStageAccess
   const start = (page - 1) * limit + 1
   const end   = Math.min(page * limit, total)
 
@@ -387,10 +375,12 @@ export function UserTable({
                         canDeactivate={canDeactivate}
                         canAssignRole={canAssignRole}
                         canViewActivityLog={canViewActivityLog}
+                        canManageStageAccess={canManageStageAccess}
                         onEdit={() => onEdit?.(user)}
                         onRoles={() => onRoles?.(user)}
                         onForceReset={() => onForceReset?.(user)}
                         onViewActivityLog={() => onViewActivityLog?.(user)}
+                        onStageAccess={() => onStageAccess?.(user)}
                         onStatusChange={handleStatusChange}
                         onDelete={() => setDeleteTarget(user)}
                       />

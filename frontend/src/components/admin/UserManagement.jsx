@@ -23,6 +23,7 @@ import { EditUserDialog }         from './EditUserDialog'
 import { RolesPermissionsDialog } from './RolesPermissionsDialog'
 import { ForceResetDialog }       from './ForceResetDialog'
 import { ActivityLogDialog }      from './ActivityLogDialog'
+import { StageAccessDialog }      from './StageAccessDialog'
 import { ALL_ROLES, ROLE_LABELS } from './RoleBadge'
 
 const LIMIT = 20
@@ -77,6 +78,7 @@ export function UserManagement() {
   const [rolesUser, setRolesUser]         = useState(null)
   const [resetUser, setResetUser]         = useState(null)
   const [activityLogUser, setActivityLogUser] = useState(null)
+  const [stageAccessUser, setStageAccessUser] = useState(null)
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
   const fetchUsers = useCallback(async (options = {}) => {
@@ -279,10 +281,12 @@ export function UserManagement() {
         canDeactivate={canDeactivate}
         canAssignRole={canAssignRole}
         canViewActivityLog={isManagementRole}
+        canManageStageAccess={isManagementRole}
         onEdit={(user) => setEditUser(user)}
         onRoles={(user) => setRolesUser(user)}
         onForceReset={(user) => setResetUser(user)}
         onViewActivityLog={(user) => setActivityLogUser(user)}
+        onStageAccess={(user) => setStageAccessUser(user)}
         onRefresh={handleRefresh}
       />
 
@@ -327,6 +331,14 @@ export function UserManagement() {
           open={!!activityLogUser}
           onOpenChange={(v) => !v && setActivityLogUser(null)}
           user={activityLogUser}
+        />
+      )}
+
+      {isManagementRole && (
+        <StageAccessDialog
+          open={!!stageAccessUser}
+          onOpenChange={(v) => !v && setStageAccessUser(null)}
+          user={stageAccessUser}
         />
       )}
     </div>

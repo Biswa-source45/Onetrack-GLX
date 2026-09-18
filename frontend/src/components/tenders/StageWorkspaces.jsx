@@ -4649,6 +4649,34 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
   const stage = selectedStage || bid.workflow_stage
   const { isLocked, stageIdx } = checkStageState(bid, stage)
 
+  // Stage-Level Access Control — a Bid Executive an Admin/Manager has
+  // locked out of this stage sees it here, not hidden from the tender's
+  // stage list entirely: they can still tell the tender is progressing,
+  // just not view/edit this stage's own workspace. Empty for everyone
+  // without a restriction, so this is a no-op for the rest of the app.
+  const { restrictedStages, loadRestrictedStages } = useBidStore()
+  useEffect(() => { loadRestrictedStages() }, [loadRestrictedStages])
+  if (restrictedStages.includes(stage)) {
+    return (
+      <div className="p-8 rounded-xl border border-rose-200 bg-rose-50/50 dark:bg-rose-950/20 dark:border-rose-900/50 text-center space-y-4 max-w-2xl mx-auto my-6">
+        <div className="size-14 rounded-full bg-rose-100 dark:bg-rose-900/50 flex items-center justify-center mx-auto text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-800 shadow-sm">
+          <Lock className="size-7" />
+        </div>
+        <div className="space-y-1">
+          <h3 className="text-base font-bold text-foreground">Stage {stageIdx + 1} ({stage.replace(/_/g, ' ')}) is Restricted</h3>
+          <p className="text-xs text-muted-foreground leading-relaxed max-w-md mx-auto">
+            Your access to this stage has been restricted. Your Account Manager monitors and updates it on your behalf.
+          </p>
+        </div>
+        <div className="pt-2">
+          <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-full bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+            <Lock className="size-3.5" /> Access Restricted
+          </span>
+        </div>
+      </div>
+    )
+  }
+
   // A Technical Evaluation disqualification is terminal (workflow_stage becomes
   // LOST) — Financial Evaluation was never legitimately reached, so it stays
   // locked regardless of the generic terminal-stage completion logic above.

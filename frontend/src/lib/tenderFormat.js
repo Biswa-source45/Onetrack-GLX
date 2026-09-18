@@ -144,14 +144,26 @@ export function escapeCSV(val) {
 export const ALERT_NOTE_COLORS = {
   amber: { bg: '#fffbeb', border: '#fde68a', text: '#92400e', solid: '#f59e0b' },
   rose: { bg: '#fff1f2', border: '#fecdd3', text: '#9f1239', solid: '#f43f5e' },
+  red: { bg: '#fff1f2', border: '#fecdd3', text: '#9f1239', solid: '#ef4444' },
   violet: { bg: '#f5f3ff', border: '#ddd6fe', text: '#5b21b6', solid: '#8b5cf6' },
   cyan: { bg: '#ecfeff', border: '#a5f3fc', text: '#155e75', solid: '#06b6d4' },
+  blue: { bg: '#eff6ff', border: '#bfdbfe', text: '#1e40af', solid: '#3b82f6' },
   emerald: { bg: '#ecfdf5', border: '#a7f3d0', text: '#065f46', solid: '#10b981' },
   fuchsia: { bg: '#fdf4ff', border: '#f5d0fe', text: '#86198f', solid: '#d946ef' },
   orange: { bg: '#fff7ed', border: '#fed7aa', text: '#9a3412', solid: '#fb923c' },
   indigo: { bg: '#eef2ff', border: '#c7d2fe', text: '#3730a3', solid: '#6366f1' },
 }
 export const ALERT_NOTE_COLOR_KEYS = Object.keys(ALERT_NOTE_COLORS)
+
+export const ALERT_NOTE_PRESETS = [
+  { id: 'risk', label: 'High Risk', color: 'rose', description: 'Critical blocker or high risk' },
+  { id: 'attention', label: 'Attention', color: 'amber', description: 'Important warning for reviewers' },
+  { id: 'delivery', label: 'Delivery Risk', color: 'orange', description: 'Timeline or logistics challenge' },
+  { id: 'technical', label: 'Technical Risk', color: 'violet', description: 'OEM, MAF, or spec requirement' },
+  { id: 'financial', label: 'Financial Risk', color: 'fuchsia', description: 'EMD, BG, or pricing challenge' },
+  { id: 'info', label: 'Info', color: 'cyan', description: 'General note or observation' },
+  { id: 'cleared', label: 'Low Risk', color: 'emerald', description: 'Minor note or resolved condition' },
+]
 
 export function randomAlertNoteColor(excludeKey) {
   const options = excludeKey ? ALERT_NOTE_COLOR_KEYS.filter(k => k !== excludeKey) : ALERT_NOTE_COLOR_KEYS

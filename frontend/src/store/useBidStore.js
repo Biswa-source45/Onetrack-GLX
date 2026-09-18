@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { listBids, listFieldSuggestions } from '../services/bids'
-import { listUsers } from '../services/users'
+import { listUsers, getStageRestrictions } from '../services/users'
 import { tokenStorage } from '../services/auth'
 
 // Resolves a quick end-date filter key ('today' | 'week' | 'month') into a
@@ -61,6 +61,12 @@ export const useBidStore = create((set, get) => ({
   // on every keystroke instead of hitting the network per character typed.
   fieldSuggestions: {},
   fieldSuggestionsLoading: {},
+
+  // Stage-Level Access Control — the logged-in user's own restricted stage
+  // keys (empty = full access), fetched once and cached so every tender's
+  // DynamicStageWorkspace doesn't refetch it per stage tab click.
+  restrictedStages: [],
+  restrictedStagesLoaded: false,
 
   setScope: (scope, ownerId = '') => {
     const finalOwnerId = scope === 'owned' ? (ownerId || tokenStorage.getUser()?.id || '') : ''
@@ -210,5 +216,19 @@ export const useBidStore = create((set, get) => ({
       ? list.map((s) => (s === existing ? { ...s, value, usage_count: s.usage_count + 1 } : s))
       : [...list, { value, usage_count: 1 }]
     set({ fieldSuggestions: { ...fieldSuggestions, [fieldKey]: next } })
+  },
+
+  loadRestrictedStages: async (force = false) => {
+    const { restrictedStagesLoaded } = get()
+    if (restrictedStagesLoaded && !force) return
+    const userId = tokenStorage.getUser()?.id
+    if (!userId) return
+    try {
+      const res = await getStageRestrictions(userId)
+      const stages = res.ok && res.data ? (res.data.restricted_stages || []) : []
+      set({ restrictedStages: stages, restrictedStagesLoaded: true })
+    } catch (err) {
+      console.error('Failed to load stage restrictions', err)
+    }
   },
 }))

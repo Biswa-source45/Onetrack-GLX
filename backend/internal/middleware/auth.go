@@ -111,6 +111,39 @@ func (m *AuthMiddleware) RequireRole(role string) gin.HandlerFunc {
 	}
 }
 
+// RequireAnyRole passes if the caller holds at least one of the given
+// roles — the multi-role sibling of RequireRole, for endpoints management
+// shares across SUPER_ADMIN/ADMIN/MANAGER rather than one exact role.
+func (m *AuthMiddleware) RequireAnyRole(roles ...string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userRolesVal, exists := c.Get("roles")
+		if !exists {
+			response.Forbidden(c, "No roles found")
+			c.Abort()
+			return
+		}
+
+		userRoles, ok := userRolesVal.([]string)
+		if !ok {
+			response.Forbidden(c, "Invalid roles format")
+			c.Abort()
+			return
+		}
+
+		for _, want := range roles {
+			for _, have := range userRoles {
+				if have == want {
+					c.Next()
+					return
+				}
+			}
+		}
+
+		response.Forbidden(c, "Insufficient role")
+		c.Abort()
+	}
+}
+
 func hasPermission(userPermissions []string, required string) bool {
 	for _, p := range userPermissions {
 		if p == required {

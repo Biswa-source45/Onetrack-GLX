@@ -148,7 +148,8 @@ func (h *UserHandler) UpdateStatus(c *gin.Context) {
 		return
 	}
 
-	err := h.userService.UpdateStatus(c.Request.Context(), id, req)
+	actorID, _ := c.Get("user_id")
+	err := h.userService.UpdateStatus(c.Request.Context(), id, req, actorID.(string))
 	if err != nil {
 		if errors.Is(err, service.ErrUserNotFound) {
 			response.NotFound(c, "User not found")
@@ -201,7 +202,8 @@ func (h *UserHandler) UpdatePermissions(c *gin.Context) {
 		return
 	}
 
-	err := h.userService.UpdatePermissions(c.Request.Context(), id, req)
+	actorID, _ := c.Get("user_id")
+	err := h.userService.UpdatePermissions(c.Request.Context(), id, req, actorID.(string))
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrUserNotFound):

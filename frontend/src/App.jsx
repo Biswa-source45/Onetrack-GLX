@@ -18,6 +18,7 @@ import { AlertsPage } from "./components/alerts/AlertsPage"
 import { AnalyticsPage } from "./components/analytics/AnalyticsPage"
 import { FeedbackPage } from "./components/feedback/FeedbackPage"
 import { TicketsPage } from "./components/feedback/TicketsPage"
+import { SystemLogsPage } from "./components/admin/SystemLogsPage"
 
 // Auth Guard to protect routes
 function AuthGuard() {
@@ -127,6 +128,7 @@ export default function App() {
 
               <Route element={<RoleGuard role="SUPER_ADMIN" />}>
                 <Route path="bulk-import" element={<BulkImportPage />} />
+                <Route path="system-logs" element={<SystemLogsPage />} />
               </Route>
 
               {/* Redirect any other dashboard path to index */}

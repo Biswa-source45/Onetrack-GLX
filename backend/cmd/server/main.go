@@ -28,6 +28,9 @@ import (
 	"github.com/onetrack/backend/internal/platform/database"
 	emailService "github.com/onetrack/backend/internal/platform/email"
 	redisClient "github.com/onetrack/backend/internal/platform/redis"
+	systemlogHandler "github.com/onetrack/backend/internal/systemlog/handler"
+	systemlogRepo "github.com/onetrack/backend/internal/systemlog/repository"
+	systemlogService "github.com/onetrack/backend/internal/systemlog/service"
 	userHandler "github.com/onetrack/backend/internal/user/handler"
 	userRepo "github.com/onetrack/backend/internal/user/repository"
 	userService "github.com/onetrack/backend/internal/user/service"
@@ -96,9 +99,17 @@ func main() {
 	authHdlr := authHandler.NewAuthHandler(authSvc)
 	authHandler.RegisterAuthRoutes(v1, authHdlr, authMiddleware)
 
+	// Initialize System Logs module first — the user and bid modules both
+	// record into it (user creation/role/permission changes, stage-access
+	// toggles), so its Recorder needs to exist before either is wired up.
+	systemlogRepository := systemlogRepo.NewPostgresRepository(dbPool)
+	systemlogSvc := systemlogService.NewService(systemlogRepository)
+	systemlogHdlr := systemlogHandler.NewHandler(systemlogSvc)
+	systemlogHandler.RegisterRoutes(v1, systemlogHdlr, authMiddleware)
+
 	// Initialize user module
 	userRepository := userRepo.NewPostgresUserRepository(dbPool)
-	userSvc := userService.NewUserService(userRepository)
+	userSvc := userService.NewUserService(userRepository, systemlogSvc)
 	userHdlr := userHandler.NewUserHandler(userSvc)
 	userHandler.RegisterUserRoutes(v1, userHdlr, authMiddleware)
 
@@ -110,7 +121,7 @@ func main() {
 
 	// Initialize bid module
 	bidRepository := bidRepo.NewPostgresBidRepository(dbPool)
-	bidSvc := bidService.NewBidService(bidRepository, alertSvc)
+	bidSvc := bidService.NewBidService(bidRepository, alertSvc, systemlogSvc)
 	bidHdlr := bidHandler.NewBidHandler(bidSvc)
 	bidImportHdlr := bidHandler.NewBulkImportHandler(dbPool)
 	bidHandler.RegisterBidRoutes(v1, bidHdlr, bidImportHdlr, authMiddleware)

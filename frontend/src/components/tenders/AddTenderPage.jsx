@@ -7,7 +7,7 @@ import {
   Plus, Trash2, HelpCircle, CheckSquare, Award, ArrowRight, ArrowLeft, Shuffle
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { ALERT_NOTE_COLORS, randomAlertNoteColor } from '../../lib/tenderFormat'
+import { ALERT_NOTE_COLORS, ALERT_NOTE_PRESETS, randomAlertNoteColor } from '../../lib/tenderFormat'
 
 import { Button }    from '@/components/ui/button'
 import { Input }     from '@/components/ui/input'
@@ -28,14 +28,12 @@ import { tokenStorage } from '../../services/auth'
 import { useBidStore } from '../../store/useBidStore'
 
 const STANDARD_PORTAL_SOURCES = ['GeM', 'CPPP', 'eProcure']
-const PORTAL_SOURCES = [...STANDARD_PORTAL_SOURCES, 'Other']
 const BID_TYPES      = ['BID', 'BID_TO_RA']
 const SCOPE_TYPES    = ['Supply', 'Implementation', 'Support', 'N/A']
 const STANDARD_CATEGORY_OPTIONS = [
   'End computing', 'IT infra', 'Non-IT infra', 'Security', 'Cloud',
   'Surveillance', 'Software', 'Manpower-augmentation',
 ]
-const CATEGORY_OPTIONS = [...STANDARD_CATEGORY_OPTIONS, 'Other']
 
 const BIDDER_SUGGESTIONS = [
   'Experience Certificate',
@@ -141,8 +139,6 @@ export function AddTenderPage() {
 
   const [errors, setErrors]   = useState({})
   const [loading, setLoading] = useState(false)
-  const [otherPortalSource, setOtherPortalSource] = useState(false)
-  const [otherCategory, setOtherCategory] = useState(false)
   // Online/DD are independent raw-capture toggles — a tender document can
   // offer either, both, or neither (if fully exempt). Kept outside `form` so
   // unticking one can clear just its own fields without touching the other.
@@ -155,7 +151,7 @@ export function AddTenderPage() {
   const [showAlertNote, setShowAlertNote] = useState(false)
   const [alertNoteText, setAlertNoteText] = useState('')
   const [alertNoteLabel, setAlertNoteLabel] = useState('')
-  const [alertNoteColor, setAlertNoteColor] = useState(() => randomAlertNoteColor())
+  const [alertNoteColor, setAlertNoteColor] = useState('amber')
 
   // Account Manager is required (approving authority); Pre-Sales is optional —
   // both filtered to users holding that role as primary or secondary.
@@ -328,13 +324,20 @@ export function AddTenderPage() {
       if (res.ok) {
         // Field Memory: make the values just typed available as suggestions
         // right away, without waiting for a refetch of each field's list.
+        learnFieldValue('title', form.title)
         learnFieldValue('organization_name', form.organization_name)
         learnFieldValue('department_name', form.department_name)
         learnFieldValue('location', form.location)
+        learnFieldValue('portal_source', form.portal_source)
+        learnFieldValue('category', form.category)
+        learnFieldValue('scope_type', form.scope_type)
         learnFieldValue('emd_bank_name', form.emd_bank_name)
         learnFieldValue('emd_beneficiary', form.emd_beneficiary)
         learnFieldValue('emd_payable_at', form.emd_payable_at)
-        cleanProducts.forEach((p) => learnFieldValue('oem', p.oem))
+        cleanProducts.forEach((p) => {
+          learnFieldValue('oem', p.oem)
+          learnFieldValue('product', p.product)
+        })
 
         toast.success('Tender workspace created successfully!')
         navigate('/dashboard/tenders')
@@ -485,9 +488,10 @@ export function AddTenderPage() {
                     {/* Tender Title */}
                     <div className="sm:col-span-2">
                       <Field label="Tender Title" error={errors.title} required tooltip="The primary title of the tender.">
-                        <Input
+                        <FieldMemoryInput
+                          fieldKey="title"
                           value={form.title}
-                          onChange={(e) => set('title', e.target.value)}
+                          onChange={(v) => set('title', v)}
                           placeholder="e.g. Supply and Implementation of Enterprise Firewall"
                           className={inputCls(errors.title)}
                         />
@@ -523,40 +527,20 @@ export function AddTenderPage() {
                         className={inputCls()} />
                     </Field>
 
-                    {/* Portal Source */}
+                    {/* Portal Source — typable dropdown: pick a preset or
+                        type your own; whatever's typed is remembered and
+                        suggested next time (Field Memory), same as Category
+                        and Scope Type below. */}
                     <Field label="Portal Source">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="outline" size="sm" className="w-full h-9 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5">
-                            <span>{otherPortalSource ? 'Other' : form.portal_source}</span>
-                            <ChevronDown className="size-3 text-muted-foreground ml-auto" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent className="w-[220px]">
-                          {PORTAL_SOURCES.map((p) => (
-                            <DropdownMenuItem key={p} onSelect={() => {
-                              if (p === 'Other') {
-                                setOtherPortalSource(true)
-                                set('portal_source', '')
-                              } else {
-                                setOtherPortalSource(false)
-                                set('portal_source', p)
-                              }
-                            }}>
-                              {p}
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      {otherPortalSource && (
-                        <Input
-                          value={form.portal_source}
-                          onChange={(e) => set('portal_source', e.target.value)}
-                          placeholder="Enter portal source name"
-                          className={`${inputCls()} mt-2`}
-                          autoFocus
-                        />
-                      )}
+                      <FieldMemoryInput
+                        fieldKey="portal_source"
+                        presetOptions={STANDARD_PORTAL_SOURCES}
+                        maxSuggestions={10}
+                        value={form.portal_source}
+                        onChange={(v) => set('portal_source', v)}
+                        placeholder="GeM, CPPP, eProcure, or type your own"
+                        className={inputCls()}
+                      />
                     </Field>
 
                     {/* Bid Type (BID / BID_TO_RA) */}
@@ -580,57 +564,28 @@ export function AddTenderPage() {
 
                     {/* Category / Scope Group */}
                     <Field label="Category / Scope Group">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="outline" size="sm" className="w-full h-9 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5">
-                            <span>{otherCategory ? 'Other' : (form.category || 'Select category...')}</span>
-                            <ChevronDown className="size-3 text-muted-foreground ml-auto" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent className="w-[220px]">
-                          {CATEGORY_OPTIONS.map((c) => (
-                            <DropdownMenuItem key={c} onSelect={() => {
-                              if (c === 'Other') {
-                                setOtherCategory(true)
-                                set('category', '')
-                              } else {
-                                setOtherCategory(false)
-                                set('category', c)
-                              }
-                            }}>
-                              {c}
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      {otherCategory && (
-                        <Input
-                          value={form.category}
-                          onChange={(e) => set('category', e.target.value)}
-                          placeholder="Enter category name"
-                          className={`${inputCls()} mt-2`}
-                          autoFocus
-                        />
-                      )}
+                      <FieldMemoryInput
+                        fieldKey="category"
+                        presetOptions={STANDARD_CATEGORY_OPTIONS}
+                        maxSuggestions={14}
+                        value={form.category}
+                        onChange={(v) => set('category', v)}
+                        placeholder="Select a category, or type your own"
+                        className={inputCls()}
+                      />
                     </Field>
 
                     {/* Scope Type */}
                     <Field label="Scope Type">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="outline" size="sm" className="w-full h-9 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5">
-                            <span>{form.scope_type}</span>
-                            <ChevronDown className="size-3 text-muted-foreground ml-auto" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent className="w-[220px]">
-                          {SCOPE_TYPES.map((st) => (
-                            <DropdownMenuItem key={st} onSelect={() => set('scope_type', st)}>
-                              {st}
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <FieldMemoryInput
+                        fieldKey="scope_type"
+                        presetOptions={SCOPE_TYPES}
+                        maxSuggestions={10}
+                        value={form.scope_type}
+                        onChange={(v) => set('scope_type', v)}
+                        placeholder="Supply, Implementation, Support, or type your own"
+                        className={inputCls()}
+                      />
                     </Field>
 
                     {/* Every tender is for some number of units or licences. */}
@@ -672,7 +627,7 @@ export function AddTenderPage() {
                         {products.map((p) => (
                           <TableRow key={p.id}>
                             <TableCell className="min-w-[160px]">
-                              <Input value={p.product} onChange={(e) => updateProductRow(p.id, 'product', e.target.value)}
+                              <FieldMemoryInput fieldKey="product" value={p.product} onChange={(v) => updateProductRow(p.id, 'product', v)}
                                 placeholder="e.g. Enterprise Firewall" className="h-8 text-xs bg-background" />
                             </TableCell>
                             <TableCell className="min-w-[200px]">
@@ -1059,20 +1014,53 @@ export function AddTenderPage() {
                               placeholder="Label, e.g. Delivery Risk"
                               className="text-xs h-8 bg-background flex-1"
                             />
-                            <span
-                              className="text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-full text-white shrink-0 whitespace-nowrap"
-                              style={{ background: ALERT_NOTE_COLORS[alertNoteColor].solid }}
-                            >
-                              {alertNoteLabel.trim() || 'Attention'}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setAlertNoteColor((c) => randomAlertNoteColor(c))}
-                              title="Shuffle color"
-                              className="p-1.5 rounded-md border border-border hover:bg-muted shrink-0"
-                            >
-                              <Shuffle className="size-3.5" />
-                            </button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="text-[10px] font-bold uppercase tracking-wide px-2.5 py-1 rounded-full text-white shrink-0 whitespace-nowrap flex items-center gap-1 hover:opacity-90 transition-all cursor-pointer shadow-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                                  style={{ background: ALERT_NOTE_COLORS[alertNoteColor]?.solid || ALERT_NOTE_COLORS.amber.solid }}
+                                  title="Click to select condition"
+                                >
+                                  <span>{alertNoteLabel.trim() || 'Attention'}</span>
+                                  <ChevronDown className="size-3 text-white/80" />
+                                </button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-64 p-1.5 space-y-0.5">
+                                <DropdownMenuLabel className="text-[11px] text-muted-foreground font-semibold px-2 py-1">
+                                  Select Condition / Risk Type
+                                </DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                {ALERT_NOTE_PRESETS.map((preset) => {
+                                  const isSelected = alertNoteColor === preset.color
+                                  return (
+                                    <DropdownMenuItem
+                                      key={preset.id}
+                                      onClick={() => {
+                                        setAlertNoteColor(preset.color)
+                                        if (!alertNoteLabel.trim() || ALERT_NOTE_PRESETS.some((p) => p.label.toLowerCase() === alertNoteLabel.trim().toLowerCase())) {
+                                          setAlertNoteLabel(preset.label)
+                                        }
+                                      }}
+                                      className="flex items-center justify-between p-2 rounded-md cursor-pointer hover:bg-muted/80 gap-2"
+                                    >
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <span
+                                          className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full text-white shrink-0"
+                                          style={{ background: ALERT_NOTE_COLORS[preset.color]?.solid }}
+                                        >
+                                          {preset.label}
+                                        </span>
+                                        <span className="text-[11px] text-muted-foreground truncate">{preset.description}</span>
+                                      </div>
+                                      {isSelected && (
+                                        <Check className="size-3.5 text-primary shrink-0 ml-auto" />
+                                      )}
+                                    </DropdownMenuItem>
+                                  )
+                                })}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                           <Textarea
                             value={alertNoteText}

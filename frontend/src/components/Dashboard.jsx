@@ -6,7 +6,7 @@ import {
   Users, LayoutDashboard, Menu, X, ChevronRight,
   FileText, TrendingUp, Activity, BarChart2, ShieldCheck, Bell,
   Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Pencil,
-  FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass } from 'lucide-react'
+  FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass, ScrollText } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button }    from '@/components/ui/button'
@@ -34,6 +34,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { computePipelineSummary, getEffectiveStage } from '../lib/pipelineMetrics'
 import { openMasterSheetDrill } from '../lib/masterSheetDrill'
 import { PipelineKpiBand } from './analytics/PipelineKpiBand'
+import { EmdProjectionBlock } from './analytics/EmdProjectionBlock'
 import { dimOtherSlices } from '../lib/chartUtils'
 import {
   ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis,
@@ -72,6 +73,7 @@ const NAV_ITEMS = [
   { id: 'feedback',   label: 'Feedback',         icon: MessageSquarePlus, permission: null, excludeRole: 'SUPER_ADMIN' },
   { id: 'tickets',    label: 'Tickets',          icon: Ticket,          permission: null, role: 'SUPER_ADMIN' },
   { id: 'users',      label: 'Users',            managementLabel: 'User Management', icon: Users, permission: 'user.view' },
+  { id: 'system-logs', label: 'System Logs',     icon: ScrollText,      permission: null, role: 'SUPER_ADMIN', path: '/dashboard/system-logs' },
   { id: 'bulk-import', label: 'Bulk Import',     icon: FileSpreadsheet, permission: null, role: 'SUPER_ADMIN', path: '/dashboard/bulk-import' },
 ]
 
@@ -584,6 +586,9 @@ export function OverviewPanel() {
             </button>
           </div>
 
+          {/* EMD Capital Projection & Pending Analysis Block */}
+          <EmdProjectionBlock bids={filteredBids} navigate={navigate} />
+
           <Dialog open={!!emdDrill} onOpenChange={(o) => !o && setEmdDrill(null)}>
             <DialogContent className="sm:max-w-3xl">
               <DialogHeader>
@@ -909,6 +914,9 @@ export function OverviewPanel() {
               </div>
             </button>
           </div>
+
+          {/* EMD Capital Projection & Pending Analysis Block */}
+          <EmdProjectionBlock bids={filteredBids} navigate={navigate} />
 
           {/* Pipeline Overview — condensed version of the Analytics tab's Pipeline
               Summary, so the two pages read as one system. Full charts (stage
@@ -1703,6 +1711,8 @@ export default function Dashboard() {
     ? 'feedback'
     : location.pathname.includes('/users')
     ? 'users'
+    : location.pathname.includes('/system-logs')
+    ? 'system-logs'
     : location.pathname.includes('/bulk-import')
     ? 'bulk-import'
     : 'overview'

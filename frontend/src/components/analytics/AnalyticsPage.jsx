@@ -810,7 +810,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
                 <Badge variant="outline" className="text-[10px]">Tender Count</Badge>
               </CardHeader>
               <CardContent className="pt-2">
-                <div className="h-[300px] w-full min-h-[300px]">
+                <div className="h-[360px] w-full min-h-[360px]">
                   {analyticsSummary.stageCountData.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-xs text-muted-foreground">
                       <AlertCircle className="size-6 mb-1 text-muted-foreground/60" />
@@ -818,9 +818,16 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
                     </div>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={analyticsSummary.stageCountData} margin={{ top: 10, right: 10, left: -20, bottom: 25 }}>
+                      <BarChart data={analyticsSummary.stageCountData} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
                         <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                        <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-25} textAnchor="end" />
+                        <XAxis
+                          dataKey="name"
+                          tick={{ fontSize: 10 }}
+                          interval={0}
+                          angle={-35}
+                          textAnchor="end"
+                          height={85}
+                        />
                         <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
                         <RechartsTooltip
                           contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px', color: '#fff' }}

@@ -327,6 +327,10 @@ func (h *BidHandler) RecordOutcome(c *gin.Context) {
 	}
 	actorID := c.GetString("user_id")
 	if err := h.svc.RecordOutcome(c.Request.Context(), id, &req, actorID); err != nil {
+		if errors.Is(err, domain.ErrForbidden) {
+			response.Forbidden(c, err.Error())
+			return
+		}
 		response.NotFound(c, "Bid not found")
 		return
 	}
@@ -471,6 +475,66 @@ func (h *BidHandler) ListFieldSuggestions(c *gin.Context) {
 		return
 	}
 	response.Success(c, http.StatusOK, "Field suggestions retrieved", suggestions)
+}
+
+// stageAccessManagerRoles gates who can *change* a user's restricted-stage
+// set — the same three roles the rest of User Management's admin actions
+// (Roles & Permissions, Activity Log) already require.
+var stageAccessManagerRoles = map[string]bool{"SUPER_ADMIN": true, "ADMIN": true, "MANAGER": true}
+
+// GetStageRestrictions is readable by the user themself (so the frontend
+// can render their own locked-stage panels) or by a stage-access manager
+// viewing someone else's — not by an arbitrary colleague.
+func (h *BidHandler) GetStageRestrictions(c *gin.Context) {
+	targetID := c.Param("id")
+	actorID := c.GetString("user_id")
+	if actorID != targetID {
+		rolesVal, _ := c.Get("roles")
+		roles, _ := rolesVal.([]string)
+		allowed := false
+		for _, r := range roles {
+			if stageAccessManagerRoles[r] {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			response.Forbidden(c, "Only Super Admin, Admin, or Manager can view another user's stage access")
+			return
+		}
+	}
+
+	stages, err := h.svc.GetStageRestrictions(c.Request.Context(), targetID)
+	if err != nil {
+		response.InternalError(c, "Failed to load stage restrictions")
+		return
+	}
+	response.Success(c, http.StatusOK, "Stage restrictions retrieved", domain.StageRestrictionsResponse{
+		UserID:           targetID,
+		RestrictedStages: stages,
+	})
+}
+
+// SetStageRestrictions is route-gated to stageAccessManagerRoles (see
+// routes.go) — the target Bid Executive can never toggle their own access.
+func (h *BidHandler) SetStageRestrictions(c *gin.Context) {
+	targetID := c.Param("id")
+	var req domain.SetStageRestrictionsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request payload", err.Error())
+		return
+	}
+
+	actorID := c.GetString("user_id")
+	if err := h.svc.SetStageRestrictions(c.Request.Context(), targetID, req.Stages, actorID); err != nil {
+		if errors.Is(err, domain.ErrValidation) {
+			response.BadRequest(c, err.Error(), nil)
+			return
+		}
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Stage access updated", nil)
 }
 
 func parseIntQuery(c *gin.Context, key string, def int) int {

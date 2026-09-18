@@ -885,3 +885,18 @@ type FieldSuggestion struct {
 	Value      string `json:"value"`
 	UsageCount int    `json:"usage_count"`
 }
+
+// StageRestrictionsResponse is one user's current restricted-stage set, as
+// shown/edited from User Management's "Stage Access" dialog. Empty
+// RestrictedStages means the user has full access to every stage — the
+// default for everyone until an Admin/Manager explicitly locks one.
+type StageRestrictionsResponse struct {
+	UserID           string   `json:"user_id"`
+	RestrictedStages []string `json:"restricted_stages"`
+}
+
+type SetStageRestrictionsRequest struct {
+	// Stages is the full desired restricted set — a replace, not a diff.
+	// Empty clears every restriction for this user.
+	Stages []string `json:"stages"`
+}

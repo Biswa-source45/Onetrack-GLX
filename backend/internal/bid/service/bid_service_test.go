@@ -8,6 +8,7 @@ import (
 
 	alertDomain "github.com/onetrack/backend/internal/alert/domain"
 	"github.com/onetrack/backend/internal/bid/domain"
+	systemlogDomain "github.com/onetrack/backend/internal/systemlog/domain"
 )
 
 // fakeBidRepo implements domain.BidRepository with just enough behavior for
@@ -18,12 +19,15 @@ import (
 type fakeBidRepo struct {
 	bid *domain.BidWorkspace
 
-	lastUpdate    *domain.UpdateBidRequest
-	addedMembers  []memberCall
+	lastUpdate     *domain.UpdateBidRequest
+	addedMembers   []memberCall
 	removedMembers []string
 
 	lastFieldSuggestions map[string][]string
 	addedHistory         []*domain.BidStageHistory
+
+	stageRestrictions map[string][]string // userID -> restricted stages
+	userSummaries     map[string]*domain.UserSummary
 }
 
 type memberCall struct {
@@ -82,6 +86,9 @@ func (f *fakeBidRepo) GetTenderPerformanceMatrix(ctx context.Context, ownerID st
 	return nil, nil
 }
 func (f *fakeBidRepo) GetUserSummary(ctx context.Context, userID string) (*domain.UserSummary, error) {
+	if u, ok := f.userSummaries[userID]; ok {
+		return u, nil
+	}
 	return &domain.UserSummary{ID: userID}, nil
 }
 func (f *fakeBidRepo) BulkInsertChecklists(ctx context.Context, bidID string, titles []string) error {
@@ -119,6 +126,31 @@ func (f *fakeBidRepo) RecordFieldSuggestions(ctx context.Context, entries map[st
 func (f *fakeBidRepo) ListFieldSuggestions(ctx context.Context, fieldKey string, limit int) ([]domain.FieldSuggestion, error) {
 	return nil, nil
 }
+func (f *fakeBidRepo) GetStageRestrictions(ctx context.Context, userID string) ([]string, error) {
+	if f.stageRestrictions == nil {
+		return nil, nil
+	}
+	return f.stageRestrictions[userID], nil
+}
+func (f *fakeBidRepo) SetStageRestrictions(ctx context.Context, userID string, stages []string, restrictedBy string) error {
+	if f.stageRestrictions == nil {
+		f.stageRestrictions = map[string][]string{}
+	}
+	f.stageRestrictions[userID] = stages
+	return nil
+}
+
+// fakeSystemLog is a no-op Recorder — tests that don't assert on System
+// Logs just need NewBidService's third argument satisfied.
+type fakeSystemLog struct {
+	recorded []string // eventType, for tests that do care
+}
+
+func (f *fakeSystemLog) Record(ctx context.Context, category, eventType, actorID string, targetUserID *string, summary string, details interface{}) {
+	f.recorded = append(f.recorded, eventType)
+}
+
+var _ systemlogDomain.Recorder = (*fakeSystemLog)(nil)
 
 // fakeAlertSvc records every alert CreateAlert was called with, so the test
 // can assert on what was (or wasn't) sent.
@@ -189,7 +221,7 @@ func TestUpdateBid_InternalApprovalReadyAlert(t *testing.T) {
 	t.Run("EMD exempted + checklist just completed fires the alert", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newBid(true, false)}
 		alerts := &fakeAlertSvc{}
-		svc := NewBidService(repo, alerts)
+		svc := NewBidService(repo, alerts, &fakeSystemLog{})
 
 		req := &domain.UpdateBidRequest{
 			StageCompletions: map[string]bool{domain.StageDocumentChecklistPrep: true},
@@ -210,7 +242,7 @@ func TestUpdateBid_InternalApprovalReadyAlert(t *testing.T) {
 	t.Run("EMD not applicable + checklist just completed fires the alert", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newBid(false, true)}
 		alerts := &fakeAlertSvc{}
-		svc := NewBidService(repo, alerts)
+		svc := NewBidService(repo, alerts, &fakeSystemLog{})
 
 		req := &domain.UpdateBidRequest{
 			StageCompletions: map[string]bool{domain.StageDocumentChecklistPrep: true},
@@ -226,7 +258,7 @@ func TestUpdateBid_InternalApprovalReadyAlert(t *testing.T) {
 	t.Run("EMD still required — no alert on checklist completion", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newBid(false, false)}
 		alerts := &fakeAlertSvc{}
-		svc := NewBidService(repo, alerts)
+		svc := NewBidService(repo, alerts, &fakeSystemLog{})
 
 		req := &domain.UpdateBidRequest{
 			StageCompletions: map[string]bool{domain.StageDocumentChecklistPrep: true},
@@ -244,7 +276,7 @@ func TestUpdateBid_InternalApprovalReadyAlert(t *testing.T) {
 		b.StageCompletions = []byte(`{"DOCUMENT_CHECKLIST_PREPARATION":true}`)
 		repo := &fakeBidRepo{bid: b}
 		alerts := &fakeAlertSvc{}
-		svc := NewBidService(repo, alerts)
+		svc := NewBidService(repo, alerts, &fakeSystemLog{})
 
 		// Re-saving the same completed state (e.g. an unrelated field edit)
 		// must not re-fire the notification.
@@ -289,7 +321,7 @@ func TestUpdateBid_OwnerReassignment(t *testing.T) {
 	t.Run("tender's Account Manager can reassign the owner", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newBid()}
 		alerts := &fakeAlertSvc{}
-		svc := NewBidService(repo, alerts)
+		svc := NewBidService(repo, alerts, &fakeSystemLog{})
 
 		req := &domain.UpdateBidRequest{BidOwnerID: strPtr("new-owner-1")}
 		if err := svc.UpdateBid(context.Background(), "bid-1", req, amID, nil); err != nil {
@@ -328,7 +360,7 @@ func TestUpdateBid_OwnerReassignment(t *testing.T) {
 
 	t.Run("tender's Reporting Manager can reassign the owner", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newBid()}
-		svc := NewBidService(repo, &fakeAlertSvc{})
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
 		req := &domain.UpdateBidRequest{BidOwnerID: strPtr("new-owner-1")}
 		if err := svc.UpdateBid(context.Background(), "bid-1", req, rmID, nil); err != nil {
@@ -338,7 +370,7 @@ func TestUpdateBid_OwnerReassignment(t *testing.T) {
 
 	t.Run("an unrelated bid.edit holder cannot reassign the owner", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newBid()}
-		svc := NewBidService(repo, &fakeAlertSvc{})
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
 		req := &domain.UpdateBidRequest{BidOwnerID: strPtr("new-owner-1")}
 		err := svc.UpdateBid(context.Background(), "bid-1", req, "some-other-user", []string{"BID_EXECUTIVE"})
@@ -349,7 +381,7 @@ func TestUpdateBid_OwnerReassignment(t *testing.T) {
 
 	t.Run("the outgoing owner cannot reassign themself out", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newBid()}
-		svc := NewBidService(repo, &fakeAlertSvc{})
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
 		req := &domain.UpdateBidRequest{BidOwnerID: strPtr("new-owner-1")}
 		err := svc.UpdateBid(context.Background(), "bid-1", req, ownerID, nil)
@@ -360,7 +392,7 @@ func TestUpdateBid_OwnerReassignment(t *testing.T) {
 
 	t.Run("SUPER_ADMIN can override and reassign the owner", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newBid()}
-		svc := NewBidService(repo, &fakeAlertSvc{})
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
 		req := &domain.UpdateBidRequest{BidOwnerID: strPtr("new-owner-1")}
 		err := svc.UpdateBid(context.Background(), "bid-1", req, "admin-1", []string{"SUPER_ADMIN"})
@@ -371,7 +403,7 @@ func TestUpdateBid_OwnerReassignment(t *testing.T) {
 
 	t.Run("cannot assign the tender's Account Manager as the new owner", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newBid()}
-		svc := NewBidService(repo, &fakeAlertSvc{})
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
 		req := &domain.UpdateBidRequest{BidOwnerID: strPtr(amID)}
 		err := svc.UpdateBid(context.Background(), "bid-1", req, amID, nil)
@@ -382,7 +414,7 @@ func TestUpdateBid_OwnerReassignment(t *testing.T) {
 
 	t.Run("re-submitting the same owner id is not a reassignment", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newBid()}
-		svc := NewBidService(repo, &fakeAlertSvc{})
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
 		// Sent by someone who isn't the tender's AM/RM — must not be blocked,
 		// since nothing is actually changing.
@@ -395,47 +427,61 @@ func TestUpdateBid_OwnerReassignment(t *testing.T) {
 
 func strPtr(s string) *string { return &s }
 
-// TestExtractOEMNames covers the JSON-parsing edge cases Field Memory relies
-// on: OEM values pulled out of requested_products must survive blank OEMs,
-// whitespace-only OEMs, and malformed JSON (which must yield no names, not
-// an error that could block saving the tender).
-func TestExtractOEMNames(t *testing.T) {
+// TestExtractProductFields covers the JSON-parsing edge cases Field Memory
+// relies on: OEM and product-name values pulled out of requested_products
+// must survive blank values, whitespace-only values, and malformed JSON
+// (which must yield no names, not an error that could block saving the
+// tender).
+func TestExtractProductFields(t *testing.T) {
 	cases := []struct {
-		name string
-		json string
-		want []string
+		name         string
+		json         string
+		wantOEMs     []string
+		wantProducts []string
 	}{
 		{
-			name: "extracts oem from each product row",
-			json: `[{"product":"Firewall","oem":"Fortinet"},{"product":"Switch","oem":"Cisco"}]`,
-			want: []string{"Fortinet", "Cisco"},
+			name:         "extracts oem and product from each row",
+			json:         `[{"product":"Firewall","oem":"Fortinet"},{"product":"Switch","oem":"Cisco"}]`,
+			wantOEMs:     []string{"Fortinet", "Cisco"},
+			wantProducts: []string{"Firewall", "Switch"},
 		},
 		{
-			name: "skips rows with a blank or whitespace-only oem",
-			json: `[{"product":"Firewall","oem":""},{"product":"Switch","oem":"   "},{"product":"AP","oem":"Aruba"}]`,
-			want: []string{"Aruba"},
+			name:         "skips rows with a blank or whitespace-only value",
+			json:         `[{"product":"Firewall","oem":""},{"product":"   ","oem":"Aruba"}]`,
+			wantOEMs:     []string{"Aruba"},
+			wantProducts: []string{"Firewall"},
 		},
 		{
-			name: "malformed JSON yields no names, not an error",
-			json: `not-json`,
-			want: nil,
+			name:         "malformed JSON yields no names, not an error",
+			json:         `not-json`,
+			wantOEMs:     nil,
+			wantProducts: nil,
 		},
 		{
-			name: "empty array yields no names",
-			json: `[]`,
-			want: nil,
+			name:         "empty array yields no names",
+			json:         `[]`,
+			wantOEMs:     nil,
+			wantProducts: nil,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := extractOEMNames(tc.json)
-			if len(got) != len(tc.want) {
-				t.Fatalf("extractOEMNames(%q) = %v, want %v", tc.json, got, tc.want)
+			gotOEMs, gotProducts := extractProductFields(tc.json)
+			if len(gotOEMs) != len(tc.wantOEMs) {
+				t.Fatalf("extractProductFields(%q) oems = %v, want %v", tc.json, gotOEMs, tc.wantOEMs)
 			}
-			for i := range got {
-				if got[i] != tc.want[i] {
-					t.Fatalf("extractOEMNames(%q)[%d] = %q, want %q", tc.json, i, got[i], tc.want[i])
+			for i := range gotOEMs {
+				if gotOEMs[i] != tc.wantOEMs[i] {
+					t.Fatalf("extractProductFields(%q) oems[%d] = %q, want %q", tc.json, i, gotOEMs[i], tc.wantOEMs[i])
+				}
+			}
+			if len(gotProducts) != len(tc.wantProducts) {
+				t.Fatalf("extractProductFields(%q) products = %v, want %v", tc.json, gotProducts, tc.wantProducts)
+			}
+			for i := range gotProducts {
+				if gotProducts[i] != tc.wantProducts[i] {
+					t.Fatalf("extractProductFields(%q) products[%d] = %q, want %q", tc.json, i, gotProducts[i], tc.wantProducts[i])
 				}
 			}
 		})
@@ -449,9 +495,13 @@ func TestFieldSuggestionEntries(t *testing.T) {
 	blank := "   "
 
 	entries := fieldSuggestionEntries(
+		strPtr("Firewall Procurement"), // title
 		strPtr("Bharat Electronics Ltd"),
-		nil,          // department_name omitted entirely
-		&blank,       // location present but blank
+		nil,             // department_name omitted entirely
+		&blank,          // location present but blank
+		strPtr("GeM"),   // portal_source
+		strPtr("Cloud"), // category
+		nil,             // scope_type omitted entirely
 		strPtr("SBI"),
 		nil,
 		nil,
@@ -459,9 +509,13 @@ func TestFieldSuggestionEntries(t *testing.T) {
 	)
 
 	want := map[string][]string{
+		"title":             {"Firewall Procurement"},
 		"organization_name": {"Bharat Electronics Ltd"},
-		"emd_bank_name":      {"SBI"},
-		"oem":                {"Fortinet"},
+		"portal_source":     {"GeM"},
+		"category":          {"Cloud"},
+		"emd_bank_name":     {"SBI"},
+		"oem":               {"Fortinet"},
+		"product":           {"Firewall"},
 	}
 	if len(entries) != len(want) {
 		t.Fatalf("fieldSuggestionEntries() = %+v, want %+v", entries, want)
@@ -495,12 +549,16 @@ func TestUpdateBid_RecordsFieldSuggestions(t *testing.T) {
 		StageCompletions: []byte(`{}`),
 	}
 	repo := &fakeBidRepo{bid: bid}
-	svc := NewBidService(repo, &fakeAlertSvc{})
+	svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
 	products := `[{"product":"Firewall","oem":"Fortinet"}]`
 	req := &domain.UpdateBidRequest{
+		Title:             strPtr("Firewall Procurement for HQ"),
 		OrganizationName:  strPtr("Bharat Electronics Ltd"),
 		Location:          strPtr("New Delhi"),
+		PortalSource:      strPtr("GeM"),
+		Category:          strPtr("Security"),
+		ScopeType:         strPtr("Supply"),
 		RequestedProducts: &products,
 	}
 	if err := svc.UpdateBid(context.Background(), "bid-1", req, "actor-1", nil); err != nil {
@@ -510,14 +568,20 @@ func TestUpdateBid_RecordsFieldSuggestions(t *testing.T) {
 	if repo.lastFieldSuggestions == nil {
 		t.Fatalf("expected RecordFieldSuggestions to be called")
 	}
-	if got := repo.lastFieldSuggestions["organization_name"]; len(got) != 1 || got[0] != "Bharat Electronics Ltd" {
-		t.Fatalf("organization_name entries = %v", got)
+	checks := map[string]string{
+		"title":             "Firewall Procurement for HQ",
+		"organization_name": "Bharat Electronics Ltd",
+		"location":          "New Delhi",
+		"portal_source":     "GeM",
+		"category":          "Security",
+		"scope_type":        "Supply",
+		"oem":               "Fortinet",
+		"product":           "Firewall",
 	}
-	if got := repo.lastFieldSuggestions["location"]; len(got) != 1 || got[0] != "New Delhi" {
-		t.Fatalf("location entries = %v", got)
-	}
-	if got := repo.lastFieldSuggestions["oem"]; len(got) != 1 || got[0] != "Fortinet" {
-		t.Fatalf("oem entries = %v", got)
+	for key, want := range checks {
+		if got := repo.lastFieldSuggestions[key]; len(got) != 1 || got[0] != want {
+			t.Fatalf("%s entries = %v, want [%q]", key, got, want)
+		}
 	}
 }
 
@@ -536,7 +600,7 @@ func TestUpdateBid_NoFieldSuggestionsWhenNothingFreeTextChanges(t *testing.T) {
 		StageCompletions: []byte(`{}`),
 	}
 	repo := &fakeBidRepo{bid: bid}
-	svc := NewBidService(repo, &fakeAlertSvc{})
+	svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
 	req := &domain.UpdateBidRequest{Remarks: strPtr("internal note only")}
 	if err := svc.UpdateBid(context.Background(), "bid-1", req, "actor-1", nil); err != nil {
@@ -640,7 +704,7 @@ func lastEventType(repo *fakeBidRepo) string {
 // denormalized onto it (so it survives even if the tender is later deleted).
 func TestUpdateBid_LogsFieldEdits(t *testing.T) {
 	repo := &fakeBidRepo{bid: newLedgerTestBid()}
-	svc := NewBidService(repo, &fakeAlertSvc{})
+	svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
 	req := &domain.UpdateBidRequest{Location: strPtr("New Delhi")}
 	if err := svc.UpdateBid(context.Background(), "bid-1", req, "actor-1", nil); err != nil {
@@ -672,7 +736,7 @@ func TestUpdateBid_LogsFieldEdits(t *testing.T) {
 func TestArchiveRestoreDeleteBid_LogActions(t *testing.T) {
 	t.Run("ArchiveBid logs TENDER_ARCHIVED", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newLedgerTestBid()}
-		svc := NewBidService(repo, &fakeAlertSvc{})
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 		if err := svc.ArchiveBid(context.Background(), "bid-1", "actor-1"); err != nil {
 			t.Fatalf("ArchiveBid: %v", err)
 		}
@@ -683,7 +747,7 @@ func TestArchiveRestoreDeleteBid_LogActions(t *testing.T) {
 
 	t.Run("RestoreBid logs TENDER_RESTORED", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newLedgerTestBid()}
-		svc := NewBidService(repo, &fakeAlertSvc{})
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 		if err := svc.RestoreBid(context.Background(), "bid-1", "actor-1"); err != nil {
 			t.Fatalf("RestoreBid: %v", err)
 		}
@@ -694,7 +758,7 @@ func TestArchiveRestoreDeleteBid_LogActions(t *testing.T) {
 
 	t.Run("PermanentDeleteBid logs TENDER_DELETED before deleting", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newLedgerTestBid()}
-		svc := NewBidService(repo, &fakeAlertSvc{})
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 		if err := svc.PermanentDeleteBid(context.Background(), "bid-1", "actor-1"); err != nil {
 			t.Fatalf("PermanentDeleteBid: %v", err)
 		}
@@ -711,7 +775,7 @@ func TestArchiveRestoreDeleteBid_LogActions(t *testing.T) {
 // TestRecordOutcome_LogsAction covers the outcome-recording path.
 func TestRecordOutcome_LogsAction(t *testing.T) {
 	repo := &fakeBidRepo{bid: newLedgerTestBid()}
-	svc := NewBidService(repo, &fakeAlertSvc{})
+	svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
 	req := &domain.RecordOutcomeRequest{BidOutcome: "WON"}
 	if err := svc.RecordOutcome(context.Background(), "bid-1", req, "actor-1"); err != nil {
@@ -725,7 +789,7 @@ func TestRecordOutcome_LogsAction(t *testing.T) {
 // TestAddRemoveMember_LogActions covers team membership changes.
 func TestAddRemoveMember_LogActions(t *testing.T) {
 	repo := &fakeBidRepo{bid: newLedgerTestBid()}
-	svc := NewBidService(repo, &fakeAlertSvc{})
+	svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
 	if err := svc.AddMember(context.Background(), "bid-1", &domain.AddMemberRequest{UserID: "member-1", Role: "MEMBER"}, "actor-1"); err != nil {
 		t.Fatalf("AddMember: %v", err)
@@ -744,3 +808,135 @@ func TestAddRemoveMember_LogActions(t *testing.T) {
 
 func floatPtr(f float64) *float64 { return &f }
 func intPtr(i int) *int           { return &i }
+
+// TestStageAccessControl covers the three enforcement points a restricted
+// Bid Executive must be blocked from — editing, transitioning, and
+// recording an outcome — plus that an unrestricted actor is unaffected.
+func TestStageAccessControl(t *testing.T) {
+	newBid := func() *domain.BidWorkspace {
+		return &domain.BidWorkspace{
+			ID:            "bid-1",
+			Title:         "Test Tender",
+			WorkflowStage: domain.StageTechnicalEvaluation,
+			CreationMode:  domain.CreationModeManual,
+			BidOwnerID:    "exec-1",
+		}
+	}
+
+	t.Run("UpdateBid is blocked while the tender sits in a restricted stage", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid(), stageRestrictions: map[string][]string{
+			"exec-1": {domain.StageTechnicalEvaluation},
+		}}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		err := svc.UpdateBid(context.Background(), "bid-1", &domain.UpdateBidRequest{Remarks: strPtr("trying to edit")}, "exec-1", nil)
+		if !errors.Is(err, domain.ErrForbidden) {
+			t.Fatalf("expected ErrForbidden, got: %v", err)
+		}
+		if repo.lastUpdate != nil {
+			t.Fatalf("Update should never have reached the repo, got: %+v", repo.lastUpdate)
+		}
+	})
+
+	t.Run("UpdateBid succeeds for an actor with no restrictions", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid()}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		if err := svc.UpdateBid(context.Background(), "bid-1", &domain.UpdateBidRequest{Remarks: strPtr("fine")}, "exec-1", nil); err != nil {
+			t.Fatalf("UpdateBid: %v", err)
+		}
+	})
+
+	t.Run("TransitionStage is blocked leaving a restricted current stage", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid(), stageRestrictions: map[string][]string{
+			"exec-1": {domain.StageTechnicalEvaluation},
+		}}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		_, err := svc.TransitionStage(context.Background(), "bid-1", &domain.TransitionStageRequest{TargetStage: domain.StageFinancialEvaluation}, "exec-1")
+		if !errors.Is(err, domain.ErrForbidden) {
+			t.Fatalf("expected ErrForbidden, got: %v", err)
+		}
+	})
+
+	t.Run("TransitionStage is blocked entering a restricted target stage", func(t *testing.T) {
+		bid := newBid()
+		bid.WorkflowStage = domain.StageGeMSubmission
+		repo := &fakeBidRepo{bid: bid, stageRestrictions: map[string][]string{
+			"exec-1": {domain.StageTechnicalEvaluation},
+		}}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		_, err := svc.TransitionStage(context.Background(), "bid-1", &domain.TransitionStageRequest{TargetStage: domain.StageTechnicalEvaluation}, "exec-1")
+		if !errors.Is(err, domain.ErrForbidden) {
+			t.Fatalf("expected ErrForbidden, got: %v", err)
+		}
+	})
+
+	t.Run("RecordOutcome is blocked while the tender sits in a restricted stage", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid(), stageRestrictions: map[string][]string{
+			"exec-1": {domain.StageTechnicalEvaluation},
+		}}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		err := svc.RecordOutcome(context.Background(), "bid-1", &domain.RecordOutcomeRequest{BidOutcome: "WON"}, "exec-1")
+		if !errors.Is(err, domain.ErrForbidden) {
+			t.Fatalf("expected ErrForbidden, got: %v", err)
+		}
+	})
+}
+
+// TestSetStageRestrictions covers the write side's validation: only a Bid
+// Executive can be restricted, only real stage keys are accepted, and a
+// successful call is recorded to System Logs.
+func TestSetStageRestrictions(t *testing.T) {
+	t.Run("rejects a target who isn't a Bid Executive", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: &domain.BidWorkspace{}}
+		repo.userSummaries = map[string]*domain.UserSummary{
+			"manager-1": {ID: "manager-1", FullName: "A Manager", Role: "MANAGER"},
+		}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		err := svc.SetStageRestrictions(context.Background(), "manager-1", []string{domain.StageTechnicalEvaluation}, "admin-1")
+		if !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("expected ErrValidation, got: %v", err)
+		}
+	})
+
+	t.Run("rejects an unknown stage key", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: &domain.BidWorkspace{}}
+		repo.userSummaries = map[string]*domain.UserSummary{
+			"exec-1": {ID: "exec-1", FullName: "An Executive", Role: "BID_EXECUTIVE"},
+		}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		err := svc.SetStageRestrictions(context.Background(), "exec-1", []string{"NOT_A_REAL_STAGE"}, "admin-1")
+		if !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("expected ErrValidation, got: %v", err)
+		}
+	})
+
+	t.Run("restricts a Bid Executive and logs the change", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: &domain.BidWorkspace{}}
+		repo.userSummaries = map[string]*domain.UserSummary{
+			"exec-1": {ID: "exec-1", FullName: "An Executive", Role: "BID_EXECUTIVE"},
+		}
+		sysLog := &fakeSystemLog{}
+		svc := NewBidService(repo, &fakeAlertSvc{}, sysLog)
+
+		stages := []string{domain.StageTechnicalEvaluation, domain.StageFinancialEvaluation, domain.StageAwardHandover}
+		if err := svc.SetStageRestrictions(context.Background(), "exec-1", stages, "admin-1"); err != nil {
+			t.Fatalf("SetStageRestrictions: %v", err)
+		}
+		got, err := svc.GetStageRestrictions(context.Background(), "exec-1")
+		if err != nil {
+			t.Fatalf("GetStageRestrictions: %v", err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("expected 3 restricted stages, got %v", got)
+		}
+		if len(sysLog.recorded) != 1 || sysLog.recorded[0] != "STAGE_ACCESS_UPDATED" {
+			t.Fatalf("expected a STAGE_ACCESS_UPDATED system log entry, got: %v", sysLog.recorded)
+		}
+	})
+}

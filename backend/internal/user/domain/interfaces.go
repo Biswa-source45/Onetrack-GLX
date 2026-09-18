@@ -27,8 +27,8 @@ type UserService interface {
 	GetMyProfile(ctx context.Context, userID string) (*UserResponse, error)
 	ListUsers(ctx context.Context, params ListUsersParams) (*UserListResponse, error)
 	UpdateUser(ctx context.Context, id string, req UpdateUserRequest) (*UserResponse, error)
-	UpdateStatus(ctx context.Context, id string, req UpdateStatusRequest) error
+	UpdateStatus(ctx context.Context, id string, req UpdateStatusRequest, actorID string) error
 	DeleteUser(ctx context.Context, id string, requestingUserID string) error
 	UpdateRoles(ctx context.Context, userID string, req UpdateRolesRequest, assignedBy string) error
-	UpdatePermissions(ctx context.Context, userID string, req UpdatePermissionsRequest) error
+	UpdatePermissions(ctx context.Context, userID string, req UpdatePermissionsRequest, actorID string) error
 }

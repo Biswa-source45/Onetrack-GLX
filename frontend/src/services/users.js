@@ -93,6 +93,25 @@ export async function updateUserPermissions(id, { allow = [], deny = [] } = {}) 
   return { ok: res.ok, status: res.status, ...data }
 }
 
+// ── Stage-Level Access Control ───────────────────────────────────────────────
+// GET /api/v1/users/{id}/stage-restrictions — self, or Super Admin/Admin/Manager
+export async function getStageRestrictions(userId) {
+  const res = await apiFetch(`/api/v1/users/${userId}/stage-restrictions`)
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, ...data }
+}
+
+// PUT /api/v1/users/{id}/stage-restrictions — Super Admin/Admin/Manager only
+// payload: { stages: string[] }  — FULL REPLACEMENT of the restricted set
+export async function setStageRestrictions(userId, stages) {
+  const res = await apiFetch(`/api/v1/users/${userId}/stage-restrictions`, {
+    method: 'PUT',
+    body: JSON.stringify({ stages }),
+  })
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, ...data }
+}
+
 // ── Force Password Reset ─────────────────────────────────────────────────────
 // PATCH /api/v1/auth/force-reset
 // Requires user.edit permission on the calling user

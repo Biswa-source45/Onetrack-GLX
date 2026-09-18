@@ -9,6 +9,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	authDomain "github.com/onetrack/backend/internal/auth/domain"
+	systemlogDomain "github.com/onetrack/backend/internal/systemlog/domain"
 	"github.com/onetrack/backend/internal/user/domain"
 	"github.com/onetrack/backend/internal/user/repository"
 )
@@ -23,11 +24,22 @@ var (
 )
 
 type userService struct {
-	repo domain.UserRepository
+	repo      domain.UserRepository
+	systemLog systemlogDomain.Recorder
 }
 
-func NewUserService(repo domain.UserRepository) domain.UserService {
-	return &userService{repo: repo}
+func NewUserService(repo domain.UserRepository, systemLog systemlogDomain.Recorder) domain.UserService {
+	return &userService{repo: repo, systemLog: systemLog}
+}
+
+// logEvent is a tiny wrapper so every call site doesn't have to nil-check
+// systemLog (tests construct userService without one) or repeat the
+// category constant.
+func (s *userService) logEvent(ctx context.Context, eventType, actorID string, targetUserID *string, summary string, details interface{}) {
+	if s.systemLog == nil {
+		return
+	}
+	s.systemLog.Record(ctx, systemlogDomain.CategoryUserMgmt, eventType, actorID, targetUserID, summary, details)
 }
 
 func (s *userService) CreateUser(ctx context.Context, req domain.CreateUserRequest, createdBy string) (*domain.UserResponse, error) {
@@ -82,6 +94,10 @@ func (s *userService) CreateUser(ctx context.Context, req domain.CreateUserReque
 	if err := s.repo.AssignRoles(ctx, userID, req.Roles, createdBy); err != nil {
 		return nil, fmt.Errorf("failed to assign roles: %w", err)
 	}
+
+	s.logEvent(ctx, "USER_CREATED", createdBy, &userID,
+		fmt.Sprintf("Created user %s (@%s) with role(s) %s", req.FullName, req.Username, strings.Join(req.Roles, ", ")),
+		map[string]interface{}{"roles": req.Roles})
 
 	return s.GetUser(ctx, userID)
 }
@@ -148,13 +164,23 @@ func (s *userService) UpdateUser(ctx context.Context, id string, req domain.Upda
 	return s.GetUser(ctx, id)
 }
 
-func (s *userService) UpdateStatus(ctx context.Context, id string, req domain.UpdateStatusRequest) error {
-	_, err := s.repo.GetByID(ctx, id)
+func (s *userService) UpdateStatus(ctx context.Context, id string, req domain.UpdateStatusRequest, actorID string) error {
+	user, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return ErrUserNotFound
 	}
 
-	return s.repo.UpdateStatus(ctx, id, req.IsActive)
+	if err := s.repo.UpdateStatus(ctx, id, req.IsActive); err != nil {
+		return err
+	}
+
+	verb := "Deactivated"
+	if req.IsActive {
+		verb = "Activated"
+	}
+	s.logEvent(ctx, "USER_STATUS_CHANGED", actorID, &id,
+		fmt.Sprintf("%s user %s (@%s)", verb, user.FullName, user.Username), nil)
+	return nil
 }
 
 func (s *userService) DeleteUser(ctx context.Context, id string, requestingUserID string) error {
@@ -172,11 +198,19 @@ func (s *userService) DeleteUser(ctx context.Context, id string, requestingUserI
 		return fmt.Errorf("cannot delete the system super admin account")
 	}
 
-	return s.repo.Delete(ctx, id)
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return err
+	}
+	// targetUserID is intentionally nil, not &id — the account no longer
+	// exists, and auth.system_events.target_user_id's ON DELETE SET NULL
+	// would just clear it anyway.
+	s.logEvent(ctx, "USER_DELETED", requestingUserID, nil,
+		fmt.Sprintf("Deleted user %s (@%s)", user.FullName, user.Username), nil)
+	return nil
 }
 
 func (s *userService) UpdateRoles(ctx context.Context, userID string, req domain.UpdateRolesRequest, assignedBy string) error {
-	_, err := s.repo.GetByID(ctx, userID)
+	user, err := s.repo.GetByID(ctx, userID)
 	if err != nil {
 		return ErrUserNotFound
 	}
@@ -188,16 +222,28 @@ func (s *userService) UpdateRoles(ctx context.Context, userID string, req domain
 		return fmt.Errorf("a user cannot have more than 2 roles (one primary and one secondary)")
 	}
 
-	return s.repo.AssignRoles(ctx, userID, req.Roles, assignedBy)
+	if err := s.repo.AssignRoles(ctx, userID, req.Roles, assignedBy); err != nil {
+		return err
+	}
+	s.logEvent(ctx, "USER_ROLES_CHANGED", assignedBy, &userID,
+		fmt.Sprintf("Set roles for %s (@%s) to %s", user.FullName, user.Username, strings.Join(req.Roles, ", ")),
+		map[string]interface{}{"roles": req.Roles})
+	return nil
 }
 
-func (s *userService) UpdatePermissions(ctx context.Context, userID string, req domain.UpdatePermissionsRequest) error {
-	_, err := s.repo.GetByID(ctx, userID)
+func (s *userService) UpdatePermissions(ctx context.Context, userID string, req domain.UpdatePermissionsRequest, actorID string) error {
+	user, err := s.repo.GetByID(ctx, userID)
 	if err != nil {
 		return ErrUserNotFound
 	}
 
-	return s.repo.SetPermissionOverrides(ctx, userID, req.Allow, req.Deny)
+	if err := s.repo.SetPermissionOverrides(ctx, userID, req.Allow, req.Deny); err != nil {
+		return err
+	}
+	s.logEvent(ctx, "USER_PERMISSIONS_CHANGED", actorID, &userID,
+		fmt.Sprintf("Updated permission overrides for %s (@%s)", user.FullName, user.Username),
+		map[string]interface{}{"allow": req.Allow, "deny": req.Deny})
+	return nil
 }
 
 func (s *userService) buildUserResponse(ctx context.Context, user *authDomain.User) (*domain.UserResponse, error) {

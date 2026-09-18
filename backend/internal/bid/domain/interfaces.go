@@ -55,6 +55,13 @@ type BidRepository interface {
 	// insensitively, incrementing usage_count on a repeat.
 	RecordFieldSuggestions(ctx context.Context, entries map[string][]string) error
 	ListFieldSuggestions(ctx context.Context, fieldKey string, limit int) ([]FieldSuggestion, error)
+
+	// Stage-Level Access Control — see bid.user_stage_restrictions (migration
+	// 000041). GetStageRestrictions returns the stage keys a user is
+	// currently locked out of (empty = unrestricted); SetStageRestrictions
+	// replaces the full set in one call.
+	GetStageRestrictions(ctx context.Context, userID string) ([]string, error)
+	SetStageRestrictions(ctx context.Context, userID string, stages []string, restrictedBy string) error
 }
 
 type BidService interface {
@@ -98,6 +105,14 @@ type BidService interface {
 	// ListFieldSuggestions returns the remembered values for one Field Memory
 	// field key, ranked by usage. fieldKey is required.
 	ListFieldSuggestions(ctx context.Context, fieldKey string) ([]FieldSuggestion, error)
+
+	// GetStageRestrictions returns the workflow stages userID is currently
+	// locked out of.
+	GetStageRestrictions(ctx context.Context, userID string) ([]string, error)
+	// SetStageRestrictions validates userID is a Bid Executive and every
+	// stage key is real, replaces their restricted set, and records the
+	// change to System Logs. actorID is who made the change.
+	SetStageRestrictions(ctx context.Context, userID string, stages []string, actorID string) error
 }
 
 type TransitionResult struct {

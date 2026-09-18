@@ -1493,3 +1493,52 @@ func (r *postgresBidRepo) ListFieldSuggestions(ctx context.Context, fieldKey str
 	}
 	return suggestions, rows.Err()
 }
+
+// GetStageRestrictions returns the workflow stages a user is currently
+// locked out of. Called on every enforcement check (transition, edit,
+// outcome) as well as by the "Stage Access" dialog, so it's a single
+// indexed lookup, not a join.
+func (r *postgresBidRepo) GetStageRestrictions(ctx context.Context, userID string) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT workflow_stage FROM bid.user_stage_restrictions WHERE user_id = $1
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get stage restrictions: %w", err)
+	}
+	defer rows.Close()
+
+	stages := []string{}
+	for rows.Next() {
+		var stage string
+		if err := rows.Scan(&stage); err != nil {
+			return nil, fmt.Errorf("scan stage restriction: %w", err)
+		}
+		stages = append(stages, stage)
+	}
+	return stages, rows.Err()
+}
+
+// SetStageRestrictions replaces a user's full restricted-stage set inside
+// one transaction — a diff would need to reconcile add/remove itself, a
+// delete-then-reinsert is simpler and the table is tiny (at most 11 rows
+// per user).
+func (r *postgresBidRepo) SetStageRestrictions(ctx context.Context, userID string, stages []string, restrictedBy string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin stage restrictions tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM bid.user_stage_restrictions WHERE user_id = $1`, userID); err != nil {
+		return fmt.Errorf("clear stage restrictions: %w", err)
+	}
+	for _, stage := range stages {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO bid.user_stage_restrictions (user_id, workflow_stage, restricted_by)
+			VALUES ($1, $2, $3)
+		`, userID, stage, restrictedBy); err != nil {
+			return fmt.Errorf("insert stage restriction (%s): %w", stage, err)
+		}
+	}
+	return tx.Commit(ctx)
+}

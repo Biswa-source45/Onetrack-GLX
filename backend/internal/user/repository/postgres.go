@@ -526,6 +526,27 @@ func (r *postgresUserRepo) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		// Ignore
 	}
+	// Stage-Level Access Control + System Logs (migration 000041) — both
+	// reference auth.users with no ON DELETE clause, so left unhandled they'd
+	// block the final DELETE the same way account_manager_id/presales_id did
+	// above the moment this user had ever restricted someone's stage access
+	// or triggered a logged event.
+	_, err = tx.Exec(ctx, `DELETE FROM bid.user_stage_restrictions WHERE user_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete stage restrictions: %w", err)
+	}
+	_, err = tx.Exec(ctx, `UPDATE bid.user_stage_restrictions SET restricted_by = NULL WHERE restricted_by = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to clear restricted_by in stage restrictions: %w", err)
+	}
+	_, err = tx.Exec(ctx, `UPDATE auth.system_events SET actor_id = NULL WHERE actor_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to clear actor_id in system_events: %w", err)
+	}
+	_, err = tx.Exec(ctx, `UPDATE auth.system_events SET target_user_id = NULL WHERE target_user_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to clear target_user_id in system_events: %w", err)
+	}
 
 	// 7. Finally delete the target user
 	result, err := tx.Exec(ctx, `DELETE FROM auth.users WHERE id = $1`, id)

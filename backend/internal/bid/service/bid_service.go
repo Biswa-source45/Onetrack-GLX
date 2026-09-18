@@ -11,17 +11,20 @@ import (
 
 	alertDomain "github.com/onetrack/backend/internal/alert/domain"
 	"github.com/onetrack/backend/internal/bid/domain"
+	systemlogDomain "github.com/onetrack/backend/internal/systemlog/domain"
 )
 
 type bidService struct {
-	repo     domain.BidRepository
-	alertSvc alertDomain.AlertService
+	repo      domain.BidRepository
+	alertSvc  alertDomain.AlertService
+	systemLog systemlogDomain.Recorder
 }
 
-func NewBidService(repo domain.BidRepository, alertSvc alertDomain.AlertService) domain.BidService {
+func NewBidService(repo domain.BidRepository, alertSvc alertDomain.AlertService, systemLog systemlogDomain.Recorder) domain.BidService {
 	return &bidService{
-		repo:     repo,
-		alertSvc: alertSvc,
+		repo:      repo,
+		alertSvc:  alertSvc,
+		systemLog: systemLog,
 	}
 }
 
@@ -153,8 +156,10 @@ func rowsToHTMLTable(rows [][2]string) string {
 var alertNoteColors = map[string][4]string{
 	"amber":   {"#fffbeb", "#fde68a", "#92400e", "#f59e0b"},
 	"rose":    {"#fff1f2", "#fecdd3", "#9f1239", "#f43f5e"},
+	"red":     {"#fff1f2", "#fecdd3", "#9f1239", "#ef4444"},
 	"violet":  {"#f5f3ff", "#ddd6fe", "#5b21b6", "#8b5cf6"},
 	"cyan":    {"#ecfeff", "#a5f3fc", "#155e75", "#06b6d4"},
+	"blue":    {"#eff6ff", "#bfdbfe", "#1e40af", "#3b82f6"},
 	"emerald": {"#ecfdf5", "#a7f3d0", "#065f46", "#10b981"},
 	"fuchsia": {"#fdf4ff", "#f5d0fe", "#86198f", "#d946ef"},
 	"orange":  {"#fff7ed", "#fed7aa", "#9a3412", "#fb923c"},
@@ -437,7 +442,7 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 
 	// Field Memory: remember every free-text value typed on this tender so
 	// it can be suggested next time. Best-effort — never blocks tender creation.
-	if entries := fieldSuggestionEntries(req.OrganizationName, req.DepartmentName, req.Location, req.EMDBankName, req.EMDBeneficiary, req.EMDPayableAt, req.RequestedProducts); len(entries) > 0 {
+	if entries := fieldSuggestionEntries(&req.Title, req.OrganizationName, req.DepartmentName, req.Location, req.PortalSource, req.Category, req.ScopeType, req.EMDBankName, req.EMDBeneficiary, req.EMDPayableAt, req.RequestedProducts); len(entries) > 0 {
 		_ = s.repo.RecordFieldSuggestions(ctx, entries)
 	}
 
@@ -781,6 +786,15 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 		actorID = "SYSTEM"
 	}
 
+	// Stage-Level Access Control: while this tender sits in a stage this
+	// actor is locked out of, they can't edit it at all — enforced at
+	// current-workflow-stage granularity rather than a per-field map, since
+	// every field UpdateBid can touch belongs to whichever stage the tender
+	// is actually in. No-op for the ~everyone who has no restriction rows.
+	if err := s.checkStageAccess(ctx, actorID, bid.WorkflowStage); err != nil {
+		return err
+	}
+
 	// Changing a tender's identifier must not collide with another tender.
 	if err := s.ensureIdentifierFree(ctx, req.GemBidNo, id); err != nil {
 		return err
@@ -1094,7 +1108,7 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 
 	// Field Memory: remember every free-text value typed on this update too —
 	// most Account Name / OEM / EMD bank edits happen here, not on create.
-	if entries := fieldSuggestionEntries(req.OrganizationName, req.DepartmentName, req.Location, req.EMDBankName, req.EMDBeneficiary, req.EMDPayableAt, req.RequestedProducts); len(entries) > 0 {
+	if entries := fieldSuggestionEntries(req.Title, req.OrganizationName, req.DepartmentName, req.Location, req.PortalSource, req.Category, req.ScopeType, req.EMDBankName, req.EMDBeneficiary, req.EMDPayableAt, req.RequestedProducts); len(entries) > 0 {
 		_ = s.repo.RecordFieldSuggestions(ctx, entries)
 	}
 
@@ -1249,9 +1263,38 @@ func (s *bidService) GetTenderPerformanceMatrix(ctx context.Context, ownerID str
 	return s.repo.GetTenderPerformanceMatrix(ctx, ownerID)
 }
 
+// checkStageAccess is the Stage-Level Access Control gate: it fails a
+// mutation if actorID is locked out of stage (empty stage is a no-op, e.g.
+// a bid that's never left DISCOVERED). Restriction rows only ever exist for
+// BID_EXECUTIVE users (enforced in SetStageRestrictions), so this is a
+// no-op indexed lookup for every other role.
+func (s *bidService) checkStageAccess(ctx context.Context, actorID, stage string) error {
+	if stage == "" {
+		return nil
+	}
+	restricted, err := s.repo.GetStageRestrictions(ctx, actorID)
+	if err != nil {
+		return fmt.Errorf("check stage access: %w", err)
+	}
+	for _, r := range restricted {
+		if r == stage {
+			return fmt.Errorf("%w: this stage has been restricted for your account — contact your Account Manager", domain.ErrForbidden)
+		}
+	}
+	return nil
+}
+
 func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain.TransitionStageRequest, actorID string) (*domain.TransitionResult, error) {
 	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+
+	// Blocks a restricted actor from leaving OR entering a locked stage.
+	if err := s.checkStageAccess(ctx, actorID, bid.WorkflowStage); err != nil {
+		return nil, err
+	}
+	if err := s.checkStageAccess(ctx, actorID, req.TargetStage); err != nil {
 		return nil, err
 	}
 
@@ -1462,6 +1505,9 @@ func (s *bidService) RemoveMember(ctx context.Context, bidID string, userID stri
 func (s *bidService) RecordOutcome(ctx context.Context, id string, req *domain.RecordOutcomeRequest, actorID string) error {
 	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		return err
+	}
+	if err := s.checkStageAccess(ctx, actorID, bid.WorkflowStage); err != nil {
 		return err
 	}
 	if err := s.repo.UpdateOutcome(ctx, id, req); err != nil {
@@ -1782,45 +1828,57 @@ func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary, accou
 // tender save into the {field_key: values} shape RecordFieldSuggestions
 // expects. Shared by CreateBid and UpdateBid so there's exactly one place
 // that decides which fields feed the suggestion memory.
-func fieldSuggestionEntries(orgName, deptName, location, emdBankName, emdBeneficiary, emdPayableAt, requestedProducts *string) map[string][]string {
+func fieldSuggestionEntries(title, orgName, deptName, location, portalSource, category, scopeType, emdBankName, emdBeneficiary, emdPayableAt, requestedProducts *string) map[string][]string {
 	entries := map[string][]string{}
 	add := func(fieldKey string, v *string) {
 		if v != nil && strings.TrimSpace(*v) != "" {
 			entries[fieldKey] = append(entries[fieldKey], *v)
 		}
 	}
+	add("title", title)
 	add("organization_name", orgName)
 	add("department_name", deptName)
 	add("location", location)
+	add("portal_source", portalSource)
+	add("category", category)
+	add("scope_type", scopeType)
 	add("emd_bank_name", emdBankName)
 	add("emd_beneficiary", emdBeneficiary)
 	add("emd_payable_at", emdPayableAt)
 
 	if requestedProducts != nil {
-		if oems := extractOEMNames(*requestedProducts); len(oems) > 0 {
+		oems, products := extractProductFields(*requestedProducts)
+		if len(oems) > 0 {
 			entries["oem"] = oems
+		}
+		if len(products) > 0 {
+			entries["product"] = products
 		}
 	}
 	return entries
 }
 
-// extractOEMNames pulls the "oem" value out of each product row in the
-// requested_products JSON ([{product,description,qty,oem}]). Malformed JSON
-// simply yields no suggestions — this must never fail the save it rides on.
-func extractOEMNames(rawJSON string) []string {
-	var products []struct {
-		OEM string `json:"oem"`
+// extractProductFields pulls the "oem" and "product" values out of each row
+// in the requested_products JSON ([{product,description,qty,oem}]) in one
+// pass. Malformed JSON simply yields no suggestions — this must never fail
+// the save it rides on.
+func extractProductFields(rawJSON string) (oems []string, products []string) {
+	var rows []struct {
+		Product string `json:"product"`
+		OEM     string `json:"oem"`
 	}
-	if err := json.Unmarshal([]byte(rawJSON), &products); err != nil {
-		return nil
+	if err := json.Unmarshal([]byte(rawJSON), &rows); err != nil {
+		return nil, nil
 	}
-	var names []string
-	for _, p := range products {
+	for _, p := range rows {
 		if strings.TrimSpace(p.OEM) != "" {
-			names = append(names, p.OEM)
+			oems = append(oems, p.OEM)
+		}
+		if strings.TrimSpace(p.Product) != "" {
+			products = append(products, p.Product)
 		}
 	}
-	return names
+	return oems, products
 }
 
 // ────────────────────────────────────────
@@ -1846,9 +1904,9 @@ func derefInt(p *int) int {
 	return *p
 }
 
-func fmtStrDiff(v string) string   { return v }
+func fmtStrDiff(v string) string    { return v }
 func fmtFloatDiff(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
-func fmtIntDiff(v int) string      { return strconv.Itoa(v) }
+func fmtIntDiff(v int) string       { return strconv.Itoa(v) }
 
 // diffField appends a FieldDiff when the request explicitly sent a value for
 // this field (newP != nil — UpdateBidRequest is a partial PATCH, so nil means
@@ -1892,4 +1950,53 @@ func (s *bidService) ListFieldSuggestions(ctx context.Context, fieldKey string) 
 		return nil, fmt.Errorf("%w: field is required", domain.ErrValidation)
 	}
 	return s.repo.ListFieldSuggestions(ctx, fieldKey, 500)
+}
+
+func (s *bidService) GetStageRestrictions(ctx context.Context, userID string) ([]string, error) {
+	return s.repo.GetStageRestrictions(ctx, userID)
+}
+
+// SetStageRestrictions is the write side of Stage-Level Access Control.
+// Restricted to a Bid Executive target (the only role this feature governs
+// — every other role stays structurally exempt from the enforcement checks
+// in UpdateBid/TransitionStage/RecordOutcome) and to real workflow stage
+// keys, then records the change to System Logs.
+func (s *bidService) SetStageRestrictions(ctx context.Context, userID string, stages []string, actorID string) error {
+	target, err := s.repo.GetUserSummary(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("%w: user not found", domain.ErrValidation)
+	}
+	if target.Role != "BID_EXECUTIVE" {
+		return fmt.Errorf("%w: stage access can only be restricted for a Bid Executive", domain.ErrValidation)
+	}
+
+	validStages := make(map[string]bool, len(domain.OrderedWorkflowStages))
+	for _, st := range domain.OrderedWorkflowStages {
+		validStages[st] = true
+	}
+	clean := make([]string, 0, len(stages))
+	for _, st := range stages {
+		if !validStages[st] {
+			return fmt.Errorf("%w: unknown workflow stage %q", domain.ErrValidation, st)
+		}
+		clean = append(clean, st)
+	}
+
+	before, _ := s.repo.GetStageRestrictions(ctx, userID)
+
+	if err := s.repo.SetStageRestrictions(ctx, userID, clean, actorID); err != nil {
+		return fmt.Errorf("set stage restrictions: %w", err)
+	}
+
+	if s.systemLog != nil {
+		summary := fmt.Sprintf("Cleared all stage restrictions for %s", target.FullName)
+		if len(clean) > 0 {
+			summary = fmt.Sprintf("Set stage access for %s: %s locked", target.FullName, strings.Join(clean, ", "))
+		}
+		s.systemLog.Record(ctx, systemlogDomain.CategoryAccessControl, "STAGE_ACCESS_UPDATED", actorID, &userID, summary, map[string]interface{}{
+			"before": before,
+			"after":  clean,
+		})
+	}
+	return nil
 }
