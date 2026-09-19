@@ -1,33 +1,46 @@
-import React, { useState } from 'react'
-import { toast } from 'sonner'
+import React, { useState } from "react";
+import { toast } from "sonner";
 import {
-  MoreHorizontal, Pencil, Shield, KeyRound, Power, PowerOff,
-  ChevronLeft, ChevronRight, Trash2, AlertTriangle, History, ShieldAlert
-} from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
+  MoreHorizontal,
+  Pencil,
+  Shield,
+  KeyRound,
+  Power,
+  PowerOff,
+  ChevronLeft,
+  ChevronRight,
+  Trash2,
+  AlertTriangle,
+  History,
+  ShieldAlert,
+} from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-} from '@/components/ui/dropdown-menu'
+} from "@/components/ui/dropdown-menu";
 
-import { UserAvatar } from './UserAvatar'
-import { RoleBadge } from './RoleBadge'
-import { updateUserStatus, deleteUser } from '../../services/users'
-import { tokenStorage } from '../../services/auth'
+import { UserAvatar } from "./UserAvatar";
+import { RoleBadge } from "./RoleBadge";
+import { updateUserStatus, deleteUser } from "../../services/users";
+import { tokenStorage } from "../../services/auth";
 
 // ── Tiny helpers ─────────────────────────────────────────────────────────────
 function formatDateTime(isoString) {
-  if (!isoString) return 'Never'
-  return new Date(isoString).toLocaleString('en-IN', {
-    day: '2-digit', month: 'short', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  })
+  if (!isoString) return "Never";
+  return new Date(isoString).toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 // ── Delete Confirmation Dialog ────────────────────────────────────────────────
@@ -35,7 +48,9 @@ function DeleteConfirmDialog({ user, onClose, onConfirm, loading }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <motion.div
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
         className="absolute inset-0 bg-foreground/20 backdrop-blur-[2px]"
         onClick={onClose}
       />
@@ -52,24 +67,40 @@ function DeleteConfirmDialog({ user, onClose, onConfirm, loading }) {
             <AlertTriangle className="size-5 text-destructive" />
           </div>
           <div>
-            <h3 className="font-semibold text-sm text-foreground">Delete User Account</h3>
-            <p className="text-xs text-muted-foreground">This action is permanent and cannot be undone.</p>
+            <h3 className="font-semibold text-sm text-foreground">
+              Delete User Account
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              This action is permanent and cannot be undone.
+            </p>
           </div>
         </div>
 
         <div className="rounded-lg bg-destructive/5 border border-destructive/20 p-3 space-y-1">
-          <p className="text-sm font-medium text-foreground">{user.full_name || user.username}</p>
-          <p className="text-xs text-muted-foreground">@{user.username} · {user.employee_code}</p>
+          <p className="text-sm font-medium text-foreground">
+            {user.full_name || user.username}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            @{user.username} · {user.employee_code}
+          </p>
         </div>
 
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Deleting this user will permanently remove their account.
-          All <strong>tender stage history and audit records will be preserved</strong> with a reference to "deleted user".
-          Bid ownership will be unassigned.
+          Deleting this user will permanently remove their account. All{" "}
+          <strong>
+            tender stage history and audit records will be preserved
+          </strong>{" "}
+          with a reference to "deleted user". Bid ownership will be unassigned.
         </p>
 
         <div className="flex gap-2 pt-1">
-          <Button variant="outline" size="sm" className="flex-1" onClick={onClose} disabled={loading}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            onClick={onClose}
+            disabled={loading}
+          >
             Cancel
           </Button>
           <Button
@@ -79,13 +110,15 @@ function DeleteConfirmDialog({ user, onClose, onConfirm, loading }) {
             onClick={onConfirm}
             disabled={loading}
           >
-            {loading && <span className="size-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin inline-block" />}
+            {loading && (
+              <span className="size-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin inline-block" />
+            )}
             Delete User
           </Button>
         </div>
       </motion.div>
     </div>
-  )
+  );
 }
 
 // ── Row Actions Menu ──────────────────────────────────────────────────────────
@@ -95,13 +128,29 @@ function DeleteConfirmDialog({ user, onClose, onConfirm, loading }) {
 // overflow too — a plain absolute-positioned menu on a row near the bottom
 // of the table got cut off. The portal escapes that entirely, and Radix
 // already handles outside-click, Escape, and edge-flipping for free.
-function RowActions({ user, canEdit, canDeactivate, canAssignRole, canViewActivityLog, canManageStageAccess, onEdit, onRoles, onForceReset, onViewActivityLog, onStageAccess, onStatusChange, onDelete }) {
-  const currentUser = tokenStorage.getUser()
-  const isSelf = currentUser?.id === user.id || currentUser?.username === user.username
-  const isSadmin = user.username === 'Sadmin'
+function RowActions({
+  user,
+  canEdit,
+  canDeactivate,
+  canAssignRole,
+  canViewActivityLog,
+  canManageStageAccess,
+  onEdit,
+  onRoles,
+  onForceReset,
+  onViewActivityLog,
+  onStageAccess,
+  onStatusChange,
+  onDelete,
+}) {
+  const currentUser = tokenStorage.getUser();
+  const isSelf =
+    currentUser?.id === user.id || currentUser?.username === user.username;
+  const isSadmin = user.username === "Sadmin";
   // Stage-Level Access Control only ever governs Bid Executives — the menu
   // item is simply absent for every other role, not just disabled.
-  const showStageAccess = canManageStageAccess && (user.roles || []).includes('BID_EXECUTIVE')
+  const showStageAccess =
+    canManageStageAccess && (user.roles || []).includes("BID_EXECUTIVE");
 
   return (
     <DropdownMenu>
@@ -118,7 +167,10 @@ function RowActions({ user, canEdit, canDeactivate, canAssignRole, canViewActivi
           </DropdownMenuItem>
         )}
         {canViewActivityLog && (
-          <DropdownMenuItem onSelect={() => onViewActivityLog(user)} className="gap-2">
+          <DropdownMenuItem
+            onSelect={() => onViewActivityLog(user)}
+            className="gap-2"
+          >
             <History className="size-3.5 text-muted-foreground" />
             Activity Log
           </DropdownMenuItem>
@@ -130,7 +182,10 @@ function RowActions({ user, canEdit, canDeactivate, canAssignRole, canViewActivi
           </DropdownMenuItem>
         )}
         {showStageAccess && (
-          <DropdownMenuItem onSelect={() => onStageAccess(user)} className="gap-2">
+          <DropdownMenuItem
+            onSelect={() => onStageAccess(user)}
+            className="gap-2"
+          >
             <ShieldAlert className="size-3.5 text-muted-foreground" />
             Stage Access
           </DropdownMenuItem>
@@ -146,13 +201,20 @@ function RowActions({ user, canEdit, canDeactivate, canAssignRole, canViewActivi
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onSelect={() => onStatusChange(user, !user.is_active)}
-              className={`gap-2 ${user.is_active ? 'text-amber-600 focus:text-amber-600' : 'text-emerald-700 focus:text-emerald-700'}`}
+              className={`gap-2 ${user.is_active ? "text-amber-600 focus:text-amber-600" : "text-emerald-700 focus:text-emerald-700"}`}
             >
-              {user.is_active ? <PowerOff className="size-3.5" /> : <Power className="size-3.5" />}
-              {user.is_active ? 'Deactivate' : 'Activate'}
+              {user.is_active ? (
+                <PowerOff className="size-3.5" />
+              ) : (
+                <Power className="size-3.5" />
+              )}
+              {user.is_active ? "Deactivate" : "Activate"}
             </DropdownMenuItem>
             {!isSadmin && (
-              <DropdownMenuItem onSelect={onDelete} className="gap-2 text-destructive focus:text-destructive">
+              <DropdownMenuItem
+                onSelect={onDelete}
+                className="gap-2 text-destructive focus:text-destructive"
+              >
                 <Trash2 className="size-3.5" />
                 Delete User
               </DropdownMenuItem>
@@ -161,7 +223,7 @@ function RowActions({ user, canEdit, canDeactivate, canAssignRole, canViewActivi
         )}
       </DropdownMenuContent>
     </DropdownMenu>
-  )
+  );
 }
 
 // ── Skeleton Row ─────────────────────────────────────────────────────────────
@@ -174,7 +236,7 @@ function SkeletonRow() {
         </td>
       ))}
     </tr>
-  )
+  );
 }
 
 export function UserTable({
@@ -197,49 +259,58 @@ export function UserTable({
   onStageAccess,
   onRefresh,
 }) {
-  const [togglingId, setTogglingId] = useState(null)
-  const [deleteTarget, setDeleteTarget] = useState(null)
-  const [deleting, setDeleting] = useState(false)
+  const [togglingId, setTogglingId] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function handleStatusChange(user, newStatus) {
-    setTogglingId(user.id)
+    setTogglingId(user.id);
     try {
-      const result = await updateUserStatus(user.id, newStatus)
+      const result = await updateUserStatus(user.id, newStatus);
       if (result.ok && result.success) {
-        toast.success(newStatus ? `@${user.username} activated` : `@${user.username} deactivated`)
-        onRefresh?.()
+        toast.success(
+          newStatus
+            ? `@${user.username} activated`
+            : `@${user.username} deactivated`,
+        );
+        onRefresh?.();
       } else {
-        toast.error(result.error?.message || 'Failed to update status')
+        toast.error(result.error?.message || "Failed to update status");
       }
     } catch {
-      toast.error('Network error.')
+      toast.error("Network error.");
     } finally {
-      setTogglingId(null)
+      setTogglingId(null);
     }
   }
 
   async function handleDelete() {
-    if (!deleteTarget) return
-    setDeleting(true)
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      const result = await deleteUser(deleteTarget.id)
+      const result = await deleteUser(deleteTarget.id);
       if (result.ok) {
-        toast.success(`User @${deleteTarget.username} deleted successfully`)
-        setDeleteTarget(null)
-        onRefresh?.()
+        toast.success(`User @${deleteTarget.username} deleted successfully`);
+        setDeleteTarget(null);
+        onRefresh?.();
       } else {
-        toast.error(result.error?.message || 'Failed to delete user')
+        toast.error(result.error?.message || "Failed to delete user");
       }
     } catch {
-      toast.error('Network error.')
+      toast.error("Network error.");
     } finally {
-      setDeleting(false)
+      setDeleting(false);
     }
   }
 
-  const hasActions = canEdit || canDeactivate || canAssignRole || canViewActivityLog || canManageStageAccess
-  const start = (page - 1) * limit + 1
-  const end   = Math.min(page * limit, total)
+  const hasActions =
+    canEdit ||
+    canDeactivate ||
+    canAssignRole ||
+    canViewActivityLog ||
+    canManageStageAccess;
+  const start = (page - 1) * limit + 1;
+  const end = Math.min(page * limit, total);
 
   return (
     <>
@@ -275,16 +346,23 @@ export function UserTable({
               </tr>
             </thead>
             <tbody>
-              {loading && users.length === 0 && (
-                Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} />)
-              )}
+              {loading &&
+                users.length === 0 &&
+                Array.from({ length: 5 }).map((_, i) => (
+                  <SkeletonRow key={i} />
+                ))}
 
               {!loading && users.length === 0 && (
                 <tr>
-                  <td colSpan={hasActions ? 7 : 6} className="px-4 py-16 text-center text-muted-foreground">
+                  <td
+                    colSpan={hasActions ? 7 : 6}
+                    className="px-4 py-16 text-center text-muted-foreground"
+                  >
                     <div className="space-y-1">
                       <p className="font-medium">No users found</p>
-                      <p className="text-xs">Try adjusting your search or filters.</p>
+                      <p className="text-xs">
+                        Try adjusting your search or filters.
+                      </p>
                     </div>
                   </td>
                 </tr>
@@ -298,7 +376,11 @@ export function UserTable({
                   {/* User identity */}
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      <UserAvatar fullName={user.full_name} username={user.username} size="sm" />
+                      <UserAvatar
+                        fullName={user.full_name}
+                        username={user.username}
+                        size="sm"
+                      />
                       <div className="min-w-0">
                         <p className="font-medium text-foreground truncate max-w-[160px]">
                           {user.full_name || user.username}
@@ -312,12 +394,16 @@ export function UserTable({
 
                   {/* Employee code */}
                   <td className="px-4 py-3 hidden md:table-cell">
-                    <span className="font-mono text-xs text-muted-foreground">{user.employee_code}</span>
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {user.employee_code}
+                    </span>
                   </td>
 
                   {/* Department */}
                   <td className="px-4 py-3 hidden lg:table-cell">
-                    <span className="text-sm text-muted-foreground">{user.department || '—'}</span>
+                    <span className="text-sm text-muted-foreground">
+                      {user.department || "—"}
+                    </span>
                   </td>
 
                   {/* Roles */}
@@ -332,7 +418,9 @@ export function UserTable({
                         />
                       ))}
                       {(user.roles || []).length === 0 && (
-                        <span className="text-xs text-muted-foreground italic">No roles</span>
+                        <span className="text-xs text-muted-foreground italic">
+                          No roles
+                        </span>
                       )}
                     </div>
                   </td>
@@ -346,12 +434,19 @@ export function UserTable({
                       </div>
                     ) : (
                       <div className="flex items-center gap-1.5">
-                        <span className={`size-1.5 rounded-full flex-shrink-0 ${user.is_active ? 'bg-emerald-500' : 'bg-neutral-300'}`} />
-                        <span className={`text-xs font-medium ${user.is_active ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground'}`}>
-                          {user.is_active ? 'Active' : 'Inactive'}
+                        <span
+                          className={`size-1.5 rounded-full flex-shrink-0 ${user.is_active ? "bg-emerald-500" : "bg-neutral-300"}`}
+                        />
+                        <span
+                          className={`text-xs font-medium ${user.is_active ? "text-emerald-700 dark:text-emerald-400" : "text-muted-foreground"}`}
+                        >
+                          {user.is_active ? "Active" : "Inactive"}
                         </span>
                         {user.force_password_change && (
-                          <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-200 bg-amber-50 ml-1">
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] text-amber-700 border-amber-200 bg-amber-50 ml-1"
+                          >
                             Pwd reset
                           </Badge>
                         )}
@@ -437,5 +532,5 @@ export function UserTable({
         )}
       </AnimatePresence>
     </>
-  )
+  );
 }

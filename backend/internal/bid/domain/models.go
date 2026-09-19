@@ -864,6 +864,7 @@ type ListBidsParams struct {
 	BidOutcome    string
 	BidOwnerID    string
 	Category      string
+	PortalSource  string
 	CreationMode  string
 	ClosingBefore *time.Time
 	ClosingAfter  *time.Time

@@ -265,6 +265,15 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		args = append(args, "%"+params.Category+"%")
 		idx++
 	}
+	if params.PortalSource != "" {
+		if params.PortalSource == "Others" {
+			conditions = append(conditions, "(b.portal_source NOT ILIKE '%GeM%' AND b.portal_source NOT ILIKE '%Private%' AND b.portal_source NOT ILIKE '%RTC%' AND b.portal_source NOT ILIKE '%CPPP%' AND b.portal_source NOT ILIKE '%eProcure%')")
+		} else {
+			conditions = append(conditions, fmt.Sprintf("b.portal_source ILIKE $%d", idx))
+			args = append(args, "%"+params.PortalSource+"%")
+			idx++
+		}
+	}
 	if params.CreationMode != "" {
 		conditions = append(conditions, fmt.Sprintf("b.creation_mode = $%d", idx))
 		args = append(args, params.CreationMode)

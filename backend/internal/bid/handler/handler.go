@@ -65,6 +65,7 @@ func (h *BidHandler) ListBids(c *gin.Context) {
 		BidOutcome:    c.Query("bid_outcome"),
 		BidOwnerID:    c.Query("bid_owner_id"),
 		Category:      c.Query("category"),
+		PortalSource:  c.Query("portal_source"),
 		CreationMode:  c.Query("creation_mode"),
 		InBin:         c.Query("in_bin") == "true" || c.Query("show_deleted") == "true",
 	}

@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react'
-import { toast } from 'sonner'
-import { Loader2, Pencil } from 'lucide-react'
+import React, { useState, useEffect } from "react";
+import { toast } from "sonner";
+import { Loader2, Pencil } from "lucide-react";
 
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -12,9 +12,9 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-} from '@/components/ui/dialog'
+} from "@/components/ui/dialog";
 
-import { updateUserProfile } from '../../services/users'
+import { updateUserProfile } from "../../services/users";
 
 /**
  * EditUserDialog
@@ -29,66 +29,76 @@ import { updateUserProfile } from '../../services/users'
  *   onUpdated   {(user) => void}
  */
 export function EditUserDialog({ open, onOpenChange, user, onUpdated }) {
-  const [form, setForm] = useState({ full_name: '', email: '', phone: '', department: '' })
-  const [loading, setLoading] = useState(false)
-  const [fieldErrors, setFieldErrors] = useState({})
+  const [form, setForm] = useState({
+    full_name: "",
+    email: "",
+    phone: "",
+    department: "",
+  });
+  const [loading, setLoading] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
 
   // Sync form when `user` changes (dialog re-open with different user)
   useEffect(() => {
     if (user) {
       setForm({
-        full_name:  user.full_name  ?? '',
-        email:      user.email      ?? '',
-        phone:      user.phone      ?? '',
-        department: user.department ?? '',
-      })
-      setFieldErrors({})
+        full_name: user.full_name ?? "",
+        email: user.email ?? "",
+        phone: user.phone ?? "",
+        department: user.department ?? "",
+      });
+      setFieldErrors({});
     }
-  }, [user])
+  }, [user]);
 
   function handleClose(val) {
-    if (!loading) onOpenChange(val)
+    if (!loading) onOpenChange(val);
   }
 
   function setField(key, value) {
-    setForm((prev) => ({ ...prev, [key]: value }))
-    if (fieldErrors[key]) setFieldErrors((prev) => ({ ...prev, [key]: undefined }))
+    setForm((prev) => ({ ...prev, [key]: value }));
+    if (fieldErrors[key])
+      setFieldErrors((prev) => ({ ...prev, [key]: undefined }));
   }
 
   async function handleSubmit(e) {
-    e.preventDefault()
+    e.preventDefault();
 
     // API requires at least one field in payload
-    const payload = {}
-    if (form.full_name.trim()  !== (user?.full_name  ?? '')) payload.full_name  = form.full_name.trim()
-    if (form.email.trim()      !== (user?.email      ?? '')) payload.email      = form.email.trim()
-    if (form.phone.trim()      !== (user?.phone      ?? '')) payload.phone      = form.phone.trim()
-    if (form.department.trim() !== (user?.department ?? '')) payload.department = form.department.trim()
+    const payload = {};
+    if (form.full_name.trim() !== (user?.full_name ?? ""))
+      payload.full_name = form.full_name.trim();
+    if (form.email.trim() !== (user?.email ?? ""))
+      payload.email = form.email.trim();
+    if (form.phone.trim() !== (user?.phone ?? ""))
+      payload.phone = form.phone.trim();
+    if (form.department.trim() !== (user?.department ?? ""))
+      payload.department = form.department.trim();
 
     if (Object.keys(payload).length === 0) {
-      toast.info('No changes to save.')
-      handleClose(false)
-      return
+      toast.info("No changes to save.");
+      handleClose(false);
+      return;
     }
 
-    setLoading(true)
+    setLoading(true);
     try {
-      const result = await updateUserProfile(user.id, payload)
+      const result = await updateUserProfile(user.id, payload);
       if (result.ok && result.success) {
-        toast.success('Profile updated successfully')
-        onUpdated?.(result.data)
-        handleClose(false)
+        toast.success("Profile updated successfully");
+        onUpdated?.(result.data);
+        handleClose(false);
       } else {
-        toast.error(result.error?.message || 'Failed to update profile')
+        toast.error(result.error?.message || "Failed to update profile");
       }
     } catch {
-      toast.error('Network error. Please try again.')
+      toast.error("Network error. Please try again.");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
-  if (!user) return null
+  if (!user) return null;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -99,20 +109,22 @@ export function EditUserDialog({ open, onOpenChange, user, onUpdated }) {
             Edit Profile
           </DialogTitle>
           <DialogDescription>
-            Updating profile for <span className="font-medium text-foreground">@{user.username}</span>
+            Updating profile for{" "}
+            <span className="font-medium text-foreground">
+              @{user.username}
+            </span>
           </DialogDescription>
         </DialogHeader>
 
         <form id="edit-user-form" onSubmit={handleSubmit} noValidate>
           <div className="grid gap-4">
-
             <div className="space-y-1.5">
               <Label htmlFor="eu-full-name">Full Name</Label>
               <Input
                 id="eu-full-name"
                 placeholder="Jane Smith"
                 value={form.full_name}
-                onChange={(e) => setField('full_name', e.target.value)}
+                onChange={(e) => setField("full_name", e.target.value)}
                 disabled={loading}
               />
             </div>
@@ -124,7 +136,7 @@ export function EditUserDialog({ open, onOpenChange, user, onUpdated }) {
                 type="email"
                 placeholder="jane@company.com"
                 value={form.email}
-                onChange={(e) => setField('email', e.target.value)}
+                onChange={(e) => setField("email", e.target.value)}
                 aria-invalid={!!fieldErrors.email}
                 disabled={loading}
               />
@@ -141,7 +153,7 @@ export function EditUserDialog({ open, onOpenChange, user, onUpdated }) {
                   type="tel"
                   placeholder="9876543210"
                   value={form.phone}
-                  onChange={(e) => setField('phone', e.target.value)}
+                  onChange={(e) => setField("phone", e.target.value)}
                   disabled={loading}
                 />
               </div>
@@ -151,17 +163,20 @@ export function EditUserDialog({ open, onOpenChange, user, onUpdated }) {
                   id="eu-department"
                   placeholder="e.g. Sales"
                   value={form.department}
-                  onChange={(e) => setField('department', e.target.value)}
+                  onChange={(e) => setField("department", e.target.value)}
                   disabled={loading}
                 />
               </div>
             </div>
-
           </div>
         </form>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => handleClose(false)} disabled={loading}>
+          <Button
+            variant="outline"
+            onClick={() => handleClose(false)}
+            disabled={loading}
+          >
             Cancel
           </Button>
           <Button type="submit" form="edit-user-form" disabled={loading}>
@@ -171,5 +186,5 @@ export function EditUserDialog({ open, onOpenChange, user, onUpdated }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

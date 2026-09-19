@@ -49,6 +49,8 @@ export const useBidStore = create((set, get) => ({
   viewMode: 'cards',
   // Quick end-date filter: '' | 'today' | 'week' | 'month'
   endDateFilter: '',
+  // Tender source / portal source filter: '' | 'GeM' | 'Private' | 'RTC' | 'CPPP' | 'eProcure' | 'Others'
+  portalSourceFilter: '',
   // Management-only cross-filter: view another user's tenders without
   // switching the route-driven "Owned Tenders" scope (see setScope above).
   ownerFilterId: '',
@@ -95,6 +97,11 @@ export const useBidStore = create((set, get) => ({
     get().loadBids()
   },
 
+  setPortalSourceFilter: (portalSourceFilter) => {
+    set({ portalSourceFilter, page: 1 })
+    get().loadBids()
+  },
+
   setInBin: (inBin) => {
     set({ inBin, page: 1 })
     get().loadBids()
@@ -120,7 +127,7 @@ export const useBidStore = create((set, get) => ({
   setViewMode: (viewMode) => set({ viewMode }),
 
   loadBids: async (overrideOwnerId) => {
-    const { page, debouncedSearch, stageFilter, statusFilter, inBin, bidOwnerId, scope, endDateFilter, ownerFilterId } = get()
+    const { page, debouncedSearch, stageFilter, statusFilter, portalSourceFilter, inBin, bidOwnerId, scope, endDateFilter, ownerFilterId } = get()
     let finalOwnerId = overrideOwnerId !== undefined ? overrideOwnerId : bidOwnerId
     if (scope === 'owned' && !finalOwnerId) {
       finalOwnerId = tokenStorage.getUser()?.id || ''
@@ -139,6 +146,7 @@ export const useBidStore = create((set, get) => ({
         search: debouncedSearch,
         workflow_stage: stageFilter,
         bid_status: statusFilter,
+        portal_source: portalSourceFilter || undefined,
         bid_owner_id: (scope === 'owned' || finalOwnerId) ? finalOwnerId : undefined,
         closing_after,
         closing_before,

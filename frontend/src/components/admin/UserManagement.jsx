@@ -1,10 +1,17 @@
-import React, { useState, useEffect, useCallback } from 'react'
-import { Search, UserPlus, RefreshCw, Users, X, ChevronDown } from 'lucide-react'
+import React, { useState, useEffect, useCallback } from "react";
+import {
+  Search,
+  UserPlus,
+  RefreshCw,
+  Users,
+  X,
+  ChevronDown,
+} from "lucide-react";
 
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -12,30 +19,30 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-} from '@/components/ui/dropdown-menu'
+} from "@/components/ui/dropdown-menu";
 
-import { usePermissions } from '../../hooks/usePermissions'
-import { listUsers } from '../../services/users'
+import { usePermissions } from "../../hooks/usePermissions";
+import { listUsers } from "../../services/users";
 
-import { UserTable }              from './UserTable'
-import { CreateUserSheet }        from './CreateUserSheet'
-import { EditUserDialog }         from './EditUserDialog'
-import { RolesPermissionsDialog } from './RolesPermissionsDialog'
-import { ForceResetDialog }       from './ForceResetDialog'
-import { ActivityLogDialog }      from './ActivityLogDialog'
-import { StageAccessDialog }      from './StageAccessDialog'
-import { ALL_ROLES, ROLE_LABELS } from './RoleBadge'
+import { UserTable } from "./UserTable";
+import { CreateUserSheet } from "./CreateUserSheet";
+import { EditUserDialog } from "./EditUserDialog";
+import { RolesPermissionsDialog } from "./RolesPermissionsDialog";
+import { ForceResetDialog } from "./ForceResetDialog";
+import { ActivityLogDialog } from "./ActivityLogDialog";
+import { StageAccessDialog } from "./StageAccessDialog";
+import { ALL_ROLES, ROLE_LABELS } from "./RoleBadge";
 
-const LIMIT = 20
+const LIMIT = 20;
 
 // ── Simple debounce hook ──────────────────────────────────────────────────────
 function useDebounce(value, delay = 350) {
-  const [debounced, setDebounced] = useState(value)
+  const [debounced, setDebounced] = useState(value);
   useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), delay)
-    return () => clearTimeout(t)
-  }, [value, delay])
-  return debounced
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
 }
 
 /**
@@ -45,107 +52,111 @@ function useDebounce(value, delay = 350) {
  * `user.view` permission (enforced by the parent Dashboard).
  */
 export function UserManagement() {
-  const { hasPermission, hasRole } = usePermissions()
+  const { hasPermission, hasRole } = usePermissions();
   // Mirrors the sidebar: roles that administer the system get the management
   // wording, everyone else just sees the user directory.
-  const isManagementRole = ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].some(hasRole)
+  const isManagementRole = ["SUPER_ADMIN", "ADMIN", "MANAGER"].some(hasRole);
 
   // ── Permission flags (derived from JWT payload, never hardcoded) ──────────
-  const canCreate     = hasPermission('user.create')
-  const canEdit       = hasPermission('user.edit')
-  const canDeactivate = hasPermission('user.deactivate')
-  const canAssignRole = hasPermission('user.assign_role')
+  const canCreate = hasPermission("user.create");
+  const canEdit = hasPermission("user.edit");
+  const canDeactivate = hasPermission("user.deactivate");
+  const canAssignRole = hasPermission("user.assign_role");
 
   // ── Filter / search state ────────────────────────────────────────────────
-  const [searchInput, setSearchInput] = useState('')
-  const [roleFilter, setRoleFilter]   = useState('')
-  const [activeFilter, setActiveFilter] = useState('') // '' | 'true' | 'false'
-  const debouncedSearch = useDebounce(searchInput)
+  const [searchInput, setSearchInput] = useState("");
+  const [roleFilter, setRoleFilter] = useState("");
+  const [activeFilter, setActiveFilter] = useState(""); // '' | 'true' | 'false'
+  const debouncedSearch = useDebounce(searchInput);
 
   // ── Pagination ────────────────────────────────────────────────────────────
-  const [page, setPage] = useState(1)
+  const [page, setPage] = useState(1);
 
   // ── Data state ────────────────────────────────────────────────────────────
-  const [users, setUsers]           = useState([])
-  const [total, setTotal]           = useState(0)
-  const [totalPages, setTotalPages] = useState(1)
-  const [loading, setLoading]       = useState(false)
-  const [fetchError, setFetchError] = useState(null)
+  const [users, setUsers] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
 
   // ── Dialog state ─────────────────────────────────────────────────────────
-  const [createOpen, setCreateOpen]       = useState(false)
-  const [editUser, setEditUser]           = useState(null) // user object | null
-  const [rolesUser, setRolesUser]         = useState(null)
-  const [resetUser, setResetUser]         = useState(null)
-  const [activityLogUser, setActivityLogUser] = useState(null)
-  const [stageAccessUser, setStageAccessUser] = useState(null)
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editUser, setEditUser] = useState(null); // user object | null
+  const [rolesUser, setRolesUser] = useState(null);
+  const [resetUser, setResetUser] = useState(null);
+  const [activityLogUser, setActivityLogUser] = useState(null);
+  const [stageAccessUser, setStageAccessUser] = useState(null);
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
-  const fetchUsers = useCallback(async (options = {}) => {
-    setLoading(true)
-    setFetchError(null)
-    try {
-      const result = await listUsers({
-        page:      options.page      ?? page,
-        limit:     LIMIT,
-        search:    options.search    ?? debouncedSearch,
-        role:      options.role      ?? roleFilter,
-        is_active: options.is_active ?? activeFilter,
-      })
+  const fetchUsers = useCallback(
+    async (options = {}) => {
+      setLoading(true);
+      setFetchError(null);
+      try {
+        const result = await listUsers({
+          page: options.page ?? page,
+          limit: LIMIT,
+          search: options.search ?? debouncedSearch,
+          role: options.role ?? roleFilter,
+          is_active: options.is_active ?? activeFilter,
+        });
 
-      if (result.ok && result.success) {
-        setUsers(result.data.users ?? [])
-        setTotal(result.data.total ?? 0)
-        setTotalPages(result.data.total_pages ?? 1)
-      } else {
-        setFetchError(result.error?.message || 'Failed to load users')
-        setUsers([])
+        if (result.ok && result.success) {
+          setUsers(result.data.users ?? []);
+          setTotal(result.data.total ?? 0);
+          setTotalPages(result.data.total_pages ?? 1);
+        } else {
+          setFetchError(result.error?.message || "Failed to load users");
+          setUsers([]);
+        }
+      } catch {
+        setFetchError("Network error. Could not reach the server.");
+        setUsers([]);
+      } finally {
+        setLoading(false);
       }
-    } catch {
-      setFetchError('Network error. Could not reach the server.')
-      setUsers([])
-    } finally {
-      setLoading(false)
-    }
-  }, [page, debouncedSearch, roleFilter, activeFilter])
+    },
+    [page, debouncedSearch, roleFilter, activeFilter],
+  );
 
   // Refetch whenever filters or page changes
   useEffect(() => {
-    fetchUsers()
-  }, [fetchUsers])
+    fetchUsers();
+  }, [fetchUsers]);
 
   // Reset to page 1 when filters change
   useEffect(() => {
-    setPage(1)
-  }, [debouncedSearch, roleFilter, activeFilter])
+    setPage(1);
+  }, [debouncedSearch, roleFilter, activeFilter]);
 
   function handleRefresh() {
-    fetchUsers({ page })
+    fetchUsers({ page });
   }
 
   function clearFilters() {
-    setSearchInput('')
-    setRoleFilter('')
-    setActiveFilter('')
-    setPage(1)
+    setSearchInput("");
+    setRoleFilter("");
+    setActiveFilter("");
+    setPage(1);
   }
 
-  const hasActiveFilters = searchInput || roleFilter || activeFilter !== ''
+  const hasActiveFilters = searchInput || roleFilter || activeFilter !== "";
 
   return (
     <div className="space-y-6">
-
       {/* ── Page Header ──────────────────────────────────────────────────── */}
       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="font-heading text-xl font-semibold text-foreground flex items-center gap-2">
             <Users className="size-5 text-primary" />
-            {isManagementRole ? 'User Management' : 'Users'}
+            {isManagementRole ? "User Management" : "Users"}
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
             {total > 0
-              ? `${total} user${total !== 1 ? 's' : ''} in the system`
-              : isManagementRole ? 'Manage system users and permissions' : 'People in your organisation'}
+              ? `${total} user${total !== 1 ? "s" : ""} in the system`
+              : isManagementRole
+                ? "Manage system users and permissions"
+                : "People in your organisation"}
           </p>
         </div>
 
@@ -164,7 +175,6 @@ export function UserManagement() {
 
       {/* ── Filters Bar ──────────────────────────────────────────────────── */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-
         {/* Search */}
         <div className="relative flex-1 min-w-0 max-w-sm">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
@@ -180,15 +190,24 @@ export function UserManagement() {
         {/* Role filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button id="um-role-filter" variant="outline" size="sm" className="h-9 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5 min-w-[130px]">
-              <span>{roleFilter ? (ROLE_LABELS[roleFilter]?.label ?? roleFilter) : 'All Roles'}</span>
+            <Button
+              id="um-role-filter"
+              variant="outline"
+              size="sm"
+              className="h-9 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5 min-w-[130px]"
+            >
+              <span>
+                {roleFilter
+                  ? (ROLE_LABELS[roleFilter]?.label ?? roleFilter)
+                  : "All Roles"}
+              </span>
               <ChevronDown className="size-3 text-muted-foreground ml-auto" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-[150px]">
             <DropdownMenuLabel>Filter by Role</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => setRoleFilter('')}>
+            <DropdownMenuItem onSelect={() => setRoleFilter("")}>
               All Roles
             </DropdownMenuItem>
             {ALL_ROLES.map((role) => (
@@ -202,34 +221,56 @@ export function UserManagement() {
         {/* Status filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button id="um-status-filter" variant="outline" size="sm" className="h-9 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5 min-w-[130px]">
-              <span>{activeFilter === 'true' ? 'Active' : activeFilter === 'false' ? 'Inactive' : 'All Status'}</span>
+            <Button
+              id="um-status-filter"
+              variant="outline"
+              size="sm"
+              className="h-9 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5 min-w-[130px]"
+            >
+              <span>
+                {activeFilter === "true"
+                  ? "Active"
+                  : activeFilter === "false"
+                    ? "Inactive"
+                    : "All Status"}
+              </span>
               <ChevronDown className="size-3 text-muted-foreground ml-auto" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-[150px]">
             <DropdownMenuLabel>Filter by Status</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => setActiveFilter('')}>
+            <DropdownMenuItem onSelect={() => setActiveFilter("")}>
               All Status
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setActiveFilter('true')}>
+            <DropdownMenuItem onSelect={() => setActiveFilter("true")}>
               Active
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setActiveFilter('false')}>
+            <DropdownMenuItem onSelect={() => setActiveFilter("false")}>
               Inactive
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
         {/* Refresh */}
-        <Button variant="outline" size="icon" onClick={handleRefresh} disabled={loading} aria-label="Refresh">
-          <RefreshCw className={`size-4 ${loading ? 'animate-spin' : ''}`} />
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={handleRefresh}
+          disabled={loading}
+          aria-label="Refresh"
+        >
+          <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
         </Button>
 
         {/* Clear filters */}
         {hasActiveFilters && (
-          <Button variant="ghost" size="sm" onClick={clearFilters} className="gap-1 text-muted-foreground">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={clearFilters}
+            className="gap-1 text-muted-foreground"
+          >
             <X className="size-3.5" />
             Clear
           </Button>
@@ -242,19 +283,25 @@ export function UserManagement() {
           {searchInput && (
             <Badge variant="secondary" className="gap-1 text-xs">
               Search: "{searchInput}"
-              <button onClick={() => setSearchInput('')}><X className="size-3" /></button>
+              <button onClick={() => setSearchInput("")}>
+                <X className="size-3" />
+              </button>
             </Badge>
           )}
           {roleFilter && (
             <Badge variant="secondary" className="gap-1 text-xs">
               Role: {ROLE_LABELS[roleFilter]?.label ?? roleFilter}
-              <button onClick={() => setRoleFilter('')}><X className="size-3" /></button>
+              <button onClick={() => setRoleFilter("")}>
+                <X className="size-3" />
+              </button>
             </Badge>
           )}
-          {activeFilter !== '' && (
+          {activeFilter !== "" && (
             <Badge variant="secondary" className="gap-1 text-xs">
-              Status: {activeFilter === 'true' ? 'Active' : 'Inactive'}
-              <button onClick={() => setActiveFilter('')}><X className="size-3" /></button>
+              Status: {activeFilter === "true" ? "Active" : "Inactive"}
+              <button onClick={() => setActiveFilter("")}>
+                <X className="size-3" />
+              </button>
             </Badge>
           )}
         </div>
@@ -264,7 +311,9 @@ export function UserManagement() {
       {fetchError && (
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive flex items-center justify-between">
           <span>{fetchError}</span>
-          <Button size="sm" variant="outline" onClick={handleRefresh}>Retry</Button>
+          <Button size="sm" variant="outline" onClick={handleRefresh}>
+            Retry
+          </Button>
         </div>
       )}
 
@@ -295,7 +344,10 @@ export function UserManagement() {
         <CreateUserSheet
           open={createOpen}
           onOpenChange={setCreateOpen}
-          onCreated={() => { setPage(1); handleRefresh() }}
+          onCreated={() => {
+            setPage(1);
+            handleRefresh();
+          }}
         />
       )}
 
@@ -342,5 +394,5 @@ export function UserManagement() {
         />
       )}
     </div>
-  )
+  );
 }

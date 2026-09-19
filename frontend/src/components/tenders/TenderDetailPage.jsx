@@ -2253,7 +2253,6 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
         <motion.div key={activeTab} initial={{opacity:0,y:6}} animate={{opacity:1,y:0}} exit={{opacity:0}} transition={{duration:0.15}}>
           {activeTab === 'overview' && (
             <div className="space-y-5">
-              <StageActionPanel bid={bid} onSelectStage={(stageKey) => setActiveTab('stages', stageKey)} />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="rounded-lg border border-border p-4 space-y-3 bg-card shadow-sm">
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
@@ -2334,6 +2333,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                   </div>
                 </div>
               </div>
+              <StageActionPanel bid={bid} onSelectStage={(stageKey) => setActiveTab('stages', stageKey)} />
               {bid.remarks && (
                 <div className="rounded-lg border border-border p-4 bg-card shadow-sm">
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Remarks & Detailed Notes</p>
