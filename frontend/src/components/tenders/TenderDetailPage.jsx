@@ -2349,7 +2349,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
           {activeTab === 'members' && <MembersTab bid={bid} onRefresh={loadBid}/>}
         </motion.div>
       </AnimatePresence>
-
+        
       {/* Transition Dialog */}
       <AnimatePresence>
         {showTransition && (

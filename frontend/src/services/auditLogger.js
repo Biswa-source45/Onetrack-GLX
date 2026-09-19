@@ -13,8 +13,8 @@ export function logStageMicroEvent(bidId, {
   transitionReason = '',
   details = null
 }) {
-  if (!bidId) return
-  addBidMicroEvent(bidId, {
+  if (!bidId) return Promise.resolve({ ok: false })
+  return addBidMicroEvent(bidId, {
     from_stage: fromStage,
     to_stage: toStage,
     event_type: eventType,
@@ -27,7 +27,9 @@ export function logStageMicroEvent(bidId, {
     } else {
       console.error('Failed to log stage micro event', res.error)
     }
+    return res
   }).catch((err) => {
     console.error('Failed to log stage micro event', err)
+    return { ok: false, error: err }
   })
 }

@@ -3753,40 +3753,45 @@ export function Stage6Workspace({ bid, onRefresh }) {
 }
 
 
-// ── Stage 8: Internal Approval ──────────────────────────────────────────────
-// Both the Account Manager and Pre-Sales assigned to a tender must sign off
-// Internal Approval independently — resolved from the shared stage history
-// (eventType 'APPROVAL', details.role) rather than a new backend column,
-// the same audit-trail-first approach as useStageCompletedBy.
+// ── Stage 8 (Workspace): Stage 7 Internal Sign-off & Approval ───────────────
+// Internal approval sign-off by Reporting Manager and/or Account Manager — resolved
+// from the shared stage history (eventType 'APPROVAL', details.role) rather than
+// a single backend column, providing an immutable audit trail.
 function useInternalApprovals(bidId, bid) {
-  const [approvals, setApprovals] = useState({ ACCOUNT_MANAGER: null, PRESALES: null })
+  const [approvals, setApprovals] = useState({})
   const [reload, setReload] = useState(0)
   useEffect(() => {
     let cancelled = false
     // limit: 200 — scans for the latest approval per role, not a page to render.
     getBidStageHistory(bidId, { limit: 200 }).then((res) => {
       if (cancelled || !res.ok) return
-      const next = { ACCOUNT_MANAGER: null, PRESALES: null }
+      const next = {}
       // res.data is newest-first — only fill a role from its first (i.e.
       // most recent) matching entry, so an older approval can't overwrite it.
       ;(res.data || [])
-        .filter((h) => h.to_stage === 'INTERNAL_APPROVAL' && h.event_type === 'APPROVAL')
+        .filter((h) => (h.to_stage === 'INTERNAL_APPROVAL' || h.from_stage === 'INTERNAL_APPROVAL') && h.event_type === 'APPROVAL')
         .forEach((h) => {
-          const role = h.details?.role
-          if ((role === 'ACCOUNT_MANAGER' || role === 'PRESALES') && !next[role]) {
+          const role = h.details?.role || 'ANY'
+          if (!next[role]) {
             next[role] = {
               name: h.transitioned_by?.full_name || h.transitioned_by?.username || 'someone',
               comment: h.details?.comment || h.transition_reason || '',
               at: h.created_at,
+              role,
+            }
+          }
+          if (!next.ANY) {
+            next.ANY = {
+              name: h.transitioned_by?.full_name || h.transitioned_by?.username || 'someone',
+              comment: h.details?.comment || h.transition_reason || '',
+              at: h.created_at,
+              role,
             }
           }
         })
       setApprovals(next)
     }).catch(() => {})
     return () => { cancelled = true }
-    // bid?.updated_at (bumped by the backend on every write) makes the
-    // header refresh button re-fetch this too — bid was already accepted as
-    // a param for this but wasn't actually used anywhere.
   }, [bidId, reload, bid?.updated_at])
   return [approvals, () => setReload((n) => n + 1)]
 }
@@ -3862,28 +3867,33 @@ function InternalApprovalDialog({ role, roleLabel, bid, onClose, onDone }) {
 export function Stage8Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
   const [approvingRole, setApprovingRole] = useState(null)
-  const { user: currentUser, isAdmin, hasRole } = usePermissions()
+  const { user: currentUser, isAdmin, hasRole, hasPermission } = usePermissions()
   const { systemConfigs, loadSystemConfigs } = useBidStore()
   useEffect(() => { loadSystemConfigs() }, [loadSystemConfigs])
-  const requireAmPresales = systemConfigs?.stage2_require_am_presales !== false
 
   const isAssignedAM = !!currentUser?.id && currentUser.id === bid?.account_manager?.id
   const isReportingManager = !!currentUser?.id && (currentUser.id === bid?.reporting_manager?.id || currentUser.id === bid?.reporting_manager_id)
   const isBidOwner = !!currentUser?.id && (currentUser.id === bid?.bid_owner?.id || currentUser.id === bid?.bid_owner_id)
   const isManagerTier = hasRole('MANAGER') || hasRole('BID_MANAGER') || hasRole('SUPER_ADMIN') || hasRole('ADMIN')
 
-  const canActAsAuthority = isAssignedAM || (!requireAmPresales && (isReportingManager || isBidOwner || isManagerTier || isAdmin)) || (!bid.account_manager && (isReportingManager || isBidOwner || isManagerTier || isAdmin))
-
   const [approvals, refetchApprovals] = useInternalApprovals(bid.id, bid)
-  const amApproved = !!approvals.ACCOUNT_MANAGER || ((!requireAmPresales || !bid.account_manager) && (!!approvals.REPORTING_MANAGER || !!approvals.BID_OWNER || !!approvals.MANAGER))
   const stageCompleted = bid?.stage_completions?.INTERNAL_APPROVAL === true
   const completedBy = useStageCompletedBy(bid.id, 'INTERNAL_APPROVAL', stageCompleted)
 
-  const approverPerson = bid.account_manager || bid.reporting_manager || bid.bid_owner
-  const approverRoleLabel = bid.account_manager ? 'Account Manager' : (bid.reporting_manager ? 'Reporting Manager' : 'Bid Authority')
-  const approverRoleKey = bid.account_manager ? 'ACCOUNT_MANAGER' : (bid.reporting_manager ? 'REPORTING_MANAGER' : 'MANAGER')
+  // Internal approval is satisfied if Reporting Manager, Account Manager, or any designated authority has approved
+  const isInternallyApproved = !!(
+    approvals.REPORTING_MANAGER ||
+    approvals.ACCOUNT_MANAGER ||
+    approvals.MANAGER ||
+    approvals.BID_OWNER ||
+    approvals.ANY
+  )
 
-  const handleReminder = async (role, name, userId) => {
+  // Once internally approved, the Bid Executive (Owner), Reporting Manager, Account Manager,
+  // Managers, or Admins can advance to Stage 8 (Bid Submission).
+  const canAdvance = isBidOwner || isReportingManager || isAssignedAM || isManagerTier || isAdmin || hasPermission('bid.edit')
+
+  const handleReminder = async (roleKey, roleLabel, name, userId) => {
     if (!userId) return
     const currentUser = tokenStorage.getUser()
     try {
@@ -3901,7 +3911,7 @@ export function Stage8Workspace({ bid, onRefresh }) {
         fromStage: 'INTERNAL_APPROVAL',
         toStage: 'INTERNAL_APPROVAL',
         eventType: 'REMINDER',
-        transitionReason: `Sent an Internal Approval reminder to ${name} (${approverRoleLabel})`,
+        transitionReason: `Sent an Internal Approval reminder to ${name} (${roleLabel})`,
       })
       toast.success(`Reminder sent to ${name}`)
     } catch {
@@ -3909,15 +3919,39 @@ export function Stage8Workspace({ bid, onRefresh }) {
     }
   }
 
-  const rows = [
-    {
-      role: approverRoleKey,
-      label: approverRoleLabel,
-      person: approverPerson,
-      approval: approvals[approverRoleKey] || approvals.ACCOUNT_MANAGER,
-      isAssigned: canActAsAuthority,
-    },
-  ]
+  // Construct approval rows for assigned roles
+  const rows = []
+
+  if (bid.reporting_manager) {
+    rows.push({
+      role: 'REPORTING_MANAGER',
+      label: 'Reporting Manager',
+      person: bid.reporting_manager,
+      approval: approvals.REPORTING_MANAGER || (!bid.account_manager ? approvals.ANY : null),
+      canApprove: isReportingManager || isManagerTier || isAdmin,
+    })
+  }
+
+  if (bid.account_manager) {
+    rows.push({
+      role: 'ACCOUNT_MANAGER',
+      label: 'Account Manager',
+      person: bid.account_manager,
+      approval: approvals.ACCOUNT_MANAGER || (!bid.reporting_manager ? approvals.ANY : null),
+      canApprove: isAssignedAM || isManagerTier || isAdmin,
+    })
+  }
+
+  // Fallback row if neither Reporting Manager nor Account Manager is assigned
+  if (rows.length === 0) {
+    rows.push({
+      role: 'MANAGER',
+      label: 'Bid Authority',
+      person: bid.bid_owner,
+      approval: approvals.MANAGER || approvals.BID_OWNER || approvals.ANY,
+      canApprove: isBidOwner || isManagerTier || isAdmin,
+    })
+  }
 
   return (
     <div className="space-y-6">
@@ -3925,7 +3959,13 @@ export function Stage8Workspace({ bid, onRefresh }) {
         <div>
           <h3 className="text-sm font-semibold text-yellow-900 dark:text-yellow-300">Stage 7: Internal Sign-off &amp; Approval</h3>
           <p className="text-xs text-yellow-700 dark:text-yellow-400">
-            {bid.account_manager ? 'The assigned Account Manager must approve.' : 'Internal approval by Reporting Manager or Bid Owner.'}
+            {bid.reporting_manager && bid.account_manager
+              ? 'Internal sign-off required from the Reporting Manager or Account Manager before bid submission.'
+              : bid.reporting_manager
+                ? 'Internal sign-off required from the Reporting Manager before bid submission.'
+                : bid.account_manager
+                  ? 'Internal sign-off required from the Account Manager before bid submission.'
+                  : 'Internal sign-off required from the Bid Authority before bid submission.'}
           </p>
         </div>
         <StageHeaderActions
@@ -3935,8 +3975,14 @@ export function Stage8Workspace({ bid, onRefresh }) {
           onRefresh={onRefresh}
           completeLabel="Approve & Unlock Bid Submission"
           completeClass="bg-yellow-600 hover:bg-yellow-700 text-white"
-          disabled={!amApproved || !(canActAsAuthority || isAdmin)}
-          disabledTooltip={!amApproved ? `${approverRoleLabel} must approve first.` : `Only the ${approverRoleLabel} or an Admin can advance this stage.`}
+          disabled={!isInternallyApproved || !canAdvance}
+          disabledTooltip={
+            !isInternallyApproved
+              ? 'Awaiting internal sign-off approval from Reporting Manager or Account Manager.'
+              : !canAdvance
+                ? 'Only the Bid Executive, Reporting Manager, or an Admin can advance this stage.'
+                : undefined
+          }
         />
       </div>
 
@@ -3975,12 +4021,12 @@ export function Stage8Workspace({ bid, onRefresh }) {
                   <td className="px-3 py-2 text-muted-foreground">{r.approval?.comment || '—'}</td>
                   <td className="px-3 py-2 text-muted-foreground">{r.approval ? fmtDateTime(r.approval.at) : '—'}</td>
                   <td className="px-3 py-2">
-                    {r.approval ? null : r.isAssigned ? (
-                      <Button size="sm" onClick={() => setApprovingRole(r.role)} className="h-7 text-[11px] gap-1 bg-yellow-600 hover:bg-yellow-700 text-white">
+                    {r.approval ? null : r.canApprove ? (
+                      <Button size="sm" onClick={() => setApprovingRole({ role: r.role, label: r.label })} className="h-7 text-[11px] gap-1 bg-yellow-600 hover:bg-yellow-700 text-white">
                         <CheckCircle2 className="size-3" /> Approve
                       </Button>
                     ) : r.person ? (
-                      <Button size="sm" variant="outline" onClick={() => handleReminder(r.role, r.person.full_name, r.person.id)} className="h-7 text-[11px] gap-1">
+                      <Button size="sm" variant="outline" onClick={() => handleReminder(r.role, r.label, r.person.full_name, r.person.id)} className="h-7 text-[11px] gap-1">
                         <Bell className="size-3" /> Remind
                       </Button>
                     ) : null}
@@ -3994,8 +4040,8 @@ export function Stage8Workspace({ bid, onRefresh }) {
 
       {approvingRole && (
         <InternalApprovalDialog
-          role={approvingRole}
-          roleLabel={approverRoleLabel}
+          role={approvingRole.role}
+          roleLabel={approvingRole.label}
           bid={bid}
           onClose={() => setApprovingRole(null)}
           onDone={() => { setApprovingRole(null); refetchApprovals(); onRefresh() }}
