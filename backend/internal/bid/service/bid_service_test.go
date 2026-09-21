@@ -28,6 +28,9 @@ type fakeBidRepo struct {
 
 	stageRestrictions map[string][]string // userID -> restricted stages
 	userSummaries     map[string]*domain.UserSummary
+
+	pendingEdits  map[string]*domain.TenderEditApproval // editID -> edit
+	nextPendingID int
 }
 
 type memberCall struct {
@@ -137,6 +140,40 @@ func (f *fakeBidRepo) SetStageRestrictions(ctx context.Context, userID string, s
 		f.stageRestrictions = map[string][]string{}
 	}
 	f.stageRestrictions[userID] = stages
+	return nil
+}
+func (f *fakeBidRepo) CreatePendingEdit(ctx context.Context, edit *domain.TenderEditApproval) error {
+	if f.pendingEdits == nil {
+		f.pendingEdits = map[string]*domain.TenderEditApproval{}
+	}
+	f.nextPendingID++
+	edit.ID = "pending-" + string(rune('0'+f.nextPendingID))
+	f.pendingEdits[edit.ID] = edit
+	return nil
+}
+func (f *fakeBidRepo) GetPendingEditByID(ctx context.Context, editID string) (*domain.TenderEditApproval, error) {
+	return f.pendingEdits[editID], nil
+}
+func (f *fakeBidRepo) GetPendingEditForBid(ctx context.Context, bidID string) (*domain.TenderEditApproval, error) {
+	for _, e := range f.pendingEdits {
+		if e.BidID == bidID && e.Status == domain.EditApprovalPending {
+			return e, nil
+		}
+	}
+	return nil, nil
+}
+func (f *fakeBidRepo) DecidePendingEdit(ctx context.Context, editID string, status string, decidedPayload []byte, decisionDiff []domain.FieldDiff, comment string, decidedBy string) error {
+	e := f.pendingEdits[editID]
+	if e == nil {
+		return errors.New("not found")
+	}
+	e.Status = status
+	e.DecidedPayload = decidedPayload
+	e.DecisionDiff = decisionDiff
+	if comment != "" {
+		e.DecisionComment = &comment
+	}
+	e.DecidedBy = &domain.UserSummary{ID: decidedBy}
 	return nil
 }
 
@@ -937,6 +974,203 @@ func TestSetStageRestrictions(t *testing.T) {
 		}
 		if len(sysLog.recorded) != 1 || sysLog.recorded[0] != "STAGE_ACCESS_UPDATED" {
 			t.Fatalf("expected a STAGE_ACCESS_UPDATED system log entry, got: %v", sysLog.recorded)
+		}
+	})
+}
+
+// TestUpdateBid_EditApproval covers the Reporting-Manager-approval gate on
+// a Bid Executive's Edit-Tender-form submission (req.FullEditSubmission):
+// held instead of applied, the RM can approve as-is, correct it, or reject
+// it, and the executive is notified either way.
+func TestUpdateBid_EditApproval(t *testing.T) {
+	rmID := "rm-user-1"
+	execID := "exec-user-1"
+
+	newBid := func(rm *string) *domain.BidWorkspace {
+		return &domain.BidWorkspace{
+			ID:                 "bid-1",
+			Title:              "Test Tender",
+			WorkflowStage:      domain.StageDiscovered,
+			CreationMode:       domain.CreationModeManual,
+			BidOwnerID:         execID,
+			ReportingManagerID: rm,
+			EstimatedValue:     floatPtr(100000),
+			EMDNotApplicable:   true,
+			StageCompletions:   []byte(`{}`),
+		}
+	}
+
+	t.Run("executive's full-edit submission is held, not applied", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid(strPtr(rmID))}
+		alerts := &fakeAlertSvc{}
+		svc := NewBidService(repo, alerts, &fakeSystemLog{})
+
+		req := &domain.UpdateBidRequest{FullEditSubmission: true, EstimatedValue: floatPtr(150000)}
+		err := svc.UpdateBid(context.Background(), "bid-1", req, execID, []string{"BID_EXECUTIVE"})
+
+		var pae *domain.PendingApprovalError
+		if !errors.As(err, &pae) {
+			t.Fatalf("expected a PendingApprovalError, got: %v", err)
+		}
+		if repo.lastUpdate != nil {
+			t.Fatalf("expected the change NOT to reach repo.Update while pending, got: %+v", repo.lastUpdate)
+		}
+		if !hasAlertType(alerts.created, "TENDER_EDIT_PENDING_APPROVAL") {
+			t.Fatalf("expected a TENDER_EDIT_PENDING_APPROVAL alert to the RM, got: %+v", alerts.created)
+		}
+		for _, a := range alerts.created {
+			if a.Type == "TENDER_EDIT_PENDING_APPROVAL" && (a.UserID == nil || *a.UserID != rmID) {
+				t.Fatalf("pending-approval alert should target the Reporting Manager, got %+v", a.UserID)
+			}
+		}
+	})
+
+	t.Run("Account Manager / Manager / Admin edits bypass the gate", func(t *testing.T) {
+		for _, roles := range [][]string{{"ACCOUNT_MANAGER"}, {"MANAGER"}, {"SUPER_ADMIN"}} {
+			repo := &fakeBidRepo{bid: newBid(strPtr(rmID))}
+			svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+			req := &domain.UpdateBidRequest{FullEditSubmission: true, EstimatedValue: floatPtr(150000)}
+			if err := svc.UpdateBid(context.Background(), "bid-1", req, "actor-1", roles); err != nil {
+				t.Fatalf("roles=%v UpdateBid: %v", roles, err)
+			}
+			if repo.lastUpdate == nil {
+				t.Fatalf("roles=%v expected the edit to apply immediately", roles)
+			}
+		}
+	})
+
+	t.Run("no Reporting Manager assigned — applies immediately", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid(nil)}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		req := &domain.UpdateBidRequest{FullEditSubmission: true, EstimatedValue: floatPtr(150000)}
+		if err := svc.UpdateBid(context.Background(), "bid-1", req, execID, []string{"BID_EXECUTIVE"}); err != nil {
+			t.Fatalf("UpdateBid: %v", err)
+		}
+		if repo.lastUpdate == nil {
+			t.Fatalf("expected the edit to apply immediately with no Reporting Manager to route to")
+		}
+	})
+
+	t.Run("no actual change — applies immediately, nothing held", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid(strPtr(rmID))}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		req := &domain.UpdateBidRequest{FullEditSubmission: true, EstimatedValue: floatPtr(100000)} // same as current
+		if err := svc.UpdateBid(context.Background(), "bid-1", req, execID, []string{"BID_EXECUTIVE"}); err != nil {
+			t.Fatalf("UpdateBid: %v", err)
+		}
+		if repo.lastUpdate == nil {
+			t.Fatalf("expected a no-op edit to apply directly instead of being held for approval")
+		}
+	})
+
+	t.Run("a second edit while one is pending is rejected", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid(strPtr(rmID))}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		req := &domain.UpdateBidRequest{FullEditSubmission: true, EstimatedValue: floatPtr(150000)}
+		_ = svc.UpdateBid(context.Background(), "bid-1", req, execID, []string{"BID_EXECUTIVE"})
+
+		req2 := &domain.UpdateBidRequest{FullEditSubmission: true, Category: strPtr("IT Hardware")}
+		err := svc.UpdateBid(context.Background(), "bid-1", req2, execID, []string{"BID_EXECUTIVE"})
+		if !errors.Is(err, domain.ErrEditAlreadyPending) {
+			t.Fatalf("expected ErrEditAlreadyPending, got: %v", err)
+		}
+	})
+
+	t.Run("Reporting Manager approves as-is", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid(strPtr(rmID))}
+		alerts := &fakeAlertSvc{}
+		svc := NewBidService(repo, alerts, &fakeSystemLog{})
+
+		req := &domain.UpdateBidRequest{FullEditSubmission: true, EstimatedValue: floatPtr(150000)}
+		var pae *domain.PendingApprovalError
+		errors.As(svc.UpdateBid(context.Background(), "bid-1", req, execID, []string{"BID_EXECUTIVE"}), &pae)
+
+		approveReq := &domain.UpdateBidRequest{EstimatedValue: floatPtr(150000)}
+		if err := svc.ApprovePendingEdit(context.Background(), pae.EditID, approveReq, "", rmID, []string{"MANAGER"}); err != nil {
+			t.Fatalf("ApprovePendingEdit: %v", err)
+		}
+		if repo.lastUpdate == nil || repo.lastUpdate.EstimatedValue == nil || *repo.lastUpdate.EstimatedValue != 150000 {
+			t.Fatalf("expected the approved value to reach repo.Update, got: %+v", repo.lastUpdate)
+		}
+		if !hasAlertType(alerts.created, "TENDER_EDIT_APPROVED") {
+			t.Fatalf("expected a TENDER_EDIT_APPROVED alert to the executive, got: %+v", alerts.created)
+		}
+		for _, a := range alerts.created {
+			if a.Type == "TENDER_EDIT_APPROVED" && (a.UserID == nil || *a.UserID != execID) {
+				t.Fatalf("approval alert should target the requesting executive, got %+v", a.UserID)
+			}
+		}
+		edit := repo.pendingEdits[pae.EditID]
+		if edit.Status != domain.EditApprovalApproved {
+			t.Fatalf("expected edit status APPROVED, got %s", edit.Status)
+		}
+		if len(edit.DecisionDiff) != 0 {
+			t.Fatalf("expected no correction diff when approving as-is, got: %+v", edit.DecisionDiff)
+		}
+	})
+
+	t.Run("Reporting Manager corrects a value before approving", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid(strPtr(rmID))}
+		alerts := &fakeAlertSvc{}
+		svc := NewBidService(repo, alerts, &fakeSystemLog{})
+
+		req := &domain.UpdateBidRequest{FullEditSubmission: true, EstimatedValue: floatPtr(150000)}
+		var pae *domain.PendingApprovalError
+		errors.As(svc.UpdateBid(context.Background(), "bid-1", req, execID, []string{"BID_EXECUTIVE"}), &pae)
+
+		// RM corrects the proposed value down to 140000 before approving.
+		approveReq := &domain.UpdateBidRequest{EstimatedValue: floatPtr(140000)}
+		if err := svc.ApprovePendingEdit(context.Background(), pae.EditID, approveReq, "adjusted the value", rmID, []string{"MANAGER"}); err != nil {
+			t.Fatalf("ApprovePendingEdit: %v", err)
+		}
+		if repo.lastUpdate == nil || repo.lastUpdate.EstimatedValue == nil || *repo.lastUpdate.EstimatedValue != 140000 {
+			t.Fatalf("expected the corrected value to reach repo.Update, got: %+v", repo.lastUpdate)
+		}
+		edit := repo.pendingEdits[pae.EditID]
+		if len(edit.DecisionDiff) != 1 || edit.DecisionDiff[0].Field != "estimated_value" {
+			t.Fatalf("expected a one-field correction diff on estimated_value, got: %+v", edit.DecisionDiff)
+		}
+	})
+
+	t.Run("Reporting Manager rejects — nothing applied", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid(strPtr(rmID))}
+		alerts := &fakeAlertSvc{}
+		svc := NewBidService(repo, alerts, &fakeSystemLog{})
+
+		req := &domain.UpdateBidRequest{FullEditSubmission: true, EstimatedValue: floatPtr(150000)}
+		var pae *domain.PendingApprovalError
+		errors.As(svc.UpdateBid(context.Background(), "bid-1", req, execID, []string{"BID_EXECUTIVE"}), &pae)
+
+		if err := svc.RejectPendingEdit(context.Background(), pae.EditID, "not accurate", rmID, []string{"MANAGER"}); err != nil {
+			t.Fatalf("RejectPendingEdit: %v", err)
+		}
+		if repo.lastUpdate != nil {
+			t.Fatalf("expected nothing to reach repo.Update on rejection, got: %+v", repo.lastUpdate)
+		}
+		if !hasAlertType(alerts.created, "TENDER_EDIT_REJECTED") {
+			t.Fatalf("expected a TENDER_EDIT_REJECTED alert to the executive, got: %+v", alerts.created)
+		}
+		edit := repo.pendingEdits[pae.EditID]
+		if edit.Status != domain.EditApprovalRejected {
+			t.Fatalf("expected edit status REJECTED, got %s", edit.Status)
+		}
+	})
+
+	t.Run("an unrelated user cannot approve or reject", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid(strPtr(rmID))}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		req := &domain.UpdateBidRequest{FullEditSubmission: true, EstimatedValue: floatPtr(150000)}
+		var pae *domain.PendingApprovalError
+		errors.As(svc.UpdateBid(context.Background(), "bid-1", req, execID, []string{"BID_EXECUTIVE"}), &pae)
+
+		err := svc.ApprovePendingEdit(context.Background(), pae.EditID, &domain.UpdateBidRequest{EstimatedValue: floatPtr(150000)}, "", "some-other-user", []string{"BID_EXECUTIVE"})
+		if !errors.Is(err, domain.ErrForbidden) {
+			t.Fatalf("expected ErrForbidden, got: %v", err)
 		}
 	})
 }

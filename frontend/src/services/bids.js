@@ -67,6 +67,34 @@ export async function updateBid(id, payload) {
   return { ok: res.ok, status: res.status, ...data }
 }
 
+// ── Tender Edit Approvals ────────────────────────────────────────────────────
+// A Bid Executive's Edit-Tender-form save (see EditTenderDialog's
+// full_edit_submission flag) may come back 202 PENDING_APPROVAL instead of
+// applying — these cover the Reporting Manager's review of it.
+export async function getPendingEdit(bidId) {
+  const res = await apiFetch(`${BASE}/bids/${bidId}/pending-edit`)
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, ...data }
+}
+
+export async function approvePendingEdit(editId, payload, comment = '') {
+  const res = await apiFetch(`${BASE}/bids/pending-edits/${editId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ ...payload, comment }),
+  })
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, ...data }
+}
+
+export async function rejectPendingEdit(editId, comment) {
+  const res = await apiFetch(`${BASE}/bids/pending-edits/${editId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ comment }),
+  })
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, ...data }
+}
+
 // ── Transition Stage ─────────────────────────────────────────────────────────
 export async function transitionBidStage(id, target_stage, reason = '') {
   const res = await apiFetch(`${BASE}/bids/${id}/transition`, {

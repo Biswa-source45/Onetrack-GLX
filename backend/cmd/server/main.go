@@ -140,7 +140,7 @@ func main() {
 	// alertSvc for the same in-app + email notification tender alerts use.
 	feedbackRepository := feedbackRepo.NewPostgresTicketRepository(dbPool)
 	feedbackSvc := feedbackService.NewTicketService(feedbackRepository, alertSvc, bidRepository)
-	feedbackHdlr := feedbackHandler.NewTicketHandler(feedbackSvc)
+	feedbackHdlr := feedbackHandler.NewTicketHandler(feedbackSvc, cfg.UploadDir)
 	feedbackHandler.RegisterTicketRoutes(v1, feedbackHdlr, authMiddleware)
 
 	// Start server

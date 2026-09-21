@@ -179,6 +179,20 @@ If something is wrong after deploying:
 
 ---
 
+## Separate item: moving the whole app to a different host machine
+
+Feedback ticket screenshots/photos live in `./feedback-assets/`, bind-mounted into the backend
+container (`docker-compose.yml`) rather than kept in a Docker-managed named volume. That means
+they're plain files sitting next to `docker-compose.yml` — copying the whole project directory to
+a new machine and running `docker compose up` brings every uploaded image with it, no extra step.
+
+**This does not apply to the database.** Postgres still uses a named volume (`postgres_data`),
+which lives inside Docker's own storage and does *not* travel with a folder copy. Moving hosts
+still means the `pg_dump` / `pg_restore` flow in Step 1 and the Rollback section above — do not
+assume a folder copy alone preserves tender data, only the feedback images.
+
+---
+
 ## Separate item: rotate the checked-in secrets
 
 Unrelated to this release, but worth doing before or shortly after: `backend/.env` is

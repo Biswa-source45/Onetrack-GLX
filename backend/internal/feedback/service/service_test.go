@@ -13,8 +13,9 @@ import (
 // fakeTicketRepo implements domain.TicketRepository entirely in memory —
 // enough behavior for the service tests below, nothing more.
 type fakeTicketRepo struct {
-	tickets map[string]*domain.TicketResponse
-	nextID  int
+	tickets    map[string]*domain.TicketResponse
+	imagePaths map[string]*string
+	nextID     int
 
 	lastCreated      *domain.Ticket
 	lastHistory      []*domain.TicketStatusHistoryInsert
@@ -22,7 +23,7 @@ type fakeTicketRepo struct {
 }
 
 func newFakeTicketRepo() *fakeTicketRepo {
-	return &fakeTicketRepo{tickets: map[string]*domain.TicketResponse{}}
+	return &fakeTicketRepo{tickets: map[string]*domain.TicketResponse{}, imagePaths: map[string]*string{}}
 }
 
 func (f *fakeTicketRepo) Create(ctx context.Context, t *domain.Ticket) error {
@@ -34,7 +35,12 @@ func (f *fakeTicketRepo) Create(ctx context.Context, t *domain.Ticket) error {
 		Description: t.Description, Status: t.Status,
 		Reporter: domain.UserSummary{ID: t.UserID, FullName: "Test User", Username: "testuser"},
 	}
+	f.imagePaths[t.ID] = t.ImagePath
 	return nil
+}
+
+func (f *fakeTicketRepo) GetImagePath(ctx context.Context, id string) (*string, error) {
+	return f.imagePaths[id], nil
 }
 
 func (f *fakeTicketRepo) GetByID(ctx context.Context, id string) (*domain.TicketResponse, error) {
@@ -251,6 +257,43 @@ func TestGetTicket_OwnershipEnforced(t *testing.T) {
 	})
 	t.Run("a different non-admin user is forbidden", func(t *testing.T) {
 		_, err := svc.GetTicket(context.Background(), ticket.ID, "someone-else", false)
+		if !errors.Is(err, domain.ErrForbidden) {
+			t.Fatalf("expected ErrForbidden, got: %v", err)
+		}
+	})
+}
+
+// TestGetTicketImagePath_OwnershipEnforced mirrors GetTicket's rule exactly
+// — same three cases — since the handler's attachment route relies on this
+// method for its entire authorization check.
+func TestGetTicketImagePath_OwnershipEnforced(t *testing.T) {
+	repo := newFakeTicketRepo()
+	svc := NewTicketService(repo, &fakeAlertSvc{}, &fakeFieldMemory{})
+
+	path := "abc123.jpg"
+	ticket, err := svc.CreateTicket(context.Background(), &domain.CreateTicketRequest{
+		Category: "Bug Report", Description: "x", ImagePath: &path,
+	}, "owner-1")
+	if err != nil {
+		t.Fatalf("CreateTicket: %v", err)
+	}
+
+	t.Run("owner can fetch their own attachment path", func(t *testing.T) {
+		got, err := svc.GetTicketImagePath(context.Background(), ticket.ID, "owner-1", false)
+		if err != nil {
+			t.Fatalf("expected owner to fetch the path, got: %v", err)
+		}
+		if got == nil || *got != path {
+			t.Fatalf("expected %q, got: %v", path, got)
+		}
+	})
+	t.Run("Super Admin can fetch any attachment path", func(t *testing.T) {
+		if _, err := svc.GetTicketImagePath(context.Background(), ticket.ID, "someone-else", true); err != nil {
+			t.Fatalf("expected Super Admin to fetch it, got: %v", err)
+		}
+	})
+	t.Run("a different non-admin user is forbidden", func(t *testing.T) {
+		_, err := svc.GetTicketImagePath(context.Background(), ticket.ID, "someone-else", false)
 		if !errors.Is(err, domain.ErrForbidden) {
 			t.Fatalf("expected ErrForbidden, got: %v", err)
 		}

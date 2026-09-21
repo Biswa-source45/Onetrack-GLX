@@ -34,8 +34,12 @@ type Ticket struct {
 	CustomCategory *string
 	Description    string
 	Status         string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// ImagePath is relative to UPLOAD_DIR ("<ticket-id>/<uuid>.<ext>"), set
+	// by the handler after it validates and saves the upload — never a
+	// client-supplied value.
+	ImagePath *string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type UserSummary struct {
@@ -48,16 +52,19 @@ type UserSummary struct {
 // resolver names joined in at read time, same convention the bid module's
 // audit trail already uses.
 type TicketResponse struct {
-	ID             string       `json:"id"`
-	Category       string       `json:"category"`
-	CustomCategory *string      `json:"custom_category,omitempty"`
-	Description    string       `json:"description"`
-	Status         string       `json:"status"`
-	Reporter       UserSummary  `json:"reporter"`
-	ResolvedBy     *UserSummary `json:"resolved_by,omitempty"`
-	ResolvedAt     *time.Time   `json:"resolved_at,omitempty"`
-	CreatedAt      time.Time    `json:"created_at"`
-	UpdatedAt      time.Time    `json:"updated_at"`
+	ID             string  `json:"id"`
+	Category       string  `json:"category"`
+	CustomCategory *string `json:"custom_category,omitempty"`
+	Description    string  `json:"description"`
+	Status         string  `json:"status"`
+	// ImageURL is the servable route (/api/v1/tickets/:id/image), derived
+	// from whether the row has an ImagePath — never the raw disk path.
+	ImageURL   *string      `json:"image_url,omitempty"`
+	Reporter   UserSummary  `json:"reporter"`
+	ResolvedBy *UserSummary `json:"resolved_by,omitempty"`
+	ResolvedAt *time.Time   `json:"resolved_at,omitempty"`
+	CreatedAt  time.Time    `json:"created_at"`
+	UpdatedAt  time.Time    `json:"updated_at"`
 }
 
 type TicketStatusEvent struct {
@@ -82,6 +89,9 @@ type CreateTicketRequest struct {
 	Category       string  `json:"category" binding:"required"`
 	CustomCategory *string `json:"custom_category"`
 	Description    string  `json:"description" binding:"required"`
+	// ImagePath is set by the handler (after validating and saving an
+	// uploaded file), not bound from the request body directly.
+	ImagePath *string `json:"-"`
 }
 
 type UpdateTicketStatusRequest struct {

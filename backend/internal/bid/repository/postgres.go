@@ -17,9 +17,11 @@ import (
 
 // Audit trail keyset ("cursor") pagination — see internal/platform/pagination,
 // shared with the feedback module's ticket list.
-func encodeAuditCursor(createdAt time.Time, id string) string { return pagination.Encode(createdAt, id) }
+func encodeAuditCursor(createdAt time.Time, id string) string {
+	return pagination.Encode(createdAt, id)
+}
 func decodeAuditCursor(cursor string) (time.Time, string, error) { return pagination.Decode(cursor) }
-func auditPageSize(limit int) int { return pagination.PageSize(limit, 30, 200) }
+func auditPageSize(limit int) int                                { return pagination.PageSize(limit, 30, 200) }
 
 type postgresBidRepo struct {
 	pool *pgxpool.Pool
@@ -256,9 +258,13 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		idx++
 	}
 	if params.BidOwnerID != "" {
-		conditions = append(conditions, fmt.Sprintf("(b.bid_owner_id = $%d OR b.created_by = $%d)", idx, idx+1))
-		args = append(args, params.BidOwnerID, params.BidOwnerID)
-		idx += 2
+		// Current ownership only — a tender whose owner was reassigned away
+		// from this user must stop matching, even though they created it.
+		// (Previously OR'd in b.created_by, which meant a reassigned-away
+		// owner kept seeing the tender under their own owner filter forever.)
+		conditions = append(conditions, fmt.Sprintf("b.bid_owner_id = $%d", idx))
+		args = append(args, params.BidOwnerID)
+		idx++
 	}
 	if params.Category != "" {
 		conditions = append(conditions, fmt.Sprintf("b.category ILIKE $%d", idx))
@@ -320,9 +326,9 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		baseConditions = append(baseConditions, "b.archived_at IS NULL")
 	}
 	if params.BidOwnerID != "" {
-		baseConditions = append(baseConditions, fmt.Sprintf("(b.bid_owner_id = $%d OR b.created_by = $%d)", baseIdx, baseIdx+1))
-		baseArgs = append(baseArgs, params.BidOwnerID, params.BidOwnerID)
-		baseIdx += 2
+		baseConditions = append(baseConditions, fmt.Sprintf("b.bid_owner_id = $%d", baseIdx))
+		baseArgs = append(baseArgs, params.BidOwnerID)
+		baseIdx++
 	}
 	baseWhere := "WHERE " + strings.Join(baseConditions, " AND ")
 
@@ -1556,4 +1562,110 @@ func (r *postgresBidRepo) SetStageRestrictions(ctx context.Context, userID strin
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// ────────────────────────────────────────
+// Tender Edit Approvals
+// ────────────────────────────────────────
+
+func (r *postgresBidRepo) CreatePendingEdit(ctx context.Context, edit *domain.TenderEditApproval) error {
+	// ponytail: no pre-check for a race between two concurrent submissions —
+	// the unique index (one PENDING row per bid) is the backstop; the common
+	// case is already caught by the service layer's own GetPendingEdit check.
+	diffJSON, err := json.Marshal(edit.Diff)
+	if err != nil {
+		return fmt.Errorf("marshal edit diff: %w", err)
+	}
+	return r.pool.QueryRow(ctx, `
+		INSERT INTO bid.tender_edit_approvals (bid_id, requested_by, reporting_manager_id, payload, diff)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, created_at, updated_at
+	`, edit.BidID, edit.RequestedBy.ID, edit.ReportingManagerID, edit.Payload, diffJSON).
+		Scan(&edit.ID, &edit.CreatedAt, &edit.UpdatedAt)
+}
+
+func scanPendingEdit(row pgx.Row) (*domain.TenderEditApproval, error) {
+	var e domain.TenderEditApproval
+	var requestedBy string
+	var diffJSON, decidedPayload, decisionDiffJSON []byte
+	var decidedBy *string
+	if err := row.Scan(
+		&e.ID, &e.BidID, &e.BidTitle, &requestedBy, &e.ReportingManagerID, &e.Status,
+		&e.Payload, &diffJSON, &decidedPayload, &decisionDiffJSON,
+		&e.DecisionComment, &decidedBy, &e.DecidedAt, &e.CreatedAt, &e.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+	e.RequestedBy = &domain.UserSummary{ID: requestedBy}
+	if len(diffJSON) > 0 {
+		_ = json.Unmarshal(diffJSON, &e.Diff)
+	}
+	e.DecidedPayload = decidedPayload
+	if len(decisionDiffJSON) > 0 {
+		_ = json.Unmarshal(decisionDiffJSON, &e.DecisionDiff)
+	}
+	if decidedBy != nil {
+		e.DecidedBy = &domain.UserSummary{ID: *decidedBy}
+	}
+	return &e, nil
+}
+
+// bid_title is joined live from bid.bid_workspaces rather than stored on the
+// row — it's write-only metadata for display (see BidStageHistory.BidTitle's
+// same pattern), and a live join means a later title edit doesn't leave a
+// stale name in an in-flight approval.
+const pendingEditSelectCols = `a.id, a.bid_id, b.title, a.requested_by, a.reporting_manager_id, a.status,
+	a.payload, a.diff, a.decided_payload, a.decision_diff, a.decision_comment, a.decided_by, a.decided_at, a.created_at, a.updated_at`
+
+func (r *postgresBidRepo) GetPendingEditByID(ctx context.Context, editID string) (*domain.TenderEditApproval, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT `+pendingEditSelectCols+`
+		FROM bid.tender_edit_approvals a JOIN bid.bid_workspaces b ON b.id = a.bid_id
+		WHERE a.id = $1
+	`, editID)
+	e, err := scanPendingEdit(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return e, err
+}
+
+// GetPendingEditForBid returns the bid's open (PENDING) edit, or nil if it
+// has none — never an error for "no pending edit", since that's the normal
+// state of almost every tender.
+func (r *postgresBidRepo) GetPendingEditForBid(ctx context.Context, bidID string) (*domain.TenderEditApproval, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT `+pendingEditSelectCols+`
+		FROM bid.tender_edit_approvals a JOIN bid.bid_workspaces b ON b.id = a.bid_id
+		WHERE a.bid_id = $1 AND a.status = 'PENDING'
+	`, bidID)
+	e, err := scanPendingEdit(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return e, err
+}
+
+func (r *postgresBidRepo) DecidePendingEdit(ctx context.Context, editID string, status string, decidedPayload []byte, decisionDiff []domain.FieldDiff, comment string, decidedBy string) error {
+	decisionDiffJSON, err := json.Marshal(decisionDiff)
+	if err != nil {
+		return fmt.Errorf("marshal decision diff: %w", err)
+	}
+	var commentArg interface{}
+	if strings.TrimSpace(comment) != "" {
+		commentArg = comment
+	}
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE bid.tender_edit_approvals
+		SET status = $1, decided_payload = $2, decision_diff = $3, decision_comment = $4,
+		    decided_by = $5, decided_at = NOW(), updated_at = NOW()
+		WHERE id = $6 AND status = 'PENDING'
+	`, status, decidedPayload, decisionDiffJSON, commentArg, decidedBy, editID)
+	if err != nil {
+		return fmt.Errorf("decide pending edit: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: this edit has already been decided", domain.ErrValidation)
+	}
+	return nil
 }

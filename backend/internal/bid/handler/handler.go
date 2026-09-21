@@ -121,11 +121,20 @@ func (h *BidHandler) UpdateBid(c *gin.Context) {
 	rolesVal, _ := c.Get("roles")
 	actorRoles, _ := rolesVal.([]string)
 	if err := h.svc.UpdateBid(c.Request.Context(), id, &req, actorID, actorRoles); err != nil {
+		var pae *domain.PendingApprovalError
+		if errors.As(err, &pae) {
+			response.Success(c, http.StatusAccepted, err.Error(), gin.H{
+				"status":                 "PENDING_APPROVAL",
+				"pending_edit_id":        pae.EditID,
+				"reporting_manager_name": pae.ReportingManagerName,
+			})
+			return
+		}
 		if errors.Is(err, domain.ErrDuplicateIdentifier) {
 			response.Conflict(c, err.Error())
 			return
 		}
-		if errors.Is(err, domain.ErrForbidden) {
+		if errors.Is(err, domain.ErrEditAlreadyPending) || errors.Is(err, domain.ErrForbidden) {
 			response.Forbidden(c, err.Error())
 			return
 		}
@@ -141,6 +150,77 @@ func (h *BidHandler) UpdateBid(c *gin.Context) {
 		return
 	}
 	response.Success(c, http.StatusOK, "Bid updated successfully", nil)
+}
+
+// GetPendingEdit returns bidID's open (PENDING) edit approval, or null if
+// it has none — used by the tender detail page to show the approval
+// banner to both the Reporting Manager and the original requester.
+func (h *BidHandler) GetPendingEdit(c *gin.Context) {
+	id := c.Param("id")
+	edit, err := h.svc.GetPendingEdit(c.Request.Context(), id)
+	if err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Pending edit retrieved", edit)
+}
+
+// ApprovePendingEdit applies the Reporting Manager's (possibly corrected)
+// form state and notifies the original requester of the outcome.
+func (h *BidHandler) ApprovePendingEdit(c *gin.Context) {
+	editID := c.Param("editId")
+	var body struct {
+		domain.UpdateBidRequest
+		Comment string `json:"comment"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.BadRequest(c, err.Error(), nil)
+		return
+	}
+	actorID := c.GetString("user_id")
+	rolesVal, _ := c.Get("roles")
+	actorRoles, _ := rolesVal.([]string)
+	if err := h.svc.ApprovePendingEdit(c.Request.Context(), editID, &body.UpdateBidRequest, body.Comment, actorID, actorRoles); err != nil {
+		if errors.Is(err, domain.ErrForbidden) {
+			response.Forbidden(c, err.Error())
+			return
+		}
+		if errors.Is(err, domain.ErrValidation) {
+			response.BadRequest(c, err.Error(), nil)
+			return
+		}
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Edit approved", nil)
+}
+
+// RejectPendingEdit leaves the tender untouched and tells the requester why.
+func (h *BidHandler) RejectPendingEdit(c *gin.Context) {
+	editID := c.Param("editId")
+	var body struct {
+		Comment string `json:"comment"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.BadRequest(c, err.Error(), nil)
+		return
+	}
+	actorID := c.GetString("user_id")
+	rolesVal, _ := c.Get("roles")
+	actorRoles, _ := rolesVal.([]string)
+	if err := h.svc.RejectPendingEdit(c.Request.Context(), editID, body.Comment, actorID, actorRoles); err != nil {
+		if errors.Is(err, domain.ErrForbidden) {
+			response.Forbidden(c, err.Error())
+			return
+		}
+		if errors.Is(err, domain.ErrValidation) {
+			response.BadRequest(c, err.Error(), nil)
+			return
+		}
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Edit rejected", nil)
 }
 
 // GetGlobalAuditLogs serves both the global "Database Audit Trail" panel and

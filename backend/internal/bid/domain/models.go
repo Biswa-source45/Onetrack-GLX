@@ -22,6 +22,30 @@ var ErrDuplicateIdentifier = errors.New("tender identifier already exists")
 // return 403 instead of a generic 400/500.
 var ErrForbidden = errors.New("forbidden")
 
+// ErrEditPendingApproval is returned instead of actually applying an edit
+// when the actor is a Bid Executive whose change must go to this tender's
+// Reporting Manager for sign-off first (see bidService.UpdateBid). Not a
+// failure — the handler turns it into a 202 with the pending edit's id.
+var ErrEditPendingApproval = errors.New("edit submitted for reporting manager approval")
+
+// PendingApprovalError carries the created pending edit's id and its
+// approver's name so the handler can return them in the 202 body without
+// a second lookup or fragile string-parsing of the sentinel's message.
+type PendingApprovalError struct {
+	EditID               string
+	ReportingManagerName string
+}
+
+func (e *PendingApprovalError) Error() string {
+	return "edit submitted for " + e.ReportingManagerName + "'s approval"
+}
+func (e *PendingApprovalError) Unwrap() error { return ErrEditPendingApproval }
+
+// ErrEditAlreadyPending is returned when a tender already has an open
+// (PENDING) edit approval — only one may be in flight at a time so a
+// Reporting Manager is never asked to reconcile two overlapping proposals.
+var ErrEditAlreadyPending = errors.New("an edit is already awaiting approval for this tender")
+
 // ErrInvalidCursor is returned when a paginated audit-log request carries a
 // cursor that doesn't decode — e.g. hand-edited or stale across a restart —
 // so handlers can return 400 instead of a misleading 500. Aliased to the
@@ -130,10 +154,10 @@ type BidWorkspace struct {
 	// EMDExemptionTypes is the raw, possibly-multiple set of exemption criteria
 	// the tender document allows (ticked at Add/Edit Tender time). Distinct from
 	// EMDExemptionType, which is the Account Manager's single final decision.
-	EMDExemptionTypes  []string `json:"emd_exemption_types"`
-	FinalBidValue      *float64 `json:"final_bid_value,omitempty"`
-	L1Price            *float64 `json:"l1_price,omitempty"`
-	QuotedPrice        *float64 `json:"quoted_price,omitempty"`
+	EMDExemptionTypes []string `json:"emd_exemption_types"`
+	FinalBidValue     *float64 `json:"final_bid_value,omitempty"`
+	L1Price           *float64 `json:"l1_price,omitempty"`
+	QuotedPrice       *float64 `json:"quoted_price,omitempty"`
 
 	// EMD Bank / Online Payment details (when EMD mode = ONLINE)
 	EMDBankName      *string `json:"emd_bank_name,omitempty"`
@@ -320,6 +344,38 @@ type FieldDiff struct {
 	New   string `json:"new"`
 }
 
+// TenderEditApproval is a Bid Executive's Edit-Tender-form submission held
+// for that tender's Reporting Manager to approve, correct, or reject before
+// it's applied. Payload/DecidedPayload are UpdateBidRequest JSON; Diff is
+// what changed vs the tender at submission time, DecisionDiff is what the
+// Reporting Manager corrected (Payload vs DecidedPayload), if anything.
+type TenderEditApproval struct {
+	ID                 string       `json:"id"`
+	BidID              string       `json:"bid_id"`
+	BidTitle           string       `json:"bid_title"`
+	RequestedBy        *UserSummary `json:"requested_by,omitempty"`
+	ReportingManagerID string       `json:"reporting_manager_id"`
+	Status             string       `json:"status"`
+	// Payload/DecidedPayload are json.RawMessage, not []byte — encoding/json
+	// base64-encodes a plain []byte, which would ship the frontend a string
+	// instead of the object it needs to pre-fill the review form with.
+	Payload         json.RawMessage `json:"payload,omitempty"`
+	Diff            []FieldDiff     `json:"diff"`
+	DecidedPayload  json.RawMessage `json:"decided_payload,omitempty"`
+	DecisionDiff    []FieldDiff     `json:"decision_diff,omitempty"`
+	DecisionComment *string         `json:"decision_comment,omitempty"`
+	DecidedBy       *UserSummary    `json:"decided_by,omitempty"`
+	DecidedAt       *time.Time      `json:"decided_at,omitempty"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+}
+
+const (
+	EditApprovalPending  = "PENDING"
+	EditApprovalApproved = "APPROVED"
+	EditApprovalRejected = "REJECTED"
+)
+
 // AuditLogQuery drives keyset ("cursor") pagination over the audit trail.
 // Keyset pagination is used instead of OFFSET because OFFSET gets slower as
 // a table grows and can skip or repeat rows when new entries are inserted
@@ -334,15 +390,15 @@ type AuditLogQuery struct {
 // AuditLogPage is one page of the global or per-person audit feed.
 type AuditLogPage struct {
 	Items      []GlobalAuditItem `json:"items"`
-	NextCursor string             `json:"next_cursor,omitempty"`
-	HasMore    bool               `json:"has_more"`
+	NextCursor string            `json:"next_cursor,omitempty"`
+	HasMore    bool              `json:"has_more"`
 }
 
 // StageHistoryPage is one page of a single tender's history tab.
 type StageHistoryPage struct {
 	Items      []StageHistoryResponse `json:"items"`
-	NextCursor string                  `json:"next_cursor,omitempty"`
-	HasMore    bool                    `json:"has_more"`
+	NextCursor string                 `json:"next_cursor,omitempty"`
+	HasMore    bool                   `json:"has_more"`
 }
 
 // AddMicroEventRequest is the client-facing payload for POST /bids/:id/history —
@@ -443,47 +499,47 @@ type UpdateBidRequest struct {
 	EMDExemptionReason *string  `json:"emd_exemption_reason"`
 	EMDExemptionTypes  []string `json:"emd_exemption_types"`
 	// EMD bank / DD detail fields
-	EMDBankName               *string  `json:"emd_bank_name"`
-	EMDAccountNumber          *string  `json:"emd_account_number"`
-	EMDIFSCCode               *string  `json:"emd_ifsc_code"`
-	EMDBranch                 *string  `json:"emd_branch"`
-	EMDBeneficiary            *string  `json:"emd_beneficiary"`
-	EMDPayableAt              *string  `json:"emd_payable_at"`
-	HighLevelScope            *string  `json:"high_level_scope"`
-	BGRequired                *bool    `json:"bg_required"`
-	BGRate                    *float64 `json:"bg_rate"`
-	StartDate                 *string  `json:"start_date"`
-	EndDate                   *string  `json:"end_date"`
-	OpeningDate               *string  `json:"opening_date,omitempty"`
-	ClosingDate               *string  `json:"closing_date,omitempty"`
-	DurationMonths            *int     `json:"duration_months"`
-	Authority                 *string  `json:"authority"`
+	EMDBankName      *string  `json:"emd_bank_name"`
+	EMDAccountNumber *string  `json:"emd_account_number"`
+	EMDIFSCCode      *string  `json:"emd_ifsc_code"`
+	EMDBranch        *string  `json:"emd_branch"`
+	EMDBeneficiary   *string  `json:"emd_beneficiary"`
+	EMDPayableAt     *string  `json:"emd_payable_at"`
+	HighLevelScope   *string  `json:"high_level_scope"`
+	BGRequired       *bool    `json:"bg_required"`
+	BGRate           *float64 `json:"bg_rate"`
+	StartDate        *string  `json:"start_date"`
+	EndDate          *string  `json:"end_date"`
+	OpeningDate      *string  `json:"opening_date,omitempty"`
+	ClosingDate      *string  `json:"closing_date,omitempty"`
+	DurationMonths   *int     `json:"duration_months"`
+	Authority        *string  `json:"authority"`
 	// BidOwnerID reassigns the tender's owner. Restricted at the service layer
 	// to this tender's Account Manager / Reporting Manager (or an admin) — see
 	// bidService.UpdateBid.
-	BidOwnerID                *string  `json:"bid_owner_id"`
-	ReportingManagerID        *string  `json:"reporting_manager_id"`
-	AccountManagerID          *string  `json:"account_manager_id"`
-	PresalesID                *string  `json:"presales_id"`
-	Location                  *string  `json:"location"`
-	BGDurationMonths          *int     `json:"bg_duration_months"`
-	RequestedProducts         *string  `json:"requested_products"` // raw JSON string
-	PrimaryReview             *string  `json:"primary_review"`     // raw JSON string
-	AlertNote                 *string  `json:"alert_note"`         // raw JSON string — {text,label,color}
-	Remarks                   *string  `json:"remarks"`
-	TechComplianceStatus      *string  `json:"tech_compliance_status"`
-	QualificationStatus       *string  `json:"qualification_status"`
-	WorkflowStage             *string  `json:"workflow_stage,omitempty"`
-	BidStatus                 *string  `json:"bid_status,omitempty"`
-	BidOutcome                *string  `json:"bid_outcome,omitempty"`
-	Team                      *string  `json:"team,omitempty"`
-	ScopeType                 *string  `json:"scope_type,omitempty"`
-	ActivityType              *string  `json:"activity_type,omitempty"`
-	ExcelBidStatus            *string  `json:"excel_bid_status,omitempty"`
-	SubmissionStatus          *string  `json:"submission_status,omitempty"`
-	FinancialEvaluationStatus *string  `json:"financial_evaluation_status,omitempty"`
-	POReceivedStatus          *string  `json:"po_received_status,omitempty"`
-	BidResult                 *string  `json:"bid_result,omitempty"`
+	BidOwnerID                *string `json:"bid_owner_id"`
+	ReportingManagerID        *string `json:"reporting_manager_id"`
+	AccountManagerID          *string `json:"account_manager_id"`
+	PresalesID                *string `json:"presales_id"`
+	Location                  *string `json:"location"`
+	BGDurationMonths          *int    `json:"bg_duration_months"`
+	RequestedProducts         *string `json:"requested_products"` // raw JSON string
+	PrimaryReview             *string `json:"primary_review"`     // raw JSON string
+	AlertNote                 *string `json:"alert_note"`         // raw JSON string — {text,label,color}
+	Remarks                   *string `json:"remarks"`
+	TechComplianceStatus      *string `json:"tech_compliance_status"`
+	QualificationStatus       *string `json:"qualification_status"`
+	WorkflowStage             *string `json:"workflow_stage,omitempty"`
+	BidStatus                 *string `json:"bid_status,omitempty"`
+	BidOutcome                *string `json:"bid_outcome,omitempty"`
+	Team                      *string `json:"team,omitempty"`
+	ScopeType                 *string `json:"scope_type,omitempty"`
+	ActivityType              *string `json:"activity_type,omitempty"`
+	ExcelBidStatus            *string `json:"excel_bid_status,omitempty"`
+	SubmissionStatus          *string `json:"submission_status,omitempty"`
+	FinancialEvaluationStatus *string `json:"financial_evaluation_status,omitempty"`
+	POReceivedStatus          *string `json:"po_received_status,omitempty"`
+	BidResult                 *string `json:"bid_result,omitempty"`
 	// Stage tracking updates
 	FinanceAlerted         *bool             `json:"finance_alerted,omitempty"`
 	EMDReady               *bool             `json:"emd_ready,omitempty"`
@@ -514,6 +570,15 @@ type UpdateBidRequest struct {
 	StageReviews           map[string]bool   `json:"stage_reviews,omitempty"`
 	PricingWorkspace       *string           `json:"pricing_workspace,omitempty"` // raw JSON string for Stage 4
 	OEMWorkspace           *string           `json:"oem_workspace,omitempty"`     // raw JSON string for Stage 3 OEM matrix
+
+	// FullEditSubmission marks this request as coming from the main Edit
+	// Tender form (EditTenderDialog), as opposed to a stage-workspace save
+	// (checklist ticks, EMD ready, stage transitions, ...) that happens to
+	// reuse the same PATCH endpoint and struct. It's the one clean signal
+	// bidService.UpdateBid uses to decide whether a Bid Executive's change
+	// needs Reporting Manager approval before it lands — field presence
+	// alone can't tell the two save paths apart since they share every field.
+	FullEditSubmission bool `json:"full_edit_submission,omitempty"`
 }
 
 type TransitionStageRequest struct {

@@ -62,6 +62,13 @@ type BidRepository interface {
 	// replaces the full set in one call.
 	GetStageRestrictions(ctx context.Context, userID string) ([]string, error)
 	SetStageRestrictions(ctx context.Context, userID string, stages []string, restrictedBy string) error
+
+	// Tender edit approvals — see migration 000045. CreatePendingEdit fails
+	// (unique index) if the bid already has a PENDING row.
+	CreatePendingEdit(ctx context.Context, edit *TenderEditApproval) error
+	GetPendingEditByID(ctx context.Context, editID string) (*TenderEditApproval, error)
+	GetPendingEditForBid(ctx context.Context, bidID string) (*TenderEditApproval, error)
+	DecidePendingEdit(ctx context.Context, editID string, status string, decidedPayload []byte, decisionDiff []FieldDiff, comment string, decidedBy string) error
 }
 
 type BidService interface {
@@ -113,6 +120,16 @@ type BidService interface {
 	// stage key is real, replaces their restricted set, and records the
 	// change to System Logs. actorID is who made the change.
 	SetStageRestrictions(ctx context.Context, userID string, stages []string, actorID string) error
+
+	// Tender edit approvals — a Bid Executive's Edit-Tender-form submission
+	// held for Reporting Manager sign-off. GetPendingEdit is nil (no error)
+	// when the tender has none open. finalReq on Approve is the Reporting
+	// Manager's form state (defaults to the executive's own values, may
+	// correct any of them); comment is optional on approve, and the reason
+	// on reject.
+	GetPendingEdit(ctx context.Context, bidID string) (*TenderEditApproval, error)
+	ApprovePendingEdit(ctx context.Context, editID string, finalReq *UpdateBidRequest, comment string, actorID string, actorRoles []string) error
+	RejectPendingEdit(ctx context.Context, editID string, comment string, actorID string, actorRoles []string) error
 }
 
 type TransitionResult struct {

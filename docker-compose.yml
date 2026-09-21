@@ -49,9 +49,17 @@ services:
     restart: unless-stopped
     ports:
       - "8081:8081"
+    # Feedback screenshots/attachments live in a plain host folder, not a
+    # named Docker volume — copy this whole project directory to another
+    # machine and the images come with it. (The Postgres volume below does
+    # NOT travel this way; that still needs the pg_dump/restore flow in
+    # DEPLOYMENT.md.)
+    volumes:
+      - ./feedback-assets:/app/uploads/feedback
     environment:
       - SERVER_PORT=8081
       - GIN_MODE=release
+      - UPLOAD_DIR=/app/uploads/feedback
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_USER=postgres

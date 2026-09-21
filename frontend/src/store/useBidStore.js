@@ -126,6 +126,13 @@ export const useBidStore = create((set, get) => ({
 
   setViewMode: (viewMode) => set({ viewMode }),
 
+  // Bumped on every loadBids call so an in-flight request can tell, once it
+  // resolves, whether a newer filter change has already superseded it — two
+  // filter clicks in quick succession (e.g. Owner, then End Date) fire two
+  // requests, and without this guard whichever response lands *second*
+  // overwrites the list even if it was answering the *older* query.
+  _requestSeq: 0,
+
   loadBids: async (overrideOwnerId) => {
     const { page, debouncedSearch, stageFilter, statusFilter, portalSourceFilter, inBin, bidOwnerId, scope, endDateFilter, ownerFilterId } = get()
     let finalOwnerId = overrideOwnerId !== undefined ? overrideOwnerId : bidOwnerId
@@ -138,7 +145,8 @@ export const useBidStore = create((set, get) => ({
       finalOwnerId = ownerFilterId
     }
     const { closing_after, closing_before } = computeEndDateRange(endDateFilter)
-    set({ loading: true, error: null })
+    const requestId = get()._requestSeq + 1
+    set({ loading: true, error: null, _requestSeq: requestId })
     try {
       const res = await listBids({
         page,
@@ -152,6 +160,7 @@ export const useBidStore = create((set, get) => ({
         closing_before,
         in_bin: inBin,
       })
+      if (get()._requestSeq !== requestId) return // superseded by a newer filter change
       if (res.ok) {
         const bids = Array.isArray(res.data) ? res.data : (res.data?.bids || [])
         set({
@@ -163,9 +172,10 @@ export const useBidStore = create((set, get) => ({
         set({ error: res.error?.message ?? 'Failed to retrieve tenders' })
       }
     } catch (err) {
+      if (get()._requestSeq !== requestId) return
       set({ error: 'Network error occurred while fetching tenders' })
     } finally {
-      set({ loading: false })
+      if (get()._requestSeq === requestId) set({ loading: false })
     }
   },
 

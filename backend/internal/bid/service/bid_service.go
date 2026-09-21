@@ -779,7 +779,32 @@ func (s *bidService) ListBids(ctx context.Context, params domain.ListBidsParams)
 	}, nil
 }
 
+// exemptFromEditApproval are the roles whose Edit-Tender-form submissions
+// apply immediately — everyone else with bid.edit is either the approver
+// (Reporting Manager) or senior enough that gating them would just add a
+// pointless extra hop.
+var exemptFromEditApproval = []string{"SUPER_ADMIN", "ADMIN", "MANAGER", "BID_MANAGER"}
+
+// UpdateBid is the gate in front of applyUpdate: a Bid Executive's
+// full-form Edit Tender submission (req.FullEditSubmission) on a tender
+// that has a Reporting Manager assigned is held for that manager's
+// approval instead of applied — see submitPendingEdit. Every other update
+// (stage-workspace saves, non-executive edits, tenders with no Reporting
+// Manager to route to) goes straight through, unchanged from before.
 func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.UpdateBidRequest, actorID string, actorRoles []string) error {
+	if req.FullEditSubmission && hasAnyRole(actorRoles, "BID_EXECUTIVE") && !hasAnyRole(actorRoles, exemptFromEditApproval...) {
+		bid, err := s.repo.GetByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		if bid.ReportingManagerID != nil && strings.TrimSpace(*bid.ReportingManagerID) != "" && *bid.ReportingManagerID != actorID {
+			return s.submitPendingEdit(ctx, bid, req, actorID, actorRoles)
+		}
+	}
+	return s.applyUpdate(ctx, id, req, actorID, actorRoles)
+}
+
+func (s *bidService) applyUpdate(ctx context.Context, id string, req *domain.UpdateBidRequest, actorID string, actorRoles []string) error {
 	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
@@ -1266,6 +1291,260 @@ func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.Updat
 		})
 	}
 
+	return nil
+}
+
+// ────────────────────────────────────────
+// Tender Edit Approvals
+// ────────────────────────────────────────
+
+// fieldLabels renders a diffed field key as something a Reporting Manager
+// reads at a glance instead of a raw column name; anything not listed here
+// falls back to its key with underscores turned to spaces.
+var fieldLabels = map[string]string{
+	"title": "Tender Title", "organization_name": "Account Name", "department_name": "Department",
+	"location": "Location", "category": "Category", "bid_type": "Bid Type", "authority": "Authority",
+	"our_rank": "Our Rank", "remarks": "Remarks", "estimated_value": "Estimated Value",
+	"emd_amount": "EMD Amount", "quantity": "Quantity", "bid_owner_id": "Bid Owner",
+	"account_manager_id": "Account Manager", "reporting_manager_id": "Reporting Manager",
+	"presales_id": "Pre-Sales", "bid_no": "RFP No.", "gem_bid_no": "GeM Bid No.",
+	"portal_source": "Portal Source", "high_level_scope": "High-Level Scope", "bg_rate": "BG Rate",
+	"duration_months": "Duration (months)", "start_date": "Start Date", "end_date": "End Date",
+}
+
+func fieldLabel(field string) string {
+	if l, ok := fieldLabels[field]; ok {
+		return l
+	}
+	return strings.ReplaceAll(field, "_", " ")
+}
+
+// diffRowsHTML renders a []FieldDiff as the same rowsToHTMLTable an email
+// already uses elsewhere, with each row reading "old → new".
+func diffRowsHTML(diffs []domain.FieldDiff) string {
+	rows := make([][2]string, 0, len(diffs))
+	for _, d := range diffs {
+		old := d.Old
+		if strings.TrimSpace(old) == "" {
+			old = "(empty)"
+		}
+		rows = append(rows, [2]string{
+			fieldLabel(d.Field),
+			fmt.Sprintf(`<span style="color:#94a3b8;text-decoration:line-through;">%s</span> → <b>%s</b>`, old, d.New),
+		})
+	}
+	return rowsToHTMLTable(rows)
+}
+
+// diffRequestFields is diffBidFields' counterpart for comparing two
+// *requests* instead of a bid-state-vs-request — used to show a Reporting
+// Manager's corrections (finalReq) against what the executive originally
+// asked for (origReq). Mirrors the same curated field list.
+func diffRequestFields(orig, final *domain.UpdateBidRequest) []domain.FieldDiff {
+	var diffs []domain.FieldDiff
+	diffField(&diffs, "title", derefStr(orig.Title), final.Title, fmtStrDiff)
+	diffField(&diffs, "organization_name", derefStr(orig.OrganizationName), final.OrganizationName, fmtStrDiff)
+	diffField(&diffs, "department_name", derefStr(orig.DepartmentName), final.DepartmentName, fmtStrDiff)
+	diffField(&diffs, "location", derefStr(orig.Location), final.Location, fmtStrDiff)
+	diffField(&diffs, "category", derefStr(orig.Category), final.Category, fmtStrDiff)
+	diffField(&diffs, "bid_type", derefStr(orig.BidType), final.BidType, fmtStrDiff)
+	diffField(&diffs, "authority", derefStr(orig.Authority), final.Authority, fmtStrDiff)
+	diffField(&diffs, "our_rank", derefStr(orig.OurRank), final.OurRank, fmtStrDiff)
+	diffField(&diffs, "remarks", derefStr(orig.Remarks), final.Remarks, fmtStrDiff)
+	diffField(&diffs, "estimated_value", derefFloat(orig.EstimatedValue), final.EstimatedValue, fmtFloatDiff)
+	diffField(&diffs, "emd_amount", derefFloat(orig.EMDAmount), final.EMDAmount, fmtFloatDiff)
+	diffField(&diffs, "quantity", derefInt(orig.Quantity), final.Quantity, fmtIntDiff)
+	diffField(&diffs, "bid_no", derefStr(orig.BidNo), final.BidNo, fmtStrDiff)
+	diffField(&diffs, "gem_bid_no", derefStr(orig.GemBidNo), final.GemBidNo, fmtStrDiff)
+	diffField(&diffs, "portal_source", derefStr(orig.PortalSource), final.PortalSource, fmtStrDiff)
+	diffField(&diffs, "high_level_scope", derefStr(orig.HighLevelScope), final.HighLevelScope, fmtStrDiff)
+	diffField(&diffs, "bg_rate", derefFloat(orig.BGRate), final.BGRate, fmtFloatDiff)
+	diffField(&diffs, "duration_months", derefInt(orig.DurationMonths), final.DurationMonths, fmtIntDiff)
+	diffField(&diffs, "start_date", derefStr(orig.StartDate), final.StartDate, fmtStrDiff)
+	diffField(&diffs, "end_date", derefStr(orig.EndDate), final.EndDate, fmtStrDiff)
+	return diffs
+}
+
+// submitPendingEdit holds a Bid Executive's Edit-Tender-form submission for
+// this tender's Reporting Manager instead of applying it. Called only from
+// UpdateBid once it's confirmed the gate applies.
+func (s *bidService) submitPendingEdit(ctx context.Context, bid *domain.BidWorkspace, req *domain.UpdateBidRequest, actorID string, actorRoles []string) error {
+	if existing, err := s.repo.GetPendingEditForBid(ctx, bid.ID); err != nil {
+		return fmt.Errorf("check pending edit: %w", err)
+	} else if existing != nil {
+		return fmt.Errorf("%w — ask your Reporting Manager to decide the one already submitted", domain.ErrEditAlreadyPending)
+	}
+
+	diff := diffBidFields(bid, req)
+	if len(diff) == 0 {
+		// Nothing a Reporting Manager would need to review — apply as-is.
+		return s.applyUpdate(ctx, bid.ID, req, actorID, actorRoles)
+	}
+
+	requester, err := s.repo.GetUserSummary(ctx, actorID)
+	if err != nil || requester == nil {
+		requester = &domain.UserSummary{ID: actorID}
+	}
+	rm, _ := s.repo.GetUserSummary(ctx, *bid.ReportingManagerID)
+	rmName := "your Reporting Manager"
+	if rm != nil && rm.FullName != "" {
+		rmName = rm.FullName
+	}
+
+	payloadJSON, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal edit payload: %w", err)
+	}
+
+	edit := &domain.TenderEditApproval{
+		BidID: bid.ID, BidTitle: bid.Title, RequestedBy: requester,
+		ReportingManagerID: *bid.ReportingManagerID, Status: domain.EditApprovalPending,
+		Payload: payloadJSON, Diff: diff,
+	}
+	if err := s.repo.CreatePendingEdit(ctx, edit); err != nil {
+		return fmt.Errorf("create pending edit: %w", err)
+	}
+
+	if s.alertSvc != nil {
+		rmID := *bid.ReportingManagerID
+		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+			UserID: &rmID, BidID: &bid.ID, CreatedBy: &actorID,
+			Type:  "TENDER_EDIT_PENDING_APPROVAL",
+			Title: fmt.Sprintf("Edit awaiting your approval: %s", bid.Title),
+			Message: fmt.Sprintf(
+				"<p>%s submitted changes to tender '%s' that need your review before they apply.</p>%s",
+				requester.FullName, bid.Title, diffRowsHTML(diff),
+			),
+		})
+	}
+
+	return &domain.PendingApprovalError{EditID: edit.ID, ReportingManagerName: rmName}
+}
+
+// GetPendingEdit returns bidID's open edit approval (nil if none), with the
+// requester's name/role resolved for display.
+func (s *bidService) GetPendingEdit(ctx context.Context, bidID string) (*domain.TenderEditApproval, error) {
+	edit, err := s.repo.GetPendingEditForBid(ctx, bidID)
+	if err != nil || edit == nil {
+		return edit, err
+	}
+	if requester, err := s.repo.GetUserSummary(ctx, edit.RequestedBy.ID); err == nil && requester != nil {
+		edit.RequestedBy = requester
+	}
+	return edit, nil
+}
+
+// authorizeEditDecision restricts approve/reject to this edit's own
+// Reporting Manager or a senior/admin role — the same "or an Admin" escape
+// hatch every other approval-style gate in this file already has.
+func authorizeEditDecision(edit *domain.TenderEditApproval, actorID string, actorRoles []string) error {
+	if actorID == edit.ReportingManagerID || hasAnyRole(actorRoles, exemptFromEditApproval...) {
+		return nil
+	}
+	return fmt.Errorf("%w: only this tender's Reporting Manager (or an Admin) can decide this edit", domain.ErrForbidden)
+}
+
+// ApprovePendingEdit applies finalReq — the Reporting Manager's own form
+// state, defaulted from the executive's proposal and possibly corrected —
+// attributed to the original requester, so the tender's own audit trail
+// still shows who actually changed it. Any correction is recorded
+// separately and reported back to the executive.
+func (s *bidService) ApprovePendingEdit(ctx context.Context, editID string, finalReq *domain.UpdateBidRequest, comment string, actorID string, actorRoles []string) error {
+	edit, err := s.repo.GetPendingEditByID(ctx, editID)
+	if err != nil {
+		return err
+	}
+	if edit == nil {
+		return fmt.Errorf("%w: pending edit not found", domain.ErrValidation)
+	}
+	if edit.Status != domain.EditApprovalPending {
+		return fmt.Errorf("%w: this edit has already been decided", domain.ErrValidation)
+	}
+	if err := authorizeEditDecision(edit, actorID, actorRoles); err != nil {
+		return err
+	}
+
+	var origReq domain.UpdateBidRequest
+	_ = json.Unmarshal(edit.Payload, &origReq)
+	decisionDiff := diffRequestFields(&origReq, finalReq)
+
+	finalReq.FullEditSubmission = false
+	if err := s.applyUpdate(ctx, edit.BidID, finalReq, edit.RequestedBy.ID, actorRoles); err != nil {
+		return err
+	}
+
+	decidedPayloadJSON, _ := json.Marshal(finalReq)
+	if err := s.repo.DecidePendingEdit(ctx, editID, domain.EditApprovalApproved, decidedPayloadJSON, decisionDiff, comment, actorID); err != nil {
+		return err
+	}
+
+	approver, _ := s.repo.GetUserSummary(ctx, actorID)
+	approverName := "Your Reporting Manager"
+	if approver != nil && approver.FullName != "" {
+		approverName = approver.FullName
+	}
+	{
+		reason := fmt.Sprintf("%s approved %s's edit to '%s'", approverName, edit.RequestedBy.FullName, edit.BidTitle)
+		eventType := "EDIT_APPROVED"
+		_ = s.repo.AddStageHistory(ctx, &domain.BidStageHistory{
+			BidID: edit.BidID, BidTitle: edit.BidTitle, ToStage: "FIELD_EDIT",
+			EventType: &eventType, TransitionReason: &reason, TransitionedBy: actorID,
+		})
+	}
+
+	if s.alertSvc != nil {
+		message := fmt.Sprintf("<p>%s approved your changes to tender '%s'.</p>%s", approverName, edit.BidTitle, diffRowsHTML(edit.Diff))
+		if len(decisionDiff) > 0 {
+			message += fmt.Sprintf(`<p style="margin-top:12px;">%s also corrected the following before approving:</p>%s`, approverName, diffRowsHTML(decisionDiff))
+		}
+		if strings.TrimSpace(comment) != "" {
+			message += fmt.Sprintf(`<p style="margin-top:12px;color:#475569;">Comment: %s</p>`, comment)
+		}
+		requesterID := edit.RequestedBy.ID
+		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+			UserID: &requesterID, BidID: &edit.BidID, CreatedBy: &actorID,
+			Type: "TENDER_EDIT_APPROVED", Title: fmt.Sprintf("Edit approved: %s", edit.BidTitle), Message: message,
+		})
+	}
+	return nil
+}
+
+// RejectPendingEdit leaves the bid untouched and tells the executive why.
+func (s *bidService) RejectPendingEdit(ctx context.Context, editID string, comment string, actorID string, actorRoles []string) error {
+	edit, err := s.repo.GetPendingEditByID(ctx, editID)
+	if err != nil {
+		return err
+	}
+	if edit == nil {
+		return fmt.Errorf("%w: pending edit not found", domain.ErrValidation)
+	}
+	if edit.Status != domain.EditApprovalPending {
+		return fmt.Errorf("%w: this edit has already been decided", domain.ErrValidation)
+	}
+	if err := authorizeEditDecision(edit, actorID, actorRoles); err != nil {
+		return err
+	}
+
+	if err := s.repo.DecidePendingEdit(ctx, editID, domain.EditApprovalRejected, nil, nil, comment, actorID); err != nil {
+		return err
+	}
+
+	if s.alertSvc != nil {
+		approver, _ := s.repo.GetUserSummary(ctx, actorID)
+		approverName := "Your Reporting Manager"
+		if approver != nil && approver.FullName != "" {
+			approverName = approver.FullName
+		}
+		message := fmt.Sprintf("<p>%s did not approve your changes to tender '%s'.</p>%s", approverName, edit.BidTitle, diffRowsHTML(edit.Diff))
+		if strings.TrimSpace(comment) != "" {
+			message += fmt.Sprintf(`<p style="margin-top:12px;color:#475569;">Reason: %s</p>`, comment)
+		}
+		requesterID := edit.RequestedBy.ID
+		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+			UserID: &requesterID, BidID: &edit.BidID, CreatedBy: &actorID,
+			Type: "TENDER_EDIT_REJECTED", Title: fmt.Sprintf("Edit not approved: %s", edit.BidTitle), Message: message,
+		})
+	}
 	return nil
 }
 
@@ -1959,7 +2238,41 @@ func diffBidFields(bid *domain.BidWorkspace, req *domain.UpdateBidRequest) []dom
 	diffField(&diffs, "account_manager_id", derefStr(bid.AccountManagerID), req.AccountManagerID, fmtStrDiff)
 	diffField(&diffs, "reporting_manager_id", derefStr(bid.ReportingManagerID), req.ReportingManagerID, fmtStrDiff)
 	diffField(&diffs, "presales_id", derefStr(bid.PresalesID), req.PresalesID, fmtStrDiff)
+	diffField(&diffs, "bid_no", derefStr(bid.BidNo), req.BidNo, fmtStrDiff)
+	diffField(&diffs, "gem_bid_no", derefStr(bid.GemBidNo), req.GemBidNo, fmtStrDiff)
+	diffField(&diffs, "portal_source", bid.PortalSource, req.PortalSource, fmtStrDiff)
+	diffField(&diffs, "high_level_scope", derefStr(bid.HighLevelScope), req.HighLevelScope, fmtStrDiff)
+	diffField(&diffs, "bg_rate", derefFloat(bid.BGRate), req.BGRate, fmtFloatDiff)
+	diffField(&diffs, "duration_months", derefInt(bid.DurationMonths), req.DurationMonths, fmtIntDiff)
+	// ponytail: dates need their own compare (bid stores time.Time, the
+	// request carries an RFC3339 string) — deep EMD/BG sub-fields and raw
+	// JSON blobs (requested_products, alert_note) stay undiffed for v1,
+	// add if a reviewer needs to see those change at a glance too.
+	diffDateField(&diffs, "start_date", bid.StartDate, req.StartDate)
+	diffDateField(&diffs, "end_date", bid.EndDate, req.EndDate)
 	return diffs
+}
+
+// diffDateField compares a bid's stored *time.Time against an incoming
+// RFC3339 *string, formatting both to a plain date for a readable diff.
+// Mirrors diffField's "nil request value = not part of this update" rule;
+// an unparseable request string is likewise treated as no change (the
+// existing Update() path silently no-ops on a bad date the same way).
+func diffDateField(diffs *[]domain.FieldDiff, field string, oldVal *time.Time, newP *string) {
+	if newP == nil {
+		return
+	}
+	newT, err := time.Parse(time.RFC3339, *newP)
+	if err != nil {
+		return
+	}
+	oldStr, newStr := "", newT.Format("2006-01-02")
+	if oldVal != nil {
+		oldStr = oldVal.Format("2006-01-02")
+	}
+	if oldStr != newStr {
+		*diffs = append(*diffs, domain.FieldDiff{Field: field, Old: oldStr, New: newStr})
+	}
 }
 
 func (s *bidService) ListFieldSuggestions(ctx context.Context, fieldKey string) ([]domain.FieldSuggestion, error) {

@@ -11,3 +11,8 @@ backend/.env
 
 # Stray compiled binaries that shouldn't be committed.
 *.exe
+
+# Feedback screenshot/photo uploads — bind-mounted host folder (see
+# docker-compose.yml), user-uploaded content, not repo content.
+/feedback-assets/
+backend/uploads/

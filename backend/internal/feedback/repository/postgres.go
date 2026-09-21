@@ -19,15 +19,15 @@ func NewPostgresTicketRepository(pool *pgxpool.Pool) domain.TicketRepository {
 
 func (r *postgresTicketRepo) Create(ctx context.Context, t *domain.Ticket) error {
 	return r.pool.QueryRow(ctx, `
-		INSERT INTO feedback.tickets (user_id, category, custom_category, description, status)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO feedback.tickets (user_id, category, custom_category, description, status, image_path)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at
-	`, t.UserID, t.Category, t.CustomCategory, t.Description, t.Status).
+	`, t.UserID, t.Category, t.CustomCategory, t.Description, t.Status, t.ImagePath).
 		Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
 }
 
 const ticketSelectColumns = `
-	t.id, t.category, t.custom_category, t.description, t.status,
+	t.id, t.category, t.custom_category, t.description, t.status, t.image_path,
 	t.created_at, t.updated_at, t.resolved_at,
 	t.user_id, COALESCE(reporter.full_name, reporter.username, 'Deleted user'), COALESCE(reporter.username, ''),
 	t.resolved_by, COALESCE(resolver.full_name, resolver.username, ''), COALESCE(resolver.username, '')
@@ -37,11 +37,12 @@ func scanTicket(row interface {
 	Scan(dest ...interface{}) error
 }) (*domain.TicketResponse, error) {
 	var it domain.TicketResponse
+	var imagePath *string
 	var reporterID string
 	var resolvedByID *string
 	var resolverFullName, resolverUsername string
 	if err := row.Scan(
-		&it.ID, &it.Category, &it.CustomCategory, &it.Description, &it.Status,
+		&it.ID, &it.Category, &it.CustomCategory, &it.Description, &it.Status, &imagePath,
 		&it.CreatedAt, &it.UpdatedAt, &it.ResolvedAt,
 		&reporterID, &it.Reporter.FullName, &it.Reporter.Username,
 		&resolvedByID, &resolverFullName, &resolverUsername,
@@ -51,6 +52,13 @@ func scanTicket(row interface {
 	it.Reporter.ID = reporterID
 	if resolvedByID != nil {
 		it.ResolvedBy = &domain.UserSummary{ID: *resolvedByID, FullName: resolverFullName, Username: resolverUsername}
+	}
+	// The public URL is derived from the id, not the stored path — the
+	// serving route looks up whatever file is actually on disk for this
+	// ticket, so the client never sees (or needs) the real filename.
+	if imagePath != nil {
+		url := "/api/v1/tickets/" + it.ID + "/image"
+		it.ImageURL = &url
 	}
 	return &it, nil
 }
@@ -64,6 +72,12 @@ func (r *postgresTicketRepo) GetByID(ctx context.Context, id string) (*domain.Ti
 		WHERE t.id = $1
 	`, ticketSelectColumns), id)
 	return scanTicket(row)
+}
+
+func (r *postgresTicketRepo) GetImagePath(ctx context.Context, id string) (*string, error) {
+	var path *string
+	err := r.pool.QueryRow(ctx, `SELECT image_path FROM feedback.tickets WHERE id = $1`, id).Scan(&path)
+	return path, err
 }
 
 // List pages tickets newest-first. UserID scopes to one reporter ("my

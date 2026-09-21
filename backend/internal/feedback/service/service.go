@@ -47,6 +47,7 @@ func (s *ticketService) CreateTicket(ctx context.Context, req *domain.CreateTick
 		CustomCategory: customCategory,
 		Description:    description,
 		Status:         domain.StatusOpen,
+		ImagePath:      req.ImagePath,
 	}
 	if err := s.repo.Create(ctx, t); err != nil {
 		return nil, fmt.Errorf("create ticket: %w", err)
@@ -88,6 +89,17 @@ func (s *ticketService) GetTicket(ctx context.Context, id string, requesterID st
 		return nil, domain.ErrForbidden
 	}
 	return t, nil
+}
+
+func (s *ticketService) GetTicketImagePath(ctx context.Context, id string, requesterID string, isSuperAdmin bool) (*string, error) {
+	t, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !isSuperAdmin && t.Reporter.ID != requesterID {
+		return nil, domain.ErrForbidden
+	}
+	return s.repo.GetImagePath(ctx, id)
 }
 
 func (s *ticketService) ListMyTickets(ctx context.Context, userID string, params domain.ListTicketsParams) (*domain.TicketListPage, error) {

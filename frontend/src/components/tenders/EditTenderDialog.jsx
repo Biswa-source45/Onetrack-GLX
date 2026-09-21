@@ -13,6 +13,7 @@ import {
   Trash2,
   Shuffle,
   Check,
+  CheckCircle2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -44,7 +45,12 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { updateBid, getBid } from "../../services/bids";
+import {
+  updateBid,
+  getBid,
+  approvePendingEdit,
+  rejectPendingEdit,
+} from "../../services/bids";
 import { listUsers } from "../../services/users";
 import { usePermissions } from "../../hooks/usePermissions";
 
@@ -137,6 +143,38 @@ function parseRequestedProducts(rp) {
   }));
 }
 
+// Mirrors the backend's fieldLabels map (bid_service.go) so a reviewer sees
+// the same human-readable names in the proposed-changes panel.
+const FIELD_DIFF_LABELS = {
+  title: "Tender Title",
+  organization_name: "Account Name",
+  department_name: "Department",
+  location: "Location",
+  category: "Category",
+  bid_type: "Bid Type",
+  authority: "Authority",
+  our_rank: "Our Rank",
+  remarks: "Remarks",
+  estimated_value: "Estimated Value",
+  emd_amount: "EMD Amount",
+  quantity: "Quantity",
+  bid_owner_id: "Bid Owner",
+  account_manager_id: "Account Manager",
+  reporting_manager_id: "Reporting Manager",
+  presales_id: "Pre-Sales",
+  bid_no: "RFP No.",
+  gem_bid_no: "GeM Bid No.",
+  portal_source: "Portal Source",
+  high_level_scope: "High-Level Scope",
+  bg_rate: "BG Rate",
+  duration_months: "Duration (months)",
+  start_date: "Start Date",
+  end_date: "End Date",
+};
+function fieldDiffLabel(field) {
+  return FIELD_DIFF_LABELS[field] || field.replace(/_/g, " ");
+}
+
 function inputCls(err) {
   return `h-8 text-sm ${err ? "border-destructive focus-visible:ring-destructive/30" : ""}`;
 }
@@ -160,6 +198,12 @@ export function EditTenderDialog({
   onUpdated,
   originX,
   originY,
+  // Reporting Manager review mode: renders the same form pre-filled with a
+  // pending edit's proposed values (the caller passes bid merged with the
+  // pending payload), shows what changed, and swaps Save/Cancel for
+  // Approve/Reject — so the manager can correct any field before approving,
+  // same as a normal edit, without a second form to build and maintain.
+  approvalContext,
 }) {
   const spring = useMacOSDialog(open, originX, originY);
   const { user, isAdmin } = usePermissions();
@@ -287,7 +331,12 @@ export function EditTenderDialog({
       try {
         const res = await getBid(bid.id);
         if (res.ok && res.data && active) {
-          const b = res.data;
+          // Review mode: overlay the executive's proposed values onto the
+          // freshly-fetched (current, unchanged) bid, so the form starts
+          // from what they asked to change rather than what's live today.
+          const b = approvalContext?.payload
+            ? { ...res.data, ...approvalContext.payload }
+            : res.data;
           setForm({
             title: b.title || "",
             high_level_scope: b.high_level_scope || "",
@@ -446,7 +495,7 @@ export function EditTenderDialog({
     return () => {
       active = false;
     };
-  }, [bid, open]);
+  }, [bid, open, approvalContext]);
 
   function set(field, value) {
     setForm((f) => {
@@ -631,9 +680,35 @@ export function EditTenderDialog({
                 color: alertNoteColor,
               })
             : JSON.stringify(null),
+        // Marks this as a main Edit-Tender-form save (as opposed to a
+        // stage-workspace save reusing the same PATCH endpoint) — the one
+        // signal the backend uses to decide whether a Bid Executive's
+        // change needs Reporting Manager approval before it lands.
+        full_edit_submission: true,
       };
 
+      if (approvalContext) {
+        const res = await approvePendingEdit(approvalContext.editId, payload);
+        if (res.ok) {
+          toast.success("Edit approved");
+          onUpdated();
+          onClose();
+        } else {
+          toast.error(res.error?.message ?? "Failed to approve edit");
+        }
+        setLoading(false);
+        return;
+      }
+
       const res = await updateBid(bid.id, payload);
+      if (res.ok && res.data?.status === "PENDING_APPROVAL") {
+        toast.success(
+          `Submitted to ${res.data.reporting_manager_name || "your Reporting Manager"} for approval`,
+        );
+        onUpdated();
+        onClose();
+        return;
+      }
       if (res.ok) {
         // Field Memory: make the values just typed available as suggestions
         // right away, without waiting for a refetch of each field's list.
@@ -691,10 +766,14 @@ export function EditTenderDialog({
               <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-muted/20">
                 <div>
                   <h2 className="font-heading text-base font-semibold text-foreground">
-                    Edit Tender Details
+                    {approvalContext
+                      ? "Review Proposed Edit"
+                      : "Edit Tender Details"}
                   </h2>
                   <p className="text-xs text-muted-foreground">
-                    Modify tender properties and financials
+                    {approvalContext
+                      ? `Submitted by ${approvalContext.requesterName} — correct any field below, then approve or reject`
+                      : "Modify tender properties and financials"}
                   </p>
                 </div>
                 <button
@@ -709,6 +788,34 @@ export function EditTenderDialog({
               {/* Scrollable body */}
               <ScrollArea className="max-h-[70vh]">
                 <div className="px-6 py-5 space-y-6 relative">
+                  {approvalContext?.diff?.length > 0 && (
+                    <div className="rounded-lg border border-amber-300/60 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-900/40 p-3.5">
+                      <p className="text-xs font-semibold text-amber-900 dark:text-amber-300 mb-2">
+                        Proposed changes
+                      </p>
+                      <div className="space-y-1.5">
+                        {approvalContext.diff.map((d) => (
+                          <div
+                            key={d.field}
+                            className="text-xs flex flex-wrap items-baseline gap-x-1.5"
+                          >
+                            <span className="font-medium text-amber-900 dark:text-amber-300 min-w-[130px]">
+                              {fieldDiffLabel(d.field)}:
+                            </span>
+                            <span className="text-muted-foreground line-through">
+                              {d.old || "(empty)"}
+                            </span>
+                            <span className="text-amber-700 dark:text-amber-400">
+                              →
+                            </span>
+                            <span className="font-medium text-foreground">
+                              {d.new}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {fetchingBid ? (
                     <div className="flex flex-col items-center justify-center py-20 text-muted-foreground gap-3">
                       <Loader2 className="size-8 animate-spin text-primary" />
@@ -1674,28 +1781,81 @@ export function EditTenderDialog({
 
               {/* Footer */}
               <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-border bg-muted/10">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={onClose}
-                  disabled={loading || fetchingBid}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  size="sm"
-                  disabled={loading || fetchingBid}
-                  className="gap-1.5 min-w-[120px]"
-                >
-                  {loading ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <FileText className="size-3.5" />
-                  )}
-                  {loading ? "Saving…" : "Save Changes"}
-                </Button>
+                {approvalContext ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/10"
+                      disabled={loading || fetchingBid}
+                      onClick={async () => {
+                        // ponytail: a native prompt for the reason — a
+                        // dedicated inline textarea can replace this if
+                        // reviewers want a richer input.
+                        const comment = window.prompt(
+                          "Reason for rejecting this edit (optional):",
+                        );
+                        if (comment === null) return;
+                        setLoading(true);
+                        const res = await rejectPendingEdit(
+                          approvalContext.editId,
+                          comment,
+                        );
+                        setLoading(false);
+                        if (res.ok) {
+                          toast.success("Edit rejected");
+                          onUpdated();
+                          onClose();
+                        } else {
+                          toast.error(
+                            res.error?.message ?? "Failed to reject edit",
+                          );
+                        }
+                      }}
+                    >
+                      Reject
+                    </Button>
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={loading || fetchingBid}
+                      className="gap-1.5 min-w-[120px] bg-emerald-600 hover:bg-emerald-700 text-white"
+                    >
+                      {loading ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="size-3.5" />
+                      )}
+                      {loading ? "Approving…" : "Approve"}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={onClose}
+                      disabled={loading || fetchingBid}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={loading || fetchingBid}
+                      className="gap-1.5 min-w-[120px]"
+                    >
+                      {loading ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <FileText className="size-3.5" />
+                      )}
+                      {loading ? "Saving…" : "Save Changes"}
+                    </Button>
+                  </>
+                )}
               </div>
             </form>
           </motion.div>

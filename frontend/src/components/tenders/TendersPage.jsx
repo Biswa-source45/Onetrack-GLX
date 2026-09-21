@@ -102,11 +102,12 @@ import {
 import { StageBadge, StatusTag } from "../../lib/tenderDisplay";
 
 // ── Stage List order for progress computation ────────────────────────────────
-// The real 10-stage pipeline (mirrors services/bids.js STAGE_LABELS). A
+// The real 11-stage pipeline (mirrors services/bids.js STAGE_LABELS). A
 // terminal stage isn't a pipeline position, so it renders full progress
 // rather than indexOf returning -1 and showing 0%.
 const STAGES_ORDER = [
   "DISCOVERED",
+  "PRIMARY_REVIEW",
   "OEM_AUTHORIZATION_REQUEST",
   "PRICING_REQUEST",
   "DOCUMENT_CHECKLIST_PREPARATION",
@@ -311,15 +312,16 @@ async function exportToExcel() {
 const STAGE_OPTIONS = [
   { value: "", label: "All Stages" },
   { value: "DISCOVERED", label: "1. Search & ID" },
-  { value: "OEM_AUTHORIZATION_REQUEST", label: "2. OEM Auth" },
-  { value: "PRICING_REQUEST", label: "3. Pricing Request" },
-  { value: "DOCUMENT_CHECKLIST_PREPARATION", label: "4. Checklist Prep" },
-  { value: "EMD_PROCESSING", label: "5. EMD Processing" },
-  { value: "INTERNAL_APPROVAL", label: "6. Internal Approval" },
-  { value: "GEM_SUBMISSION", label: "7. Bid Submission" },
-  { value: "TECHNICAL_EVALUATION", label: "8. Tech Eval" },
-  { value: "FINANCIAL_EVALUATION", label: "9. Financial Eval" },
-  { value: "AWARD_HANDOVER", label: "10. Award & Delivery" },
+  { value: "PRIMARY_REVIEW", label: "2. Primary Review" },
+  { value: "OEM_AUTHORIZATION_REQUEST", label: "3. OEM Auth" },
+  { value: "PRICING_REQUEST", label: "4. Pricing Request" },
+  { value: "DOCUMENT_CHECKLIST_PREPARATION", label: "5. Checklist Prep" },
+  { value: "EMD_PROCESSING", label: "6. EMD Processing" },
+  { value: "INTERNAL_APPROVAL", label: "7. Internal Approval" },
+  { value: "GEM_SUBMISSION", label: "8. Bid Submission" },
+  { value: "TECHNICAL_EVALUATION", label: "9. Tech Eval" },
+  { value: "FINANCIAL_EVALUATION", label: "10. Financial Eval" },
+  { value: "AWARD_HANDOVER", label: "11. Award & Delivery" },
   { value: "WON", label: "Won" },
   { value: "LOST", label: "Lost" },
   { value: "CANCELLED", label: "Cancelled" },

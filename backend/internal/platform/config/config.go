@@ -13,6 +13,11 @@ type Config struct {
 	Redis    RedisConfig
 	JWT      JWTConfig
 	Email    EmailConfig
+	// UploadDir is where feedback screenshots/attachments are written —
+	// bind-mounted to a host folder in docker-compose.yml so uploads travel
+	// with a plain copy of the project directory, unlike the Postgres data
+	// volume. Defaults to a local ./uploads/feedback for dev.
+	UploadDir string
 }
 
 type ServerConfig struct {
@@ -94,6 +99,7 @@ func Load() (*Config, error) {
 			Username:   getEnv("EMAIL_USERNAME", "support@globx.co.in"),
 			Password:   getEnv("EMAIL_PASSWORD", ""),
 		},
+		UploadDir: getEnv("UPLOAD_DIR", "./uploads/feedback"),
 	}
 
 	return cfg, nil

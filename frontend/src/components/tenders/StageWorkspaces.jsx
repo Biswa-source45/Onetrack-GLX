@@ -37,6 +37,15 @@ function fmtMoney(v) {
   return `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
 }
 
+// Feedback (Pricing & OEM Workspace): amounts in the Pricing Request stage's
+// commercial breakdown must read as absolute numbers, not L/Cr shorthand —
+// unlike fmtMoney above, which stays abbreviated everywhere else (EMD
+// amounts, dashboard cards, other stages) since only Pricing was reported.
+function fmtMoneyFull(v) {
+  if (!v && v !== 0) return '—'
+  return `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+}
+
 function fmtDate(dt) {
   if (!dt) return '—'
   return new Date(dt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -2295,7 +2304,7 @@ function buildRemarkCalloutHtml(name, text, label = 'Remarks') {
   return `<div style="margin:0 0 12px 0;padding:10px 14px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #f59e0b;color:#78350f;font-size:12px;"><strong style="color:#78350f;">⚑ ${label} from ${name}:</strong> ${text}</div>`
 }
 function buildValuesAdjustedBannerHtml(reqMargin, finalMargin, reqTotal, finalTotal) {
-  return `<div style="margin:0 0 12px 0;padding:10px 14px;border-radius:8px;background:#f5f3ff;border:1px solid #ddd6fe;border-left:4px solid #8b5cf6;color:#5b21b6;font-size:12px;font-weight:600;">⚠ Values were adjusted before approval — Margin: ${Number(reqMargin).toFixed(2)}% → ${Number(finalMargin).toFixed(2)}%, GlobX Total (incl. GST): ${fmtMoney(reqTotal)} → ${fmtMoney(finalTotal)}</div>`
+  return `<div style="margin:0 0 12px 0;padding:10px 14px;border-radius:8px;background:#f5f3ff;border:1px solid #ddd6fe;border-left:4px solid #8b5cf6;color:#5b21b6;font-size:12px;font-weight:600;">⚠ Values were adjusted before approval — Margin: ${Number(reqMargin).toFixed(2)}% → ${Number(finalMargin).toFixed(2)}%, GlobX Total (incl. GST): ${fmtMoneyFull(reqTotal)} → ${fmtMoneyFull(finalTotal)}</div>`
 }
 
 // Module scope (not just the useState initializer) so the resync effect
@@ -2585,12 +2594,12 @@ export function Stage4Workspace({ bid, onRefresh }) {
           <td style="padding: 8px 10px; text-align: center; font-weight: bold; color: #64748b; font-family: monospace;">${i + 1}</td>
           <td style="padding: 8px 10px; font-weight: 600; color: #1e293b;">${it.desc}</td>
           <td style="padding: 8px 10px; text-align: center; color: #334155; font-weight: 500;">${qty}</td>
-          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #475569;">${fmtMoney(basic)}</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #475569;">${fmtMoneyFull(basic)}</td>
           <td style="padding: 8px 10px; text-align: center; color: #4338ca; font-weight: 700;">${itMargin}%</td>
-          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #334155;">${fmtMoney(unitPriceExclGst)}</td>
-          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #64748b;">${fmtMoney(unitGst)} <span style="font-size:10px;color:#94a3b8;">(${itGstPct}%)</span></td>
-          <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #4f46e5;">${fmtMoney(globxUnit)}</td>
-          <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #4f46e5; background-color: #f5f3ff;">${fmtMoney(globxTotal)}</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #334155;">${fmtMoneyFull(unitPriceExclGst)}</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #64748b;">${fmtMoneyFull(unitGst)} <span style="font-size:10px;color:#94a3b8;">(${itGstPct}%)</span></td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #4f46e5;">${fmtMoneyFull(globxUnit)}</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #4f46e5; background-color: #f5f3ff;">${fmtMoneyFull(globxTotal)}</td>
         </tr>
       `
     }).join('')
@@ -2623,10 +2632,10 @@ export function Stage4Workspace({ bid, onRefresh }) {
             </tbody>
             <tfoot>
               <tr style="background-color: #f8fafc; font-weight: bold; border-top: 2px solid #cbd5e1;">
-                <td colspan="4" style="padding: 12px 10px; text-align: right; color: #334155; font-size: 12px; border-right: 1px solid #e2e8f0;">Grand Total Summary (Base Cost: ${fmtMoney(grandBasePurchase)}):</td>
+                <td colspan="4" style="padding: 12px 10px; text-align: right; color: #334155; font-size: 12px; border-right: 1px solid #e2e8f0;">Grand Total Summary (Base Cost: ${fmtMoneyFull(grandBasePurchase)}):</td>
                 <td style="padding: 12px 10px; text-align: center; color: #4338ca; font-size: 12px; border-right: 1px solid #e2e8f0;">${effectiveMargin}%</td>
                 <td colspan="3" style="padding: 12px 10px; text-align: right; color: #64748b; font-size: 11px; border-right: 1px solid #e2e8f0;">TOTAL OFFERED VALUE (INCL. GST)</td>
-                <td style="padding: 12px 10px; text-align: right; font-family: monospace; font-size: 13px; font-weight: 800; color: #4338ca; background-color: #ede9fe;">${fmtMoney(grandGlobxTotal)}</td>
+                <td style="padding: 12px 10px; text-align: right; font-family: monospace; font-size: 13px; font-weight: 800; color: #4338ca; background-color: #ede9fe;">${fmtMoneyFull(grandGlobxTotal)}</td>
               </tr>
             </tfoot>
           </table>
@@ -2730,7 +2739,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
     // margin change" instead of a bogus "0.00% -> X%".
     const reqMarginDisplay = reqMargin ?? finalMargin
     const changeNote = valuesChanged
-      ? ` Values were adjusted before approval — Margin: ${Number(reqMarginDisplay).toFixed(2)}% → ${Number(finalMargin).toFixed(2)}%, GlobX Total (incl. GST): ${fmtMoney(reqTotal)} → ${fmtMoney(finalTotal)}.`
+      ? ` Values were adjusted before approval — Margin: ${Number(reqMarginDisplay).toFixed(2)}% → ${Number(finalMargin).toFixed(2)}%, GlobX Total (incl. GST): ${fmtMoneyFull(reqTotal)} → ${fmtMoneyFull(finalTotal)}.`
       : ''
 
     await save({ approvalStatus: 'APPROVED', approvedAt: nowISO, approvedGrandTotal: finalTotal })
@@ -2759,7 +2768,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
       fromStage: 'PRICING_REQUEST',
       toStage: 'PRICING_REQUEST',
       eventType: 'PRICING',
-      transitionReason: `Pricing approved by ${currentUser?.full_name || currentUser?.username || 'Unknown'}${finalTotal != null ? ` — GlobX Total (incl. GST): ${fmtMoney(finalTotal)}` : ''}.${changeNote}`,
+      transitionReason: `Pricing approved by ${currentUser?.full_name || currentUser?.username || 'Unknown'}${finalTotal != null ? ` — GlobX Total (incl. GST): ${fmtMoneyFull(finalTotal)}` : ''}.${changeNote}`,
       details: { approvedBy: currentUser?.id, approvedGrandTotal: finalTotal, requestedMarginPct: reqMargin, finalMarginPct: finalMargin, requestedGrandTotal: reqTotal, valuesChanged }
     })
     toast.success(valuesChanged ? 'Pricing approved — owner notified of the adjusted values!' : 'Pricing approved — owner notified!')
@@ -3024,15 +3033,15 @@ export function Stage4Workspace({ bid, onRefresh }) {
                         <tr key={ii} className="hover:bg-muted/20">
                           <td className="border border-border p-1.5">{it.desc}</td>
                           <td className="border border-border p-1.5 text-center">{it.qty}</td>
-                          <td className="border border-border p-1.5 text-right font-mono">{fmtMoney(it.basicPrice)}</td>
-                          <td className="border border-border p-1.5 text-right font-mono font-semibold text-foreground">{fmtMoney((Number(it.basicPrice) || 0) * (Number(it.qty) || 1))}</td>
+                          <td className="border border-border p-1.5 text-right font-mono">{fmtMoneyFull(it.basicPrice)}</td>
+                          <td className="border border-border p-1.5 text-right font-mono font-semibold text-foreground">{fmtMoneyFull((Number(it.basicPrice) || 0) * (Number(it.qty) || 1))}</td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot>
                       <tr className="bg-muted/30 font-bold border-t border-border">
                         <td colSpan={3} className="border border-border p-1.5 text-right text-muted-foreground text-[10px]">Total Base Value:</td>
-                        <td className="border border-border p-1.5 text-right font-mono text-foreground">{fmtMoney(qTotal)}</td>
+                        <td className="border border-border p-1.5 text-right font-mono text-foreground">{fmtMoneyFull(qTotal)}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -3093,24 +3102,24 @@ export function Stage4Workspace({ bid, onRefresh }) {
                     <td className="border border-border p-2 font-medium text-foreground">{row.desc}</td>
                     <td className="border border-border p-2 text-muted-foreground">{row.oem || resolvedOemByProductName[row.desc] || '—'}</td>
                     <td className="border border-border p-2 text-center font-semibold">{row.qty}</td>
-                    <td className="border border-border p-2 text-right font-mono text-muted-foreground">{fmtMoney(row.basicPrice)}</td>
+                    <td className="border border-border p-2 text-right font-mono text-muted-foreground">{fmtMoneyFull(row.basicPrice)}</td>
                     <td className="border border-border p-2 text-center font-semibold text-indigo-600 dark:text-indigo-400">{row.itemMargin}%</td>
-                    <td className="border border-border p-2 text-right font-mono text-foreground">{fmtMoney(row.unitPriceExclGst)}</td>
+                    <td className="border border-border p-2 text-right font-mono text-foreground">{fmtMoneyFull(row.unitPriceExclGst)}</td>
                     <td className="border border-border p-2 text-right font-mono text-muted-foreground">
-                      {fmtMoney(row.unitGst)} <span className="text-[9px] text-muted-foreground/70">({row.itemGstRate}%)</span>
+                      {fmtMoneyFull(row.unitGst)} <span className="text-[9px] text-muted-foreground/70">({row.itemGstRate}%)</span>
                     </td>
-                    <td className="border border-border p-2 text-right font-mono font-bold text-indigo-600 dark:text-indigo-400">{fmtMoney(row.globxUnit)}</td>
-                    <td className="border border-border p-2 text-right font-mono font-extrabold text-indigo-700 dark:text-indigo-300 bg-indigo-50/40 dark:bg-indigo-950/20">{fmtMoney(row.globxTotal)}</td>
+                    <td className="border border-border p-2 text-right font-mono font-bold text-indigo-600 dark:text-indigo-400">{fmtMoneyFull(row.globxUnit)}</td>
+                    <td className="border border-border p-2 text-right font-mono font-extrabold text-indigo-700 dark:text-indigo-300 bg-indigo-50/40 dark:bg-indigo-950/20">{fmtMoneyFull(row.globxTotal)}</td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr className="bg-muted/40 font-bold border-t-2 border-border text-xs">
                   <td colSpan={4} className="border border-border p-2.5 text-right text-muted-foreground uppercase tracking-wider">Grand Total Summary:</td>
-                  <td className="border border-border p-2.5 text-right font-mono font-bold text-foreground">{fmtMoney(l1Calculations.grandBaseCost)}</td>
+                  <td className="border border-border p-2.5 text-right font-mono font-bold text-foreground">{fmtMoneyFull(l1Calculations.grandBaseCost)}</td>
                   <td className="border border-border p-2.5 text-center font-bold text-indigo-700 dark:text-indigo-300">{l1Calculations.effectiveMarginPct.toFixed(2)}%</td>
                   <td colSpan={3} className="border border-border p-2.5 text-right text-muted-foreground uppercase tracking-wider">Total Offered Value (Incl. GST):</td>
-                  <td className="border border-border p-2.5 text-right font-mono text-sm font-extrabold text-indigo-700 dark:text-indigo-300 bg-indigo-50/80 dark:bg-indigo-950/40">{fmtMoney(l1Calculations.grandGlobxTotal)}</td>
+                  <td className="border border-border p-2.5 text-right font-mono text-sm font-extrabold text-indigo-700 dark:text-indigo-300 bg-indigo-50/80 dark:bg-indigo-950/40">{fmtMoneyFull(l1Calculations.grandGlobxTotal)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -3120,27 +3129,27 @@ export function Stage4Workspace({ bid, onRefresh }) {
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             <div className="p-3 rounded-lg border border-border bg-muted/20">
               <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Base Purchase Cost</div>
-              <div className="text-sm font-bold font-mono text-foreground mt-0.5">{fmtMoney(l1Calculations.grandBaseCost)}</div>
+              <div className="text-sm font-bold font-mono text-foreground mt-0.5">{fmtMoneyFull(l1Calculations.grandBaseCost)}</div>
               <div className="text-[10px] text-muted-foreground mt-0.5">L1: {l1Quote.distName}</div>
             </div>
             <div className="p-3 rounded-lg border border-border bg-muted/20">
               <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Selling (Excl. GST)</div>
-              <div className="text-sm font-bold font-mono text-foreground mt-0.5">{fmtMoney(l1Calculations.grandSellingExclGst)}</div>
+              <div className="text-sm font-bold font-mono text-foreground mt-0.5">{fmtMoneyFull(l1Calculations.grandSellingExclGst)}</div>
               <div className="text-[10px] text-muted-foreground mt-0.5">Base + Profit Margin</div>
             </div>
             <div className="p-3 rounded-lg border border-border bg-muted/20">
               <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">GST Tax Component</div>
-              <div className="text-sm font-bold font-mono text-foreground mt-0.5">{fmtMoney(l1Calculations.grandGstAmount)}</div>
+              <div className="text-sm font-bold font-mono text-foreground mt-0.5">{fmtMoneyFull(l1Calculations.grandGstAmount)}</div>
               <div className="text-[10px] text-muted-foreground mt-0.5">Standard 18% Output</div>
             </div>
             <div className="p-3 rounded-lg border border-indigo-300 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/30">
               <div className="text-[10px] font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">GlobX Total (incl. GST)</div>
-              <div className="text-base font-extrabold font-mono text-indigo-700 dark:text-indigo-300 mt-0.5">{fmtMoney(l1Calculations.grandGlobxTotal)}</div>
+              <div className="text-base font-extrabold font-mono text-indigo-700 dark:text-indigo-300 mt-0.5">{fmtMoneyFull(l1Calculations.grandGlobxTotal)}</div>
               <div className="text-[10px] font-semibold text-indigo-600/80 dark:text-indigo-400 mt-0.5">Final Quoted Bid Value</div>
             </div>
             <div className="p-3 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/30">
               <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider">Net Profit</div>
-              <div className="text-base font-extrabold font-mono text-emerald-700 dark:text-emerald-300 mt-0.5">{fmtMoney(l1Calculations.grandTotalProfit)}</div>
+              <div className="text-base font-extrabold font-mono text-emerald-700 dark:text-emerald-300 mt-0.5">{fmtMoneyFull(l1Calculations.grandTotalProfit)}</div>
               <div className="text-[10px] font-semibold text-emerald-600/80 dark:text-emerald-400 mt-0.5">{l1Calculations.effectiveMarginPct.toFixed(2)}% of Base Cost</div>
             </div>
           </div>

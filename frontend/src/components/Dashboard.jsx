@@ -8,6 +8,7 @@ import {
   Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Pencil,
   FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass, ScrollText, Settings } from 'lucide-react'
 import { toast } from 'sonner'
+import { toBlob } from 'html-to-image'
 
 import { Button }    from '@/components/ui/button'
 import { Input }     from '@/components/ui/input'
@@ -21,6 +22,8 @@ import { getMyProfile, updateUserProfile } from '../services/users'
 import { getAlerts } from '../services/alerts'
 import { getOpenTicketCount } from '../services/tickets'
 import { usePermissions } from '../hooks/usePermissions'
+import { useFeedbackDraftStore } from '../store/useFeedbackDraftStore'
+import { guessFeedbackCategory } from '../lib/feedbackCategoryMap'
 import { UserManagement } from './admin/UserManagement'
 import { UserAvatar }     from './admin/UserAvatar'
 import { RoleBadge }      from './admin/RoleBadge'
@@ -1639,6 +1642,35 @@ export default function Dashboard() {
     const interval = setInterval(fetchTicketsCount, 30000)
     return () => clearInterval(interval)
   }, [fetchTicketsCount])
+
+  // Ctrl+I — capture the current page as a screenshot with zero extra
+  // clicks (no native screen-share permission prompt, unlike
+  // getDisplayMedia) and jump to Feedback with it pre-attached. Super Admin
+  // never submits feedback (same exclusion as the /feedback route itself),
+  // so the shortcut is simply inert for them.
+  useEffect(() => {
+    if (isSuperAdminForTickets) return undefined
+    async function onKeyDown(e) {
+      if (!e.ctrlKey || e.key.toLowerCase() !== 'i') return
+      e.preventDefault()
+      try {
+        const blob = await toBlob(document.body)
+        if (!blob) throw new Error('capture failed')
+        useFeedbackDraftStore.getState().setDraft(
+          blob,
+          URL.createObjectURL(blob),
+          guessFeedbackCategory(window.location.pathname, window.location.search),
+        )
+        toast.success('Screenshot captured — add a few details')
+        navigate('/dashboard/feedback')
+      } catch {
+        toast.error('Could not capture a screenshot — you can still attach one manually')
+        navigate('/dashboard/feedback')
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isSuperAdminForTickets, navigate])
 
   // Load user on mount
   useEffect(() => {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -26,7 +26,7 @@ import {
 import {
   getBid, getBidStageHistory, transitionBidStage,
   removeBidMember, recordBidOutcome, archiveBid, updateBid,
-  softDeleteBid, restoreBid, permanentDeleteBid,
+  softDeleteBid, restoreBid, permanentDeleteBid, getPendingEdit,
   STAGE_LABELS, STAGE_COLORS, STATUS_COLORS, statusStyle, STAGE_TRANSITIONS,
   WORKFLOW_STAGES_ORDERED,
 } from '../../services/bids'
@@ -2004,8 +2004,10 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
   const bidId = propBidId || routeBidId
   const onBack = propOnBack || (() => navigate('/dashboard/tenders'))
 
-  const { hasPermission } = usePermissions()
+  const { hasPermission, hasRole, isAdmin, user } = usePermissions()
   const [bid, setBid]               = useState(null)
+  const [pendingEdit, setPendingEdit] = useState(null)
+  const [reviewingEdit, setReviewingEdit] = useState(false)
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState(null)
   // Backed by the URL (?tab=&stage=) instead of local state, so refreshing
@@ -2036,11 +2038,34 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
       else setError(res.error?.message ?? 'Failed to load tender')
     } catch { setError('Network error') }
     finally { setLoading(false) }
+    try {
+      const peRes = await getPendingEdit(bidId)
+      setPendingEdit(peRes.ok ? peRes.data || null : null)
+    } catch { /* banner just stays hidden */ }
   }, [bidId])
 
   useEffect(() => {
     if (bidId) loadBid(true)
   }, [bidId, loadBid])
+
+  // Memoized so the review dialog's own data-load effect (keyed on its bid
+  // prop) doesn't re-fire — and wipe the Reporting Manager's in-progress
+  // corrections — on every unrelated re-render of this page. Must sit above
+  // the early returns below (Rules of Hooks) — safe when bid/pendingEdit
+  // are still null since spreading null is a no-op.
+  const reviewBid = useMemo(
+    () => (pendingEdit ? { ...bid, ...pendingEdit.payload } : bid),
+    [bid, pendingEdit],
+  )
+  const reviewApprovalContext = useMemo(
+    () => (pendingEdit ? {
+      editId: pendingEdit.id,
+      requesterName: pendingEdit.requested_by?.full_name || 'A Bid Executive',
+      diff: pendingEdit.diff,
+      payload: pendingEdit.payload,
+    } : null),
+    [pendingEdit],
+  )
 
   if (loading) return (
     <div className="flex items-center justify-center h-64 gap-3 text-muted-foreground">
@@ -2069,6 +2094,39 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
           <span className="text-sm text-foreground font-medium truncate max-w-[300px]">{bid.title}</span>
         </div>
       </div>
+
+      {/* Pending Edit Approval Banner */}
+      {pendingEdit && (() => {
+        const isApprover = user?.id === pendingEdit.reporting_manager_id || isAdmin || hasRole('MANAGER') || hasRole('BID_MANAGER')
+        const requesterName = pendingEdit.requested_by?.full_name || 'A Bid Executive'
+        return (
+          <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 flex items-center justify-between gap-4 text-amber-900 shadow-sm dark:bg-amber-950/20 dark:border-amber-900/50 dark:text-amber-300">
+            <div className="flex items-start gap-3">
+              <Clock className="size-5 shrink-0 text-amber-600 dark:text-amber-500 mt-0.5" />
+              <div className="space-y-0.5">
+                <p className="font-semibold text-sm">
+                  {isApprover
+                    ? `An edit by ${requesterName} is awaiting your approval`
+                    : `Your edit is awaiting approval`}
+                </p>
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  {pendingEdit.diff?.length ?? 0} field{(pendingEdit.diff?.length ?? 0) === 1 ? '' : 's'} changed — nothing has been applied yet.
+                </p>
+              </div>
+            </div>
+            {isApprover && (
+              <Button
+                size="sm"
+                className="gap-1.5 shrink-0 bg-amber-600 hover:bg-amber-700 text-white"
+                onClick={() => setReviewingEdit(true)}
+              >
+                <Eye className="size-3.5" />
+                Review
+              </Button>
+            )}
+          </div>
+        )
+      })()}
 
       {/* Archive / Bin Warning Banner */}
       {bid.deleted_at ? (
@@ -2359,6 +2417,15 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
 
       {/* Edit Tender Dialog */}
       <EditTenderDialog open={showEdit} onClose={()=>setShowEdit(false)} bid={bid} onUpdated={loadBid} />
+      {reviewingEdit && pendingEdit && (
+        <EditTenderDialog
+          open={reviewingEdit}
+          onClose={() => setReviewingEdit(false)}
+          bid={reviewBid}
+          onUpdated={loadBid}
+          approvalContext={reviewApprovalContext}
+        />
+      )}
 
       {/* Outcome Dialog */}
       <AnimatePresence>

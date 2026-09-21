@@ -17,6 +17,13 @@ func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, importHandl
 		bids.GET("", authMiddleware.RequirePermission("bid.view"), handler.ListBids)
 		bids.GET("/:id", authMiddleware.RequirePermission("bid.view"), handler.GetBid)
 		bids.PATCH("/:id", authMiddleware.RequirePermission("bid.edit"), handler.UpdateBid)
+		// Tender Edit Approvals — a Bid Executive's edit held for their
+		// Reporting Manager's sign-off (see bidService.UpdateBid). Approve/
+		// reject are further restricted to that edit's own Reporting
+		// Manager (or an admin) at the service layer.
+		bids.GET("/:id/pending-edit", authMiddleware.RequirePermission("bid.view"), handler.GetPendingEdit)
+		bids.POST("/pending-edits/:editId/approve", authMiddleware.RequirePermission("bid.edit"), handler.ApprovePendingEdit)
+		bids.POST("/pending-edits/:editId/reject", authMiddleware.RequirePermission("bid.edit"), handler.RejectPendingEdit)
 		bids.DELETE("/:id", authMiddleware.RequirePermission("bid.delete"), handler.ArchiveBid)
 		bids.POST("/:id/restore", authMiddleware.RequirePermission("bid.edit"), handler.RestoreBid)
 		bids.DELETE("/:id/permanent", authMiddleware.RequirePermission("bid.delete"), handler.PermanentDeleteBid)

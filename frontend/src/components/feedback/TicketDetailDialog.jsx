@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Loader2, Clock, User, CheckCircle2, PlayCircle, RotateCcw } from 'lucide-react'
+import { Loader2, Clock, User, CheckCircle2, PlayCircle, RotateCcw, X } from 'lucide-react'
 
 import {
   Dialog,
@@ -12,6 +12,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { getTicket, getTicketHistory, updateTicketStatus } from '../../services/tickets'
+import { apiFetch } from '../../services/auth'
 import { categoryColor, TICKET_STATUS_LABELS, TICKET_STATUS_CLASSES } from '../../lib/ticketCategories'
 
 function formatWhen(iso) {
@@ -37,6 +38,8 @@ export function TicketDetailDialog({ open, onOpenChange, ticketId, canManage = f
   const [loading, setLoading] = useState(true)
   const [note, setNote] = useState('')
   const [changingTo, setChangingTo] = useState(null)
+  const [imageObjectUrl, setImageObjectUrl] = useState(null)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
 
   const load = useCallback(() => {
     if (!open || !ticketId) return
@@ -50,6 +53,25 @@ export function TicketDetailDialog({ open, onOpenChange, ticketId, canManage = f
 
   useEffect(() => { load() }, [load])
   useEffect(() => { if (!open) setNote('') }, [open])
+
+  // The attachment route is auth-gated (owner or Super Admin), so a plain
+  // <img src="..."> can't carry the Bearer token the way apiFetch does —
+  // fetch it as a blob instead and point the <img> at an object URL.
+  useEffect(() => {
+    if (!ticket?.image_url) { setImageObjectUrl(null); return undefined }
+    let objectUrl = null
+    let cancelled = false
+    apiFetch(ticket.image_url).then(async (res) => {
+      if (cancelled || !res.ok) return
+      const blob = await res.blob()
+      objectUrl = URL.createObjectURL(blob)
+      setImageObjectUrl(objectUrl)
+    })
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [ticket?.image_url])
 
   async function handleStatusChange(status) {
     setChangingTo(status)
@@ -74,6 +96,7 @@ export function TicketDetailDialog({ open, onOpenChange, ticketId, canManage = f
   const displayCategory = ticket ? (ticket.category === 'Other' ? (ticket.custom_category || 'Other') : ticket.category) : ''
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg p-0 gap-0 overflow-hidden">
         <DialogHeader className="px-5 pt-5 pb-4 border-b border-border">
@@ -98,6 +121,21 @@ export function TicketDetailDialog({ open, onOpenChange, ticketId, canManage = f
                 </span>
               </div>
               <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{ticket.description}</p>
+              {ticket.image_url && (
+                <button
+                  type="button"
+                  onClick={() => setLightboxOpen(true)}
+                  className="block rounded-lg border border-border overflow-hidden hover:opacity-90 transition-opacity"
+                >
+                  {imageObjectUrl ? (
+                    <img src={imageObjectUrl} alt="Attached screenshot" className="max-h-48 w-auto" />
+                  ) : (
+                    <div className="h-24 w-40 flex items-center justify-center bg-muted/40">
+                      <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                    </div>
+                  )}
+                </button>
+              )}
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <User className="size-3.5" />
                 <span className="font-medium text-foreground">{ticket.reporter?.full_name || ticket.reporter?.username || 'Unknown'}</span>
@@ -165,5 +203,26 @@ export function TicketDetailDialog({ open, onOpenChange, ticketId, canManage = f
         )}
       </DialogContent>
     </Dialog>
+
+    {imageObjectUrl && (
+      <Dialog open={lightboxOpen} onOpenChange={setLightboxOpen}>
+        <DialogContent className="max-w-3xl p-2 bg-transparent border-none shadow-none [&>button]:hidden">
+          <DialogTitle className="sr-only">Attached screenshot</DialogTitle>
+          <DialogDescription className="sr-only">Full-size view of the attached screenshot</DialogDescription>
+          <div className="relative">
+            <img src={imageObjectUrl} alt="Attached screenshot, full size" className="w-full h-auto rounded-lg" />
+            <button
+              type="button"
+              onClick={() => setLightboxOpen(false)}
+              aria-label="Close"
+              className="absolute -top-3 -right-3 size-8 rounded-full bg-foreground text-background flex items-center justify-center shadow-md hover:bg-foreground/90 transition-colors"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    )}
+    </>
   )
 }

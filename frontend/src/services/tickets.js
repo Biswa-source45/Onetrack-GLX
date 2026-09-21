@@ -3,11 +3,18 @@ import { apiFetch } from './auth'
 const BASE = '/api/v1/tickets'
 
 // ── Submit feedback (any user) ──────────────────────────────────────────────
-export async function createTicket({ category, custom_category, description }) {
-  const res = await apiFetch(BASE, {
-    method: 'POST',
-    body: JSON.stringify({ category, custom_category, description }),
-  })
+// Always FormData, image or not — apiFetch already leaves a FormData body's
+// browser-generated multipart Content-Type alone (used by bulk-import too),
+// so this is the one submit path whether the image came from a manual file
+// picker or the Ctrl+I screenshot capture.
+export async function createTicket({ category, custom_category, description, image }) {
+  const body = new FormData()
+  body.set('category', category)
+  if (custom_category) body.set('custom_category', custom_category)
+  body.set('description', description)
+  if (image) body.set('image', image, image.name || 'screenshot.png')
+
+  const res = await apiFetch(BASE, { method: 'POST', body })
   const data = await res.json()
   return { ok: res.ok, status: res.status, ...data }
 }
