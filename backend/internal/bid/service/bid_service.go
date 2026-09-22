@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -785,6 +786,19 @@ func (s *bidService) ListBids(ctx context.Context, params domain.ListBidsParams)
 // pointless extra hop.
 var exemptFromEditApproval = []string{"SUPER_ADMIN", "ADMIN", "MANAGER", "BID_MANAGER"}
 
+// needsRMApproval reports whether actorID's action on bid must be held for
+// bid's Reporting Manager to decide instead of applying immediately — the
+// same condition UpdateBid has always used for Edit-Tender-form submissions,
+// extracted so Cancel and Delete can reuse it instead of a Bid Executive
+// being able to route around Edit approval with a different button.
+func needsRMApproval(bid *domain.BidWorkspace, actorID string, actorRoles []string) bool {
+	return hasAnyRole(actorRoles, "BID_EXECUTIVE") &&
+		!hasAnyRole(actorRoles, exemptFromEditApproval...) &&
+		bid.ReportingManagerID != nil &&
+		strings.TrimSpace(*bid.ReportingManagerID) != "" &&
+		*bid.ReportingManagerID != actorID
+}
+
 // UpdateBid is the gate in front of applyUpdate: a Bid Executive's
 // full-form Edit Tender submission (req.FullEditSubmission) on a tender
 // that has a Reporting Manager assigned is held for that manager's
@@ -1365,20 +1379,17 @@ func diffRequestFields(orig, final *domain.UpdateBidRequest) []domain.FieldDiff 
 	return diffs
 }
 
-// submitPendingEdit holds a Bid Executive's Edit-Tender-form submission for
-// this tender's Reporting Manager instead of applying it. Called only from
-// UpdateBid once it's confirmed the gate applies.
-func (s *bidService) submitPendingEdit(ctx context.Context, bid *domain.BidWorkspace, req *domain.UpdateBidRequest, actorID string, actorRoles []string) error {
+// submitPendingAction is the shared write path behind submitPendingEdit,
+// submitPendingCancel and submitPendingDelete: one PENDING row per bid (the
+// unique index on bid.tender_edit_approvals enforces that regardless of
+// actionType, so a tender can't have an edit and a cancellation both
+// awaiting the same Reporting Manager at once), an alert to that manager,
+// and a PendingApprovalError instead of the caller applying the action.
+func (s *bidService) submitPendingAction(ctx context.Context, bid *domain.BidWorkspace, actorID string, actionType string, payload json.RawMessage, diff []domain.FieldDiff, alertType, alertTitle, alertMessage string) error {
 	if existing, err := s.repo.GetPendingEditForBid(ctx, bid.ID); err != nil {
-		return fmt.Errorf("check pending edit: %w", err)
+		return fmt.Errorf("check pending action: %w", err)
 	} else if existing != nil {
 		return fmt.Errorf("%w — ask your Reporting Manager to decide the one already submitted", domain.ErrEditAlreadyPending)
-	}
-
-	diff := diffBidFields(bid, req)
-	if len(diff) == 0 {
-		// Nothing a Reporting Manager would need to review — apply as-is.
-		return s.applyUpdate(ctx, bid.ID, req, actorID, actorRoles)
 	}
 
 	requester, err := s.repo.GetUserSummary(ctx, actorID)
@@ -1391,34 +1402,104 @@ func (s *bidService) submitPendingEdit(ctx context.Context, bid *domain.BidWorks
 		rmName = rm.FullName
 	}
 
-	payloadJSON, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("marshal edit payload: %w", err)
-	}
-
 	edit := &domain.TenderEditApproval{
 		BidID: bid.ID, BidTitle: bid.Title, RequestedBy: requester,
 		ReportingManagerID: *bid.ReportingManagerID, Status: domain.EditApprovalPending,
-		Payload: payloadJSON, Diff: diff,
+		ActionType: actionType, Payload: payload, Diff: diff,
 	}
 	if err := s.repo.CreatePendingEdit(ctx, edit); err != nil {
-		return fmt.Errorf("create pending edit: %w", err)
+		return fmt.Errorf("create pending action: %w", err)
 	}
 
 	if s.alertSvc != nil {
 		rmID := *bid.ReportingManagerID
 		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
 			UserID: &rmID, BidID: &bid.ID, CreatedBy: &actorID,
-			Type:  "TENDER_EDIT_PENDING_APPROVAL",
-			Title: fmt.Sprintf("Edit awaiting your approval: %s", bid.Title),
-			Message: fmt.Sprintf(
-				"<p>%s submitted changes to tender '%s' that need your review before they apply.</p>%s",
-				requester.FullName, bid.Title, diffRowsHTML(diff),
-			),
+			Type: alertType, Title: alertTitle, Message: alertMessage,
 		})
 	}
 
 	return &domain.PendingApprovalError{EditID: edit.ID, ReportingManagerName: rmName}
+}
+
+// submitPendingEdit holds a Bid Executive's Edit-Tender-form submission for
+// this tender's Reporting Manager instead of applying it. Called only from
+// UpdateBid once it's confirmed the gate applies.
+func (s *bidService) submitPendingEdit(ctx context.Context, bid *domain.BidWorkspace, req *domain.UpdateBidRequest, actorID string, actorRoles []string) error {
+	diff := diffBidFields(bid, req)
+	if len(diff) == 0 {
+		// Nothing a Reporting Manager would need to review — apply as-is.
+		return s.applyUpdate(ctx, bid.ID, req, actorID, actorRoles)
+	}
+
+	payloadJSON, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal edit payload: %w", err)
+	}
+
+	requester, _ := s.repo.GetUserSummary(ctx, actorID)
+	requesterName := "A Bid Executive"
+	if requester != nil && requester.FullName != "" {
+		requesterName = requester.FullName
+	}
+
+	return s.submitPendingAction(ctx, bid, actorID, domain.ActionTypeEdit, payloadJSON, diff,
+		"TENDER_EDIT_PENDING_APPROVAL",
+		fmt.Sprintf("Edit awaiting your approval: %s", bid.Title),
+		fmt.Sprintf(
+			"<p>%s submitted changes to tender '%s' that need your review before they apply.</p>%s",
+			requesterName, bid.Title, diffRowsHTML(diff),
+		),
+	)
+}
+
+// submitPendingCancel holds a Bid Executive's tender cancellation for this
+// tender's Reporting Manager instead of applying it immediately. Called
+// from RecordOutcome and TransitionStage once the gate applies.
+func (s *bidService) submitPendingCancel(ctx context.Context, bid *domain.BidWorkspace, reason string, actorID string) error {
+	payload, err := json.Marshal(map[string]string{"outcome_reason": reason})
+	if err != nil {
+		return fmt.Errorf("marshal cancel payload: %w", err)
+	}
+	requester, _ := s.repo.GetUserSummary(ctx, actorID)
+	requesterName := "A Bid Executive"
+	if requester != nil && requester.FullName != "" {
+		requesterName = requester.FullName
+	}
+	message := fmt.Sprintf("<p>%s wants to cancel tender '%s'.</p>", requesterName, bid.Title)
+	if strings.TrimSpace(reason) != "" {
+		message += fmt.Sprintf(`<p style="margin-top:12px;color:#475569;">Reason: %s</p>`, reason)
+	}
+	return s.submitPendingAction(ctx, bid, actorID, domain.ActionTypeCancel, payload, nil,
+		"TENDER_CANCEL_PENDING_APPROVAL",
+		fmt.Sprintf("Cancellation awaiting your approval: %s", bid.Title),
+		message,
+	)
+}
+
+// submitPendingDelete holds a Bid Executive's tender deletion — soft ("move
+// to the Tender Bin", mode ARCHIVE) or a permanent purge (mode PERMANENT) —
+// for this tender's Reporting Manager instead of applying it immediately.
+// Called from ArchiveBid and PermanentDeleteBid once the gate applies.
+func (s *bidService) submitPendingDelete(ctx context.Context, bid *domain.BidWorkspace, mode string, actorID string) error {
+	payload, err := json.Marshal(map[string]string{"mode": mode})
+	if err != nil {
+		return fmt.Errorf("marshal delete payload: %w", err)
+	}
+	requester, _ := s.repo.GetUserSummary(ctx, actorID)
+	requesterName := "A Bid Executive"
+	if requester != nil && requester.FullName != "" {
+		requesterName = requester.FullName
+	}
+	verb := "delete"
+	if mode == "ARCHIVE" {
+		verb = "move to the Tender Bin"
+	}
+	return s.submitPendingAction(ctx, bid, actorID, domain.ActionTypeDelete, payload, nil,
+		"TENDER_DELETE_PENDING_APPROVAL",
+		fmt.Sprintf("Deletion awaiting your approval: %s", bid.Title),
+		fmt.Sprintf("<p>%s wants to %s tender '%s'.</p>", requesterName, verb, bid.Title),
+	)
 }
 
 // GetPendingEdit returns bidID's open edit approval (nil if none), with the
@@ -1462,6 +1543,13 @@ func (s *bidService) ApprovePendingEdit(ctx context.Context, editID string, fina
 	}
 	if err := authorizeEditDecision(edit, actorID, actorRoles); err != nil {
 		return err
+	}
+
+	switch edit.ActionType {
+	case domain.ActionTypeCancel:
+		return s.approvePendingCancel(ctx, edit, comment, actorID)
+	case domain.ActionTypeDelete:
+		return s.approvePendingDelete(ctx, edit, comment, actorID)
 	}
 
 	var origReq domain.UpdateBidRequest
@@ -1509,7 +1597,97 @@ func (s *bidService) ApprovePendingEdit(ctx context.Context, editID string, fina
 	return nil
 }
 
-// RejectPendingEdit leaves the bid untouched and tells the executive why.
+// approvePendingCancel applies a Reporting-Manager-approved cancellation —
+// records the CANCELLED outcome with the executive's original reason,
+// attributed to the requester — and notifies them.
+func (s *bidService) approvePendingCancel(ctx context.Context, edit *domain.TenderEditApproval, comment string, actorID string) error {
+	var payload struct {
+		OutcomeReason string `json:"outcome_reason"`
+	}
+	_ = json.Unmarshal(edit.Payload, &payload)
+
+	if err := s.repo.UpdateOutcome(ctx, edit.BidID, &domain.RecordOutcomeRequest{
+		BidOutcome: domain.BidStatusCancelled, OutcomeReason: &payload.OutcomeReason,
+	}); err != nil {
+		return err
+	}
+	s.logAction(ctx, edit.BidID, edit.BidTitle, "OUTCOME_RECORDED", edit.RequestedBy.ID, "Outcome recorded: CANCELLED")
+
+	if err := s.repo.DecidePendingEdit(ctx, edit.ID, domain.EditApprovalApproved, edit.Payload, nil, comment, actorID); err != nil {
+		return err
+	}
+
+	if s.alertSvc != nil {
+		approverName := approverDisplayName(s, ctx, actorID)
+		message := fmt.Sprintf("<p>%s approved cancelling tender '%s'.</p>", approverName, edit.BidTitle)
+		if strings.TrimSpace(comment) != "" {
+			message += fmt.Sprintf(`<p style="margin-top:12px;color:#475569;">Comment: %s</p>`, comment)
+		}
+		requesterID := edit.RequestedBy.ID
+		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+			UserID: &requesterID, BidID: &edit.BidID, CreatedBy: &actorID,
+			Type: "TENDER_CANCEL_APPROVED", Title: fmt.Sprintf("Cancellation approved: %s", edit.BidTitle), Message: message,
+		})
+	}
+	return nil
+}
+
+// approvePendingDelete applies a Reporting-Manager-approved deletion — soft
+// ("move to bin") or permanent — attributed to the requester. The pending
+// row is marked APPROVED before the delete runs, not after: a PERMANENT
+// delete's ON DELETE CASCADE (bid.tender_edit_approvals.bid_id references
+// bid.bid_workspaces) would otherwise remove this very row while it's still
+// PENDING, and the later DecidePendingEdit would find nothing to update.
+func (s *bidService) approvePendingDelete(ctx context.Context, edit *domain.TenderEditApproval, comment string, actorID string) error {
+	var payload struct {
+		Mode string `json:"mode"`
+	}
+	_ = json.Unmarshal(edit.Payload, &payload)
+
+	if err := s.repo.DecidePendingEdit(ctx, edit.ID, domain.EditApprovalApproved, edit.Payload, nil, comment, actorID); err != nil {
+		return err
+	}
+
+	if payload.Mode == "PERMANENT" {
+		s.logAction(ctx, edit.BidID, edit.BidTitle, "TENDER_DELETED", edit.RequestedBy.ID, "Permanently deleted")
+		if err := s.repo.PermanentDelete(ctx, edit.BidID); err != nil {
+			return err
+		}
+	} else {
+		if err := s.repo.SoftDelete(ctx, edit.BidID); err != nil {
+			return err
+		}
+		s.logAction(ctx, edit.BidID, edit.BidTitle, "TENDER_ARCHIVED", edit.RequestedBy.ID, "Moved to the Tender Bin")
+	}
+
+	if s.alertSvc != nil {
+		approverName := approverDisplayName(s, ctx, actorID)
+		message := fmt.Sprintf("<p>%s approved deleting tender '%s'.</p>", approverName, edit.BidTitle)
+		if strings.TrimSpace(comment) != "" {
+			message += fmt.Sprintf(`<p style="margin-top:12px;color:#475569;">Comment: %s</p>`, comment)
+		}
+		requesterID := edit.RequestedBy.ID
+		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+			UserID: &requesterID, BidID: &edit.BidID, CreatedBy: &actorID,
+			Type: "TENDER_DELETE_APPROVED", Title: fmt.Sprintf("Deletion approved: %s", edit.BidTitle), Message: message,
+		})
+	}
+	return nil
+}
+
+// approverDisplayName resolves actorID's full name for an approve/reject
+// alert, falling back to a generic label — the same lookup ApprovePendingEdit
+// and RejectPendingEdit each already did inline.
+func approverDisplayName(s *bidService, ctx context.Context, actorID string) string {
+	approver, _ := s.repo.GetUserSummary(ctx, actorID)
+	if approver != nil && approver.FullName != "" {
+		return approver.FullName
+	}
+	return "Your Reporting Manager"
+}
+
+// RejectPendingEdit leaves the tender untouched and tells the requester why
+// — works the same whether edit.ActionType is EDIT, CANCEL or DELETE.
 func (s *bidService) RejectPendingEdit(ctx context.Context, editID string, comment string, actorID string, actorRoles []string) error {
 	edit, err := s.repo.GetPendingEditByID(ctx, editID)
 	if err != nil {
@@ -1530,19 +1708,26 @@ func (s *bidService) RejectPendingEdit(ctx context.Context, editID string, comme
 	}
 
 	if s.alertSvc != nil {
-		approver, _ := s.repo.GetUserSummary(ctx, actorID)
-		approverName := "Your Reporting Manager"
-		if approver != nil && approver.FullName != "" {
-			approverName = approver.FullName
+		approverName := approverDisplayName(s, ctx, actorID)
+		var message, title string
+		switch edit.ActionType {
+		case domain.ActionTypeCancel:
+			message = fmt.Sprintf("<p>%s did not approve cancelling tender '%s'.</p>", approverName, edit.BidTitle)
+			title = fmt.Sprintf("Cancellation not approved: %s", edit.BidTitle)
+		case domain.ActionTypeDelete:
+			message = fmt.Sprintf("<p>%s did not approve deleting tender '%s'.</p>", approverName, edit.BidTitle)
+			title = fmt.Sprintf("Deletion not approved: %s", edit.BidTitle)
+		default:
+			message = fmt.Sprintf("<p>%s did not approve your changes to tender '%s'.</p>%s", approverName, edit.BidTitle, diffRowsHTML(edit.Diff))
+			title = fmt.Sprintf("Edit not approved: %s", edit.BidTitle)
 		}
-		message := fmt.Sprintf("<p>%s did not approve your changes to tender '%s'.</p>%s", approverName, edit.BidTitle, diffRowsHTML(edit.Diff))
 		if strings.TrimSpace(comment) != "" {
 			message += fmt.Sprintf(`<p style="margin-top:12px;color:#475569;">Reason: %s</p>`, comment)
 		}
 		requesterID := edit.RequestedBy.ID
 		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
 			UserID: &requesterID, BidID: &edit.BidID, CreatedBy: &actorID,
-			Type: "TENDER_EDIT_REJECTED", Title: fmt.Sprintf("Edit not approved: %s", edit.BidTitle), Message: message,
+			Type: "TENDER_EDIT_REJECTED", Title: title, Message: message,
 		})
 	}
 	return nil
@@ -1581,7 +1766,7 @@ func (s *bidService) checkStageAccess(ctx context.Context, actorID, stage string
 	return nil
 }
 
-func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain.TransitionStageRequest, actorID string) (*domain.TransitionResult, error) {
+func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain.TransitionStageRequest, actorID string, actorRoles []string) (*domain.TransitionResult, error) {
 	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -1604,6 +1789,17 @@ func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain
 	if !IsTransitionAllowed(bid.CreationMode, bid.WorkflowStage, req.TargetStage) {
 		return nil, fmt.Errorf("transition from %s to %s is not allowed for %s mode",
 			bid.WorkflowStage, req.TargetStage, bid.CreationMode)
+	}
+
+	// Held for Reporting Manager approval only once the transition is
+	// otherwise confirmed valid — no point asking them to decide a
+	// cancellation that couldn't have applied anyway.
+	if req.TargetStage == domain.StageCancelled && needsRMApproval(bid, actorID, actorRoles) {
+		reason := ""
+		if req.Reason != nil {
+			reason = *req.Reason
+		}
+		return nil, s.submitPendingCancel(ctx, bid, reason, actorID)
 	}
 
 	// Determine bid_status update
@@ -1648,6 +1844,7 @@ func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain
 
 	_ = s.repo.AddStageHistory(ctx, &domain.BidStageHistory{
 		BidID:            id,
+		BidTitle:         bid.Title,
 		FromStage:        &prevStage,
 		ToStage:          req.TargetStage,
 		TransitionReason: req.Reason,
@@ -1688,7 +1885,8 @@ func (s *bidService) GetStageHistory(ctx context.Context, id string, q domain.Au
 // OEM/checklist edit, EMD confirmation, etc.) to the shared stage-history
 // table so every user sees it — not just the browser that performed it.
 func (s *bidService) AddMicroEvent(ctx context.Context, bidID string, req *domain.AddMicroEventRequest, actorID string) (*domain.StageHistoryResponse, error) {
-	if _, err := s.repo.GetByID(ctx, bidID); err != nil {
+	bid, err := s.repo.GetByID(ctx, bidID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -1699,6 +1897,7 @@ func (s *bidService) AddMicroEvent(ctx context.Context, bidID string, req *domai
 	eventType := req.EventType
 	h := &domain.BidStageHistory{
 		BidID:            bidID,
+		BidTitle:         bid.Title,
 		FromStage:        req.FromStage,
 		ToStage:          toStage,
 		TransitionReason: req.TransitionReason,
@@ -1799,13 +1998,23 @@ func (s *bidService) RemoveMember(ctx context.Context, bidID string, userID stri
 	return nil
 }
 
-func (s *bidService) RecordOutcome(ctx context.Context, id string, req *domain.RecordOutcomeRequest, actorID string) error {
+func (s *bidService) RecordOutcome(ctx context.Context, id string, req *domain.RecordOutcomeRequest, actorID string, actorRoles []string) error {
 	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
 	if err := s.checkStageAccess(ctx, actorID, bid.WorkflowStage); err != nil {
 		return err
+	}
+	// Cancelling is Edit's equal in severity — hold it for the same
+	// Reporting Manager gate instead of letting a Bid Executive route around
+	// Edit approval just by using a different button.
+	if req.BidOutcome == domain.BidStatusCancelled && needsRMApproval(bid, actorID, actorRoles) {
+		reason := ""
+		if req.OutcomeReason != nil {
+			reason = *req.OutcomeReason
+		}
+		return s.submitPendingCancel(ctx, bid, reason, actorID)
 	}
 	if err := s.repo.UpdateOutcome(ctx, id, req); err != nil {
 		return err
@@ -1814,10 +2023,13 @@ func (s *bidService) RecordOutcome(ctx context.Context, id string, req *domain.R
 	return nil
 }
 
-func (s *bidService) ArchiveBid(ctx context.Context, id string, actorID string) error {
+func (s *bidService) ArchiveBid(ctx context.Context, id string, actorID string, actorRoles []string) error {
 	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
+	}
+	if needsRMApproval(bid, actorID, actorRoles) {
+		return s.submitPendingDelete(ctx, bid, "ARCHIVE", actorID)
 	}
 	if err := s.repo.SoftDelete(ctx, id); err != nil {
 		return err
@@ -1850,10 +2062,13 @@ func (s *bidService) RestoreBid(ctx context.Context, id string, actorID string) 
 	return nil
 }
 
-func (s *bidService) PermanentDeleteBid(ctx context.Context, id string, actorID string) error {
+func (s *bidService) PermanentDeleteBid(ctx context.Context, id string, actorID string, actorRoles []string) error {
 	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
+	}
+	if needsRMApproval(bid, actorID, actorRoles) {
+		return s.submitPendingDelete(ctx, bid, "PERMANENT", actorID)
 	}
 	// Logged before the delete, not after: bid_stage_history.bid_id now sets
 	// itself to NULL (not cascade-deletes) when the tender it references is
@@ -1928,6 +2143,7 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, repor
 		CreationMode:              bid.CreationMode,
 		WorkflowStage:             bid.WorkflowStage,
 		BidStatus:                 bid.BidStatus,
+		DerivedStatus:             bid.DerivedStatus,
 		EstimatedValue:            bid.EstimatedValue,
 		EMDAmount:                 bid.EMDAmount,
 		EMDType:                   bid.EMDType,
@@ -2069,6 +2285,7 @@ func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary, accou
 		CreationMode:              bid.CreationMode,
 		WorkflowStage:             bid.WorkflowStage,
 		BidStatus:                 bid.BidStatus,
+		DerivedStatus:             bid.DerivedStatus,
 		BidOutcome:                bid.BidOutcome,
 		EstimatedValue:            bid.EstimatedValue,
 		EMDAmount:                 bid.EMDAmount,
@@ -2330,4 +2547,117 @@ func (s *bidService) SetStageRestrictions(ctx context.Context, userID string, st
 		})
 	}
 	return nil
+}
+
+// pricingWorkspaceJSON/pricingQuoteJSON/pricingItemJSON mirror the shape
+// frontend/src/components/tenders/StageWorkspaces.jsx (PRICING_DEFAULTS,
+// handleAddQuote/handleSaveMargins) actually saves into bid_workspaces.
+// pricing_workspace — read-only here, only for the suggestion scan below.
+type pricingWorkspaceJSON struct {
+	ApprovalStatus string             `json:"approvalStatus"`
+	MarginPct      float64            `json:"marginPct"`
+	Quotes         []pricingQuoteJSON `json:"quotes"`
+}
+type pricingQuoteJSON struct {
+	Items []pricingItemJSON `json:"items"`
+}
+type pricingItemJSON struct {
+	Desc       string   `json:"desc"`
+	Qty        float64  `json:"qty"`
+	BasicPrice float64  `json:"basicPrice"`
+	MarginPct  *float64 `json:"marginPct"`
+}
+
+// pickL1PricingQuote mirrors computeL1PricingSummary's L1 selection
+// (StageWorkspaces.jsx:2236-2242): the quote with the lowest
+// Σ basicPrice*qty wins.
+func pickL1PricingQuote(quotes []pricingQuoteJSON) *pricingQuoteJSON {
+	var best *pricingQuoteJSON
+	bestTotal := math.MaxFloat64
+	for i := range quotes {
+		q := &quotes[i]
+		total := 0.0
+		for _, it := range q.Items {
+			qty := it.Qty
+			if qty == 0 {
+				qty = 1
+			}
+			total += it.BasicPrice * qty
+		}
+		if best == nil || total < bestTotal {
+			best, bestTotal = q, total
+		}
+	}
+	return best
+}
+
+// GetPricingSuggestion returns the "suggested price/margin" hint for
+// productDesc: a sliding-window average over its past APPROVED deals across
+// every tender, matched case/whitespace-insensitively. This is a read-only
+// reference for whoever is entering pricing — it is never included in the
+// approval alert/email (that's built and sent entirely on the frontend from
+// buildPricingTableHtml, which this method has no connection to).
+func (s *bidService) GetPricingSuggestion(ctx context.Context, productDesc string) (*domain.PricingSuggestion, error) {
+	needle := strings.TrimSpace(strings.ToLower(productDesc))
+	window, err := s.repo.GetPricingSuggestionWindow(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if needle == "" {
+		return &domain.PricingSuggestion{Window: window}, nil
+	}
+
+	candidates, err := s.repo.GetPricingWorkspaceCandidates(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var deals []domain.PricingDeal
+	for _, c := range candidates {
+		var pw pricingWorkspaceJSON
+		if err := json.Unmarshal(c.PricingWorkspace, &pw); err != nil {
+			continue // not this tender's fault — skip a malformed/legacy blob rather than fail the whole suggestion
+		}
+		if pw.ApprovalStatus != "APPROVED" {
+			continue // only finalized deals count — including the tender currently being priced, which can't be APPROVED yet
+		}
+		l1 := pickL1PricingQuote(pw.Quotes)
+		if l1 == nil {
+			continue
+		}
+		for _, it := range l1.Items {
+			if strings.TrimSpace(strings.ToLower(it.Desc)) != needle {
+				continue
+			}
+			marginPct := pw.MarginPct
+			if it.MarginPct != nil {
+				marginPct = *it.MarginPct
+			}
+			deals = append(deals, domain.PricingDeal{
+				BidID: c.BidID, BidTitle: c.BidTitle, Date: c.CreatedAt,
+				UnitPriceExclGst: it.BasicPrice * (1 + marginPct/100),
+				MarginPct:        marginPct,
+			})
+			break // one data point per bid — a quote shouldn't list the same product twice
+		}
+	}
+
+	sort.Slice(deals, func(i, j int) bool { return deals[i].Date.After(deals[j].Date) })
+	if len(deals) > window {
+		deals = deals[:window]
+	}
+
+	result := &domain.PricingSuggestion{Count: len(deals), Window: window, Deals: deals}
+	if len(deals) == 0 {
+		return result, nil
+	}
+	var sumPrice, sumMargin float64
+	for _, d := range deals {
+		sumPrice += d.UnitPriceExclGst
+		sumMargin += d.MarginPct
+	}
+	result.AvgUnitPriceExclGst = sumPrice / float64(len(deals))
+	result.AvgMarginPct = sumMargin / float64(len(deals))
+	result.LastMarginPct = deals[0].MarginPct // deals[0] is the most recent — sorted above
+	return result, nil
 }

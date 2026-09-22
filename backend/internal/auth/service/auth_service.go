@@ -12,13 +12,14 @@ import (
 
 	"github.com/onetrack/backend/internal/auth/domain"
 	"github.com/onetrack/backend/internal/platform/email"
+	systemlogDomain "github.com/onetrack/backend/internal/systemlog/domain"
 )
 
 var (
 	ErrInvalidCredentials     = errors.New("invalid username or password")
 	ErrAccountInactive        = errors.New("account is inactive")
 	ErrPasswordChangeRequired = errors.New("password change required")
-	ErrInvalidCurrentPassword  = errors.New("current password is incorrect")
+	ErrInvalidCurrentPassword = errors.New("current password is incorrect")
 	ErrTokenBlacklisted       = errors.New("token has been invalidated")
 	ErrUserNotFound           = errors.New("user not found")
 	ErrOTPInvalid             = errors.New("invalid or expired OTP code")
@@ -28,28 +29,43 @@ type authService struct {
 	repo         domain.AuthRepository
 	jwtService   domain.JWTService
 	emailService *email.EmailService
+	systemLog    systemlogDomain.Recorder
 }
 
-func NewAuthService(repo domain.AuthRepository, jwtService domain.JWTService, emailService *email.EmailService) domain.AuthService {
+func NewAuthService(repo domain.AuthRepository, jwtService domain.JWTService, emailService *email.EmailService, systemLog systemlogDomain.Recorder) domain.AuthService {
 	return &authService{
 		repo:         repo,
 		jwtService:   jwtService,
 		emailService: emailService,
+		systemLog:    systemLog,
 	}
+}
+
+// logEvent nil-checks systemLog once here rather than at every call site.
+func (s *authService) logEvent(ctx context.Context, eventType, actorID string, targetUserID *string, summary string) {
+	if s.systemLog == nil {
+		return
+	}
+	s.systemLog.Record(ctx, systemlogDomain.CategorySecurity, eventType, actorID, targetUserID, summary, nil)
 }
 
 func (s *authService) Login(ctx context.Context, req domain.LoginRequest) (*domain.LoginResponse, error) {
 	req.Username = strings.ToLower(strings.TrimSpace(req.Username))
 	user, err := s.repo.GetUserByUsername(ctx, req.Username)
 	if err != nil {
+		// No such user — actorID "" so the log entry still records the
+		// attempted username without a real user to attribute it to.
+		s.logEvent(ctx, "LOGIN_FAILED", "", nil, fmt.Sprintf("Failed login attempt for unknown username '%s'", req.Username))
 		return nil, ErrInvalidCredentials
 	}
 
 	if !user.IsActive {
+		s.logEvent(ctx, "LOGIN_FAILED", user.ID, nil, fmt.Sprintf("Login attempt for inactive account '%s'", req.Username))
 		return nil, ErrAccountInactive
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		s.logEvent(ctx, "LOGIN_FAILED", user.ID, nil, fmt.Sprintf("Failed login attempt for '%s' (wrong password)", req.Username))
 		return nil, ErrInvalidCredentials
 	}
 
@@ -85,6 +101,7 @@ func (s *authService) Login(ctx context.Context, req domain.LoginRequest) (*doma
 
 	// Update last login
 	_ = s.repo.UpdateLastLogin(ctx, user.ID)
+	s.logEvent(ctx, "LOGIN_SUCCESS", user.ID, nil, fmt.Sprintf("'%s' logged in", user.Username))
 
 	emailStr := ""
 	if user.Email != nil {
@@ -112,7 +129,7 @@ func (s *authService) Login(ctx context.Context, req domain.LoginRequest) (*doma
 	}, nil
 }
 
-func (s *authService) Logout(ctx context.Context, accessToken string, refreshToken string) error {
+func (s *authService) Logout(ctx context.Context, userID string, accessToken string, refreshToken string) error {
 	// Blacklist both tokens
 	// Access token: blacklist for remaining lifetime (15 min max)
 	if err := s.jwtService.BlacklistToken(ctx, accessToken, 900); err != nil {
@@ -124,6 +141,9 @@ func (s *authService) Logout(ctx context.Context, accessToken string, refreshTok
 		return fmt.Errorf("failed to blacklist refresh token: %w", err)
 	}
 
+	if userID != "" {
+		s.logEvent(ctx, "LOGOUT", userID, nil, "Logged out")
+	}
 	return nil
 }
 
@@ -216,11 +236,15 @@ func (s *authService) ChangePassword(ctx context.Context, userID string, req dom
 	}
 
 	// Update password (also clears force_password_change)
-	return s.repo.UpdatePassword(ctx, userID, string(hashedPassword))
+	if err := s.repo.UpdatePassword(ctx, userID, string(hashedPassword)); err != nil {
+		return err
+	}
+	s.logEvent(ctx, "PASSWORD_CHANGED", userID, nil, fmt.Sprintf("'%s' changed their password", user.Username))
+	return nil
 }
 
-func (s *authService) ForceResetPassword(ctx context.Context, req domain.ForceResetRequest) error {
-	_, err := s.repo.GetUserByID(ctx, req.UserID)
+func (s *authService) ForceResetPassword(ctx context.Context, actorID string, req domain.ForceResetRequest) error {
+	target, err := s.repo.GetUserByID(ctx, req.UserID)
 	if err != nil {
 		return ErrUserNotFound
 	}
@@ -237,7 +261,11 @@ func (s *authService) ForceResetPassword(ctx context.Context, req domain.ForceRe
 	}
 
 	// Set force password change flag
-	return s.repo.SetForcePasswordChange(ctx, req.UserID, true)
+	if err := s.repo.SetForcePasswordChange(ctx, req.UserID, true); err != nil {
+		return err
+	}
+	s.logEvent(ctx, "PASSWORD_RESET_FORCED", actorID, &req.UserID, fmt.Sprintf("Reset password for '%s'", target.Username))
+	return nil
 }
 
 func (s *authService) ForgotPassword(ctx context.Context, emailStr string) error {
@@ -304,5 +332,6 @@ func (s *authService) ResetPasswordWithOTP(ctx context.Context, emailStr, otp, n
 	}
 
 	_ = s.repo.DeleteOTP(ctx, emailStr)
+	s.logEvent(ctx, "PASSWORD_RESET_OTP", user.ID, nil, fmt.Sprintf("'%s' reset their password via OTP", user.Username))
 	return nil
 }

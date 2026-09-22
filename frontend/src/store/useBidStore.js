@@ -252,7 +252,7 @@ export const useBidStore = create((set, get) => ({
   },
 
   // Dynamic system configurations (e.g. stage2_require_am_presales)
-  systemConfigs: { stage2_require_am_presales: true },
+  systemConfigs: { stage2_require_am_presales: true, pricing_suggestion_window: 5 },
   systemConfigsLoaded: false,
 
   loadSystemConfigs: async (force = false) => {

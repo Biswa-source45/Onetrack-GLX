@@ -26,6 +26,7 @@ import { transitionBidStage, recordBidOutcome, updateBid, getBidStageHistory, to
 import { usePermissions } from '../../hooks/usePermissions'
 import { tokenStorage } from '../../services/auth'
 import { ChecklistTab } from './ChecklistTab'
+import { PricingSuggestionHint } from './PricingSuggestionHint'
 import { logStageMicroEvent } from '../../services/auditLogger'
 import { useBidStore } from '../../store/useBidStore'
 import { buildAlertNoteHtml } from '../../lib/tenderFormat'
@@ -3104,7 +3105,10 @@ export function Stage4Workspace({ bid, onRefresh }) {
                     <td className="border border-border p-2 text-center font-semibold">{row.qty}</td>
                     <td className="border border-border p-2 text-right font-mono text-muted-foreground">{fmtMoneyFull(row.basicPrice)}</td>
                     <td className="border border-border p-2 text-center font-semibold text-indigo-600 dark:text-indigo-400">{row.itemMargin}%</td>
-                    <td className="border border-border p-2 text-right font-mono text-foreground">{fmtMoneyFull(row.unitPriceExclGst)}</td>
+                    <td className="border border-border p-2 text-right font-mono text-foreground">
+                      {fmtMoneyFull(row.unitPriceExclGst)}
+                      <div className="text-right"><PricingSuggestionHint desc={row.desc} /></div>
+                    </td>
                     <td className="border border-border p-2 text-right font-mono text-muted-foreground">
                       {fmtMoneyFull(row.unitGst)} <span className="text-[9px] text-muted-foreground/70">({row.itemGstRate}%)</span>
                     </td>
@@ -3294,17 +3298,22 @@ export function Stage4Workspace({ bid, onRefresh }) {
             <p className="text-xs text-muted-foreground">Set a margin per product. Leave blank to use the fallback margin (2.45%) in the calculation.</p>
             <div className="space-y-2">
               {l1Quote.items.map((it, idx) => (
-                <div key={idx} className="grid grid-cols-5 gap-2 items-center p-2 rounded-md border border-border/60">
-                  <div className="col-span-2 text-xs font-medium text-foreground truncate">{it.desc}</div>
-                  <div className="text-xs text-muted-foreground">Qty {it.qty}</div>
-                  <div className="text-xs text-muted-foreground">₹{it.basicPrice}</div>
-                  <Input
-                    type="number" step="any"
-                    value={marginEdits[idx] ?? ''}
-                    onChange={e => setMarginEdits(prev => ({ ...prev, [idx]: e.target.value }))}
-                    placeholder="Margin %"
-                    className="h-8 text-xs"
-                  />
+                <div key={idx} className="p-2 rounded-md border border-border/60 space-y-1.5">
+                  <div className="grid grid-cols-5 gap-2 items-center">
+                    <div className="col-span-2 text-xs font-medium text-foreground truncate">{it.desc}</div>
+                    <div className="text-xs text-muted-foreground">Qty {it.qty}</div>
+                    <div className="text-xs text-muted-foreground">₹{it.basicPrice}</div>
+                    <Input
+                      type="number" step="any"
+                      value={marginEdits[idx] ?? ''}
+                      onChange={e => setMarginEdits(prev => ({ ...prev, [idx]: e.target.value }))}
+                      placeholder="Margin %"
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                  <div className="pl-0.5">
+                    <PricingSuggestionHint desc={it.desc} />
+                  </div>
                 </div>
               ))}
             </div>

@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { listBids, listAllBids } from '../../services/bids'
 import { ImportedPill } from './ImportedPill'
+import { InProgressPill } from './InProgressPill'
 import { usePermissions } from '../../hooks/usePermissions'
 import {
   formatCurrency, formatEmdExemption, formatDate,
@@ -402,6 +403,7 @@ export function MasterSheetPage() {
                     {c.key === 'title' ? (
                       <div className="flex items-center gap-1.5">
                         {bid.is_imported && <ImportedPill compact />}
+                        {bid.derived_status === 'ACTIVE' && <InProgressPill compact />}
                         <span className="truncate hover:underline">{c.render(bid)}</span>
                       </div>
                     ) : (

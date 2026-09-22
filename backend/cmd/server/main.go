@@ -76,8 +76,16 @@ func main() {
 
 	// Initialize services
 	jwtSvc := authService.NewJWTService(cfg.JWT, rdb)
+
+	// Initialize System Logs module first — auth, user, and bid all record
+	// into it (login/logout/password events, user creation/role/permission
+	// changes, stage-access toggles), so its Recorder needs to exist before
+	// any of them are wired up.
+	systemlogRepository := systemlogRepo.NewPostgresRepository(dbPool)
+	systemlogSvc := systemlogService.NewService(systemlogRepository)
+
 	authRepository := authRepo.NewPostgresAuthRepository(dbPool)
-	authSvc := authService.NewAuthService(authRepository, jwtSvc, emailSvc)
+	authSvc := authService.NewAuthService(authRepository, jwtSvc, emailSvc, systemlogSvc)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(jwtSvc)
@@ -102,11 +110,6 @@ func main() {
 	authHdlr := authHandler.NewAuthHandler(authSvc)
 	authHandler.RegisterAuthRoutes(v1, authHdlr, authMiddleware)
 
-	// Initialize System Logs module first — the user and bid modules both
-	// record into it (user creation/role/permission changes, stage-access
-	// toggles), so its Recorder needs to exist before either is wired up.
-	systemlogRepository := systemlogRepo.NewPostgresRepository(dbPool)
-	systemlogSvc := systemlogService.NewService(systemlogRepository)
 	systemlogHdlr := systemlogHandler.NewHandler(systemlogSvc)
 	systemlogHandler.RegisterRoutes(v1, systemlogHdlr, authMiddleware)
 

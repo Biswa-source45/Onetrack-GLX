@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"testing"
+	"time"
 
 	alertDomain "github.com/onetrack/backend/internal/alert/domain"
 	"github.com/onetrack/backend/internal/bid/domain"
@@ -31,6 +34,13 @@ type fakeBidRepo struct {
 
 	pendingEdits  map[string]*domain.TenderEditApproval // editID -> edit
 	nextPendingID int
+
+	lastOutcome      *domain.RecordOutcomeRequest
+	softDeleted      bool
+	permanentDeleted bool
+
+	pricingCandidates []domain.PricingWorkspaceRow
+	pricingWindow     int
 }
 
 type memberCall struct {
@@ -58,11 +68,18 @@ func (f *fakeBidRepo) UpdateStage(ctx context.Context, id string, stage string, 
 	return nil
 }
 func (f *fakeBidRepo) UpdateOutcome(ctx context.Context, id string, req *domain.RecordOutcomeRequest) error {
+	f.lastOutcome = req
 	return nil
 }
-func (f *fakeBidRepo) SoftDelete(ctx context.Context, id string) error      { return nil }
-func (f *fakeBidRepo) Restore(ctx context.Context, id string) error         { return nil }
-func (f *fakeBidRepo) PermanentDelete(ctx context.Context, id string) error { return nil }
+func (f *fakeBidRepo) SoftDelete(ctx context.Context, id string) error {
+	f.softDeleted = true
+	return nil
+}
+func (f *fakeBidRepo) Restore(ctx context.Context, id string) error { return nil }
+func (f *fakeBidRepo) PermanentDelete(ctx context.Context, id string) error {
+	f.permanentDeleted = true
+	return nil
+}
 func (f *fakeBidRepo) CleanupExpired(ctx context.Context) error             { return nil }
 func (f *fakeBidRepo) AddMember(ctx context.Context, bidID, userID, role, addedBy string) error {
 	f.addedMembers = append(f.addedMembers, memberCall{userID: userID, role: role})
@@ -161,6 +178,15 @@ func (f *fakeBidRepo) GetPendingEditForBid(ctx context.Context, bidID string) (*
 		}
 	}
 	return nil, nil
+}
+func (f *fakeBidRepo) GetPricingWorkspaceCandidates(ctx context.Context) ([]domain.PricingWorkspaceRow, error) {
+	return f.pricingCandidates, nil
+}
+func (f *fakeBidRepo) GetPricingSuggestionWindow(ctx context.Context) (int, error) {
+	if f.pricingWindow > 0 {
+		return f.pricingWindow, nil
+	}
+	return 5, nil
 }
 func (f *fakeBidRepo) DecidePendingEdit(ctx context.Context, editID string, status string, decidedPayload []byte, decisionDiff []domain.FieldDiff, comment string, decidedBy string) error {
 	e := f.pendingEdits[editID]
@@ -774,7 +800,7 @@ func TestArchiveRestoreDeleteBid_LogActions(t *testing.T) {
 	t.Run("ArchiveBid logs TENDER_ARCHIVED", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newLedgerTestBid()}
 		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
-		if err := svc.ArchiveBid(context.Background(), "bid-1", "actor-1"); err != nil {
+		if err := svc.ArchiveBid(context.Background(), "bid-1", "actor-1", nil); err != nil {
 			t.Fatalf("ArchiveBid: %v", err)
 		}
 		if lastEventType(repo) != "TENDER_ARCHIVED" {
@@ -796,7 +822,7 @@ func TestArchiveRestoreDeleteBid_LogActions(t *testing.T) {
 	t.Run("PermanentDeleteBid logs TENDER_DELETED before deleting", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newLedgerTestBid()}
 		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
-		if err := svc.PermanentDeleteBid(context.Background(), "bid-1", "actor-1"); err != nil {
+		if err := svc.PermanentDeleteBid(context.Background(), "bid-1", "actor-1", nil); err != nil {
 			t.Fatalf("PermanentDeleteBid: %v", err)
 		}
 		if lastEventType(repo) != "TENDER_DELETED" {
@@ -815,7 +841,7 @@ func TestRecordOutcome_LogsAction(t *testing.T) {
 	svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
 	req := &domain.RecordOutcomeRequest{BidOutcome: "WON"}
-	if err := svc.RecordOutcome(context.Background(), "bid-1", req, "actor-1"); err != nil {
+	if err := svc.RecordOutcome(context.Background(), "bid-1", req, "actor-1", nil); err != nil {
 		t.Fatalf("RecordOutcome: %v", err)
 	}
 	if lastEventType(repo) != "OUTCOME_RECORDED" {
@@ -890,7 +916,7 @@ func TestStageAccessControl(t *testing.T) {
 		}}
 		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
-		_, err := svc.TransitionStage(context.Background(), "bid-1", &domain.TransitionStageRequest{TargetStage: domain.StageFinancialEvaluation}, "exec-1")
+		_, err := svc.TransitionStage(context.Background(), "bid-1", &domain.TransitionStageRequest{TargetStage: domain.StageFinancialEvaluation}, "exec-1", nil)
 		if !errors.Is(err, domain.ErrForbidden) {
 			t.Fatalf("expected ErrForbidden, got: %v", err)
 		}
@@ -904,7 +930,7 @@ func TestStageAccessControl(t *testing.T) {
 		}}
 		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
-		_, err := svc.TransitionStage(context.Background(), "bid-1", &domain.TransitionStageRequest{TargetStage: domain.StageTechnicalEvaluation}, "exec-1")
+		_, err := svc.TransitionStage(context.Background(), "bid-1", &domain.TransitionStageRequest{TargetStage: domain.StageTechnicalEvaluation}, "exec-1", nil)
 		if !errors.Is(err, domain.ErrForbidden) {
 			t.Fatalf("expected ErrForbidden, got: %v", err)
 		}
@@ -916,7 +942,7 @@ func TestStageAccessControl(t *testing.T) {
 		}}
 		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
-		err := svc.RecordOutcome(context.Background(), "bid-1", &domain.RecordOutcomeRequest{BidOutcome: "WON"}, "exec-1")
+		err := svc.RecordOutcome(context.Background(), "bid-1", &domain.RecordOutcomeRequest{BidOutcome: "WON"}, "exec-1", nil)
 		if !errors.Is(err, domain.ErrForbidden) {
 			t.Fatalf("expected ErrForbidden, got: %v", err)
 		}
@@ -1171,6 +1197,208 @@ func TestUpdateBid_EditApproval(t *testing.T) {
 		err := svc.ApprovePendingEdit(context.Background(), pae.EditID, &domain.UpdateBidRequest{EstimatedValue: floatPtr(150000)}, "", "some-other-user", []string{"BID_EXECUTIVE"})
 		if !errors.Is(err, domain.ErrForbidden) {
 			t.Fatalf("expected ErrForbidden, got: %v", err)
+		}
+	})
+}
+
+// TestCancelDeleteApproval covers extending the same Reporting-Manager gate
+// used by Edit to Cancel (RecordOutcome, TransitionStage) and Delete
+// (ArchiveBid, PermanentDeleteBid): a Bid Executive's action is held instead
+// of applied, and approving it actually performs the cancel/delete.
+func TestCancelDeleteApproval(t *testing.T) {
+	rmID := "rm-user-1"
+	execID := "exec-user-1"
+
+	newBid := func() *domain.BidWorkspace {
+		return &domain.BidWorkspace{
+			ID: "bid-1", Title: "Test Tender",
+			WorkflowStage: domain.StageDiscovered, CreationMode: domain.CreationModeManual,
+			BidOwnerID: execID, ReportingManagerID: strPtr(rmID),
+		}
+	}
+
+	t.Run("RecordOutcome CANCELLED is held for approval, not applied", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid()}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		req := &domain.RecordOutcomeRequest{BidOutcome: "CANCELLED", OutcomeReason: strPtr("client withdrew")}
+		err := svc.RecordOutcome(context.Background(), "bid-1", req, execID, []string{"BID_EXECUTIVE"})
+
+		var pae *domain.PendingApprovalError
+		if !errors.As(err, &pae) {
+			t.Fatalf("expected a PendingApprovalError, got: %v", err)
+		}
+		if repo.lastOutcome != nil {
+			t.Fatalf("expected the cancellation NOT to reach repo.UpdateOutcome while pending, got: %+v", repo.lastOutcome)
+		}
+
+		if err := svc.ApprovePendingEdit(context.Background(), pae.EditID, &domain.UpdateBidRequest{}, "", rmID, []string{"MANAGER"}); err != nil {
+			t.Fatalf("ApprovePendingEdit: %v", err)
+		}
+		if repo.lastOutcome == nil || repo.lastOutcome.BidOutcome != "CANCELLED" || repo.lastOutcome.OutcomeReason == nil || *repo.lastOutcome.OutcomeReason != "client withdrew" {
+			t.Fatalf("expected the approved cancellation to reach repo.UpdateOutcome, got: %+v", repo.lastOutcome)
+		}
+	})
+
+	t.Run("ArchiveBid is held for approval, not applied", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid()}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		err := svc.ArchiveBid(context.Background(), "bid-1", execID, []string{"BID_EXECUTIVE"})
+		var pae *domain.PendingApprovalError
+		if !errors.As(err, &pae) {
+			t.Fatalf("expected a PendingApprovalError, got: %v", err)
+		}
+		if repo.softDeleted {
+			t.Fatalf("expected SoftDelete NOT to run while pending")
+		}
+
+		if err := svc.ApprovePendingEdit(context.Background(), pae.EditID, &domain.UpdateBidRequest{}, "", rmID, []string{"MANAGER"}); err != nil {
+			t.Fatalf("ApprovePendingEdit: %v", err)
+		}
+		if !repo.softDeleted {
+			t.Fatalf("expected the approved archive to reach repo.SoftDelete")
+		}
+	})
+
+	t.Run("PermanentDeleteBid is held for approval, and rejecting it leaves the tender untouched", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid()}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		err := svc.PermanentDeleteBid(context.Background(), "bid-1", execID, []string{"BID_EXECUTIVE"})
+		var pae *domain.PendingApprovalError
+		if !errors.As(err, &pae) {
+			t.Fatalf("expected a PendingApprovalError, got: %v", err)
+		}
+
+		if err := svc.RejectPendingEdit(context.Background(), pae.EditID, "keep it for now", rmID, []string{"MANAGER"}); err != nil {
+			t.Fatalf("RejectPendingEdit: %v", err)
+		}
+		if repo.permanentDeleted {
+			t.Fatalf("expected PermanentDelete NOT to run on rejection")
+		}
+		edit := repo.pendingEdits[pae.EditID]
+		if edit.Status != domain.EditApprovalRejected {
+			t.Fatalf("expected edit status REJECTED, got %s", edit.Status)
+		}
+	})
+
+	t.Run("exempt roles bypass the gate for Cancel and Delete", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid()}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		if err := svc.ArchiveBid(context.Background(), "bid-1", "admin-1", []string{"SUPER_ADMIN"}); err != nil {
+			t.Fatalf("ArchiveBid: %v", err)
+		}
+		if !repo.softDeleted {
+			t.Fatalf("expected an exempt role's archive to apply immediately")
+		}
+	})
+}
+
+// TestGetPricingSuggestion covers the Pricing Request "suggested
+// price/margin" hint: only APPROVED deals count, matching is case/
+// whitespace-insensitive, the window truncates to the most recent N, and a
+// never-priced product returns Count 0 (not an error).
+func TestGetPricingSuggestion(t *testing.T) {
+	marshalPW := func(t *testing.T, pw pricingWorkspaceJSON) []byte {
+		t.Helper()
+		b, err := json.Marshal(pw)
+		if err != nil {
+			t.Fatalf("marshal fixture: %v", err)
+		}
+		return b
+	}
+	floatp := func(f float64) *float64 { return &f }
+
+	t.Run("never priced before — Count 0, not an error", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: &domain.BidWorkspace{ID: "bid-1"}, pricingCandidates: []domain.PricingWorkspaceRow{
+			{BidID: "b1", BidTitle: "Other Tender", CreatedAt: time.Now(), PricingWorkspace: marshalPW(t, pricingWorkspaceJSON{
+				ApprovalStatus: "APPROVED",
+				Quotes:         []pricingQuoteJSON{{Items: []pricingItemJSON{{Desc: "Something Else", Qty: 1, BasicPrice: 100}}}},
+			})},
+		}}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		got, err := svc.GetPricingSuggestion(context.Background(), "AutoCAD LT for 3 Year Subscription")
+		if err != nil {
+			t.Fatalf("GetPricingSuggestion: %v", err)
+		}
+		if got.Count != 0 {
+			t.Fatalf("expected Count 0, got %+v", got)
+		}
+	})
+
+	t.Run("only APPROVED deals count, matching is case/whitespace-insensitive", func(t *testing.T) {
+		now := time.Now()
+		repo := &fakeBidRepo{bid: &domain.BidWorkspace{ID: "bid-1"}, pricingCandidates: []domain.PricingWorkspaceRow{
+			// Approved — margin from the item override.
+			{BidID: "b1", BidTitle: "Tender A", CreatedAt: now.Add(-24 * time.Hour), PricingWorkspace: marshalPW(t, pricingWorkspaceJSON{
+				ApprovalStatus: "APPROVED", MarginPct: 2.45,
+				Quotes: []pricingQuoteJSON{{Items: []pricingItemJSON{{Desc: "  autocad lt  ", Qty: 1, BasicPrice: 1000, MarginPct: floatp(4)}}}},
+			})},
+			// Approved — no item override, falls back to workspace marginPct.
+			{BidID: "b2", BidTitle: "Tender B", CreatedAt: now, PricingWorkspace: marshalPW(t, pricingWorkspaceJSON{
+				ApprovalStatus: "APPROVED", MarginPct: 6,
+				Quotes: []pricingQuoteJSON{{Items: []pricingItemJSON{{Desc: "AutoCAD LT", Qty: 1, BasicPrice: 1000}}}},
+			})},
+			// Still pending approval — must not count.
+			{BidID: "b3", BidTitle: "Tender C (pending)", CreatedAt: now.Add(1 * time.Hour), PricingWorkspace: marshalPW(t, pricingWorkspaceJSON{
+				ApprovalStatus: "PENDING", MarginPct: 50,
+				Quotes: []pricingQuoteJSON{{Items: []pricingItemJSON{{Desc: "AutoCAD LT", Qty: 1, BasicPrice: 1000}}}},
+			})},
+		}}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		got, err := svc.GetPricingSuggestion(context.Background(), "AutoCAD LT")
+		if err != nil {
+			t.Fatalf("GetPricingSuggestion: %v", err)
+		}
+		if got.Count != 2 {
+			t.Fatalf("expected 2 approved deals (pending excluded), got %d: %+v", got.Count, got.Deals)
+		}
+		// (1000*1.04 + 1000*1.06) / 2 = 1050
+		if math.Abs(got.AvgUnitPriceExclGst-1050) > 0.001 {
+			t.Fatalf("expected avg unit price excl GST 1050, got %v", got.AvgUnitPriceExclGst)
+		}
+		if math.Abs(got.AvgMarginPct-5) > 0.001 {
+			t.Fatalf("expected avg margin 5%%, got %v", got.AvgMarginPct)
+		}
+		// Tender B (now) is more recent than Tender A (now-24h) — its 6% margin is "last".
+		if math.Abs(got.LastMarginPct-6) > 0.001 {
+			t.Fatalf("expected last margin 6%% (most recent deal), got %v", got.LastMarginPct)
+		}
+	})
+
+	t.Run("window truncates to the most recent N deals", func(t *testing.T) {
+		now := time.Now()
+		var candidates []domain.PricingWorkspaceRow
+		for i := 0; i < 8; i++ {
+			candidates = append(candidates, domain.PricingWorkspaceRow{
+				BidID: fmt.Sprintf("b%d", i), BidTitle: fmt.Sprintf("Tender %d", i),
+				CreatedAt: now.Add(-time.Duration(i) * time.Hour), // i=0 is most recent
+				PricingWorkspace: marshalPW(t, pricingWorkspaceJSON{
+					ApprovalStatus: "APPROVED", MarginPct: 3,
+					Quotes: []pricingQuoteJSON{{Items: []pricingItemJSON{{Desc: "Widget", Qty: 1, BasicPrice: 100, MarginPct: floatp(float64(i))}}}},
+				}),
+			})
+		}
+		repo := &fakeBidRepo{bid: &domain.BidWorkspace{ID: "bid-1"}, pricingCandidates: candidates, pricingWindow: 3}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		got, err := svc.GetPricingSuggestion(context.Background(), "Widget")
+		if err != nil {
+			t.Fatalf("GetPricingSuggestion: %v", err)
+		}
+		if got.Count != 3 {
+			t.Fatalf("expected window to cap at 3 deals, got %d", got.Count)
+		}
+		// Most recent 3 are i=0,1,2 (margins 0,1,2) — last (most recent) is i=0's margin 0.
+		if math.Abs(got.LastMarginPct-0) > 0.001 {
+			t.Fatalf("expected last margin 0 (most recent), got %v", got.LastMarginPct)
+		}
+		if math.Abs(got.AvgMarginPct-1) > 0.001 { // (0+1+2)/3
+			t.Fatalf("expected avg margin 1, got %v", got.AvgMarginPct)
 		}
 	})
 }

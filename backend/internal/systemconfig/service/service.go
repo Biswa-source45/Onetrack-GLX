@@ -36,7 +36,7 @@ func (s *service) UpdateConfig(ctx context.Context, key string, value json.RawMe
 
 	if s.recorder != nil {
 		summary := fmt.Sprintf("Updated platform configuration '%s'", key)
-		s.recorder.Record(ctx, "CONFIGURATION", "CONFIG_UPDATE", actorID, nil, summary, map[string]interface{}{
+		s.recorder.Record(ctx, systemlogDomain.CategoryConfiguration, "CONFIG_UPDATE", actorID, nil, summary, map[string]interface{}{
 			"key":   key,
 			"value": string(value),
 		})

@@ -16,17 +16,20 @@ const CATEGORY_FILTERS = [
   { value: 'USER_MGMT', label: 'User Management' },
   { value: 'ACCESS_CONTROL', label: 'Access Control' },
   { value: 'SECURITY', label: 'Security' },
+  { value: 'CONFIGURATION', label: 'Configuration' },
 ]
 
 const CATEGORY_CLASSES = {
   USER_MGMT: 'bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300 border-sky-200 dark:border-sky-900',
   ACCESS_CONTROL: 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200 dark:border-rose-900',
   SECURITY: 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200 dark:border-amber-900',
+  CONFIGURATION: 'bg-violet-100 text-violet-800 dark:bg-violet-950/60 dark:text-violet-300 border-violet-200 dark:border-violet-900',
 }
 const CATEGORY_LABELS = {
   USER_MGMT: 'User Management',
   ACCESS_CONTROL: 'Access Control',
   SECURITY: 'Security',
+  CONFIGURATION: 'Configuration',
 }
 
 function formatTime(iso) {
@@ -107,7 +110,7 @@ export function SystemLogsPage() {
           System Logs
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Every account, role, permission, and stage-access change made across the system — who did what, and when.
+          Every login, account, role, permission, stage-access, and configuration change made across the system — who did what, and when.
         </p>
       </div>
 
@@ -142,7 +145,7 @@ export function SystemLogsPage() {
             const dayLabel = dateGroupLabel(e.created_at)
             const prevDayLabel = i > 0 ? dateGroupLabel(events[i - 1].created_at) : null
             const isNewDay = dayLabel !== prevDayLabel
-            const catClass = CATEGORY_CLASSES[e.category] || CATEGORY_CLASSES.USER_MGMT
+            const catClass = CATEGORY_CLASSES[e.category] || 'bg-muted text-muted-foreground border-border'
             return (
               <div key={e.id}>
                 {isNewDay && (

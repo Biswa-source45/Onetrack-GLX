@@ -27,10 +27,13 @@ import {
   getBid, getBidStageHistory, transitionBidStage,
   removeBidMember, recordBidOutcome, archiveBid, updateBid,
   softDeleteBid, restoreBid, permanentDeleteBid, getPendingEdit,
+  approvePendingEdit, rejectPendingEdit,
   STAGE_LABELS, STAGE_COLORS, STATUS_COLORS, statusStyle, STAGE_TRANSITIONS,
   WORKFLOW_STAGES_ORDERED,
 } from '../../services/bids'
 import { ImportedPill } from './ImportedPill'
+import { InProgressPill } from './InProgressPill'
+import { RejectReasonDialog } from './RejectReasonDialog'
 import { usePermissions } from '../../hooks/usePermissions'
 import { tokenStorage } from '../../services/auth'
 import { ChecklistTab } from './ChecklistTab'
@@ -1672,7 +1675,10 @@ function ArchiveConfirmDialog({ bid, onClose, onDone }) {
     setLoading(true)
     try {
       const res = await softDeleteBid(bid.id)
-      if (res.ok) {
+      if (res.ok && res.data?.status === 'PENDING_APPROVAL') {
+        toast.success(`Submitted to ${res.data.reporting_manager_name || 'your Reporting Manager'} for approval`)
+        onDone()
+      } else if (res.ok) {
         toast.success('Tender moved to Tender Bin')
         onDone()
       } else {
@@ -1753,7 +1759,10 @@ function OutcomeDialog({ bid, defaultOutcome = 'WON', lockedOutcome = null, onCl
         }))
       }
       const res = await recordBidOutcome(bid.id, payload)
-      if (res.ok) {
+      if (res.ok && res.data?.status === 'PENDING_APPROVAL') {
+        toast.success(`Submitted to ${res.data.reporting_manager_name || 'your Reporting Manager'} for approval`)
+        onDone()
+      } else if (res.ok) {
         // For cancellations, also persist the reason in the bid's remarks field without touching bid_status or workflow_stage
         if (form.bid_outcome === 'CANCELLED' && form.outcome_reason?.trim()) {
           try {
@@ -2008,6 +2017,8 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
   const [bid, setBid]               = useState(null)
   const [pendingEdit, setPendingEdit] = useState(null)
   const [reviewingEdit, setReviewingEdit] = useState(false)
+  const [showPendingRejectDlg, setShowPendingRejectDlg] = useState(false)
+  const [decidingPending, setDecidingPending] = useState(false)
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState(null)
   // Backed by the URL (?tab=&stage=) instead of local state, so refreshing
@@ -2095,26 +2106,41 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
         </div>
       </div>
 
-      {/* Pending Edit Approval Banner */}
+      {/* Pending Action Approval Banner — EDIT reopens the Edit Tender review
+          dialog; CANCEL/DELETE decide inline since there's no form to reopen. */}
       {pendingEdit && (() => {
         const isApprover = user?.id === pendingEdit.reporting_manager_id || isAdmin || hasRole('MANAGER') || hasRole('BID_MANAGER')
         const requesterName = pendingEdit.requested_by?.full_name || 'A Bid Executive'
+        const actionType = pendingEdit.action_type || 'EDIT'
+        const actionLabel = actionType === 'CANCEL' ? 'cancellation' : actionType === 'DELETE' ? 'deletion' : 'edit'
+        const approveNow = async () => {
+          const res = await approvePendingEdit(pendingEdit.id, {}, '')
+          if (res.ok) {
+            toast.success(`${actionLabel[0].toUpperCase()}${actionLabel.slice(1)} approved`)
+            loadBid()
+          } else {
+            toast.error(res.error?.message ?? 'Failed to approve')
+          }
+        }
         return (
+          <>
           <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 flex items-center justify-between gap-4 text-amber-900 shadow-sm dark:bg-amber-950/20 dark:border-amber-900/50 dark:text-amber-300">
             <div className="flex items-start gap-3">
               <Clock className="size-5 shrink-0 text-amber-600 dark:text-amber-500 mt-0.5" />
               <div className="space-y-0.5">
                 <p className="font-semibold text-sm">
                   {isApprover
-                    ? `An edit by ${requesterName} is awaiting your approval`
-                    : `Your edit is awaiting approval`}
+                    ? `A ${actionLabel} by ${requesterName} is awaiting your approval`
+                    : `Your ${actionLabel} is awaiting approval`}
                 </p>
                 <p className="text-xs text-amber-700 dark:text-amber-400">
-                  {pendingEdit.diff?.length ?? 0} field{(pendingEdit.diff?.length ?? 0) === 1 ? '' : 's'} changed — nothing has been applied yet.
+                  {actionType === 'EDIT'
+                    ? `${pendingEdit.diff?.length ?? 0} field${(pendingEdit.diff?.length ?? 0) === 1 ? '' : 's'} changed — nothing has been applied yet.`
+                    : 'Nothing has been applied yet.'}
                 </p>
               </div>
             </div>
-            {isApprover && (
+            {isApprover && (actionType === 'EDIT' ? (
               <Button
                 size="sm"
                 className="gap-1.5 shrink-0 bg-amber-600 hover:bg-amber-700 text-white"
@@ -2123,8 +2149,38 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                 <Eye className="size-3.5" />
                 Review
               </Button>
-            )}
+            ) : (
+              <div className="flex gap-2 shrink-0">
+                <Button size="sm" variant="outline" className="border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-300" onClick={() => setShowPendingRejectDlg(true)}>
+                  Reject
+                </Button>
+                <Button size="sm" className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white" onClick={approveNow}>
+                  <Check className="size-3.5" />
+                  Approve
+                </Button>
+              </div>
+            ))}
           </div>
+          <RejectReasonDialog
+            open={showPendingRejectDlg}
+            title={`Reject this ${actionLabel}`}
+            description={`${requesterName} will be notified this ${actionLabel} was not approved, with your reason if you give one.`}
+            loading={decidingPending}
+            onCancel={() => setShowPendingRejectDlg(false)}
+            onConfirm={async (reason) => {
+              setDecidingPending(true)
+              const res = await rejectPendingEdit(pendingEdit.id, reason)
+              setDecidingPending(false)
+              if (res.ok) {
+                setShowPendingRejectDlg(false)
+                toast.success(`${actionLabel[0].toUpperCase()}${actionLabel.slice(1)} rejected`)
+                loadBid()
+              } else {
+                toast.error(res.error?.message ?? 'Failed to reject')
+              }
+            }}
+          />
+          </>
         )
       })()}
 
@@ -2169,7 +2225,10 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                 onClick={async () => {
                   if (window.confirm(`PERMANENTLY PURGE "${bid.title}"? This action CANNOT be undone.`)) {
                     const res = await permanentDeleteBid(bid.id)
-                    if (res.ok) {
+                    if (res.ok && res.data?.status === 'PENDING_APPROVAL') {
+                      toast.success(`Submitted to ${res.data.reporting_manager_name || 'your Reporting Manager'} for approval`)
+                      loadBid()
+                    } else if (res.ok) {
                       toast.success('Tender permanently purged')
                       onBack()
                     } else {
@@ -2223,6 +2282,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                 <span className="text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-800">{bid.portal_source}</span>
               )}
               {bid.is_imported && <ImportedPill />}
+              {bid.derived_status === 'ACTIVE' && <InProgressPill />}
             </div>
           </div>
 

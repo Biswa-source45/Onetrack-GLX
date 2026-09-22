@@ -83,7 +83,8 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		refreshToken = "placeholder"
 	}
 
-	if err := h.authService.Logout(c.Request.Context(), accessToken, refreshToken); err != nil {
+	userID := c.GetString("user_id")
+	if err := h.authService.Logout(c.Request.Context(), userID, accessToken, refreshToken); err != nil {
 		response.InternalError(c, "Logout failed")
 		return
 	}
@@ -127,7 +128,8 @@ func (h *AuthHandler) ForceReset(c *gin.Context) {
 		return
 	}
 
-	err := h.authService.ForceResetPassword(c.Request.Context(), req)
+	actorID := c.GetString("user_id")
+	err := h.authService.ForceResetPassword(c.Request.Context(), actorID, req)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrUserNotFound):

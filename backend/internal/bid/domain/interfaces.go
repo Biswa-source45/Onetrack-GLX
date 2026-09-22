@@ -1,6 +1,9 @@
 package domain
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type BidRepository interface {
 	Create(ctx context.Context, params *CreateBidParams) (string, error)
@@ -69,6 +72,23 @@ type BidRepository interface {
 	GetPendingEditByID(ctx context.Context, editID string) (*TenderEditApproval, error)
 	GetPendingEditForBid(ctx context.Context, bidID string) (*TenderEditApproval, error)
 	DecidePendingEdit(ctx context.Context, editID string, status string, decidedPayload []byte, decisionDiff []FieldDiff, comment string, decidedBy string) error
+
+	// Pricing suggestion — see bidService.GetPricingSuggestion.
+	// GetPricingWorkspaceCandidates returns recent tenders' raw pricing_workspace
+	// JSON for the service layer to scan for a matching product.
+	GetPricingWorkspaceCandidates(ctx context.Context) ([]PricingWorkspaceRow, error)
+	// GetPricingSuggestionWindow reads the 'pricing_suggestion_window' system
+	// config (auth.system_configurations), defaulting to 5 if unset/unparsable.
+	GetPricingSuggestionWindow(ctx context.Context) (int, error)
+}
+
+// PricingWorkspaceRow is one tender's raw pricing data as read for the
+// pricing-suggestion scan.
+type PricingWorkspaceRow struct {
+	BidID           string
+	BidTitle        string
+	PricingWorkspace []byte
+	CreatedAt       time.Time
 }
 
 type BidService interface {
@@ -79,7 +99,7 @@ type BidService interface {
 	// used only to authorize a Bid Owner reassignment when the actor isn't
 	// this specific tender's Account Manager or Reporting Manager.
 	UpdateBid(ctx context.Context, id string, req *UpdateBidRequest, actorID string, actorRoles []string) error
-	TransitionStage(ctx context.Context, id string, req *TransitionStageRequest, actorID string) (*TransitionResult, error)
+	TransitionStage(ctx context.Context, id string, req *TransitionStageRequest, actorID string, actorRoles []string) (*TransitionResult, error)
 	GetStageHistory(ctx context.Context, id string, q AuditLogQuery) (*StageHistoryPage, error)
 	AddMicroEvent(ctx context.Context, bidID string, req *AddMicroEventRequest, actorID string) (*StageHistoryResponse, error)
 	// GetGlobalAuditLogs powers both the global "Database Audit Trail" panel
@@ -96,10 +116,14 @@ type BidService interface {
 	// removed, so the team panel and the tender's actual assignment can't
 	// drift apart the way they used to.
 	RemoveMember(ctx context.Context, bidID string, userID string, actorID string) error
-	RecordOutcome(ctx context.Context, id string, req *RecordOutcomeRequest, actorID string) error
-	ArchiveBid(ctx context.Context, id string, actorID string) error
+	// RecordOutcome, ArchiveBid and PermanentDeleteBid hold a Bid Executive's
+	// action for Reporting Manager approval the same way UpdateBid does
+	// (actorRoles decides whether the gate applies) when the outcome being
+	// recorded is CANCELLED, or the bid has one assigned.
+	RecordOutcome(ctx context.Context, id string, req *RecordOutcomeRequest, actorID string, actorRoles []string) error
+	ArchiveBid(ctx context.Context, id string, actorID string, actorRoles []string) error
 	RestoreBid(ctx context.Context, id string, actorID string) error
-	PermanentDeleteBid(ctx context.Context, id string, actorID string) error
+	PermanentDeleteBid(ctx context.Context, id string, actorID string, actorRoles []string) error
 
 	// Bid-scoped checklists
 	GetChecklists(ctx context.Context, bidID string) ([]BidChecklistItem, error)
@@ -130,6 +154,11 @@ type BidService interface {
 	GetPendingEdit(ctx context.Context, bidID string) (*TenderEditApproval, error)
 	ApprovePendingEdit(ctx context.Context, editID string, finalReq *UpdateBidRequest, comment string, actorID string, actorRoles []string) error
 	RejectPendingEdit(ctx context.Context, editID string, comment string, actorID string, actorRoles []string) error
+
+	// GetPricingSuggestion returns the sliding-window "suggested price/margin"
+	// hint for productDesc (matched case/whitespace-insensitively against past
+	// APPROVED pricing deals). Count is 0, not an error, when never priced.
+	GetPricingSuggestion(ctx context.Context, productDesc string) (*PricingSuggestion, error)
 }
 
 type TransitionResult struct {

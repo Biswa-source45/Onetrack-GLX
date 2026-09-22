@@ -314,8 +314,19 @@ func (h *BidHandler) TransitionStage(c *gin.Context) {
 	}
 
 	actorID := c.GetString("user_id")
-	result, err := h.svc.TransitionStage(c.Request.Context(), id, &req, actorID)
+	rolesVal, _ := c.Get("roles")
+	actorRoles, _ := rolesVal.([]string)
+	result, err := h.svc.TransitionStage(c.Request.Context(), id, &req, actorID, actorRoles)
 	if err != nil {
+		var pae *domain.PendingApprovalError
+		if errors.As(err, &pae) {
+			response.Success(c, http.StatusAccepted, err.Error(), gin.H{
+				"status":                 "PENDING_APPROVAL",
+				"pending_edit_id":        pae.EditID,
+				"reporting_manager_name": pae.ReportingManagerName,
+			})
+			return
+		}
 		response.Conflict(c, err.Error())
 		return
 	}
@@ -407,7 +418,18 @@ func (h *BidHandler) RecordOutcome(c *gin.Context) {
 		return
 	}
 	actorID := c.GetString("user_id")
-	if err := h.svc.RecordOutcome(c.Request.Context(), id, &req, actorID); err != nil {
+	rolesVal, _ := c.Get("roles")
+	actorRoles, _ := rolesVal.([]string)
+	if err := h.svc.RecordOutcome(c.Request.Context(), id, &req, actorID, actorRoles); err != nil {
+		var pae *domain.PendingApprovalError
+		if errors.As(err, &pae) {
+			response.Success(c, http.StatusAccepted, err.Error(), gin.H{
+				"status":                 "PENDING_APPROVAL",
+				"pending_edit_id":        pae.EditID,
+				"reporting_manager_name": pae.ReportingManagerName,
+			})
+			return
+		}
 		if errors.Is(err, domain.ErrForbidden) {
 			response.Forbidden(c, err.Error())
 			return
@@ -421,7 +443,18 @@ func (h *BidHandler) RecordOutcome(c *gin.Context) {
 func (h *BidHandler) ArchiveBid(c *gin.Context) {
 	id := c.Param("id")
 	actorID := c.GetString("user_id")
-	if err := h.svc.ArchiveBid(c.Request.Context(), id, actorID); err != nil {
+	rolesVal, _ := c.Get("roles")
+	actorRoles, _ := rolesVal.([]string)
+	if err := h.svc.ArchiveBid(c.Request.Context(), id, actorID, actorRoles); err != nil {
+		var pae *domain.PendingApprovalError
+		if errors.As(err, &pae) {
+			response.Success(c, http.StatusAccepted, err.Error(), gin.H{
+				"status":                 "PENDING_APPROVAL",
+				"pending_edit_id":        pae.EditID,
+				"reporting_manager_name": pae.ReportingManagerName,
+			})
+			return
+		}
 		response.NotFound(c, "Bid not found")
 		return
 	}
@@ -448,7 +481,18 @@ func (h *BidHandler) RestoreBid(c *gin.Context) {
 func (h *BidHandler) PermanentDeleteBid(c *gin.Context) {
 	id := c.Param("id")
 	actorID := c.GetString("user_id")
-	if err := h.svc.PermanentDeleteBid(c.Request.Context(), id, actorID); err != nil {
+	rolesVal, _ := c.Get("roles")
+	actorRoles, _ := rolesVal.([]string)
+	if err := h.svc.PermanentDeleteBid(c.Request.Context(), id, actorID, actorRoles); err != nil {
+		var pae *domain.PendingApprovalError
+		if errors.As(err, &pae) {
+			response.Success(c, http.StatusAccepted, err.Error(), gin.H{
+				"status":                 "PENDING_APPROVAL",
+				"pending_edit_id":        pae.EditID,
+				"reporting_manager_name": pae.ReportingManagerName,
+			})
+			return
+		}
 		response.NotFound(c, "Bid not found")
 		return
 	}
@@ -556,6 +600,19 @@ func (h *BidHandler) ListFieldSuggestions(c *gin.Context) {
 		return
 	}
 	response.Success(c, http.StatusOK, "Field suggestions retrieved", suggestions)
+}
+
+// GetPricingSuggestion returns the Pricing Request "suggested price/margin"
+// hint for ?desc= — a sliding-window average over that product's past
+// approved deals. Count is 0 (not an error) when it's never been priced.
+func (h *BidHandler) GetPricingSuggestion(c *gin.Context) {
+	desc := c.Query("desc")
+	suggestion, err := h.svc.GetPricingSuggestion(c.Request.Context(), desc)
+	if err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Pricing suggestion retrieved", suggestion)
 }
 
 // stageAccessManagerRoles gates who can *change* a user's restricted-stage

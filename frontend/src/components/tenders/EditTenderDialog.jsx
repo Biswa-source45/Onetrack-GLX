@@ -53,6 +53,7 @@ import {
 } from "../../services/bids";
 import { listUsers } from "../../services/users";
 import { usePermissions } from "../../hooks/usePermissions";
+import { RejectReasonDialog } from "./RejectReasonDialog";
 
 function useMacOSDialog(open, originX, originY) {
   const centerX = typeof window !== "undefined" ? window.innerWidth / 2 : 0;
@@ -268,6 +269,8 @@ export function EditTenderDialog({
   const [users, setUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [fetchingBid, setFetchingBid] = useState(false);
+  const [showRejectDlg, setShowRejectDlg] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
   // Online/DD are independent raw-capture toggles, kept outside `form` so
   // unticking one clears just its own fields (see AddTenderPage for why).
   const [emdOnlineOn, setEmdOnlineOn] = useState(false);
@@ -1789,30 +1792,7 @@ export function EditTenderDialog({
                       size="sm"
                       className="text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/10"
                       disabled={loading || fetchingBid}
-                      onClick={async () => {
-                        // ponytail: a native prompt for the reason — a
-                        // dedicated inline textarea can replace this if
-                        // reviewers want a richer input.
-                        const comment = window.prompt(
-                          "Reason for rejecting this edit (optional):",
-                        );
-                        if (comment === null) return;
-                        setLoading(true);
-                        const res = await rejectPendingEdit(
-                          approvalContext.editId,
-                          comment,
-                        );
-                        setLoading(false);
-                        if (res.ok) {
-                          toast.success("Edit rejected");
-                          onUpdated();
-                          onClose();
-                        } else {
-                          toast.error(
-                            res.error?.message ?? "Failed to reject edit",
-                          );
-                        }
-                      }}
+                      onClick={() => setShowRejectDlg(true)}
                     >
                       Reject
                     </Button>
@@ -1902,6 +1882,27 @@ export function EditTenderDialog({
               </div>
             )}
           </AnimatePresence>
+
+          <RejectReasonDialog
+            open={showRejectDlg}
+            title="Reject this edit"
+            description="The executive will be notified this edit was not approved, with your reason if you give one."
+            loading={rejecting}
+            onCancel={() => setShowRejectDlg(false)}
+            onConfirm={async (reason) => {
+              setRejecting(true);
+              const res = await rejectPendingEdit(approvalContext.editId, reason);
+              setRejecting(false);
+              if (res.ok) {
+                setShowRejectDlg(false);
+                toast.success("Edit rejected");
+                onUpdated();
+                onClose();
+              } else {
+                toast.error(res.error?.message ?? "Failed to reject edit");
+              }
+            }}
+          />
         </div>
       )}
     </AnimatePresence>

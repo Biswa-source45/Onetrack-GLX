@@ -48,6 +48,7 @@ import {
   UserCheck,
   Layers,
   Globe,
+  Info,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -57,6 +58,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -82,6 +84,7 @@ import {
 } from "../../services/bids";
 import { dateGroupLabel } from "../../lib/dateGroups";
 import { ImportedPill } from "./ImportedPill";
+import { InProgressPill } from "./InProgressPill";
 import { usePermissions } from "../../hooks/usePermissions";
 import { useBidStore } from "../../store/useBidStore";
 import { tokenStorage } from "../../services/auth";
@@ -584,7 +587,12 @@ export function TendersPage({ initialScope = "all" }) {
     }
     try {
       const res = await permanentDeleteBid(bidId);
-      if (res.ok) {
+      if (res.ok && res.data?.status === "PENDING_APPROVAL") {
+        toast.success(
+          `Submitted to ${res.data.reporting_manager_name || "your Reporting Manager"} for approval`,
+        );
+        loadBids();
+      } else if (res.ok) {
         toast.success("Tender permanently deleted");
         loadBids();
       } else {
@@ -1068,7 +1076,7 @@ export function TendersPage({ initialScope = "all" }) {
       )}
 
       {/* ── Stats Row ────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
         {[
           {
             label: "Total Tenders",
@@ -1077,14 +1085,16 @@ export function TendersPage({ initialScope = "all" }) {
             color: "text-blue-600",
             bg: "bg-blue-50/50",
             filterKey: "",
+            explain: "Every tender ever created, including Won, Lost, Cancelled and Closed.",
           },
           {
-            label: "Active",
+            label: "In Progress",
             value: meta.active_count ?? 0,
             icon: TrendingUp,
             color: "text-emerald-600",
             bg: "bg-emerald-50/50",
             filterKey: "ACTIVE",
+            explain: "Identified but not yet submitted. Excludes Submitted, Won, Lost, Cancelled and Closed.",
           },
           {
             label: "Submitted",
@@ -1093,6 +1103,7 @@ export function TendersPage({ initialScope = "all" }) {
             color: "text-teal-600",
             bg: "bg-teal-50/50",
             filterKey: "TECHNICAL_EVALUATION",
+            explain: "Sent to the GeM/portal and in technical or financial evaluation — not yet decided.",
           },
           {
             label: "Won",
@@ -1101,6 +1112,7 @@ export function TendersPage({ initialScope = "all" }) {
             color: "text-sky-600",
             bg: "bg-sky-50/50",
             filterKey: "WON",
+            explain: "Submitted tenders awarded to us.",
           },
           {
             label: "Lost",
@@ -1109,6 +1121,7 @@ export function TendersPage({ initialScope = "all" }) {
             color: "text-orange-600",
             bg: "bg-orange-50/50",
             filterKey: "LOST",
+            explain: "Submitted tenders awarded to a competitor.",
           },
           {
             label: "Cancelled",
@@ -1117,6 +1130,7 @@ export function TendersPage({ initialScope = "all" }) {
             color: "text-red-600",
             bg: "bg-red-50/50",
             filterKey: "CANCELLED",
+            explain: "Withdrawn or cancelled before an outcome was decided.",
           },
           {
             label: "Closed",
@@ -1125,6 +1139,7 @@ export function TendersPage({ initialScope = "all" }) {
             color: "text-zinc-600",
             bg: "bg-zinc-50/50",
             filterKey: "CLOSED",
+            explain: "Manually closed out, outside the Won/Lost/Cancelled outcomes.",
           },
         ].map((stat) => {
           const isActiveFilter =
@@ -1154,18 +1169,34 @@ export function TendersPage({ initialScope = "all" }) {
                   );
                 }
               }}
-              className={`rounded-xl border p-3.5 flex items-center gap-3 shadow-xs cursor-pointer transition-all ${
+              className={`relative rounded-xl border p-3.5 flex items-center gap-3 shadow-xs cursor-pointer transition-all ${
                 isActiveFilter
                   ? "border-primary ring-2 ring-primary/30 bg-primary/5 shadow-sm"
                   : "border-border bg-card hover:bg-muted/40 hover:border-muted-foreground/30"
               }`}
             >
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute top-1.5 right-1.5 text-muted-foreground/50 hover:text-foreground transition-colors"
+                    aria-label={`What does ${stat.label} count?`}
+                  >
+                    <Info className="size-3.5" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-[220px]">
+                  {stat.explain}
+                </TooltipContent>
+              </Tooltip>
               <div
                 className={`size-9 rounded-lg ${stat.bg} flex items-center justify-center shrink-0`}
               >
                 <stat.icon className={`size-4.5 ${stat.color}`} />
               </div>
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 flex-1 pr-3.5">
                 <p className="text-xl font-bold font-heading text-foreground leading-none">
                   {stat.value}
                 </p>
@@ -1618,6 +1649,7 @@ export function TendersPage({ initialScope = "all" }) {
                               </span>
                             )}
                             {bid.is_imported && <ImportedPill />}
+                            {bid.derived_status === "ACTIVE" && <InProgressPill />}
                           </div>
                           {inBin && (
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300 border border-rose-300">
@@ -1914,6 +1946,7 @@ export function TendersPage({ initialScope = "all" }) {
                             >
                               <div className="flex items-center gap-2.5 w-full">
                                 {bid.is_imported && <ImportedPill compact />}
+                                {bid.derived_status === "ACTIVE" && <InProgressPill compact />}
                                 {bid.bid_status === "ACTIVE" ? (
                                   <span
                                     className="relative flex size-2 shrink-0"

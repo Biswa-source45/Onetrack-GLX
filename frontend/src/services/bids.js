@@ -148,6 +148,16 @@ export async function getTenderPerformanceMatrix() {
   return { ok: res.ok, status: res.status, ...data }
 }
 
+// ── Pricing Request "suggested price/margin" hint ───────────────────────────
+// Sliding-window average over this exact product's past APPROVED deals
+// across every tender. data.count === 0 means never priced before (not an
+// error) — the caller should render N/A.
+export async function getPricingSuggestion(desc) {
+  const res = await apiFetch(`${BASE}/bids/pricing-suggestion?desc=${encodeURIComponent(desc)}`)
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, ...data }
+}
+
 // ── Add Member ───────────────────────────────────────────────────────────────
 export async function addBidMember(bidId, user_id, role = 'MEMBER') {
   const res = await apiFetch(`${BASE}/bids/${bidId}/members`, {

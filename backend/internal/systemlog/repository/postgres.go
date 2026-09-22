@@ -18,11 +18,19 @@ func NewPostgresRepository(pool *pgxpool.Pool) domain.Repository {
 }
 
 func (r *postgresRepo) Insert(ctx context.Context, e *domain.Event) error {
+	// actor_id is a UUID column; an empty string isn't a valid one. Failed
+	// logins against a username that doesn't exist have no real actor to
+	// attribute the attempt to, so that case (and only that case — every
+	// other caller always passes a real id) needs NULL, not ''.
+	var actorID interface{}
+	if e.ActorID != "" {
+		actorID = e.ActorID
+	}
 	return r.pool.QueryRow(ctx, `
 		INSERT INTO auth.system_events (category, event_type, actor_id, target_user_id, summary, details)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at
-	`, e.Category, e.EventType, e.ActorID, e.TargetUserID, e.Summary, e.Details).
+	`, e.Category, e.EventType, actorID, e.TargetUserID, e.Summary, e.Details).
 		Scan(&e.ID, &e.CreatedAt)
 }
 
@@ -32,7 +40,9 @@ const eventSelectColumns = `
 	e.target_user_id, COALESCE(target.full_name, target.username, ''), COALESCE(target.username, '')
 `
 
-func scanEvent(row interface{ Scan(dest ...interface{}) error }) (*domain.EventItem, error) {
+func scanEvent(row interface {
+	Scan(dest ...interface{}) error
+}) (*domain.EventItem, error) {
 	var it domain.EventItem
 	var actorID *string
 	var targetID *string

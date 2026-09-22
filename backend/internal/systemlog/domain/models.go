@@ -17,6 +17,7 @@ const (
 	CategoryUserMgmt      = "USER_MGMT"
 	CategoryAccessControl = "ACCESS_CONTROL"
 	CategorySecurity      = "SECURITY"
+	CategoryConfiguration = "CONFIGURATION"
 )
 
 // Recorder lets other modules (user, bid) write a System Log entry without

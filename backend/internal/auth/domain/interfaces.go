@@ -19,10 +19,15 @@ type AuthRepository interface {
 
 type AuthService interface {
 	Login(ctx context.Context, req LoginRequest) (*LoginResponse, error)
-	Logout(ctx context.Context, accessToken string, refreshToken string) error
+	// Logout takes the acting user's id (from the authenticated request,
+	// not the token being blacklisted) purely so it can be attributed in
+	// System Logs.
+	Logout(ctx context.Context, userID string, accessToken string, refreshToken string) error
 	RefreshToken(ctx context.Context, refreshToken string) (*LoginResponse, error)
 	ChangePassword(ctx context.Context, userID string, req ChangePasswordRequest) error
-	ForceResetPassword(ctx context.Context, req ForceResetRequest) error
+	// ForceResetPassword takes the acting admin's id so the System Logs
+	// entry can say who reset it, not just whose password changed.
+	ForceResetPassword(ctx context.Context, actorID string, req ForceResetRequest) error
 	ForgotPassword(ctx context.Context, email string) error
 	VerifyOTP(ctx context.Context, email, otp string) error
 	ResetPasswordWithOTP(ctx context.Context, email, otp, newPassword string) error

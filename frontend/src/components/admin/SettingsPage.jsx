@@ -12,10 +12,12 @@ import {
   Sparkles,
   Info,
   ArrowRight,
+  Calculator,
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
 import { getSystemConfigs, updateSystemConfig } from '../../services/systemConfig'
 import { useBidStore } from '../../store/useBidStore'
@@ -34,6 +36,31 @@ export function SettingsPage() {
   }, [loadSystemConfigs])
 
   const requireAmPresales = systemConfigs?.stage2_require_am_presales !== false
+
+  const suggestionWindow = systemConfigs?.pricing_suggestion_window ?? 5
+  // null = not being edited right now — show the store's value directly,
+  // no effect needed to keep a mirrored copy in sync with it.
+  const [windowDraft, setWindowDraft] = useState(null)
+  const windowInput = windowDraft ?? String(suggestionWindow)
+
+  const handleSaveSuggestionWindow = async () => {
+    const n = Math.min(20, Math.max(1, Math.round(Number(windowInput)) || 5))
+    setSavingKey('pricing_suggestion_window')
+    try {
+      const res = await updateSystemConfig('pricing_suggestion_window', n)
+      if (res.ok) {
+        setSystemConfigLocal('pricing_suggestion_window', n)
+        setWindowDraft(null)
+        toast.success(`Pricing suggestions now average the last ${n} approved deal${n === 1 ? '' : 's'}`)
+      } else {
+        toast.error(res.error?.message || 'Failed to update setting')
+      }
+    } catch {
+      toast.error('Network error updating setting')
+    } finally {
+      setSavingKey(null)
+    }
+  }
 
   const handleToggleStage2 = async () => {
     const nextVal = !requireAmPresales
@@ -215,6 +242,61 @@ export function SettingsPage() {
               <p className="leading-relaxed">
                 Toggling this configuration has <strong>zero adverse effect</strong> on tenders that have already completed Stage 2. Completed milestones remain permanently recorded. Every configuration change is captured in the <strong>System Logs</strong> audit ledger with actor timestamp.
               </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ── Section: Pricing Request ─────────────────────────────────────────── */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 border-b border-border/60 pb-2">
+          <Calculator className="size-4 text-primary" />
+          <h2 className="text-xs font-bold uppercase tracking-wider text-foreground">
+            Pricing Request — Suggested Price &amp; Margin
+          </h2>
+        </div>
+
+        <Card className="border-border bg-card shadow-xs overflow-hidden transition-all">
+          <CardHeader className="p-5 pb-4 bg-muted/10 border-b border-border/60">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <div className="size-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                  <Calculator className="size-3.5" />
+                </div>
+                <CardTitle className="text-sm font-semibold text-foreground">
+                  Sliding Window Size
+                </CardTitle>
+              </div>
+              <CardDescription className="text-xs">
+                While pricing a product, the Pricing Request stage shows a suggested unit price (excl. GST) and margin % — the average of that exact product's last N approved deals across every tender. This sets N.
+              </CardDescription>
+            </div>
+          </CardHeader>
+          <CardContent className="p-5">
+            <div className="p-4 rounded-xl border border-border/80 bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <span className="text-xs font-bold text-foreground">Average the last N approved deals</span>
+                <p className="text-xs text-muted-foreground">
+                  A product with fewer than N past deals is averaged over however many exist; a never-priced product shows N/A.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Input
+                  type="number" min={1} max={20}
+                  value={windowInput}
+                  onChange={(e) => setWindowDraft(e.target.value)}
+                  className="h-9 w-20 text-sm text-center"
+                  disabled={loading || savingKey === 'pricing_suggestion_window'}
+                />
+                <Button
+                  size="sm"
+                  onClick={handleSaveSuggestionWindow}
+                  disabled={loading || savingKey === 'pricing_suggestion_window' || String(suggestionWindow) === windowInput}
+                >
+                  {savingKey === 'pricing_suggestion_window' ? <Loader2 className="size-3.5 animate-spin mr-1" /> : null}
+                  Save
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>

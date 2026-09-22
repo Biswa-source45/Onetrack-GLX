@@ -139,6 +139,12 @@ type BidWorkspace struct {
 	CreationMode       string  `json:"creation_mode"`
 	WorkflowStage      string  `json:"workflow_stage"`
 	BidStatus          string  `json:"bid_status"`
+	// DerivedStatus is the same WON/LOST/CANCELLED/CLOSED/TECHNICAL_EVALUATION/
+	// SUBMITTED/ACTIVE bucket the stats tiles and status filter are computed
+	// from (see derivedStatusExpr) — unlike BidStatus (the raw column, which
+	// stays 'ACTIVE' well past GeM Submission until an outcome is recorded),
+	// this reflects where the tender actually sits right now.
+	DerivedStatus      string  `json:"derived_status"`
 	BidOwnerID         string  `json:"bid_owner_id"`
 	ReportingManagerID *string `json:"reporting_manager_id,omitempty"`
 	CreatedBy          string  `json:"created_by"`
@@ -356,6 +362,10 @@ type TenderEditApproval struct {
 	RequestedBy        *UserSummary `json:"requested_by,omitempty"`
 	ReportingManagerID string       `json:"reporting_manager_id"`
 	Status             string       `json:"status"`
+	// ActionType is EDIT, CANCEL or DELETE — see migration 000047. EDIT's
+	// Payload/DecidedPayload are UpdateBidRequest JSON; CANCEL's payload is
+	// {"outcome_reason": "..."}; DELETE's is {"mode": "ARCHIVE"|"PERMANENT"}.
+	ActionType string `json:"action_type"`
 	// Payload/DecidedPayload are json.RawMessage, not []byte — encoding/json
 	// base64-encodes a plain []byte, which would ship the frontend a string
 	// instead of the object it needs to pre-fill the review form with.
@@ -375,6 +385,39 @@ const (
 	EditApprovalApproved = "APPROVED"
 	EditApprovalRejected = "REJECTED"
 )
+
+const (
+	ActionTypeEdit   = "EDIT"
+	ActionTypeCancel = "CANCEL"
+	ActionTypeDelete = "DELETE"
+)
+
+// PricingDeal is one past approved deal's numbers for a product, used to
+// build a PricingSuggestion and shown verbatim in its "how was this
+// calculated" breakdown.
+type PricingDeal struct {
+	BidID            string    `json:"bid_id"`
+	BidTitle         string    `json:"bid_title"`
+	Date             time.Time `json:"date"`
+	UnitPriceExclGst float64   `json:"unit_price_excl_gst"`
+	MarginPct        float64   `json:"margin_pct"`
+}
+
+// PricingSuggestion is the Pricing Request "suggested price/margin" hint for
+// one product description — a sliding-window average over its past approved
+// deals (see bidService.GetPricingSuggestion). Count is 0 (not an error)
+// when the product has never been priced before.
+type PricingSuggestion struct {
+	Count int `json:"count"`
+	// Deliberately no `omitempty` on these three — a legitimate 0 (e.g. a
+	// product always sold at 0% margin) must still serialize, not vanish and
+	// read as "missing" to the frontend.
+	AvgUnitPriceExclGst float64       `json:"avg_unit_price_excl_gst"`
+	AvgMarginPct        float64       `json:"avg_margin_pct"`
+	LastMarginPct       float64       `json:"last_margin_pct"`
+	Window              int           `json:"window"`
+	Deals               []PricingDeal `json:"deals,omitempty"`
+}
 
 // AuditLogQuery drives keyset ("cursor") pagination over the audit trail.
 // Keyset pagination is used instead of OFFSET because OFFSET gets slower as
@@ -661,6 +704,7 @@ type BidResponse struct {
 	CreationMode              string             `json:"creation_mode"`
 	WorkflowStage             string             `json:"workflow_stage"`
 	BidStatus                 string             `json:"bid_status"`
+	DerivedStatus             string             `json:"derived_status"`
 	EstimatedValue            *float64           `json:"estimated_value"`
 	EMDAmount                 *float64           `json:"emd_amount"`
 	EMDType                   *string            `json:"emd_type"`
@@ -772,6 +816,7 @@ type BidListItem struct {
 	CreationMode              string       `json:"creation_mode"`
 	WorkflowStage             string       `json:"workflow_stage"`
 	BidStatus                 string       `json:"bid_status"`
+	DerivedStatus             string       `json:"derived_status"`
 	BidOutcome                *string      `json:"bid_outcome"`
 	EstimatedValue            *float64     `json:"estimated_value"`
 	EMDAmount                 *float64     `json:"emd_amount"`

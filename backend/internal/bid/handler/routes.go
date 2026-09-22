@@ -37,6 +37,8 @@ func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, importHandl
 		// Field Memory — remembered values for a free-text field, e.g.
 		// /bids/field-suggestions?field=organization_name
 		bids.GET("/field-suggestions", authMiddleware.RequirePermission("bid.view"), handler.ListFieldSuggestions)
+		// Pricing Request "suggested price/margin" hint — /bids/pricing-suggestion?desc=...
+		bids.GET("/pricing-suggestion", authMiddleware.RequirePermission("bid.view"), handler.GetPricingSuggestion)
 	}
 
 	// Stage-Level Access Control lives in the bid module (the restriction

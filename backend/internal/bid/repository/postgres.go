@@ -161,9 +161,10 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 		       emd_ready_date, delivery_complete, delivery_complete_date,
 		       emd_not_applicable,
 		       account_manager_id, presales_id, location, bg_duration_months,
-		       requested_products, primary_review, alert_note
-		FROM bid.bid_workspaces
-		WHERE id = $1
+		       requested_products, primary_review, alert_note,
+		       ` + derivedStatusExpr + ` AS derived_status
+		FROM bid.bid_workspaces b
+		WHERE b.id = $1
 	`
 	row := r.pool.QueryRow(ctx, query, id)
 	return scanBid(row)
@@ -386,7 +387,8 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		       b.emd_ready_date, b.delivery_complete, b.delivery_complete_date,
 		       b.emd_not_applicable,
 		       b.account_manager_id, b.presales_id, b.location, b.bg_duration_months,
-		       b.requested_products, b.primary_review, b.alert_note
+		       b.requested_products, b.primary_review, b.alert_note,
+		       ` + derivedStatusExpr + ` AS derived_status
 		FROM bid.bid_workspaces b
 		LEFT JOIN auth.users u ON b.bid_owner_id = u.id
 		%s
@@ -1171,7 +1173,7 @@ func (r *postgresBidRepo) GetGlobalAuditLogs(ctx context.Context, q domain.Audit
 	limit := auditPageSize(q.Limit)
 
 	query := `
-		SELECT h.id, h.bid_id, COALESCE(h.bid_title, b.title, 'Deleted Bid'), h.from_stage, h.to_stage,
+		SELECT h.id, h.bid_id, COALESCE(NULLIF(h.bid_title, ''), b.title, 'Deleted Bid'), h.from_stage, h.to_stage,
 		       h.transition_reason, h.event_type, h.details, h.transitioned_by, h.created_at,
 		       COALESCE(u.full_name, u.username, 'System User'), COALESCE(u.username, 'system'),
 		       COALESCE((
@@ -1291,6 +1293,7 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 		&b.EMDNotApplicable,
 		&b.AccountManagerID, &b.PresalesID, &b.Location, &b.BGDurationMonths,
 		&b.RequestedProducts, &b.PrimaryReview, &b.AlertNote,
+		&b.DerivedStatus,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan bid: %w", err)
@@ -1576,11 +1579,15 @@ func (r *postgresBidRepo) CreatePendingEdit(ctx context.Context, edit *domain.Te
 	if err != nil {
 		return fmt.Errorf("marshal edit diff: %w", err)
 	}
+	actionType := edit.ActionType
+	if actionType == "" {
+		actionType = domain.ActionTypeEdit
+	}
 	return r.pool.QueryRow(ctx, `
-		INSERT INTO bid.tender_edit_approvals (bid_id, requested_by, reporting_manager_id, payload, diff)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO bid.tender_edit_approvals (bid_id, requested_by, reporting_manager_id, action_type, payload, diff)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at
-	`, edit.BidID, edit.RequestedBy.ID, edit.ReportingManagerID, edit.Payload, diffJSON).
+	`, edit.BidID, edit.RequestedBy.ID, edit.ReportingManagerID, actionType, edit.Payload, diffJSON).
 		Scan(&edit.ID, &edit.CreatedAt, &edit.UpdatedAt)
 }
 
@@ -1590,7 +1597,7 @@ func scanPendingEdit(row pgx.Row) (*domain.TenderEditApproval, error) {
 	var diffJSON, decidedPayload, decisionDiffJSON []byte
 	var decidedBy *string
 	if err := row.Scan(
-		&e.ID, &e.BidID, &e.BidTitle, &requestedBy, &e.ReportingManagerID, &e.Status,
+		&e.ID, &e.BidID, &e.BidTitle, &requestedBy, &e.ReportingManagerID, &e.Status, &e.ActionType,
 		&e.Payload, &diffJSON, &decidedPayload, &decisionDiffJSON,
 		&e.DecisionComment, &decidedBy, &e.DecidedAt, &e.CreatedAt, &e.UpdatedAt,
 	); err != nil {
@@ -1614,7 +1621,7 @@ func scanPendingEdit(row pgx.Row) (*domain.TenderEditApproval, error) {
 // row — it's write-only metadata for display (see BidStageHistory.BidTitle's
 // same pattern), and a live join means a later title edit doesn't leave a
 // stale name in an in-flight approval.
-const pendingEditSelectCols = `a.id, a.bid_id, b.title, a.requested_by, a.reporting_manager_id, a.status,
+const pendingEditSelectCols = `a.id, a.bid_id, b.title, a.requested_by, a.reporting_manager_id, a.status, a.action_type,
 	a.payload, a.diff, a.decided_payload, a.decision_diff, a.decision_comment, a.decided_by, a.decided_at, a.created_at, a.updated_at`
 
 func (r *postgresBidRepo) GetPendingEditByID(ctx context.Context, editID string) (*domain.TenderEditApproval, error) {
@@ -1668,4 +1675,52 @@ func (r *postgresBidRepo) DecidePendingEdit(ctx context.Context, editID string, 
 		return fmt.Errorf("%w: this edit has already been decided", domain.ErrValidation)
 	}
 	return nil
+}
+
+// GetPricingWorkspaceCandidates returns recent live tenders' raw
+// pricing_workspace JSON, newest first, for the service layer to scan for a
+// matching product. Capped at 500 — a linear scan over the bounded set of
+// tenders that have ever done pricing, not a per-product index.
+// ponytail: linear scan; upgrade to a normalized pricing_line_items table if
+// tender volume grows past low thousands.
+func (r *postgresBidRepo) GetPricingWorkspaceCandidates(ctx context.Context) ([]domain.PricingWorkspaceRow, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, title, pricing_workspace, created_at
+		FROM bid.bid_workspaces
+		WHERE pricing_workspace IS NOT NULL AND archived_at IS NULL
+		ORDER BY created_at DESC
+		LIMIT 500
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query pricing workspace candidates: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.PricingWorkspaceRow
+	for rows.Next() {
+		var row domain.PricingWorkspaceRow
+		if err := rows.Scan(&row.BidID, &row.BidTitle, &row.PricingWorkspace, &row.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan pricing workspace candidate: %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// GetPricingSuggestionWindow reads the 'pricing_suggestion_window' system
+// config directly (auth.system_configurations is a cross-schema, same-
+// database KV store already used by systemconfig) rather than adding a new
+// bidService constructor dependency for one occasional read.
+func (r *postgresBidRepo) GetPricingSuggestionWindow(ctx context.Context) (int, error) {
+	const fallback = 5
+	var raw []byte
+	err := r.pool.QueryRow(ctx, `SELECT value FROM auth.system_configurations WHERE key = 'pricing_suggestion_window'`).Scan(&raw)
+	if err != nil {
+		return fallback, nil //nolint:nilerr // missing/unset config is not a failure — default silently.
+	}
+	var n int
+	if err := json.Unmarshal(raw, &n); err != nil || n <= 0 {
+		return fallback, nil
+	}
+	return n, nil
 }
