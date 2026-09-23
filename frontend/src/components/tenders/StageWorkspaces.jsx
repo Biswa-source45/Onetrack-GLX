@@ -3511,13 +3511,20 @@ export function Stage6Workspace({ bid, onRefresh }) {
   // so no new field is needed to track alert/reminder history or who to
   // notify back once Finance confirms it's ready.
   const [emdAlertHistory, setEmdAlertHistory] = useState([])
+  // Who actually confirmed EMD Ready — a genuine Finance sign-off, or a
+  // Super Admin override (see handleMarkEmdReady's details.approvedBy) —
+  // resolved from the same stage-history fetch below, so the override is an
+  // explicit, visible record rather than indistinguishable from Finance's
+  // own confirmation.
+  const [emdReadyConfirmedBy, setEmdReadyConfirmedBy] = useState(null)
   const [emdHistoryReload, setEmdHistoryReload] = useState(0)
   useEffect(() => {
     let cancelled = false
     // limit: 200 — collects every matching alert, not a page to render.
     getBidStageHistory(bid.id, { limit: 200 }).then((res) => {
       if (cancelled || !res.ok) return
-      const entries = (res.data || [])
+      const data = res.data || []
+      const entries = data
         .filter((h) => h.to_stage === 'EMD_PROCESSING' && (h.event_type === 'ALERT' || h.event_type === 'REMINDER'))
         .map((h) => ({
           type: h.event_type,
@@ -3526,17 +3533,34 @@ export function Stage6Workspace({ bid, onRefresh }) {
           at: h.created_at,
         }))
       setEmdAlertHistory(entries)
+
+      // data is newest-first (same assumption useInternalApprovals makes
+      // above), so the first FINANCE-eventType match is the latest one.
+      const readyEntry = data.find((h) => h.to_stage === 'EMD_PROCESSING' && h.event_type === 'FINANCE')
+      setEmdReadyConfirmedBy(readyEntry ? {
+        name: readyEntry.transitioned_by?.full_name || readyEntry.transitioned_by?.username || 'someone',
+        at: readyEntry.created_at,
+        isOverride: readyEntry.details?.approvedBy === 'ADMIN_OVERRIDE',
+      } : null)
     }).catch(() => {})
     return () => { cancelled = true }
     // bid.updated_at (bumped by the backend on every write) makes the header
     // refresh button re-fetch this too, on top of emdHistoryReload covering
-    // this session's own handleAlertFinance sends.
+    // this session's own handleAlertFinance/handleMarkEmdReady sends.
   }, [bid.id, bid.updated_at, emdHistoryReload])
   const emdTriggeredBy = emdAlertHistory.length > 0
     ? { id: emdAlertHistory[emdAlertHistory.length - 1].byId, name: emdAlertHistory[emdAlertHistory.length - 1].by }
     : null
 
   const handleMarkEmdReady = async () => {
+    // Finance clicking this is a genuine sign-off. Anyone else who can reach
+    // this button (Admin/Super Admin only — see the render condition below)
+    // is explicitly overriding that requirement, so the audit trail and the
+    // requester notification both need to say so rather than reading as if
+    // Finance confirmed it.
+    const isOverride = !isFinance
+    const currentUser = tokenStorage.getUser()
+    const actorName = currentUser?.full_name || currentUser?.username || (isOverride ? 'Admin' : 'Finance')
     try {
       const res = await updateBid(bid.id, { emd_ready: true, emd_ready_date: new Date().toISOString() })
       if (res.ok) {
@@ -3544,15 +3568,21 @@ export function Stage6Workspace({ bid, onRefresh }) {
           fromStage: 'EMD_PROCESSING',
           toStage: 'EMD_PROCESSING',
           eventType: 'FINANCE',
-          transitionReason: 'Finance confirmed EMD is ready',
+          transitionReason: isOverride
+            ? `EMD marked Ready by ${actorName} — Super Admin override (not confirmed by Finance)`
+            : 'Finance confirmed EMD is ready',
+          details: { approvedBy: isOverride ? 'ADMIN_OVERRIDE' : 'FINANCE' },
         })
+        setEmdHistoryReload((n) => n + 1)
 
         // Notify whoever triggered the EMD request (falls back to the tender
         // owner) that EMD is now ready, with the full payment/exemption details.
         const notifyId = emdTriggeredBy?.id || bid.bid_owner?.id
         if (notifyId) {
-          const currentUser = tokenStorage.getUser()
           const tableHtml = buildEmdDetailsTableHtml(bid)
+          const confirmedByLine = isOverride
+            ? `confirmed <strong>ready</strong> via a Super Admin override by ${actorName} — not a Finance confirmation`
+            : `confirmed <strong>ready</strong> by Finance (${actorName})`
           import('../../services/alerts').then(({ createAlert }) => {
             createAlert({
               user_id: notifyId,
@@ -3560,7 +3590,7 @@ export function Stage6Workspace({ bid, onRefresh }) {
               type: 'EMD',
               created_by: currentUser?.id,
               title: `EMD Ready — ${bid.title}`,
-              message: `<p style="margin: 0 0 8px 0;">EMD for tender <strong>${bid.title}</strong> (GeM Bid No: ${bid.gem_bid_no || 'N/A'}) has been confirmed <strong>ready</strong> by Finance (${currentUser?.full_name || currentUser?.username || 'Finance'}).</p>${tableHtml}`,
+              message: `<p style="margin: 0 0 8px 0;">EMD for tender <strong>${bid.title}</strong> (GeM Bid No: ${bid.gem_bid_no || 'N/A'}) has been ${confirmedByLine}.</p>${tableHtml}`,
             })
           })
         }
@@ -3628,10 +3658,12 @@ export function Stage6Workspace({ bid, onRefresh }) {
               🔒 EMD alert must be triggered by a Bid Executive/Manager/Admin
             </span>
           ) : null}
-          {isFinance && !bid.emd_ready && (
-            <Button size="sm" onClick={handleMarkEmdReady} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold">
-              <CheckCircle2 className="size-3.5" /> Mark EMD Ready
-            </Button>
+          {(isFinance || isAdmin) && !bid.emd_ready && (
+            <span title={isFinance ? undefined : 'Super Admin override — this bypasses Finance confirmation and is recorded as such.'}>
+              <Button size="sm" onClick={handleMarkEmdReady} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold">
+                <CheckCircle2 className="size-3.5" /> {isFinance ? 'Mark EMD Ready' : 'Mark EMD Ready (Admin Override)'}
+              </Button>
+            </span>
           )}
           <StageHeaderActions
             bid={bid}
@@ -3676,12 +3708,20 @@ export function Stage6Workspace({ bid, onRefresh }) {
       )}
 
       {bid.emd_ready ? (
-        <div className="px-3.5 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 text-xs font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5 max-w-md">
-          <CheckCircle2 className="size-3.5" /> EMD Ready — confirmed{bid.emd_ready_date ? ` on ${fmtDate(bid.emd_ready_date)}` : ''}
+        <div className="max-w-md space-y-1">
+          <div className="px-3.5 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 text-xs font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
+            <CheckCircle2 className="size-3.5" />
+            EMD Ready — confirmed{emdReadyConfirmedBy ? ` by ${emdReadyConfirmedBy.name}` : ''}{bid.emd_ready_date ? ` on ${fmtDate(bid.emd_ready_date)}` : ''}
+          </div>
+          {emdReadyConfirmedBy?.isOverride && (
+            <div className="px-3.5 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-[11px] font-medium text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+              <AlertTriangle className="size-3" /> Super Admin override — not confirmed by Finance
+            </div>
+          )}
         </div>
       ) : (
         <div className="px-3.5 py-2 rounded-lg bg-muted/40 border border-border text-xs font-medium text-muted-foreground flex items-center gap-1.5 max-w-md">
-          <Hourglass className="size-3.5" /> {isFinance ? 'Click "Mark EMD Ready" once EMD is processed' : 'Awaiting confirmation from the Finance team'}
+          <Hourglass className="size-3.5" /> {(isFinance || isAdmin) ? 'Click "Mark EMD Ready" once EMD is processed' : 'Awaiting confirmation from the Finance team'}
         </div>
       )}
 

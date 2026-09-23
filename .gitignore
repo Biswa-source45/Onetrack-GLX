@@ -12,6 +12,13 @@ backend/.env
 # Stray compiled binaries that shouldn't be committed.
 *.exe
 
+# AI assistant skill folders (local tool config, not shared via git)
+.claude/skills/
+.agents/skills/
+
+# graphify local-only output (graphify-out/ itself is committed so the team shares one map)
+graphify-out/cost.json
+
 # Feedback screenshot/photo uploads — bind-mounted host folder (see
 # docker-compose.yml), user-uploaded content, not repo content.
 /feedback-assets/

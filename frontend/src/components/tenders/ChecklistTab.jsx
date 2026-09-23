@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   GripVertical, Trash2, Plus, Calendar, User,
   AlertTriangle, Loader2, CheckSquare, ListTodo, Check,
-  Edit2, X, Award, Building2
+  Edit2, X, Award, Building2, Download
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -19,6 +19,8 @@ import {
   updateBid
 } from '../../services/bids'
 import { logStageMicroEvent } from '../../services/auditLogger'
+import { isOemDocItem, readOemDoc, writeOemDoc } from '../../lib/checklistOem'
+import { exportChecklistToExcel } from '../../lib/checklistExport'
 
 // Cycled by OEM index so each OEM reads as a consistent color across every
 // checklist row it appears on, without needing to store a color per OEM.
@@ -37,6 +39,7 @@ export function ChecklistTab({ bid, onRefresh }) {
   const isLocked = ['ARCHIVED', 'CANCELLED', 'WON', 'LOST'].includes(bid.bid_status)
 
   const [loading, setLoading] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [items, setItems] = useState([])
   const [newBidderTitle, setNewBidderTitle] = useState('')
   const [newOemTitle, setNewOemTitle] = useState('')
@@ -49,18 +52,6 @@ export function ChecklistTab({ bid, onRefresh }) {
 
   const oemList = Array.isArray(bid.oem_workspace) ? bid.oem_workspace
     : (bid.oem_workspace && Array.isArray(bid.oem_workspace.oems) ? bid.oem_workspace.oems : [])
-
-  // An OEM document checklist item — MAF included. MAF's per-OEM receipt
-  // status lives in the matrix row's legacy top-level `maf` field rather
-  // than `docStatus` (which only exists for documents added after multi-OEM
-  // tracking did), so it needs its own read/write instead of going through
-  // `docStatus` like every other OEM document.
-  const isOemDocItem = (item) => item.checklist_group === 'OEM' || item.title.startsWith('[OEM]')
-  const isMafItem = (item) => /\bmaf\b/i.test(item.title)
-  const readOemDoc = (o, item) => isMafItem(item) ? o.maf === 'RECEIVED' : (o.docStatus || {})[item.id] === 'RECEIVED'
-  const writeOemDoc = (o, item, received) => isMafItem(item)
-    ? { ...o, maf: received ? 'RECEIVED' : 'NOT RECEIVED' }
-    : { ...o, docStatus: { ...(o.docStatus || {}), [item.id]: received ? 'RECEIVED' : 'NOT RECEIVED' } }
 
   // 1. Log checklist events to local stage history with username fallback
   function logChecklistHistory(actionText) {
@@ -94,6 +85,21 @@ export function ChecklistTab({ bid, onRefresh }) {
   useEffect(() => {
     loadChecklist()
   }, [bidId])
+
+  // 2.5 Export the current checklist (Bidder + OEM docs) as a formatted .xlsx
+  const handleExport = async () => {
+    if (exporting || items.length === 0) return
+    setExporting(true)
+    try {
+      await exportChecklistToExcel({ bid, items, oemList })
+      toast.success('Checklist exported')
+    } catch (err) {
+      console.error(err)
+      toast.error('Failed to export checklist')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   // 3. Handle toggling (mark done / re-open)
   const handleToggle = async (item) => {
@@ -513,7 +519,17 @@ export function ChecklistTab({ bid, onRefresh }) {
               {doneCount} of {totalCount} items completed. Items can be added, edited, re-opened, or deleted anytime.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExport}
+              disabled={exporting || items.length === 0}
+              className="gap-1.5"
+            >
+              {exporting ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+              Export to Excel
+            </Button>
             <div className="text-right">
               <span className="text-2xl font-bold text-primary">{pct}%</span>
               <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Completed</span>
