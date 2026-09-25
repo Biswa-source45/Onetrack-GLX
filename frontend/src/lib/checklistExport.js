@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs'
 import { isOemDocItem, readOemDoc } from './checklistOem'
+import { saveWorkbook } from './excelExport'
 
 // Mirrors the app's own status colors (emerald = done, amber = pending) and
 // OEM_PILL_COLORS' blue/violet/amber/rose/cyan/lime rotation from
@@ -137,16 +138,7 @@ export async function exportChecklistToExcel({ bid, items, oemList }) {
   r++
   addSection(ws, r, { title: 'OEM DOCS', color: VIOLET, items: oemItems, extraOems: oems })
 
-  const buffer = await wb.xlsx.writeBuffer()
-  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
   const namePart = (bid.gem_bid_no || bid.title || 'checklist').replace(/[^a-z0-9]+/gi, '_').toLowerCase()
   const stamp = new Date().toISOString().slice(0, 10)
-  a.href = url
-  a.download = `Checklist_${namePart}_${stamp}.xlsx`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  await saveWorkbook(wb, `Checklist_${namePart}_${stamp}.xlsx`)
 }

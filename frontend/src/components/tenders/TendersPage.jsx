@@ -99,10 +99,11 @@ import {
   getFinEvalStatusVal,
   getPoRecvStatusVal,
   getBidResultVal,
-  escapeCSV,
   getDerivedBidStatusAndOutcome,
 } from "../../lib/tenderFormat";
 import { StageBadge, StatusTag } from "../../lib/tenderDisplay";
+import { downloadExcel } from "../../lib/excelExport";
+import { ExportSuccessDialog } from "./ExportSuccessDialog";
 
 // ── Stage List order for progress computation ────────────────────────────────
 // The real 11-stage pipeline (mirrors services/bids.js STAGE_LABELS). A
@@ -153,162 +154,144 @@ function safeDateInputFormat(dt) {
   }
 }
 
-// ── Export to Excel/CSV (Full database export with compliance details) ─────────
-async function exportToExcel() {
-  const toastId = toast.loading(
-    "Fetching all tenders and details for export...",
-  );
-  try {
-    // 1. Retrieve all bids in the system
-    const res = await listAllBids();
-    if (!res.ok) {
-      throw new Error(
-        res.error?.message ?? "Failed to retrieve tenders from API",
-      );
-    }
-    const allBids = Array.isArray(res.data) ? res.data : res.data?.bids || [];
+// ── Client-side list filters ─────────────────────────────────────────────────
+// Applied on top of the server query: the owned view also counts tenders the
+// user created, and "Others" portal source means "none of the known portals".
+// Shared by the list render and the Excel export so both show the same rows.
+function isBidOwnedByUser(bid, user) {
+  if (!user || !user.id) return true;
+  const ownerId = bid.bid_owner?.id || bid.bid_owner_id;
+  const creatorId = bid.created_by;
+  return (ownerId && ownerId === user.id) || (creatorId && creatorId === user.id);
+}
 
-    if (allBids.length === 0) {
-      toast.error("No tenders available to export", { id: toastId });
-      return;
-    }
-
-    // 2. Fetch full details for each bid in parallel to get full compliance information
-    const detailPromises = allBids.map((b) => getBid(b.id));
-    const detailResults = await Promise.all(detailPromises);
-    const enrichedBids = allBids.map((b, idx) => {
-      const detailRes = detailResults[idx];
-      let enriched = b;
-      if (detailRes && detailRes.ok && detailRes.data) {
-        enriched = {
-          ...b,
-          ...detailRes.data,
-        };
-      }
-      const { status, outcome } = getDerivedBidStatusAndOutcome(enriched);
-      return {
-        ...enriched,
-        bid_status: status,
-        bid_outcome: outcome,
-      };
-    });
-
-    // 3. Define headers and rows
-    const headers = [
-      "Title",
-      "Status",
-      "Workflow Stage",
-      "Category",
-      "Bid ID",
-      "Platform",
-      "Department",
-      "High Level Scope",
-      "Quantity",
-      "Scope Type",
-      "EMD",
-      "EMD Exemption",
-      "BG Rate (%)",
-      "Target Month",
-      "Start Date",
-      "End Date",
-      "Estimated Value",
-      "GlobX Total (Bid Submit Price)",
-      "Tech Eval",
-      "Submission Status",
-      "Financial Evaluation Status",
-      "PO Received",
-      "PO Received Date",
-      "EMD Ready Date",
-      "BG Issued Date",
-      "Delivery/Work Complete Date",
-      "Our Rank",
-      "Result",
-      "Owner",
-      "Remarks",
-    ];
-
-    const csvRows = [headers.map(escapeCSV).join(",")];
-
-    enrichedBids.forEach((b) => {
-      const row = [
-        b.title ?? "",
-        b.bid_status ?? "",
-        STAGE_LABELS[b.workflow_stage] ?? b.workflow_stage ?? "",
-        b.category ?? "",
-        b.gem_bid_no ?? b.bid_no ?? "",
-        b.portal_source ?? "",
-        b.organization_name ?? b.department_name ?? "",
-        b.high_level_scope ?? "",
-        b.quantity ?? "",
-        b.scope_type ?? "",
-        b.emd_amount !== null && b.emd_amount !== undefined
-          ? String(b.emd_amount)
-          : "",
-        formatEmdExemption(b),
-        b.bg_rate !== null && b.bg_rate !== undefined ? `${b.bg_rate}%` : "",
-        b.target_month_date
-          ? new Date(b.target_month_date).toLocaleDateString("en-IN")
-          : "—",
-        b.opening_date
-          ? new Date(b.opening_date).toLocaleDateString("en-IN")
-          : "—",
-        b.closing_date
-          ? new Date(b.closing_date).toLocaleString("en-IN", {
-              day: "2-digit",
-              month: "short",
-              year: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-          : "—",
-        b.estimated_value !== null && b.estimated_value !== undefined
-          ? String(b.estimated_value)
-          : "",
-        b.quoted_price !== null && b.quoted_price !== undefined
-          ? String(b.quoted_price)
-          : "",
-        b.technical_result === "QUALIFIED"
-          ? "Qualified"
-          : b.technical_result === "DISQUALIFIED"
-            ? "Disqualified"
-            : "Pending",
-        b.submission_status ?? "",
-        b.financial_evaluation_status ?? "",
-        b.po_received_status === "PO Received"
-          ? "Yes"
-          : ["LOST", "CANCELLED"].includes(b.bid_status)
-            ? "N/A"
-            : "No",
-        formatDate(b.po_received_date),
-        formatDate(b.emd_ready_date),
-        formatDate(b.bg_discharged_date),
-        formatDate(b.delivery_complete_date),
-        b.our_rank ?? "",
-        b.bid_result ?? "",
-        b.bid_owner?.full_name ?? "",
-        b.remarks ?? "",
-      ];
-      csvRows.push(row.map(escapeCSV).join(","));
-    });
-
-    // Add Unicode BOM to force Excel to read UTF-8 correctly
-    const csvContent = "\uFEFF" + csvRows.join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `tenders_workspace_export_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-
-    toast.success(
-      `Successfully exported ${enrichedBids.length} records to CSV/Excel`,
-      { id: toastId },
-    );
-  } catch (err) {
-    console.error("Failed to export tenders:", err);
-    toast.error(err.message || "Error occurred during export", { id: toastId });
+function matchesClientFilters(bid, { isOwnedView, currentUser, portalSourceFilter }) {
+  if (isOwnedView && currentUser?.id) {
+    if (!isBidOwnedByUser(bid, currentUser)) return false;
   }
+  if (portalSourceFilter) {
+    const src = (bid.portal_source || "").toLowerCase().trim();
+    const filter = portalSourceFilter.toLowerCase().trim();
+    if (filter === "others") {
+      const standardList = ["gem", "private", "rtc", "cppp", "eprocure"];
+      if (standardList.some((s) => src.includes(s))) return false;
+    } else if (!src.includes(filter)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// ── Export to Excel (every tender matching the current filters, all pages) ────
+// `params` are the store's listBids filter params (getListParams) and `keep`
+// the client-side predicate, so the file holds exactly what the list shows.
+// Returns { count, filename }, or null when nothing matched.
+async function exportTendersToExcel(params, keep) {
+  const res = await listAllBids(params);
+  if (!res.ok) {
+    throw new Error(res.error?.message ?? "Failed to retrieve tenders from API");
+  }
+  const bids = (Array.isArray(res.data) ? res.data : res.data?.bids || []).filter(keep);
+  if (bids.length === 0) return null;
+
+  // The list endpoint omits some compliance fields, so pull each tender's
+  // full record. A failed lookup falls back to the list row instead of
+  // failing the whole export.
+  const details = await Promise.all(bids.map((b) => getBid(b.id).catch(() => null)));
+  const enrichedBids = bids.map((b, idx) => {
+    const detail = details[idx];
+    const enriched = detail?.ok && detail.data ? { ...b, ...detail.data } : b;
+    const { status, outcome } = getDerivedBidStatusAndOutcome(enriched);
+    return { ...enriched, bid_status: status, bid_outcome: outcome };
+  });
+
+  const headers = [
+    "Title",
+    "Status",
+    "Workflow Stage",
+    "Category",
+    "Bid ID",
+    "Platform",
+    "Department",
+    "High Level Scope",
+    "Quantity",
+    "Scope Type",
+    "EMD",
+    "EMD Exemption",
+    "BG Rate (%)",
+    "Target Month",
+    "Start Date",
+    "End Date",
+    "Estimated Value",
+    "GlobX Total (Bid Submit Price)",
+    "Tech Eval",
+    "Submission Status",
+    "Financial Evaluation Status",
+    "PO Received",
+    "PO Received Date",
+    "EMD Ready Date",
+    "BG Issued Date",
+    "Delivery/Work Complete Date",
+    "Our Rank",
+    "Result",
+    "Owner",
+    "Remarks",
+  ];
+
+  const rows = enrichedBids.map((b) => [
+    b.title,
+    b.bid_status,
+    STAGE_LABELS[b.workflow_stage] ?? b.workflow_stage,
+    b.category,
+    b.gem_bid_no ?? b.bid_no,
+    b.portal_source,
+    b.organization_name ?? b.department_name,
+    b.high_level_scope,
+    b.quantity,
+    b.scope_type,
+    b.emd_amount,
+    formatEmdExemption(b),
+    b.bg_rate,
+    b.target_month_date
+      ? new Date(b.target_month_date).toLocaleDateString("en-IN")
+      : "—",
+    b.opening_date ? new Date(b.opening_date).toLocaleDateString("en-IN") : "—",
+    b.closing_date
+      ? new Date(b.closing_date).toLocaleString("en-IN", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "—",
+    b.estimated_value,
+    b.quoted_price,
+    b.technical_result === "QUALIFIED"
+      ? "Qualified"
+      : b.technical_result === "DISQUALIFIED"
+        ? "Disqualified"
+        : "Pending",
+    b.submission_status,
+    b.financial_evaluation_status,
+    b.po_received_status === "PO Received"
+      ? "Yes"
+      : ["LOST", "CANCELLED"].includes(b.bid_status)
+        ? "N/A"
+        : "No",
+    formatDate(b.po_received_date),
+    formatDate(b.emd_ready_date),
+    formatDate(b.bg_discharged_date),
+    formatDate(b.delivery_complete_date),
+    b.our_rank,
+    b.bid_result,
+    b.bid_owner?.full_name,
+    b.remarks,
+  ]);
+
+  const filename = `tenders_export_${new Date().toISOString().slice(0, 10)}.xlsx`;
+  await downloadExcel({ sheetName: "Tenders", headers, rows, filename });
+  return { count: rows.length, filename };
 }
 
 // ── Filter Bar Options ────────────────────────────────────────────────────────
@@ -605,35 +588,36 @@ export function TendersPage({ initialScope = "all" }) {
     }
   };
 
-  const isBidOwnedByUser = (bid, user) => {
-    if (!user || !user.id) return true;
-    const ownerId = bid.bid_owner?.id || bid.bid_owner_id;
-    const creatorId = bid.created_by;
-    return (
-      (ownerId && ownerId === user.id) || (creatorId && creatorId === user.id)
-    );
-  };
-
   // bid_status/bid_outcome are shown exactly as the server returns them -
   // re-deriving them client-side from free text made a card's own status
   // disagree with the stat-card counts (which come from the same server
   // truth via meta.*_count).
-  const effectiveBids = bids.filter((bid) => {
-    if (isOwnedView && currentUser?.id) {
-      if (!isBidOwnedByUser(bid, currentUser)) return false;
-    }
-    if (portalSourceFilter) {
-      const src = (bid.portal_source || "").toLowerCase().trim();
-      const filter = portalSourceFilter.toLowerCase().trim();
-      if (filter === "others") {
-        const standardList = ["gem", "private", "rtc", "cppp", "eprocure"];
-        if (standardList.some((s) => src.includes(s))) return false;
-      } else {
-        if (!src.includes(filter)) return false;
+  const clientFilters = { isOwnedView, currentUser, portalSourceFilter };
+  const effectiveBids = bids.filter((bid) => matchesClientFilters(bid, clientFilters));
+
+  const [exporting, setExporting] = useState(false);
+  const [exportResult, setExportResult] = useState(null);
+  const handleExport = async () => {
+    setExporting(true);
+    const toastId = toast.loading("Preparing Excel export…");
+    try {
+      const result = await exportTendersToExcel(
+        useBidStore.getState().getListParams(),
+        (bid) => matchesClientFilters(bid, clientFilters),
+      );
+      if (!result) {
+        toast.info("No tenders match the current filters", { id: toastId });
+        return;
       }
+      toast.dismiss(toastId);
+      setExportResult(result);
+    } catch (err) {
+      console.error("Failed to export tenders:", err);
+      toast.error(err.message || "Error occurred during export", { id: toastId });
+    } finally {
+      setExporting(false);
     }
-    return true;
-  });
+  };
 
   // Setup search debouncing to update store's debouncedSearch
   const debouncedSearchVal = useDebounce(searchInput, 300);
@@ -1005,11 +989,15 @@ export function TendersPage({ initialScope = "all" }) {
               variant="outline"
               size="sm"
               className="gap-1.5 border-border hover:bg-muted"
-              onClick={exportToExcel}
-              disabled={bids.length === 0}
+              onClick={handleExport}
+              disabled={exporting || effectiveBids.length === 0}
             >
-              <Download className="size-3.5 text-muted-foreground" />
-              Export Excel
+              {exporting ? (
+                <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+              ) : (
+                <Download className="size-3.5 text-muted-foreground" />
+              )}
+              {exporting ? "Exporting…" : "Export Excel"}
             </Button>
           )}
 
@@ -3042,6 +3030,8 @@ export function TendersPage({ initialScope = "all" }) {
           </div>
         </div>
       )}
+
+      <ExportSuccessDialog result={exportResult} onClose={() => setExportResult(null)} />
     </div>
   );
 }

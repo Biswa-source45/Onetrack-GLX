@@ -11,11 +11,13 @@ import { usePermissions } from '../../hooks/usePermissions'
 import {
   formatCurrency, formatEmdExemption, formatDate,
   formatDateTime, getTargetMonthDisplay, getSubmissionStatusVal,
-  getFinEvalStatusVal, getPoRecvStatusVal, getBidResultVal, escapeCSV,
+  getFinEvalStatusVal, getPoRecvStatusVal, getBidResultVal,
 } from '../../lib/tenderFormat'
 import { StageBadge } from '../../lib/tenderDisplay'
 import { statusStyle, STAGE_LABELS } from '../../services/bids'
 import { readMasterSheetDrill } from '../../lib/masterSheetDrill'
+import { downloadExcel } from '../../lib/excelExport'
+import { ExportSuccessDialog } from './ExportSuccessDialog'
 
 const PAGE_SIZE = 100
 
@@ -42,9 +44,9 @@ const COLUMNS = [
   { key: 'created_at', label: 'Created At', minWidth: 160,
     render: (b) => formatDateTime(b.created_at) },
   { key: 'status', label: 'Status', minWidth: 110,
-    render: (b) => <StatusPill status={b.bid_status} />, csvValue: (b) => b.bid_status ?? '' },
+    render: (b) => <StatusPill status={b.bid_status} />, exportValue: (b) => b.bid_status ?? '' },
   { key: 'stage', label: 'Workflow Stage', minWidth: 170,
-    render: (b) => <StageBadge stage={b.workflow_stage} />, csvValue: (b) => STAGE_LABELS[b.workflow_stage] ?? b.workflow_stage ?? '' },
+    render: (b) => <StageBadge stage={b.workflow_stage} />, exportValue: (b) => STAGE_LABELS[b.workflow_stage] ?? b.workflow_stage ?? '' },
   { key: 'category', label: 'Category', minWidth: 110,
     render: (b) => b.category ?? '—' },
   { key: 'bid_id', label: 'Bid ID', minWidth: 140, mono: true,
@@ -140,6 +142,7 @@ export function MasterSheetPage() {
   const [loadingFirst, setLoadingFirst] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [exportResult, setExportResult] = useState(null)
   const [error, setError] = useState(null)
 
   // Drill-through mode (route has :drillId) — a specific, small set of
@@ -262,21 +265,12 @@ export function MasterSheetPage() {
         return
       }
       const headers = COLUMNS.map((c) => c.label)
-      const csvRows = [headers.map(escapeCSV).join(',')]
-      for (const b of rows) {
-        csvRows.push(COLUMNS.map((c) => escapeCSV(c.csvValue ? c.csvValue(b) : plainText(c.render(b)))).join(','))
-      }
-      const blob = new Blob(['﻿' + csvRows.join('\r\n')], { type: 'text/csv;charset=utf-8;' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
+      const data = rows.map((b) => COLUMNS.map((c) => (c.exportValue ? c.exportValue(b) : plainText(c.render(b)))))
       const stamp = new Date().toISOString().slice(0, 10)
-      a.href = url
-      a.download = `master_sheet_${drillId ? (drillInfo?.title || 'filtered').replace(/[^a-z0-9]+/gi, '_').toLowerCase() : (pillFilter || 'all')}_${stamp}.csv`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      toast.success(`Exported ${rows.length} tenders`, { id: toastId })
+      const filename = `master_sheet_${drillId ? (drillInfo?.title || 'filtered').replace(/[^a-z0-9]+/gi, '_').toLowerCase() : (pillFilter || 'all')}_${stamp}.xlsx`
+      await downloadExcel({ sheetName: 'Master Sheet', headers, rows: data, filename })
+      toast.dismiss(toastId)
+      setExportResult({ count: rows.length, filename })
     } catch (err) {
       toast.error(err.message || 'Export failed', { id: toastId })
     } finally {
@@ -448,14 +442,16 @@ export function MasterSheetPage() {
           — end of list — {rows.length} tender{rows.length !== 1 ? 's' : ''}
         </p>
       )}
+
+      <ExportSuccessDialog result={exportResult} onClose={() => setExportResult(null)} />
     </div>
   )
 }
 
-// Strips a React element down to its visible text for the CSV export. Only
+// Strips a React element down to its visible text for the Excel export. Only
 // walks a node's own `children` prop, so it cannot see inside a custom
 // component that builds its text internally (StatusPill, StageBadge) -
-// those columns provide their own `csvValue` instead of relying on this.
+// those columns provide their own `exportValue` instead of relying on this.
 function plainText(node) {
   if (node == null || typeof node === 'boolean') return ''
   if (typeof node === 'string' || typeof node === 'number') return node

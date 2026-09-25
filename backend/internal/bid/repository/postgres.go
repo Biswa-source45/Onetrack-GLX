@@ -395,7 +395,10 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		-- Newest-added-first: whichever tender was most recently created or
 		-- imported into OneTrack sorts to the top, regardless of the tender's
 		-- own start date. A bulk import lands together at the top as "latest".
-		ORDER BY b.created_at DESC
+		-- b.id breaks created_at ties (a bulk import shares one timestamp) so
+		-- LIMIT/OFFSET pages are stable - without it rows repeat or go missing
+		-- across pages.
+		ORDER BY b.created_at DESC, b.id DESC
 		LIMIT $%d OFFSET $%d
 	`, where, idx, idx+1)
 

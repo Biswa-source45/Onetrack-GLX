@@ -133,8 +133,11 @@ export const useBidStore = create((set, get) => ({
   // overwrites the list even if it was answering the *older* query.
   _requestSeq: 0,
 
-  loadBids: async (overrideOwnerId) => {
-    const { page, debouncedSearch, stageFilter, statusFilter, portalSourceFilter, inBin, bidOwnerId, scope, endDateFilter, ownerFilterId } = get()
+  // The listBids filter params for the current filter state, minus paging.
+  // Shared by loadBids and the Tenders page's Excel export so an export always
+  // matches exactly what the list is showing.
+  getListParams: (overrideOwnerId) => {
+    const { debouncedSearch, stageFilter, statusFilter, portalSourceFilter, inBin, bidOwnerId, scope, endDateFilter, ownerFilterId } = get()
     let finalOwnerId = overrideOwnerId !== undefined ? overrideOwnerId : bidOwnerId
     if (scope === 'owned' && !finalOwnerId) {
       finalOwnerId = tokenStorage.getUser()?.id || ''
@@ -145,21 +148,24 @@ export const useBidStore = create((set, get) => ({
       finalOwnerId = ownerFilterId
     }
     const { closing_after, closing_before } = computeEndDateRange(endDateFilter)
+    return {
+      search: debouncedSearch,
+      workflow_stage: stageFilter,
+      bid_status: statusFilter,
+      portal_source: portalSourceFilter || undefined,
+      bid_owner_id: (scope === 'owned' || finalOwnerId) ? finalOwnerId : undefined,
+      closing_after,
+      closing_before,
+      in_bin: inBin,
+    }
+  },
+
+  loadBids: async (overrideOwnerId) => {
+    const params = get().getListParams(overrideOwnerId)
     const requestId = get()._requestSeq + 1
     set({ loading: true, error: null, _requestSeq: requestId })
     try {
-      const res = await listBids({
-        page,
-        limit: 20,
-        search: debouncedSearch,
-        workflow_stage: stageFilter,
-        bid_status: statusFilter,
-        portal_source: portalSourceFilter || undefined,
-        bid_owner_id: (scope === 'owned' || finalOwnerId) ? finalOwnerId : undefined,
-        closing_after,
-        closing_before,
-        in_bin: inBin,
-      })
+      const res = await listBids({ ...params, page: get().page, limit: 20 })
       if (get()._requestSeq !== requestId) return // superseded by a newer filter change
       if (res.ok) {
         const bids = Array.isArray(res.data) ? res.data : (res.data?.bids || [])

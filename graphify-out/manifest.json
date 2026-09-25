@@ -462,10 +462,10 @@
     "semantic_hash": "35f5d626aeab9feedd7ad28b77de772d"
   },
   "frontend/package.json": {
-    "mtime": 1789976887.9349582,
-    "seen": 1790141128.4531522,
-    "ast_hash": "e0c2e4079567b6e42f0804c99367a4a6",
-    "semantic_hash": "e0c2e4079567b6e42f0804c99367a4a6"
+    "mtime": 1790142549.7732337,
+    "seen": 1790145117.8663332,
+    "ast_hash": "612eeb76300323c6bc111cf1c8d0b04c",
+    "semantic_hash": ""
   },
   "frontend/src/App.jsx": {
     "mtime": 1789729241.4285934,
@@ -654,10 +654,10 @@
     "semantic_hash": "ff63763778299b02a969bdf5d01909c6"
   },
   "frontend/src/components/tenders/ChecklistTab.jsx": {
-    "mtime": 1788776786.1048288,
-    "seen": 1790141128.4531522,
-    "ast_hash": "606b35f589217e980c3b4b74216e4041",
-    "semantic_hash": "606b35f589217e980c3b4b74216e4041"
+    "mtime": 1790142625.0217752,
+    "seen": 1790145117.8678622,
+    "ast_hash": "c94866b08b06bf987e09747c7ce4c70c",
+    "semantic_hash": ""
   },
   "frontend/src/components/tenders/EditTenderDialog.jsx": {
     "mtime": 1790070655.0301123,
@@ -696,10 +696,10 @@
     "semantic_hash": "bbc9257dcd7476ea7b2c17a173e779bf"
   },
   "frontend/src/components/tenders/StageWorkspaces.jsx": {
-    "mtime": 1790071487.52356,
-    "seen": 1790141128.4531522,
-    "ast_hash": "9faadcf676b6e005dfb9529054f099aa",
-    "semantic_hash": "9faadcf676b6e005dfb9529054f099aa"
+    "mtime": 1790142705.3524687,
+    "seen": 1790145117.8678622,
+    "ast_hash": "6f85911e0c5bd5f4e65fced454387b78",
+    "semantic_hash": ""
   },
   "frontend/src/components/tenders/TenderDetailPage.jsx": {
     "mtime": 1790070702.9232256,
@@ -1018,5 +1018,773 @@
     "seen": 1790141128.4531522,
     "ast_hash": "9e517d8bc2c672b685c8ef98b857a358",
     "semantic_hash": "9e517d8bc2c672b685c8ef98b857a358"
+  },
+  "backend/cmd/emdfix/apply.sql": {
+    "mtime": 1788760753.9037547,
+    "seen": 1790145117.8663332,
+    "ast_hash": "89480311bea194d5f74761962e17bc13",
+    "semantic_hash": ""
+  },
+  "backend/cmd/emdfix/dryrun.sql": {
+    "mtime": 1788760743.0656934,
+    "seen": 1790145117.8663332,
+    "ast_hash": "8284254b1d4d97b92a616a24ff187286",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000001_create_auth_schema.down.sql": {
+    "mtime": 1779871533.0095854,
+    "seen": 1790145117.8663332,
+    "ast_hash": "15a5d8bfa254b24d06399275bdae4922",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000001_create_auth_schema.up.sql": {
+    "mtime": 1779871533.0095854,
+    "seen": 1790145117.8663332,
+    "ast_hash": "11c1d3fdd8ab03907486d7213880a9cf",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000002_seed_auth_data.down.sql": {
+    "mtime": 1779871533.0095854,
+    "seen": 1790145117.8663332,
+    "ast_hash": "dd2cec08fd420e6da85600404e5d721a",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000002_seed_auth_data.up.sql": {
+    "mtime": 1779871533.0095854,
+    "seen": 1790145117.8663332,
+    "ast_hash": "e85c20ad605da75c936862f477836595",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000003_add_user_profile_fields.down.sql": {
+    "mtime": 1779963793.6479673,
+    "seen": 1790145117.8663332,
+    "ast_hash": "d1a3e4f0e4564c8166f14423e1063f06",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000003_add_user_profile_fields.up.sql": {
+    "mtime": 1779963793.6479673,
+    "seen": 1790145117.8663332,
+    "ast_hash": "31dbfbb0d71ca9a5fc9c150146323788",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000004_create_bid_schema.down.sql": {
+    "mtime": 1780386395.779854,
+    "seen": 1790145117.8663332,
+    "ast_hash": "5556e61462f45176cda615515ebdf4bb",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000004_create_bid_schema.up.sql": {
+    "mtime": 1780386395.7850988,
+    "seen": 1790145117.8663332,
+    "ast_hash": "45650a36f7c80d6796abdc0ea9ffb117",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000005_create_task_schema.down.sql": {
+    "mtime": 1780386395.79048,
+    "seen": 1790145117.8663332,
+    "ast_hash": "899c0f1f429f82b1df94f5f0c7abbb97",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000005_create_task_schema.up.sql": {
+    "mtime": 1780386395.7965956,
+    "seen": 1790145117.8663332,
+    "ast_hash": "eaeb8062aa89a1488629d765a4e3f655",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000006_seed_role_permissions.down.sql": {
+    "mtime": 1780386395.8024974,
+    "seen": 1790145117.8663332,
+    "ast_hash": "c6f42227db714e957f6a95885e912ede",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000006_seed_role_permissions.up.sql": {
+    "mtime": 1784870879.6195145,
+    "seen": 1790145117.8663332,
+    "ast_hash": "b66039d6eef02e20b7e7adba6b54eb09",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000007_v1_bid_checklists.down.sql": {
+    "mtime": 1781678428.5076945,
+    "seen": 1790145117.8663332,
+    "ast_hash": "6c6cb9fc3eedc72226b9d5d13c8c7632",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000007_v1_bid_checklists.up.sql": {
+    "mtime": 1784871086.0717742,
+    "seen": 1790145117.8663332,
+    "ast_hash": "8f72105372191d6afcb8bbeb3fe4d308",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000008_add_excel_bid_fields.down.sql": {
+    "mtime": 1784722902.264852,
+    "seen": 1790145117.8663332,
+    "ast_hash": "669c1ed7454d6d0dac38711fb2d600f5",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000008_add_excel_bid_fields.up.sql": {
+    "mtime": 1784722895.9185908,
+    "seen": 1790145117.8663332,
+    "ast_hash": "01e82603e7fbc646c63eae91bb735620",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000009_grant_user_view_to_team_roles.down.sql": {
+    "mtime": 1784870872.1853428,
+    "seen": 1790145117.8663332,
+    "ast_hash": "1685040323dbf53e9b7297c8029e1b91",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000009_grant_user_view_to_team_roles.up.sql": {
+    "mtime": 1784870867.9097674,
+    "seen": 1790145117.8663332,
+    "ast_hash": "c77b2c1ea9cc8c7db11c0f5a502cb6bb",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000010_migration_v2_schema.down.sql": {
+    "mtime": 1785572921.294504,
+    "seen": 1790145117.8663332,
+    "ast_hash": "fab7a16eb1a9048c7fd73cef8213c066",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000010_migration_v2_schema.up.sql": {
+    "mtime": 1785572914.5562932,
+    "seen": 1790145117.8663332,
+    "ast_hash": "526aaa6abd713f7ff024f57345ffe6a0",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000011_clean_v2_users_and_otp.down.sql": {
+    "mtime": 1785574086.901858,
+    "seen": 1790145117.8663332,
+    "ast_hash": "0359d39e5963ee2a28dfe19e6e87ba10",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000011_clean_v2_users_and_otp.up.sql": {
+    "mtime": 1785580921.5567443,
+    "seen": 1790145117.8663332,
+    "ast_hash": "31ac626aa4a7435427209c43ef5957eb",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000012_allow_nullable_user_fk.up.sql": {
+    "mtime": 1785575423.703313,
+    "seen": 1790145117.8663332,
+    "ast_hash": "253a75a39bb2f9735928bd205d46d8f9",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000013_purge_old_data_seed_v2.up.sql": {
+    "mtime": 1785578100.9785044,
+    "seen": 1790145117.8663332,
+    "ast_hash": "e9fa8c74dba7f07213f6b3edd49c8e08",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000014_v2_stage_completion_tracking.up.sql": {
+    "mtime": 1785579488.035101,
+    "seen": 1790145117.8663332,
+    "ast_hash": "8991fa4d568f3d322a22f2cfc8dda080",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000015_fix_bg_rate_numeric_precision.down.sql": {
+    "mtime": 1785825004.4365635,
+    "seen": 1790145117.8663332,
+    "ast_hash": "6dd56a499b9f27517a1ed0a205c873ce",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000015_fix_bg_rate_numeric_precision.up.sql": {
+    "mtime": 1785824999.7254174,
+    "seen": 1790145117.8663332,
+    "ast_hash": "504df5e54aeea9cc6a1468fe47152d22",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000016_add_stage_reviews.up.sql": {
+    "mtime": 1785830828.6218824,
+    "seen": 1790145117.8663332,
+    "ast_hash": "c914a698b0f22fe7cc6ee908298da449",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000017_purge_all_tenders_and_users_except_sadmin.up.sql": {
+    "mtime": 1787634229.691868,
+    "seen": 1790145117.8663332,
+    "ast_hash": "4e9233b3628b8efe7236f2503517c01f",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000018_ensure_checklist_group.up.sql": {
+    "mtime": 1786097951.5468738,
+    "seen": 1790145117.8663332,
+    "ast_hash": "0929b59bc375497c1cfcbe380533481e",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000019_add_pricing_workspace.up.sql": {
+    "mtime": 1786380117.093483,
+    "seen": 1790145117.8663332,
+    "ast_hash": "339813623bfacd4fa34177479519c98f",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000020_add_oem_workspace.up.sql": {
+    "mtime": 1786519293.2984886,
+    "seen": 1790145117.8663332,
+    "ast_hash": "0ee40552f28041e80b72b778d3b95f31",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000021_cleanup_unnecessary_permissions.up.sql": {
+    "mtime": 1786531741.0402398,
+    "seen": 1790145117.8663332,
+    "ast_hash": "f34b8506177a9c297fcad6e1da318ff7",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000022_user_roles_primary_secondary.down.sql": {
+    "mtime": 1786556999.9572368,
+    "seen": 1790145117.8663332,
+    "ast_hash": "722099cdd87bfc8738d9d3671024d843",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000022_user_roles_primary_secondary.up.sql": {
+    "mtime": 1786556696.7553372,
+    "seen": 1790145117.8663332,
+    "ast_hash": "507bcc7878071f1a528d2e0ea6499c8a",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000023_add_emd_bank_details.up.sql": {
+    "mtime": 1786960042.0653954,
+    "seen": 1790145117.8663332,
+    "ast_hash": "34da8ec86de476b0c8e4a1c0442b7cd6",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000024_drop_task_schema.down.sql": {
+    "mtime": 1787036055.0335128,
+    "seen": 1790145117.8663332,
+    "ast_hash": "dcf894dcfa007c9b7641f91ea47e4df7",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000024_drop_task_schema.up.sql": {
+    "mtime": 1787036033.7141154,
+    "seen": 1790145117.8663332,
+    "ast_hash": "2de233234dbf9234768931181291038c",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000025_add_award_delivery_dates.down.sql": {
+    "mtime": 1787040381.227528,
+    "seen": 1790145117.8663332,
+    "ast_hash": "ba9af630025821b86d3fe5d79d97504f",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000025_add_award_delivery_dates.up.sql": {
+    "mtime": 1787040373.2088702,
+    "seen": 1790145117.8663332,
+    "ast_hash": "5102130045dded9c64ebd87a898e0b53",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000026_add_emd_ready_and_delivery_complete.down.sql": {
+    "mtime": 1787143225.1984062,
+    "seen": 1790145117.8663332,
+    "ast_hash": "6ed5829e8cb1f9e81907a3a252538946",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000026_add_emd_ready_and_delivery_complete.up.sql": {
+    "mtime": 1787143217.6545298,
+    "seen": 1790145117.8663332,
+    "ast_hash": "fcd2fc8cffbe2d7faa4f5b90e616affc",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000027_add_stage_history_event_details.down.sql": {
+    "mtime": 1787208706.4339488,
+    "seen": 1790145117.8663332,
+    "ast_hash": "3bbc1664d9864b940441294effd8f2f0",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000027_add_stage_history_event_details.up.sql": {
+    "mtime": 1787208701.3131237,
+    "seen": 1790145117.8663332,
+    "ast_hash": "ad1acf27556fddedd4d19a5bc1e227d2",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000028_add_emd_exemption_detail.down.sql": {
+    "mtime": 1787726565.7782452,
+    "seen": 1790145117.8663332,
+    "ast_hash": "fbb06c3be2e9c51b3a562cb33d3c67cb",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000028_add_emd_exemption_detail.up.sql": {
+    "mtime": 1787726562.445889,
+    "seen": 1790145117.8663332,
+    "ast_hash": "18f967cba46c4cb37516335863f8a0a5",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000029_rename_technical_manager_to_reporting_manager.down.sql": {
+    "mtime": 1787727051.7647054,
+    "seen": 1790145117.8663332,
+    "ast_hash": "e113abae3873926b2ee842c47857229b",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000029_rename_technical_manager_to_reporting_manager.up.sql": {
+    "mtime": 1787727048.4548006,
+    "seen": 1790145117.8663332,
+    "ast_hash": "6996a3c20caf476ec7578e538cb2545b",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000030_add_emd_not_applicable.down.sql": {
+    "mtime": 1787808399.850147,
+    "seen": 1790145117.8663332,
+    "ast_hash": "fb4a8ba430d5ec81ae4a5b30014be63b",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000030_add_emd_not_applicable.up.sql": {
+    "mtime": 1787808394.4071674,
+    "seen": 1790145117.8663332,
+    "ast_hash": "b52b0813d0980a73c9ce5ccc62725caa",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000031_unique_tender_identifiers.down.sql": {
+    "mtime": 1788151984.7147112,
+    "seen": 1790145117.8663332,
+    "ast_hash": "f5a6d934a2a6082d552857d1eb222891",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000031_unique_tender_identifiers.up.sql": {
+    "mtime": 1788151984.7161646,
+    "seen": 1790145117.8663332,
+    "ast_hash": "ddc424aaafe0963bf2047f80a53b96e2",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000032_add_closed_bid_status.down.sql": {
+    "mtime": 1788151984.717183,
+    "seen": 1790145117.8663332,
+    "ast_hash": "d9a2768332f32f91c407b9c5352b0131",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000032_add_closed_bid_status.up.sql": {
+    "mtime": 1788151984.7185264,
+    "seen": 1790145117.8663332,
+    "ast_hash": "73c2518940d85a3c169952186dba2f8c",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000033_add_quantity_and_rank.down.sql": {
+    "mtime": 1788151984.7190647,
+    "seen": 1790145117.8663332,
+    "ast_hash": "307b1a025d173b7969d0d803f3f1a92b",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000033_add_quantity_and_rank.up.sql": {
+    "mtime": 1788151984.719599,
+    "seen": 1790145117.8663332,
+    "ast_hash": "d871f137e3cf9aa8305e1d620654e363",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000034_add_account_manager_and_primary_review.down.sql": {
+    "mtime": 1788249846.750471,
+    "seen": 1790145117.8663332,
+    "ast_hash": "775a1b7ee1b9bc19b5afde07ce6413f5",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000034_add_account_manager_and_primary_review.up.sql": {
+    "mtime": 1788249841.6976264,
+    "seen": 1790145117.8663332,
+    "ast_hash": "32e573a3d9184e0605cfd19705ca408c",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000035_add_emd_exemption_types.down.sql": {
+    "mtime": 1788266249.6841824,
+    "seen": 1790145117.8663332,
+    "ast_hash": "d64e735ba010360bb72da75019984ade",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000035_add_emd_exemption_types.up.sql": {
+    "mtime": 1788266341.150359,
+    "seen": 1790145117.8663332,
+    "ast_hash": "f38da631ad2414b2325460cd146f6c24",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000036_backfill_am_presales_members.down.sql": {
+    "mtime": 1788334236.1184971,
+    "seen": 1790145117.8663332,
+    "ast_hash": "6a2e2aff86c1cf578d6d459aca498789",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000036_backfill_am_presales_members.up.sql": {
+    "mtime": 1788334230.9431102,
+    "seen": 1790145117.8663332,
+    "ast_hash": "2306f15093083c7b5df19d668e778653",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000037_add_alert_note_and_fix_category_spelling.down.sql": {
+    "mtime": 1788777311.649884,
+    "seen": 1790145117.8663332,
+    "ast_hash": "8f99fb2b2bef0b2207e34cb942a3fc9b",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000037_add_alert_note_and_fix_category_spelling.up.sql": {
+    "mtime": 1788777304.3150568,
+    "seen": 1790145117.8663332,
+    "ast_hash": "0fee74e9d22f4c81a84e8d46bf975d25",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000038_add_field_suggestions.down.sql": {
+    "mtime": 1788936165.421537,
+    "seen": 1790145117.8663332,
+    "ast_hash": "f9caadf44e1b2ea2799eee9ccf7b4300",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000038_add_field_suggestions.up.sql": {
+    "mtime": 1788936162.1869578,
+    "seen": 1790145117.8663332,
+    "ast_hash": "63d6c41a48c6b7ebf02a6a960b043dae",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000039_action_ledger.down.sql": {
+    "mtime": 1788939532.2925322,
+    "seen": 1790145117.8663332,
+    "ast_hash": "f1f3838b223b1af87f8ba9e727d30ea8",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000039_action_ledger.up.sql": {
+    "mtime": 1788939526.4117346,
+    "seen": 1790145117.8663332,
+    "ast_hash": "ed8fd5130c2fb636363b14b71389e280",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000040_create_feedback_schema.down.sql": {
+    "mtime": 1788947011.7694235,
+    "seen": 1790145117.8663332,
+    "ast_hash": "c914b5cab98da465c628afedb1edb6fa",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000040_create_feedback_schema.up.sql": {
+    "mtime": 1788947001.9729824,
+    "seen": 1790145117.8663332,
+    "ast_hash": "5122358747c143a3b22a274c451d3aa5",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000041_stage_access_control.down.sql": {
+    "mtime": 1789017912.749852,
+    "seen": 1790145117.8663332,
+    "ast_hash": "283c8e59e8da95578515861e09690de5",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000041_stage_access_control.up.sql": {
+    "mtime": 1789018233.345126,
+    "seen": 1790145117.8663332,
+    "ast_hash": "acc8988c571a928a7145152db3eef58e",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000042_backfill_new_field_suggestions.down.sql": {
+    "mtime": 1789036858.9567318,
+    "seen": 1790145117.8663332,
+    "ast_hash": "2b562de7124dd22716559645c5065ed8",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000042_backfill_new_field_suggestions.up.sql": {
+    "mtime": 1789036854.6038642,
+    "seen": 1790145117.8663332,
+    "ast_hash": "6cbf3c7970c0bc62c7e40809c32292a1",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000043_system_configurations.down.sql": {
+    "mtime": 1789729042.2381926,
+    "seen": 1790145117.8663332,
+    "ast_hash": "13223be50690557e18530ee1df5a1753",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000043_system_configurations.up.sql": {
+    "mtime": 1789729032.8814757,
+    "seen": 1790145117.8663332,
+    "ast_hash": "628c90f143b5b38e754eb5946dcd5850",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000044_heal_legacy_tenders_and_primary_review.down.sql": {
+    "mtime": 1789736187.0707264,
+    "seen": 1790145117.8663332,
+    "ast_hash": "672275c3f64cc00653b0d1c4423adcd6",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000044_heal_legacy_tenders_and_primary_review.up.sql": {
+    "mtime": 1789736181.743458,
+    "seen": 1790145117.8663332,
+    "ast_hash": "39a8dfb240c620b78e638eb6b7cdd2b1",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000045_tender_edit_approvals.down.sql": {
+    "mtime": 1789970726.344669,
+    "seen": 1790145117.8663332,
+    "ast_hash": "53f8493956fdabd5e31edc2e539feff7",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000045_tender_edit_approvals.up.sql": {
+    "mtime": 1789970722.6041217,
+    "seen": 1790145117.8663332,
+    "ast_hash": "2da1012b31156f8766e6644bcd1d694a",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000046_add_ticket_image.down.sql": {
+    "mtime": 1789976544.632696,
+    "seen": 1790145117.8663332,
+    "ast_hash": "79c06eb2ab212b6e51a1edddfd35cc24",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000046_add_ticket_image.up.sql": {
+    "mtime": 1789976539.6968553,
+    "seen": 1790145117.8663332,
+    "ast_hash": "7b79db69d6d9fd75b7ce17674c4050ce",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000047_generalize_tender_approvals.down.sql": {
+    "mtime": 1790055748.501249,
+    "seen": 1790145117.8663332,
+    "ast_hash": "7f8ea1923b68d86b2cfe733238222548",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000047_generalize_tender_approvals.up.sql": {
+    "mtime": 1790055743.0296824,
+    "seen": 1790145117.8663332,
+    "ast_hash": "1424702c7028b85065d1354ff2686e83",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000048_pricing_suggestion_window.down.sql": {
+    "mtime": 1790062775.5365882,
+    "seen": 1790145117.8663332,
+    "ast_hash": "c485338405250b89c09440e16d85e817",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000048_pricing_suggestion_window.up.sql": {
+    "mtime": 1790062772.4795756,
+    "seen": 1790145117.8663332,
+    "ast_hash": "18a95ca5d0ba7263599156e9eb5f757d",
+    "semantic_hash": ""
+  },
+  "frontend/src/lib/checklistExport.js": {
+    "mtime": 1790144942.6004333,
+    "seen": 1790145117.8678622,
+    "ast_hash": "89cd9c55686f7541fd67211b6b520c48",
+    "semantic_hash": ""
+  },
+  "frontend/src/lib/checklistOem.js": {
+    "mtime": 1790142404.53306,
+    "seen": 1790145117.8678622,
+    "ast_hash": "ef7488004797d84051ce979a95fc18ed",
+    "semantic_hash": ""
+  },
+  ".claude/CLAUDE.md": {
+    "mtime": 1790141015.0504203,
+    "seen": 1790145117.8678622,
+    "ast_hash": "9b31786b637be3c13978bec4c2330752",
+    "semantic_hash": ""
+  },
+  ".claude/skills/playwright-cli/SKILL.md": {
+    "mtime": 1788151984.651674,
+    "seen": 1790145117.8678622,
+    "ast_hash": "b6c2478cb358b1b77906319f65c218b2",
+    "semantic_hash": ""
+  },
+  ".claude/skills/playwright-cli/references/element-attributes.md": {
+    "mtime": 1788151984.6577916,
+    "seen": 1790145117.8678622,
+    "ast_hash": "06a9cd91326c0fb1eeafa6853132ff0d",
+    "semantic_hash": ""
+  },
+  ".claude/skills/playwright-cli/references/playwright-tests.md": {
+    "mtime": 1788151984.6611104,
+    "seen": 1790145117.8678622,
+    "ast_hash": "2098b51f50cfc25605dfabd6d0368fd8",
+    "semantic_hash": ""
+  },
+  ".claude/skills/playwright-cli/references/request-mocking.md": {
+    "mtime": 1788151984.662122,
+    "seen": 1790145117.8678622,
+    "ast_hash": "281652081dacf00f27a637ce372c0d17",
+    "semantic_hash": ""
+  },
+  ".claude/skills/playwright-cli/references/running-code.md": {
+    "mtime": 1788151984.662122,
+    "seen": 1790145117.8678622,
+    "ast_hash": "39be2ef507d2943ee6e969f23e8f6c20",
+    "semantic_hash": ""
+  },
+  ".claude/skills/playwright-cli/references/session-management.md": {
+    "mtime": 1788151984.6636434,
+    "seen": 1790145117.8678622,
+    "ast_hash": "50d6f92a413c507cd066e33526e5298e",
+    "semantic_hash": ""
+  },
+  ".claude/skills/playwright-cli/references/storage-state.md": {
+    "mtime": 1788151984.6636434,
+    "seen": 1790145117.8678622,
+    "ast_hash": "16c4d7ae1f2d8eceef11fc14de4ae130",
+    "semantic_hash": ""
+  },
+  ".claude/skills/playwright-cli/references/test-generation.md": {
+    "mtime": 1788151984.6671865,
+    "seen": 1790145117.8678622,
+    "ast_hash": "a34accaf4ab93f7b94b40303ba7996b3",
+    "semantic_hash": ""
+  },
+  ".claude/skills/playwright-cli/references/tracing.md": {
+    "mtime": 1788151984.6686995,
+    "seen": 1790145117.8678622,
+    "ast_hash": "8c66ddbc29fc172bde7d71211d4e3473",
+    "semantic_hash": ""
+  },
+  ".claude/skills/playwright-cli/references/video-recording.md": {
+    "mtime": 1788151984.670639,
+    "seen": 1790145117.8678622,
+    "ast_hash": "29e61c00414ae28d7719b6cc285a18bf",
+    "semantic_hash": ""
+  },
+  ".github/workflows/deploy.yml": {
+    "mtime": 1784714056.360381,
+    "seen": 1790145117.8678622,
+    "ast_hash": "2d6a93dc08bb7de967967ccf75dc6ac5",
+    "semantic_hash": ""
+  },
+  "CLAUDE.md": {
+    "mtime": 1790141015.0504203,
+    "seen": 1790145117.8678622,
+    "ast_hash": "8a6643a420fdad6bfb583523bc6cef16",
+    "semantic_hash": ""
+  },
+  "DEPLOYMENT.md": {
+    "mtime": 1789976877.3632576,
+    "seen": 1790145117.8678622,
+    "ast_hash": "03226acef8b3e35dfa4d01530c42d450",
+    "semantic_hash": ""
+  },
+  "PRODUCT.md": {
+    "mtime": 1788151984.675762,
+    "seen": 1790145117.8678622,
+    "ast_hash": "a18931167f2e3424adb75dd20c08c7fd",
+    "semantic_hash": ""
+  },
+  "backend/API_DOCS_AUTH.md": {
+    "mtime": 1779871532.9993622,
+    "seen": 1790145117.8678622,
+    "ast_hash": "97d146a1500e4eeff012c46b4269385e",
+    "semantic_hash": ""
+  },
+  "backend/API_DOCS_BID.md": {
+    "mtime": 1787809641.893583,
+    "seen": 1790145117.8678622,
+    "ast_hash": "72e5b4615c4ccd9d27db256db7379d3a",
+    "semantic_hash": ""
+  },
+  "backend/API_DOCS_USER.md": {
+    "mtime": 1780049329.3489769,
+    "seen": 1790145117.8678622,
+    "ast_hash": "679b307dd8af35d9e53508909743c1ce",
+    "semantic_hash": ""
+  },
+  "backend/V1_CHANGES.md": {
+    "mtime": 1781678428.4226081,
+    "seen": 1790145117.8678622,
+    "ast_hash": "32437704621e8492c8ffa366863759b2",
+    "semantic_hash": ""
+  },
+  "docker-compose.yml": {
+    "mtime": 1790144079.915346,
+    "seen": 1790145117.8678622,
+    "ast_hash": "56d20835a7b60c51a5e9a6dc65948e3a",
+    "semantic_hash": ""
+  },
+  "frontend/DESIGN.md": {
+    "mtime": 1788151984.723456,
+    "seen": 1790145117.8678622,
+    "ast_hash": "acf5a9c763340d6f062aa3c3819249e3",
+    "semantic_hash": ""
+  },
+  "frontend/README.md": {
+    "mtime": 1781252767.1405168,
+    "seen": 1790145117.8678622,
+    "ast_hash": "abfa161e3e5434e3e85394bf03d387a4",
+    "semantic_hash": ""
+  },
+  "frontend/index.html": {
+    "mtime": 1788418700.2767558,
+    "seen": 1790145117.8678622,
+    "ast_hash": "343e5eb01d350443b9ece7315bff15c3",
+    "semantic_hash": ""
+  },
+  "frontend/public/assets/hero_abstract_light.png": {
+    "mtime": 1788431052.5344217,
+    "seen": 1790145117.8678622,
+    "ast_hash": "816979c28d0c05298d660c70792195c2",
+    "semantic_hash": ""
+  },
+  "frontend/public/assets/pipeline_workflow_light.png": {
+    "mtime": 1788431096.1176355,
+    "seen": 1790145117.8678622,
+    "ast_hash": "588d18518a7d9dd4885fa8482309f435",
+    "semantic_hash": ""
+  },
+  "frontend/public/favicon.svg": {
+    "mtime": 1781252767.1609674,
+    "seen": 1790145117.8678622,
+    "ast_hash": "7e840862161341271697daa99a40d76b",
+    "semantic_hash": ""
+  },
+  "frontend/public/icons.svg": {
+    "mtime": 1781252767.161499,
+    "seen": 1790145117.8678622,
+    "ast_hash": "21c7473c592c67dc87223d49892c8f0a",
+    "semantic_hash": ""
+  },
+  "frontend/public/login-preview.png": {
+    "mtime": 1781252767.1696384,
+    "seen": 1790145117.8678622,
+    "ast_hash": "fd6be22dfce07b91dad84e0b69ea18c2",
+    "semantic_hash": ""
+  },
+  "frontend/public/login_abstract_side.png": {
+    "mtime": 1781252767.1776137,
+    "seen": 1790145117.8678622,
+    "ast_hash": "383c81f0ff54cc0a2bf16fd29803470b",
+    "semantic_hash": ""
+  },
+  "frontend/public/onetrack_dashboard_actual.png": {
+    "mtime": 1784872117.0820527,
+    "seen": 1790145117.8678622,
+    "ast_hash": "8498ad4aba48ac8ea69e12c3d94e553a",
+    "semantic_hash": ""
+  },
+  "frontend/public/onetrack_dashboard_enhanced.png": {
+    "mtime": 1784872316.1033578,
+    "seen": 1790145117.8678622,
+    "ast_hash": "f699573c62ccdb5a7e838bb468be88ac",
+    "semantic_hash": ""
+  },
+  "frontend/src/assets/hero.png": {
+    "mtime": 1781252767.1802595,
+    "seen": 1790145117.8678622,
+    "ast_hash": "aead493361b27e7510691c5d7072dfc1",
+    "semantic_hash": ""
+  },
+  "frontend/src/assets/landing/avatar-1.jpg": {
+    "mtime": 1788422318.692447,
+    "seen": 1790145117.8678622,
+    "ast_hash": "ee7f23d6cb6677f1dcc534bc67752105",
+    "semantic_hash": ""
+  },
+  "frontend/src/assets/landing/avatar-2.jpg": {
+    "mtime": 1788422319.0457845,
+    "seen": 1790145117.8678622,
+    "ast_hash": "4d5bbf3e52203e7f5f1774e3b7ae71dd",
+    "semantic_hash": ""
+  },
+  "frontend/src/assets/landing/avatar-3.jpg": {
+    "mtime": 1788422321.4880555,
+    "seen": 1790145117.8678622,
+    "ast_hash": "cf523967089ecc2735e2ed3b045fe938",
+    "semantic_hash": ""
+  },
+  "frontend/src/assets/landing/avatar-4.jpg": {
+    "mtime": 1788422326.0981321,
+    "seen": 1790145117.8678622,
+    "ast_hash": "72d2e8c2cfb589a8791ff2bb3625cf34",
+    "semantic_hash": ""
+  },
+  "frontend/src/assets/react.svg": {
+    "mtime": 1781252767.182119,
+    "seen": 1790145117.8678622,
+    "ast_hash": "f0402b67b6ce880f65666bb49e841696",
+    "semantic_hash": ""
+  },
+  "frontend/src/assets/vite.svg": {
+    "mtime": 1781252767.182119,
+    "seen": 1790145117.8678622,
+    "ast_hash": "6d5180a782d64c8cf51ba01c2a2184d8",
+    "semantic_hash": ""
   }
 }

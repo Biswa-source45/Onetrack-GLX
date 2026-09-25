@@ -125,17 +125,6 @@ export function getBidResultVal(bid) {
   return 'Under Eval'
 }
 
-// Helper to escape CSV fields correctly according to RFC 4180
-export function escapeCSV(val) {
-  if (val === null || val === undefined) return ''
-  let str = String(val)
-  str = str.replace(/"/g, '""')
-  if (str.includes(',') || str.includes('\n') || str.includes('\r') || str.includes('"')) {
-    return `"${str}"`
-  }
-  return str
-}
-
 // Palette for the Add Tender "Additional Info / Challenge" note's color
 // label. Mirrored in the Go backend (bid_service.go's alertNoteColors) so
 // the same note renders identically in the mailed alert as it does here —
