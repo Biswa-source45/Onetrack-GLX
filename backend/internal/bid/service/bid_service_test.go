@@ -319,6 +319,45 @@ func TestUpdateBid_StaleEMDModeDropped(t *testing.T) {
 	}
 }
 
+// TestUpdateBid_InternalApprovalReadyRecipients: with EMD required, readiness
+// fires only when the *second* of Checklist/EMD completes (either order), and
+// goes to the Reporting Manager and Account Manager — not Pre-Sales.
+func TestUpdateBid_InternalApprovalReadyRecipients(t *testing.T) {
+	rm, am, ps := "rm-1", "am-1", "ps-1"
+	run := func(existing string, done string) []*alertDomain.Alert {
+		repo := &fakeBidRepo{bid: &domain.BidWorkspace{
+			ID: "bid-1", Title: "T", WorkflowStage: domain.StageDocumentChecklistPrep, CreationMode: domain.CreationModeManual,
+			BidOwnerID: "owner-1", ReportingManagerID: &rm, AccountManagerID: &am, PresalesID: &ps,
+			EMDType: strPtr("ONLINE"), EMDBankName: strPtr("B"), EMDAccountNumber: strPtr("1"), EMDIFSCCode: strPtr("I"),
+			StageCompletions: []byte(existing),
+		}}
+		alerts := &fakeAlertSvc{}
+		svc := NewBidService(repo, alerts, &fakeSystemLog{})
+		req := &domain.UpdateBidRequest{StageCompletions: map[string]bool{done: true}}
+		if err := svc.UpdateBid(context.Background(), "bid-1", req, "actor-1", nil); err != nil {
+			t.Fatalf("UpdateBid: %v", err)
+		}
+		return alerts.created
+	}
+
+	if hasAlertType(run(`{}`, domain.StageDocumentChecklistPrep), "INTERNAL_APPROVAL_READY") {
+		t.Fatal("checklist alone must not fire while EMD is still required")
+	}
+	got := run(`{"EMD_PROCESSING":true}`, domain.StageDocumentChecklistPrep)
+	ids := map[string]bool{}
+	for _, a := range got {
+		if a.Type == "INTERNAL_APPROVAL_READY" {
+			ids[*a.UserID] = true
+		}
+	}
+	if len(ids) != 2 || !ids[rm] || !ids[am] {
+		t.Fatalf("recipients = %v, want RM and AM only", ids)
+	}
+	if !hasAlertType(run(`{"DOCUMENT_CHECKLIST_PREPARATION":true}`, domain.StageEMDProcessing), "INTERNAL_APPROVAL_READY") {
+		t.Fatal("EMD completing last must fire")
+	}
+}
+
 // TestUpdateBid_InternalApprovalReadyAlert covers the auto-notify branch
 // added to UpdateBid: completing Document Checklist Preparation on a tender
 // where EMD isn't required must alert the Account Manager that Internal

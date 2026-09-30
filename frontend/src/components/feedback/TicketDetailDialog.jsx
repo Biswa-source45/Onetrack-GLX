@@ -39,6 +39,7 @@ export function TicketDetailDialog({ open, onOpenChange, ticketId, canManage = f
   const [note, setNote] = useState('')
   const [changingTo, setChangingTo] = useState(null)
   const [imageObjectUrl, setImageObjectUrl] = useState(null)
+  const [imageFailed, setImageFailed] = useState(false)
   const [lightboxOpen, setLightboxOpen] = useState(false)
 
   const load = useCallback(() => {
@@ -58,15 +59,17 @@ export function TicketDetailDialog({ open, onOpenChange, ticketId, canManage = f
   // <img src="..."> can't carry the Bearer token the way apiFetch does —
   // fetch it as a blob instead and point the <img> at an object URL.
   useEffect(() => {
+    setImageFailed(false)
     if (!ticket?.image_url) { setImageObjectUrl(null); return undefined }
     let objectUrl = null
     let cancelled = false
     apiFetch(ticket.image_url).then(async (res) => {
-      if (cancelled || !res.ok) return
+      if (cancelled) return
+      if (!res.ok) { setImageFailed(true); return }
       const blob = await res.blob()
       objectUrl = URL.createObjectURL(blob)
       setImageObjectUrl(objectUrl)
-    })
+    }).catch(() => { if (!cancelled) setImageFailed(true) })
     return () => {
       cancelled = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
@@ -129,6 +132,10 @@ export function TicketDetailDialog({ open, onOpenChange, ticketId, canManage = f
                 >
                   {imageObjectUrl ? (
                     <img src={imageObjectUrl} alt="Attached screenshot" className="max-h-48 w-auto" />
+                  ) : imageFailed ? (
+                    <div className="h-24 w-40 flex items-center justify-center bg-muted/40 px-2 text-center text-[11px] text-muted-foreground">
+                      Image file is missing on the server
+                    </div>
                   ) : (
                     <div className="h-24 w-40 flex items-center justify-center bg-muted/40">
                       <Loader2 className="size-4 animate-spin text-muted-foreground" />

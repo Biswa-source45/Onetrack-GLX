@@ -58,6 +58,34 @@ func hasAnyRole(actorRoles []string, roles ...string) bool {
 	return false
 }
 
+// internalApprovalRecipients lists who signs off Internal Approval, mirroring
+// the approval table in the UI: the Reporting Manager and/or Account Manager,
+// or the Bid Owner (as Bid Authority) when neither is assigned. A reassignment
+// in the same request wins over the stored value.
+func internalApprovalRecipients(bid *domain.BidWorkspace, req *domain.UpdateBidRequest) []string {
+	pick := func(existing *string, updated *string) string {
+		if updated != nil && strings.TrimSpace(*updated) != "" {
+			return *updated
+		}
+		if existing != nil {
+			return *existing
+		}
+		return ""
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, id := range []string{pick(bid.ReportingManagerID, req.ReportingManagerID), pick(bid.AccountManagerID, req.AccountManagerID)} {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	if len(out) == 0 && bid.BidOwnerID != "" {
+		out = append(out, bid.BidOwnerID)
+	}
+	return out
+}
+
 // validateEMDDetails enforces that the EMD bank/DD detail fields required for a
 // given payment mode are actually present, using the merged (new-or-existing)
 // values so it works for both full creates and partial updates.
@@ -1136,34 +1164,43 @@ func (s *bidService) applyUpdate(ctx context.Context, id string, req *domain.Upd
 		}
 	}
 
-	// Internal Approval readiness: once the last thing standing between this
-	// tender and Internal Approval is actually done, notify the Account
-	// Manager and Pre-Sales proactively rather than leaving it to be noticed
-	// manually. That "last thing" is Document Checklist Preparation when EMD
-	// isn't required, or EMD Processing itself when it is — exactly one of
-	// the two per tender. Fires only on the actual completion transition
-	// (not on every later resave of an already-complete tender), mirroring
-	// the DISQUALIFIED->LOST automation above.
+	// Internal Approval readiness: the moment the last prerequisite lands —
+	// Document Checklist Preparation, plus EMD Processing when EMD applies, in
+	// either order — notify the tender's approvers (Reporting Manager /
+	// Account Manager, or the Bid Owner when neither is assigned) instead of
+	// leaving it to be noticed manually. Fires only on the not-ready -> ready
+	// edge, never on a later resave of an already-complete tender, mirroring the
+	// DISQUALIFIED->LOST automation above.
 	notifyInternalApprovalReady := false
 	var handoffRemarks string
+	var internalApprovers []string
 	{
 		var existingCompletions map[string]bool
 		if len(bid.StageCompletions) > 0 {
 			_ = json.Unmarshal(bid.StageCompletions, &existingCompletions)
 		}
-		emdNotRequired := mergedEMDExempted || mergedEMDNotApplicable
-		checklistJustCompleted := req.StageCompletions != nil && req.StageCompletions[domain.StageDocumentChecklistPrep] &&
-			!existingCompletions[domain.StageDocumentChecklistPrep]
-		emdJustCompleted := req.StageCompletions != nil && req.StageCompletions[domain.StageEMDProcessing] &&
-			!existingCompletions[domain.StageEMDProcessing]
-		triggered := (emdNotRequired && checklistJustCompleted) || (!emdNotRequired && emdJustCompleted)
-		if triggered && (bid.AccountManagerID != nil || bid.PresalesID != nil) {
-			notifyInternalApprovalReady = true
-			if req.StageRemarks != nil {
-				if emdNotRequired {
-					handoffRemarks = req.StageRemarks[domain.StageDocumentChecklistPrep]
-				} else {
+		readyFor := func(completions map[string]bool, emdNotRequired bool) bool {
+			return completions[domain.StageDocumentChecklistPrep] && (emdNotRequired || completions[domain.StageEMDProcessing])
+		}
+		mergedCompletions := map[string]bool{}
+		for k, v := range existingCompletions {
+			mergedCompletions[k] = v
+		}
+		for k, v := range req.StageCompletions {
+			mergedCompletions[k] = v
+		}
+		wasReady := readyFor(existingCompletions, bid.EMDExempted || bid.EMDNotApplicable)
+		nowReady := readyFor(mergedCompletions, mergedEMDExempted || mergedEMDNotApplicable)
+		if nowReady && !wasReady {
+			internalApprovers = internalApprovalRecipients(bid, req)
+			if len(internalApprovers) > 0 {
+				notifyInternalApprovalReady = true
+				if req.StageRemarks != nil {
+					// The remark from whichever prerequisite was completed last.
 					handoffRemarks = req.StageRemarks[domain.StageEMDProcessing]
+					if req.StageCompletions[domain.StageDocumentChecklistPrep] && !existingCompletions[domain.StageDocumentChecklistPrep] {
+						handoffRemarks = req.StageRemarks[domain.StageDocumentChecklistPrep]
+					}
 				}
 			}
 		}
@@ -1291,14 +1328,8 @@ func (s *bidService) applyUpdate(ctx context.Context, id string, req *domain.Upd
 				remarksHTML = fmt.Sprintf(`<p style="margin:12px 0 0 0;padding:10px 14px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;color:#334155;font-size:13px;">%s</p>`, handoffRemarks)
 			}
 			message := fmt.Sprintf("<p>Tender '%s' is ready for Internal Approval sign-off.</p>%s", bid.Title, remarksHTML)
-			recipients := map[string]bool{}
-			if bid.AccountManagerID != nil {
-				recipients[*bid.AccountManagerID] = true
-			}
-			if bid.PresalesID != nil {
-				recipients[*bid.PresalesID] = true
-			}
-			for uid := range recipients {
+			recipients := internalApprovers
+			for _, uid := range recipients {
 				uidCopy := uid
 				_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
 					UserID: &uidCopy, BidID: &bidIdCopy, CreatedBy: &actorID,

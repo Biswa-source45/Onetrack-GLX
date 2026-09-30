@@ -344,15 +344,18 @@ export function checkStageState(bid, stageKey) {
   //    - Primary Review is explicitly done
   //    - The tender has ALREADY progressed past Stage 2 in its lifecycle (currentIdx > 1)
   //    - Or the tender was created without an Account Manager and has moved on
-  // 2. From Bid Submission onwards, prior stages must be complete, with defensive
-  //    fallbacks for legacy tenders already in flight.
+  // 2. From Internal Approval onwards, prior stages must be complete (EMD
+  //    Processing only when EMD applies), with defensive fallbacks for legacy
+  //    tenders already in flight. Internal Approval is the sign-off on the
+  //    finished bid pack, so it can't be opened — or shown as "pending" — before
+  //    Checklist Prep (and EMD, if any) are done.
   let isLocked = false
   const primaryReviewDone = completions['PRIMARY_REVIEW'] === true || currentIdx > 1 || (!bid?.account_manager && !bid?.account_manager_id && currentIdx !== 1)
   if (!isTerminal && STAGES_GATED_BY_PRIMARY_REVIEW.includes(stageKey) && !primaryReviewDone) {
     isLocked = true
   }
-  const gemSubmissionIdx = WORKFLOW_STAGES_ORDERED.indexOf('GEM_SUBMISSION')
-  if (!isLocked && stageIdx >= gemSubmissionIdx && !isTerminal) {
+  const firstSequencedIdx = WORKFLOW_STAGES_ORDERED.indexOf('INTERNAL_APPROVAL')
+  if (!isLocked && stageIdx >= firstSequencedIdx && !isTerminal) {
     for (let i = 0; i < stageIdx; i++) {
       const priorKey = WORKFLOW_STAGES_ORDERED[i]
       const priorDone = completions[priorKey] === true ||
@@ -2824,7 +2827,15 @@ export function Stage4Workspace({ bid, onRefresh }) {
         }),
       }
     })
-    save({ quotes: updatedQuotes })
+    // approvedGrandTotal is a snapshot taken at approval and is what Bid
+    // Submission quotes — margins can still be edited after approval, so
+    // re-snapshot it here or Submission keeps showing the superseded price.
+    const patch = { quotes: updatedQuotes }
+    if (pricingData.approvalStatus === 'APPROVED') {
+      const { l1Calculations: recalculated } = computeL1PricingSummary({ ...pricingData, quotes: updatedQuotes })
+      if (recalculated) patch.approvedGrandTotal = recalculated.grandGlobxTotal
+    }
+    save(patch)
     logStageMicroEvent(bid.id, {
       fromStage: 'PRICING_REQUEST',
       toStage: 'PRICING_REQUEST',
@@ -4045,6 +4056,13 @@ export function Stage8Workspace({ bid, onRefresh }) {
         />
       </div>
 
+      {!stageCompleted && !isInternallyApproved && rows.some((r) => r.person) && (
+        <div className="px-3.5 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-xs font-medium text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+          <Bell className="size-3.5 shrink-0" />
+          All prerequisite stages are complete — {rows.filter((r) => r.person).map((r) => `${r.person.full_name} (${r.label})`).join(' and ')} {rows.filter((r) => r.person).length > 1 ? 'have' : 'has'} been alerted by in-app notification and email to sign off.
+        </div>
+      )}
+
       {stageCompleted && completedBy && (
         <div className="px-3.5 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 text-xs font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5 max-w-md">
           <CheckCircle2 className="size-3.5" /> Advanced by {completedBy.name} on {fmtDate(completedBy.at)}
@@ -4132,13 +4150,16 @@ export function Stage9Workspace({ bid, onRefresh }) {
   // sent through approval, fall back to a live recalculation so the stage
   // isn't blocked, but flag it clearly since it isn't a locked-in figure yet.
   const pricingWorkspace = bid?.pricing_workspace && typeof bid.pricing_workspace === 'object' ? bid.pricing_workspace : null
+  // The saved approvedGrandTotal is only a snapshot and goes stale if margins
+  // are edited after approval, so the current sheet's total wins; the snapshot
+  // is just the fallback when the sheet can't be recalculated.
   let finalPriceNum = pricingWorkspace?.approvedGrandTotal ?? null
   let priceSource = finalPriceNum != null ? 'approved' : 'none'
-  if (finalPriceNum == null && pricingWorkspace) {
+  if (pricingWorkspace) {
     const { l1Calculations } = computeL1PricingSummary(pricingWorkspace)
     if (l1Calculations) {
       finalPriceNum = l1Calculations.grandGlobxTotal
-      priceSource = 'live'
+      priceSource = pricingWorkspace.approvalStatus === 'APPROVED' ? 'approved' : 'live'
     }
   }
 
