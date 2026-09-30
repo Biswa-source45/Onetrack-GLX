@@ -78,6 +78,7 @@ services:
       - EMAIL_SMTP_PORT=${EMAIL_SMTP_PORT:-587}
       - EMAIL_USERNAME=${EMAIL_USERNAME:-}
       - EMAIL_PASSWORD=${EMAIL_PASSWORD:-}
+      - APP_BASE_URL=${APP_BASE_URL:-}
     depends_on:
       postgres:
         condition: service_healthy

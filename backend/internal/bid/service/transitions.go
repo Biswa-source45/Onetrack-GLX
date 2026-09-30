@@ -35,6 +35,16 @@ var allowedTransitions = map[string]map[string][]string{
 	},
 }
 
+// skipEMDStage keeps the workflow pointer off EMD Processing when the tender
+// has no EMD to process (exempted or not applicable): landing there moves it
+// straight on to Internal Approval.
+func skipEMDStage(stage string, emdNotRequired bool) string {
+	if emdNotRequired && stage == domain.StageEMDProcessing {
+		return domain.StageInternalApproval
+	}
+	return stage
+}
+
 // IsTransitionAllowed checks if moving from currentStage to targetStage is valid
 // for the given creation mode. It allows forward progression, backward transitions (Undo/Revert),
 // and terminal states (WON, LOST, CANCELLED).

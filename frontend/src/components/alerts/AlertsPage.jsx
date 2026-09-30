@@ -82,7 +82,10 @@ export function AlertsPage() {
 
   const handleAlertClick = (alert) => {
     if (!alert.is_read) handleMarkRead(alert.id)
-    if (alert.bid_id) navigate(`/dashboard/tenders/${alert.bid_id}`)
+    // link = the exact stage/approval the alert is about (backend-validated
+    // in-app path); bare tender page only for alerts that don't carry one.
+    const target = alert.link || (alert.bid_id && `/dashboard/tenders/${alert.bid_id}`)
+    if (target) navigate(target)
   }
 
   const unreadCount = alerts.filter((a) => !a.is_read).length

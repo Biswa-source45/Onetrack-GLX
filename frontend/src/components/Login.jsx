@@ -1,5 +1,5 @@
 import React, { useState } from "react"
-import { useNavigate, Link } from "react-router-dom"
+import { useNavigate, useLocation, Link } from "react-router-dom"
 import { motion, MotionConfig } from "framer-motion"
 import { Eye, EyeOff, ArrowLeft, Loader2, Mail, Lock } from "lucide-react"
 import { toast } from "sonner"
@@ -44,6 +44,10 @@ function BuildingAbstractIllustration({ className = "" }) {
 
 export default function Login() {
   const navigate = useNavigate()
+  // Set by AuthGuard when a protected page (e.g. an alert email's deep link)
+  // bounced here — return there after sign-in instead of the dashboard home.
+  const from = useLocation().state?.from
+  const afterLogin = from?.pathname?.startsWith("/dashboard") ? `${from.pathname}${from.search || ""}` : "/dashboard"
   const [activeTab, setActiveTab] = useState("login") // "login" or "forgot"
 
   // Login form states
@@ -77,7 +81,7 @@ export default function Login() {
         toast.success(result.message || "Signed in successfully!")
         setTimeout(() => {
           setIsLoading(false)
-          navigate("/dashboard")
+          navigate(afterLogin)
         }, 500)
       } else {
         setIsLoading(false)

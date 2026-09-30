@@ -77,6 +77,15 @@ export async function getPendingEdit(bidId) {
   return { ok: res.ok, status: res.status, ...data }
 }
 
+// Every approval currently waiting on the logged-in user (pending
+// edit/cancel/delete, pricing sign-off, Internal Approval) — each with a
+// `link` to the exact place it's decided. Backs the Tenders page Approvals box.
+export async function getMyPendingApprovals() {
+  const res = await apiFetch(`${BASE}/bids/my-approvals`)
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, ...data }
+}
+
 export async function approvePendingEdit(editId, payload, comment = '') {
   const res = await apiFetch(`${BASE}/bids/pending-edits/${editId}/approve`, {
     method: 'POST',

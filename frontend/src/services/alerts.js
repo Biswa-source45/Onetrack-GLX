@@ -32,9 +32,15 @@ export async function deleteAlert(id) {
   return { ok: res.ok, status: res.status, ...data }
 }
 
+// Deep link to one stage of a tender — what an alert's `link` should be when
+// it's about work in that stage, so clicking it (or the email button) lands
+// on the stage instead of the tender's Overview. Mirrors the backend's
+// alert domain StageLink.
+export const stageLink = (bidId, stage) => `/dashboard/tenders/${bidId}?tab=stages&stage=${stage}`
+
 /**
  * Create an in-app alert for a role or specific user.
- * @param {Object} payload - { target_role, user_id, bid_id, type, title, message }
+ * @param {Object} payload - { target_role, user_id, bid_id, type, title, message, link }
  */
 export async function createAlert(payload) {
   const res = await apiFetch(`${BASE}/alerts`, {

@@ -1656,6 +1656,52 @@ func (r *postgresBidRepo) GetPendingEditForBid(ctx context.Context, bidID string
 	return e, err
 }
 
+// Three sources, one per PendingApproval kind — mirrors who the frontend lets
+// act: the pending action's Reporting Manager, the pricing sheet's approverId,
+// and (for Internal Approval) the tender's AM/RM until the first APPROVAL
+// micro-event lands (Stage8Workspace's isInternallyApproved).
+func (r *postgresBidRepo) ListPendingApprovalsFor(ctx context.Context, userID string) ([]domain.PendingApproval, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT b.id::text, b.title, b.gem_bid_no, a.action_type, COALESCE(u.full_name, u.username, ''), a.created_at
+		FROM bid.tender_edit_approvals a
+		JOIN bid.bid_workspaces b ON b.id = a.bid_id
+		LEFT JOIN auth.users u ON u.id = a.requested_by
+		WHERE a.status = 'PENDING' AND a.reporting_manager_id::text = $1 AND b.archived_at IS NULL
+		UNION ALL
+		SELECT b.id::text, b.title, b.gem_bid_no, 'PRICING', COALESCE(b.pricing_workspace->>'requestedByName', ''), b.updated_at
+		FROM bid.bid_workspaces b
+		WHERE b.archived_at IS NULL
+		  AND b.pricing_workspace->>'approvalStatus' = 'PENDING'
+		  AND b.pricing_workspace->>'approverId' = $1
+		UNION ALL
+		SELECT b.id::text, b.title, b.gem_bid_no, 'INTERNAL_APPROVAL', '', b.updated_at
+		FROM bid.bid_workspaces b
+		WHERE b.archived_at IS NULL
+		  AND b.workflow_stage = 'INTERNAL_APPROVAL'
+		  AND b.bid_status NOT IN ('WON', 'LOST', 'CANCELLED', 'ARCHIVED')
+		  AND COALESCE(b.stage_completions->>'INTERNAL_APPROVAL', 'false') <> 'true'
+		  AND (b.account_manager_id::text = $1 OR b.reporting_manager_id::text = $1)
+		  AND NOT EXISTS (
+		      SELECT 1 FROM bid.bid_stage_history h
+		      WHERE h.bid_id = b.id AND h.event_type = 'APPROVAL'
+		        AND (h.to_stage = 'INTERNAL_APPROVAL' OR h.from_stage = 'INTERNAL_APPROVAL'))
+		ORDER BY 6 DESC
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list pending approvals: %w", err)
+	}
+	defer rows.Close()
+	items := []domain.PendingApproval{}
+	for rows.Next() {
+		var p domain.PendingApproval
+		if err := rows.Scan(&p.BidID, &p.BidTitle, &p.GemBidNo, &p.Kind, &p.RequestedBy, &p.RequestedAt); err != nil {
+			return nil, fmt.Errorf("scan pending approval: %w", err)
+		}
+		items = append(items, p)
+	}
+	return items, rows.Err()
+}
+
 func (r *postgresBidRepo) DecidePendingEdit(ctx context.Context, editID string, status string, decidedPayload []byte, decisionDiff []domain.FieldDiff, comment string, decidedBy string) error {
 	decisionDiffJSON, err := json.Marshal(decisionDiff)
 	if err != nil {

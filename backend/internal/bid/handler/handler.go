@@ -165,6 +165,17 @@ func (h *BidHandler) GetPendingEdit(c *gin.Context) {
 	response.Success(c, http.StatusOK, "Pending edit retrieved", edit)
 }
 
+// ListMyPendingApprovals backs the Tenders page's Approvals box — always
+// scoped to the caller, never a user_id param.
+func (h *BidHandler) ListMyPendingApprovals(c *gin.Context) {
+	items, err := h.svc.ListMyPendingApprovals(c.Request.Context(), c.GetString("user_id"))
+	if err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, http.StatusOK, "Pending approvals retrieved", items)
+}
+
 // ApprovePendingEdit applies the Reporting Manager's (possibly corrected)
 // form state and notifies the original requester of the outcome.
 func (h *BidHandler) ApprovePendingEdit(c *gin.Context) {

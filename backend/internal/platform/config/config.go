@@ -18,6 +18,10 @@ type Config struct {
 	// with a plain copy of the project directory, unlike the Postgres data
 	// volume. Defaults to a local ./uploads/feedback for dev.
 	UploadDir string
+	// AppBaseURL is the public frontend origin (e.g. http://192.168.1.10),
+	// used to turn alert deep links into clickable email buttons. Empty
+	// leaves emails without the button.
+	AppBaseURL string
 }
 
 type ServerConfig struct {
@@ -99,7 +103,8 @@ func Load() (*Config, error) {
 			Username:   getEnv("EMAIL_USERNAME", "support@globx.co.in"),
 			Password:   getEnv("EMAIL_PASSWORD", ""),
 		},
-		UploadDir: getEnv("UPLOAD_DIR", "./uploads/feedback"),
+		UploadDir:  getEnv("UPLOAD_DIR", "./uploads/feedback"),
+		AppBaseURL: getEnv("APP_BASE_URL", ""),
 	}
 
 	return cfg, nil

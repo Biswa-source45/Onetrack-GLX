@@ -268,6 +268,8 @@ export function EditTenderDialog({
   const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
+  // Diff values for user-reference fields arrive as raw ids; show the name.
+  const userName = (v) => users.find((u) => u.id === v)?.full_name ?? v;
   const [fetchingBid, setFetchingBid] = useState(false);
   const [showRejectDlg, setShowRejectDlg] = useState(false);
   const [rejecting, setRejecting] = useState(false);
@@ -806,13 +808,13 @@ export function EditTenderDialog({
                               {fieldDiffLabel(d.field)}:
                             </span>
                             <span className="text-muted-foreground line-through">
-                              {d.old || "(empty)"}
+                              {userName(d.old) || "(empty)"}
                             </span>
                             <span className="text-amber-700 dark:text-amber-400">
                               →
                             </span>
                             <span className="font-medium text-foreground">
-                              {d.new}
+                              {userName(d.new)}
                             </span>
                           </div>
                         ))}

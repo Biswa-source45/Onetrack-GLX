@@ -1011,3 +1011,18 @@ type SetStageRestrictionsRequest struct {
 	// Empty clears every restriction for this user.
 	Stages []string `json:"stages"`
 }
+
+// PendingApproval is one decision waiting on a specific user — what the
+// Tenders page's Approvals box lists. Kind is EDIT/CANCEL/DELETE (a
+// tender_edit_approvals row routed to them as Reporting Manager), PRICING
+// (they're the pricing sheet's chosen approver) or INTERNAL_APPROVAL (they're
+// the tender's Account/Reporting Manager and nobody has signed off yet).
+type PendingApproval struct {
+	BidID       string    `json:"bid_id"`
+	BidTitle    string    `json:"bid_title"`
+	GemBidNo    *string   `json:"gem_bid_no,omitempty"`
+	Kind        string    `json:"kind"`
+	RequestedBy string    `json:"requested_by,omitempty"`
+	RequestedAt time.Time `json:"requested_at"`
+	Link        string    `json:"link"`
+}

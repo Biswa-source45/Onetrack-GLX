@@ -248,6 +248,77 @@ func hasAlertType(alerts []*alertDomain.Alert, alertType string) bool {
 	return false
 }
 
+// TestUpdateBid_SkipsEMDStageWhenNotRequired: a no-EMD tender must never rest
+// on EMD Processing, whether advanced onto it or already sitting there.
+func TestUpdateBid_SkipsEMDStageWhenNotRequired(t *testing.T) {
+	cases := []struct {
+		name      string
+		bidStage  string
+		notApp    bool
+		req       *domain.UpdateBidRequest
+		wantStage string // "" = request must leave workflow_stage untouched
+	}{
+		{"advance onto EMD with No EMD", domain.StageDocumentChecklistPrep, true,
+			&domain.UpdateBidRequest{WorkflowStage: strPtr(domain.StageEMDProcessing)}, domain.StageInternalApproval},
+		{"mark No EMD while on EMD stage", domain.StageEMDProcessing, false,
+			&domain.UpdateBidRequest{EMDNotApplicable: boolPtr(true)}, domain.StageInternalApproval},
+		{"EMD required stays on EMD stage", domain.StageDocumentChecklistPrep, false,
+			&domain.UpdateBidRequest{WorkflowStage: strPtr(domain.StageEMDProcessing)}, domain.StageEMDProcessing},
+		{"No EMD elsewhere is untouched", domain.StagePricingRequest, true,
+			&domain.UpdateBidRequest{Title: strPtr("x")}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeBidRepo{bid: &domain.BidWorkspace{
+				ID: "bid-1", Title: "T", WorkflowStage: tc.bidStage, CreationMode: domain.CreationModeManual,
+				BidOwnerID: "owner-1", EMDNotApplicable: tc.notApp, EMDType: strPtr("ONLINE"),
+				EMDBankName: strPtr("B"), EMDAccountNumber: strPtr("1"), EMDIFSCCode: strPtr("I"),
+				StageCompletions: []byte(`{}`),
+			}}
+			svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+			if err := svc.UpdateBid(context.Background(), "bid-1", tc.req, "actor-1", nil); err != nil {
+				t.Fatalf("UpdateBid: %v", err)
+			}
+			got := ""
+			if repo.lastUpdate.WorkflowStage != nil {
+				got = *repo.lastUpdate.WorkflowStage
+			}
+			if got != tc.wantStage {
+				t.Fatalf("workflow_stage = %q, want %q", got, tc.wantStage)
+			}
+		})
+	}
+}
+
+// TestUpdateBid_StaleEMDModeDropped: the Edit form blanks DD details when DD is
+// unticked; a stored "DD" decision must be dropped, not block the save — but an
+// explicit emd_type with missing details is still rejected.
+func TestUpdateBid_StaleEMDModeDropped(t *testing.T) {
+	newSvc := func() (*fakeBidRepo, domain.BidService) {
+		repo := &fakeBidRepo{bid: &domain.BidWorkspace{
+			ID: "bid-1", Title: "T", WorkflowStage: domain.StagePricingRequest, CreationMode: domain.CreationModeManual,
+			BidOwnerID: "owner-1", EMDType: strPtr("DD"), StageCompletions: []byte(`{}`),
+		}}
+		return repo, NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+	}
+	blank := strPtr("")
+
+	repo, svc := newSvc()
+	req := &domain.UpdateBidRequest{EMDBeneficiary: blank, EMDPayableAt: blank, EMDExemptionTypes: []string{"MSME"}}
+	if err := svc.UpdateBid(context.Background(), "bid-1", req, "actor-1", nil); err != nil {
+		t.Fatalf("UpdateBid: %v", err)
+	}
+	if repo.lastUpdate.EMDType == nil || *repo.lastUpdate.EMDType != "" {
+		t.Fatalf("emd_type = %v, want cleared", repo.lastUpdate.EMDType)
+	}
+
+	_, svc = newSvc()
+	req = &domain.UpdateBidRequest{EMDType: strPtr("DD"), EMDBeneficiary: blank, EMDPayableAt: blank}
+	if err := svc.UpdateBid(context.Background(), "bid-1", req, "actor-1", nil); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+}
+
 // TestUpdateBid_InternalApprovalReadyAlert covers the auto-notify branch
 // added to UpdateBid: completing Document Checklist Preparation on a tender
 // where EMD isn't required must alert the Account Manager that Internal
@@ -489,6 +560,7 @@ func TestUpdateBid_OwnerReassignment(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+func boolPtr(b bool) *bool       { return &b }
 
 // TestExtractProductFields covers the JSON-parsing edge cases Field Memory
 // relies on: OEM and product-name values pulled out of requested_products
@@ -1401,4 +1473,8 @@ func TestGetPricingSuggestion(t *testing.T) {
 			t.Fatalf("expected avg margin 1, got %v", got.AvgMarginPct)
 		}
 	})
+}
+
+func (f *fakeBidRepo) ListPendingApprovalsFor(ctx context.Context, userID string) ([]domain.PendingApproval, error) {
+	return nil, nil
 }

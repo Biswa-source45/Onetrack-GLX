@@ -1,5 +1,5 @@
 import React, { useEffect } from "react"
-import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom"
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from "react-router-dom"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Toaster } from "sonner"
 import { tokenStorage } from "./services/auth"
@@ -24,7 +24,10 @@ import { SettingsPage } from "./components/admin/SettingsPage"
 // Auth Guard to protect routes
 function AuthGuard() {
   const hasToken = !!tokenStorage.getAccessToken()
-  return hasToken ? <Outlet /> : <Navigate to="/login" replace />
+  const location = useLocation()
+  // `from` lets Login send the user back to where they were headed — e.g. an
+  // alert email's deep link opened while logged out.
+  return hasToken ? <Outlet /> : <Navigate to="/login" replace state={{ from: location }} />
 }
 
 // Guest Guard to redirect authenticated users away from Login/Landing

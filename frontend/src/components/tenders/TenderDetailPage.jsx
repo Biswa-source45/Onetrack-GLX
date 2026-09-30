@@ -1012,6 +1012,14 @@ function StageSectionsTab({ bid, onRefresh, onAdvance, searchParams, setSearchPa
     setSearchParams(next, { replace: true })
   }
   const selectedIdx = WORKFLOW_STAGES_ORDERED.indexOf(selectedStage)
+  // Arriving with ?stage= (an alert / Approvals-box deep link) — bring that
+  // stage's workspace into view instead of leaving it below the stage grid.
+  // Mount-only: clicking stage cards on the page shouldn't jump the scroll.
+  const workspaceRef = useRef(null)
+  const deepLinkedStage = useRef(!!rawStage)
+  useEffect(() => {
+    if (deepLinkedStage.current) workspaceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [])
   const [refreshing, setRefreshing] = useState(false)
   const handleStageRefresh = async () => {
     setRefreshing(true)
@@ -1211,12 +1219,13 @@ function StageSectionsTab({ bid, onRefresh, onAdvance, searchParams, setSearchPa
       {/* Workspace Panel for Selected Stage */}
       <AnimatePresence mode="wait">
         <motion.div
+          ref={workspaceRef}
           key={selectedStage}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -8 }}
           transition={{ duration: 0.15 }}
-          className="rounded-xl border border-border bg-card p-5 shadow-sm"
+          className="rounded-xl border border-border bg-card p-5 shadow-sm scroll-mt-4"
         >
           <DynamicStageWorkspace bid={bid} selectedStage={selectedStage} onRefresh={onRefresh} />
         </motion.div>
@@ -2093,6 +2102,22 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
 
   const canTransition = hasPermission('bid.edit') && (STAGE_TRANSITIONS[bid.workflow_stage]?.length ?? 0) > 0
 
+  // ?approval=1 (alert / Approvals-box deep link) opens a pending EDIT's
+  // review dialog straight away for its approver — CANCEL/DELETE are decided
+  // from the banner, already the first thing on the page. Closing the dialog
+  // drops the param so it doesn't reopen on refresh/Back.
+  const autoReview = searchParams.get('approval') === '1' && !!pendingEdit &&
+    (pendingEdit.action_type || 'EDIT') === 'EDIT' &&
+    (user?.id === pendingEdit.reporting_manager_id || isAdmin || hasRole('MANAGER') || hasRole('BID_MANAGER'))
+  const closeReview = () => {
+    setReviewingEdit(false)
+    if (searchParams.has('approval')) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('approval')
+      setSearchParams(next, { replace: true })
+    }
+  }
+
   return (
     <div className="space-y-5">
       {/* Breadcrumb + back */}
@@ -2477,10 +2502,10 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
 
       {/* Edit Tender Dialog */}
       <EditTenderDialog open={showEdit} onClose={()=>setShowEdit(false)} bid={bid} onUpdated={loadBid} />
-      {reviewingEdit && pendingEdit && (
+      {(reviewingEdit || autoReview) && pendingEdit && (
         <EditTenderDialog
-          open={reviewingEdit}
-          onClose={() => setReviewingEdit(false)}
+          open
+          onClose={closeReview}
           bid={reviewBid}
           onUpdated={loadBid}
           approvalContext={reviewApprovalContext}

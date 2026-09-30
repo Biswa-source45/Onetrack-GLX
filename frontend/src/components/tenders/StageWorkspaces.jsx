@@ -25,6 +25,7 @@ import {
 import { transitionBidStage, recordBidOutcome, updateBid, getBidStageHistory, toggleChecklist } from '../../services/bids'
 import { usePermissions } from '../../hooks/usePermissions'
 import { tokenStorage } from '../../services/auth'
+import { stageLink } from '../../services/alerts'
 import { ChecklistTab } from './ChecklistTab'
 import { PricingSuggestionHint } from './PricingSuggestionHint'
 import { logStageMicroEvent } from '../../services/auditLogger'
@@ -560,7 +561,7 @@ export function Stage1Workspace({ bid, onRefresh }) {
             try {
               const { createAlert } = await import('../../services/alerts')
               if (bid.account_manager?.id) {
-                await createAlert({
+                await createAlert({ link: stageLink(bid.id, 'PRIMARY_REVIEW'),
                   user_id: bid.account_manager.id,
                   bid_id: bid.id,
                   type: 'INFO',
@@ -1310,7 +1311,7 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
             try {
               const { createAlert } = await import('../../services/alerts')
               if (bid.created_by) {
-                await createAlert({
+                await createAlert({ link: stageLink(bid.id, 'PRIMARY_REVIEW'),
                   user_id: bid.created_by,
                   bid_id: bid.id,
                   type: 'INFO',
@@ -1319,7 +1320,7 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
                 })
               }
               if (bid.presales?.id) {
-                await createAlert({
+                await createAlert({ link: stageLink(bid.id, 'PRIMARY_REVIEW'),
                   user_id: bid.presales.id,
                   bid_id: bid.id,
                   type: 'INFO',
@@ -2659,7 +2660,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
     const remarksHtml = buildRemarkCalloutHtml(currentUser?.full_name || currentUser?.username || 'requester', remarks)
     const nowISO = new Date().toISOString()
     import('../../services/alerts').then(({ createAlert }) => {
-      createAlert({ user_id: approverSelId, bid_id: bid.id, type: 'ACTION_REQUIRED', created_by: currentUser?.id,
+      createAlert({ link: stageLink(bid.id, 'PRICING_REQUEST'), user_id: approverSelId, bid_id: bid.id, type: 'ACTION_REQUIRED', created_by: currentUser?.id,
         title: `Pricing Approval Required — ${bid.title}`,
         message: `<p style="margin: 0 0 12px 0;">Bid #${bid.gem_bid_no || bid.id}: Commercial pricing calculation from L1 distributor (<strong>${l1Quote?.distName || 'N/A'}</strong>) is ready for your review and approval.</p>${remarksHtml}${tableHtml}<p style="margin: 12px 0 0 0;">Please review and approve from the tender's Pricing Request stage.</p>`
       })
@@ -2698,7 +2699,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
     const reminderHeaderHtml = `<div style="margin:0 0 12px 0;padding:10px 14px;border-radius:8px;background:#fff7ed;border:1px solid #fed7aa;border-left:4px solid #fb923c;color:#9a3412;font-size:12px;font-weight:700;">🔔 Reminder — Bid #${bid.gem_bid_no || bid.id}: this commercial pricing calculation is still awaiting your approval.</div>`
     const nowISO = new Date().toISOString()
     import('../../services/alerts').then(({ createAlert }) => {
-      createAlert({ user_id: pricingData.approverId, bid_id: bid.id, type: 'ACTION_REQUIRED', created_by: currentUser?.id,
+      createAlert({ link: stageLink(bid.id, 'PRICING_REQUEST'), user_id: pricingData.approverId, bid_id: bid.id, type: 'ACTION_REQUIRED', created_by: currentUser?.id,
         title: `Reminder: Pricing Approval Pending — ${bid.title}`,
         message: `${reminderHeaderHtml}${remarksHtml}${tableHtml}`
       })
@@ -2758,7 +2759,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
     if (pricingData.requestedById) recipientIds.add(pricingData.requestedById)
     import('../../services/alerts').then(({ createAlert }) => {
       recipientIds.forEach((uid) => {
-        createAlert({ user_id: uid, bid_id: bid.id, type: 'APPROVAL', created_by: currentUser?.id,
+        createAlert({ link: stageLink(bid.id, 'PRICING_REQUEST'), user_id: uid, bid_id: bid.id, type: 'APPROVAL', created_by: currentUser?.id,
           title: `Pricing Approved — ${bid.title}`,
           message: `<p style="margin: 0 0 12px 0;">Bid #${bid.gem_bid_no || bid.id}: the commercial pricing sheet has been <strong>approved</strong> by ${currentUser?.full_name || currentUser?.username || 'the approver'}.</p>${changeBannerHtml}${remarksHtml}${tableHtml}`
         })
@@ -3584,7 +3585,7 @@ export function Stage6Workspace({ bid, onRefresh }) {
             ? `confirmed <strong>ready</strong> via a Super Admin override by ${actorName} — not a Finance confirmation`
             : `confirmed <strong>ready</strong> by Finance (${actorName})`
           import('../../services/alerts').then(({ createAlert }) => {
-            createAlert({
+            createAlert({ link: stageLink(bid.id, 'EMD_PROCESSING'),
               user_id: notifyId,
               bid_id: bid.id,
               type: 'EMD',
@@ -3616,7 +3617,7 @@ export function Stage6Workspace({ bid, onRefresh }) {
         ? `<div style="margin:0 0 12px 0;padding:10px 14px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;color:#334155;font-size:12px;"><strong style="color:#1e293b;">Clarification from ${currentUser?.full_name || currentUser?.username || 'requester'}:</strong> ${remarks}</div>`
         : ''
 
-      await createAlert({
+      await createAlert({ link: stageLink(bid.id, 'EMD_PROCESSING'),
         target_role: 'FINANCE',
         bid_id: bid.id,
         created_by: currentUser?.id,
@@ -3873,7 +3874,7 @@ function InternalApprovalDialog({ role, roleLabel, bid, onClose, onDone }) {
       const currentUser = tokenStorage.getUser()
       if (bid.bid_owner?.id) {
         import('../../services/alerts').then(({ createAlert }) => {
-          createAlert({
+          createAlert({ link: stageLink(bid.id, 'INTERNAL_APPROVAL'),
             user_id: bid.bid_owner.id,
             bid_id: bid.id,
             type: 'APPROVAL',
@@ -3956,7 +3957,7 @@ export function Stage8Workspace({ bid, onRefresh }) {
     const currentUser = tokenStorage.getUser()
     try {
       await import('../../services/alerts').then(({ createAlert }) =>
-        createAlert({
+        createAlert({ link: stageLink(bid.id, 'INTERNAL_APPROVAL'),
           user_id: userId,
           bid_id: bid.id,
           type: 'ACTION_REQUIRED',

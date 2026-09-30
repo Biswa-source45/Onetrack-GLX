@@ -161,7 +161,9 @@ export const useBidStore = create((set, get) => ({
   },
 
   loadBids: async (overrideOwnerId) => {
-    const params = get().getListParams(overrideOwnerId)
+    // Only a string is an owner id — `onClick={loadBids}` passes the click
+    // event here, which used to reach the API as owner_id="[object Object]".
+    const params = get().getListParams(typeof overrideOwnerId === 'string' ? overrideOwnerId : undefined)
     const requestId = get()._requestSeq + 1
     set({ loading: true, error: null, _requestSeq: requestId })
     try {

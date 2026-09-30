@@ -81,6 +81,7 @@ import {
   statusStyle,
   STAGE_TRANSITIONS,
   listAllBids,
+  getMyPendingApprovals,
 } from "../../services/bids";
 import { dateGroupLabel } from "../../lib/dateGroups";
 import { ImportedPill } from "./ImportedPill";
@@ -369,6 +370,15 @@ function useDebounce(value, delay = 350) {
   return debounced;
 }
 
+// PendingApproval.kind (GET /bids/my-approvals) → what the Approvals box calls it.
+const APPROVAL_KIND_LABELS = {
+  EDIT: "Edit request",
+  CANCEL: "Cancellation request",
+  DELETE: "Deletion request",
+  PRICING: "Pricing approval",
+  INTERNAL_APPROVAL: "Internal approval",
+};
+
 export function TendersPage({ initialScope = "all" }) {
   const { hasPermission, isAdmin, hasRole } = usePermissions();
   const isManagementRole = isAdmin || hasRole("MANAGER");
@@ -496,6 +506,26 @@ export function TendersPage({ initialScope = "all" }) {
     users,
     loadUsers,
   } = useBidStore();
+
+  // Approvals box — decisions waiting on this user. The box only renders
+  // when this is non-empty; polled on the same 30s cadence as the sidebar's
+  // Alerts badge so it appears/clears without a reload.
+  const [myApprovals, setMyApprovals] = useState([]);
+  useEffect(() => {
+    let active = true;
+    const load = () =>
+      getMyPendingApprovals()
+        .then((res) => {
+          if (active && res.ok) setMyApprovals(res.data || []);
+        })
+        .catch(() => {});
+    load();
+    const timer = setInterval(load, 30000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   // Per-owner tender counts for the management-only Owner cross-filter.
   const [ownerStats, setOwnerStats] = useState([]);
@@ -911,7 +941,7 @@ export function TendersPage({ initialScope = "all" }) {
             </h1>
 
             {/* Workspace Navigation Tabs */}
-            <div className="flex items-center bg-muted/60 border border-border p-1 rounded-lg text-xs gap-1">
+            <div className="flex flex-wrap items-center bg-muted/60 border border-border p-1 rounded-lg text-xs gap-1">
               <button
                 type="button"
                 onClick={() => {
@@ -971,6 +1001,65 @@ export function TendersPage({ initialScope = "all" }) {
                 <Trash2 className="size-3.5" />
                 Tender Bin
               </button>
+
+              <AnimatePresence>
+                {myApprovals.length > 0 && (
+                  <motion.div
+                    key="approvals-box"
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.9 }}
+                    transition={{ duration: 0.18, ease: "easeOut" }}
+                  >
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          type="button"
+                          data-testid="approvals-box"
+                          aria-label={`Approvals — ${myApprovals.length} awaiting your decision`}
+                          className="relative px-3 py-1 rounded-md font-semibold transition-all flex items-center gap-1.5 bg-card text-foreground border border-rose-200 dark:border-rose-900/60 shadow-xs hover:border-rose-300"
+                        >
+                          <ShieldCheck className="size-3.5 text-rose-600 dark:text-rose-400" />
+                          Approvals
+                          <span className="min-w-4 h-4 px-1 rounded-full bg-rose-600 text-white text-[10px] leading-4 text-center tabular-nums">
+                            {myApprovals.length}
+                          </span>
+                          <span className="absolute -top-1 -right-1 flex size-2.5">
+                            <span className="absolute inline-flex h-full w-full motion-safe:animate-ping rounded-full bg-rose-500 opacity-75"></span>
+                            <span className="relative inline-flex size-2.5 rounded-full bg-rose-600"></span>
+                          </span>
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="w-80 max-w-[calc(100vw-2rem)] p-1">
+                        <DropdownMenuLabel className="text-xs text-muted-foreground font-medium">
+                          Awaiting your approval
+                        </DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <div className="max-h-80 overflow-y-auto">
+                          {myApprovals.map((a) => (
+                            <DropdownMenuItem
+                              key={`${a.kind}-${a.bid_id}`}
+                              onSelect={() => navigate(a.link)}
+                              className="flex flex-col items-start gap-0.5 cursor-pointer py-2"
+                            >
+                              <span className="text-sm font-medium text-foreground line-clamp-1 w-full">
+                                {a.bid_title}
+                              </span>
+                              <span className="text-xs text-muted-foreground w-full truncate">
+                                <span className="font-semibold text-rose-700 dark:text-rose-400">
+                                  {APPROVAL_KIND_LABELS[a.kind] || "Approval"}
+                                </span>
+                                {a.requested_by ? ` · ${a.requested_by}` : ""}
+                                {` · ${formatDate(a.requested_at)}`}
+                              </span>
+                            </DropdownMenuItem>
+                          ))}
+                        </div>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
           <p className="text-sm text-muted-foreground mt-1">

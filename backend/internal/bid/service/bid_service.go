@@ -929,7 +929,16 @@ func (s *bidService) applyUpdate(ctx context.Context, id string, req *domain.Upd
 		mergedPayableAt = req.EMDPayableAt
 	}
 	if err := validateEMDDetails(mergedEMDExempted || mergedEMDNotApplicable, mergedEMDType, mergedBankName, mergedAccountNumber, mergedIFSCCode, mergedBeneficiary, mergedPayableAt); err != nil {
-		return err
+		// The request didn't pick a payment mode, so the stored one is what went
+		// stale: the Edit Tender form treats Online/DD as raw tender-document data
+		// and blanks their details when unticked (e.g. a tender that now offers only
+		// an MSME exemption). Drop the outdated decision so it is re-made at Primary
+		// Review, rather than blocking the edit on details nobody has anymore.
+		if req.EMDType != nil || mergedEMDType == "" {
+			return err
+		}
+		cleared := ""
+		req.EMDType = &cleared
 	}
 
 	mergedExemptionType := bid.EMDExemptionType
@@ -964,6 +973,18 @@ func (s *bidService) applyUpdate(ctx context.Context, id string, req *domain.Upd
 
 	// Build human-readable audit change summaries for field changes
 	var changes []string
+
+	// A no-EMD tender must never rest on EMD Processing — whether it's being
+	// advanced onto it (completing Checklist Prep) or it already sits there
+	// when EMD gets marked exempted / not applicable.
+	effectiveStage := bid.WorkflowStage
+	if req.WorkflowStage != nil {
+		effectiveStage = *req.WorkflowStage
+	}
+	if next := skipEMDStage(effectiveStage, mergedEMDExempted || mergedEMDNotApplicable); next != effectiveStage {
+		req.WorkflowStage = &next
+		changes = append(changes, "Workflow Stage: EMD Processing skipped (EMD not required) → Internal Approval")
+	}
 
 	if req.Title != nil && *req.Title != bid.Title {
 		changes = append(changes, fmt.Sprintf("Title: '%s' → '%s'", bid.Title, *req.Title))
@@ -1284,6 +1305,7 @@ func (s *bidService) applyUpdate(ctx context.Context, id string, req *domain.Upd
 					Type:    "INTERNAL_APPROVAL_READY",
 					Title:   fmt.Sprintf("Ready for Internal Approval: %s", bid.Title),
 					Message: message,
+					Link:    alertDomain.StageLink(bidIdCopy, "INTERNAL_APPROVAL"),
 				})
 			}
 		}
@@ -1416,6 +1438,7 @@ func (s *bidService) submitPendingAction(ctx context.Context, bid *domain.BidWor
 		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
 			UserID: &rmID, BidID: &bid.ID, CreatedBy: &actorID,
 			Type: alertType, Title: alertTitle, Message: alertMessage,
+			Link: alertDomain.ApprovalLink(bid.ID),
 		})
 	}
 
@@ -1772,6 +1795,8 @@ func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain
 		return nil, err
 	}
 
+	req.TargetStage = skipEMDStage(req.TargetStage, bid.EMDExempted || bid.EMDNotApplicable)
+
 	// Blocks a restricted actor from leaving OR entering a locked stage.
 	if err := s.checkStageAccess(ctx, actorID, bid.WorkflowStage); err != nil {
 		return nil, err
@@ -1862,6 +1887,7 @@ func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain
 			Type:       fmt.Sprintf("STAGE_TRANSITION_%s", req.TargetStage),
 			Title:      fmt.Sprintf("Tender Advanced: %s", req.TargetStage),
 			Message:    fmt.Sprintf("Tender '%s' stage transitioned to %s. Remarks: %s", bid.Title, req.TargetStage, reasonText),
+			Link:       alertDomain.StageLink(bidIdCopy, req.TargetStage),
 		})
 	}
 
@@ -2660,4 +2686,22 @@ func (s *bidService) GetPricingSuggestion(ctx context.Context, productDesc strin
 	result.AvgMarginPct = sumMargin / float64(len(deals))
 	result.LastMarginPct = deals[0].MarginPct // deals[0] is the most recent — sorted above
 	return result, nil
+}
+
+func (s *bidService) ListMyPendingApprovals(ctx context.Context, userID string) ([]domain.PendingApproval, error) {
+	items, err := s.repo.ListPendingApprovalsFor(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		switch items[i].Kind {
+		case "PRICING":
+			items[i].Link = alertDomain.StageLink(items[i].BidID, "PRICING_REQUEST")
+		case "INTERNAL_APPROVAL":
+			items[i].Link = alertDomain.StageLink(items[i].BidID, "INTERNAL_APPROVAL")
+		default: // EDIT / CANCEL / DELETE — decided from the tender page's approval banner
+			items[i].Link = alertDomain.ApprovalLink(items[i].BidID)
+		}
+	}
+	return items, nil
 }

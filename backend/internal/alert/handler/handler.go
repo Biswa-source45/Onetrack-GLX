@@ -37,6 +37,7 @@ type createAlertReq struct {
 	Type       string  `json:"type"`
 	Title      string  `json:"title"`
 	Message    string  `json:"message"`
+	Link       string  `json:"link"`
 }
 
 func (h *AlertHandler) CreateAlert(c *gin.Context) {
@@ -65,6 +66,7 @@ func (h *AlertHandler) CreateAlert(c *gin.Context) {
 		Type:       req.Type,
 		Title:      req.Title,
 		Message:    req.Message,
+		Link:       req.Link,
 	}
 	if alert.Type == "" {
 		alert.Type = "INFO"

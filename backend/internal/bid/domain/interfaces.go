@@ -72,6 +72,10 @@ type BidRepository interface {
 	GetPendingEditByID(ctx context.Context, editID string) (*TenderEditApproval, error)
 	GetPendingEditForBid(ctx context.Context, bidID string) (*TenderEditApproval, error)
 	DecidePendingEdit(ctx context.Context, editID string, status string, decidedPayload []byte, decisionDiff []FieldDiff, comment string, decidedBy string) error
+	// ListPendingApprovalsFor returns every approval currently waiting on
+	// userID (see PendingApproval), newest first. Link is left for the
+	// service to fill.
+	ListPendingApprovalsFor(ctx context.Context, userID string) ([]PendingApproval, error)
 
 	// Pricing suggestion — see bidService.GetPricingSuggestion.
 	// GetPricingWorkspaceCandidates returns recent tenders' raw pricing_workspace
@@ -154,6 +158,9 @@ type BidService interface {
 	GetPendingEdit(ctx context.Context, bidID string) (*TenderEditApproval, error)
 	ApprovePendingEdit(ctx context.Context, editID string, finalReq *UpdateBidRequest, comment string, actorID string, actorRoles []string) error
 	RejectPendingEdit(ctx context.Context, editID string, comment string, actorID string, actorRoles []string) error
+	// ListMyPendingApprovals is ListPendingApprovalsFor with each item's
+	// deep link to the exact place the decision is made.
+	ListMyPendingApprovals(ctx context.Context, userID string) ([]PendingApproval, error)
 
 	// GetPricingSuggestion returns the sliding-window "suggested price/margin"
 	// hint for productDesc (matched case/whitespace-insensitively against past

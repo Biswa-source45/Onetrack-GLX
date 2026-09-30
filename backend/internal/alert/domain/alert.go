@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -14,8 +15,36 @@ type Alert struct {
 	Type       string    `json:"type"`
 	Title      string    `json:"title"`
 	Message    string    `json:"message"`
+	// Link is the in-app path the alert opens (and the email button points
+	// at) — see TenderLink/StageLink/ApprovalLink. Always app-relative.
+	Link       string    `json:"link,omitempty"`
 	IsRead     bool      `json:"is_read"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+// TenderLink, StageLink and ApprovalLink build the deep links alerts carry —
+// the query params are the ones TenderDetailPage reads (?tab=&stage=, and
+// ?approval=1 to open the pending edit/cancel/delete review).
+func TenderLink(bidID string) string { return "/dashboard/tenders/" + bidID }
+
+func StageLink(bidID, stage string) string {
+	return TenderLink(bidID) + "?tab=stages&stage=" + stage
+}
+
+func ApprovalLink(bidID string) string { return TenderLink(bidID) + "?approval=1" }
+
+// SafeLink keeps a caller-supplied link only if it's an in-app dashboard
+// path — it's rendered into an email href and navigated to on click, so an
+// absolute/protocol-relative URL must never get through. Falls back to the
+// tender's own page when the alert is about one.
+func SafeLink(link string, bidID *string) string {
+	if strings.HasPrefix(link, "/dashboard/") && !strings.ContainsAny(link, "\\\"<> ") {
+		return link
+	}
+	if bidID != nil && *bidID != "" {
+		return TenderLink(*bidID)
+	}
+	return ""
 }
 
 type AlertRepository interface {

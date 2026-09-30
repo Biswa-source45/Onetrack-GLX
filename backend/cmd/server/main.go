@@ -127,7 +127,7 @@ func main() {
 
 	// Initialize alert module
 	alertRepository := alertRepo.NewPostgresAlertRepository(dbPool)
-	alertSvc := alertService.NewAlertService(alertRepository, userRepository, emailSvc)
+	alertSvc := alertService.NewAlertService(alertRepository, userRepository, emailSvc, cfg.AppBaseURL)
 	alertHdlr := alertHandler.NewAlertHandler(alertSvc)
 	alertHandler.RegisterAlertRoutes(v1, alertHdlr, authMiddleware)
 

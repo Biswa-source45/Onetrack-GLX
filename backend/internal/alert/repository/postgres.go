@@ -18,8 +18,8 @@ func NewPostgresAlertRepository(pool *pgxpool.Pool) domain.AlertRepository {
 
 func (r *postgresAlertRepo) CreateAlert(ctx context.Context, alert *domain.Alert) error {
 	query := `
-		INSERT INTO public.alerts (user_id, target_role, bid_id, type, title, message, is_read)
-		VALUES ($1, $2, $3, $4, $5, $6, false)
+		INSERT INTO public.alerts (user_id, target_role, bid_id, type, title, message, link, is_read)
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), false)
 		RETURNING id, created_at
 	`
 	return r.pool.QueryRow(ctx, query,
@@ -29,12 +29,13 @@ func (r *postgresAlertRepo) CreateAlert(ctx context.Context, alert *domain.Alert
 		alert.Type,
 		alert.Title,
 		alert.Message,
+		alert.Link,
 	).Scan(&alert.ID, &alert.CreatedAt)
 }
 
 func (r *postgresAlertRepo) GetUserAlerts(ctx context.Context, userID string, userRole string) ([]domain.Alert, error) {
 	query := `
-		SELECT id, user_id, target_role, bid_id, type, title, message, is_read, created_at
+		SELECT id, user_id, target_role, bid_id, type, title, message, COALESCE(link, ''), is_read, created_at
 		FROM public.alerts
 		WHERE user_id = $1 OR target_role = $2 OR target_role = 'ALL'
 		ORDER BY created_at DESC
@@ -49,7 +50,7 @@ func (r *postgresAlertRepo) GetUserAlerts(ctx context.Context, userID string, us
 	var alerts []domain.Alert
 	for rows.Next() {
 		var a domain.Alert
-		if err := rows.Scan(&a.ID, &a.UserID, &a.TargetRole, &a.BidID, &a.Type, &a.Title, &a.Message, &a.IsRead, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.UserID, &a.TargetRole, &a.BidID, &a.Type, &a.Title, &a.Message, &a.Link, &a.IsRead, &a.CreatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan alert: %w", err)
 		}
 		alerts = append(alerts, a)

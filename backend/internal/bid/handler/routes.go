@@ -21,6 +21,7 @@ func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, importHandl
 		// Reporting Manager's sign-off (see bidService.UpdateBid). Approve/
 		// reject are further restricted to that edit's own Reporting
 		// Manager (or an admin) at the service layer.
+		bids.GET("/my-approvals", authMiddleware.RequirePermission("bid.view"), handler.ListMyPendingApprovals)
 		bids.GET("/:id/pending-edit", authMiddleware.RequirePermission("bid.view"), handler.GetPendingEdit)
 		bids.POST("/pending-edits/:editId/approve", authMiddleware.RequirePermission("bid.edit"), handler.ApprovePendingEdit)
 		bids.POST("/pending-edits/:editId/reject", authMiddleware.RequirePermission("bid.edit"), handler.RejectPendingEdit)
