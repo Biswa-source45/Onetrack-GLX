@@ -48,6 +48,7 @@ type BidRepository interface {
 	AddChecklist(ctx context.Context, bidID string, title string, sortOrder int) (*BidChecklist, error)
 	AddChecklistWithGroup(ctx context.Context, bidID string, title string, sortOrder int, group string) (*BidChecklist, error)
 	UpdateChecklist(ctx context.Context, checklistID string, title *string, sortOrder *int) error
+	UpdateChecklistDetails(ctx context.Context, checklistID string, req *UpdateChecklistRequest) error
 	DeleteChecklist(ctx context.Context, checklistID string) error
 	ReorderChecklists(ctx context.Context, items []ReorderChecklistItem) error
 	ToggleChecklist(ctx context.Context, checklistID string, isDone bool, doneBy string) error

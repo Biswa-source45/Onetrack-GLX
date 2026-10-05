@@ -79,6 +79,7 @@ const NAV_ITEMS = [
   { id: 'system-logs', label: 'System Logs',     icon: ScrollText,      permission: null, role: 'SUPER_ADMIN', path: '/dashboard/system-logs' },
   { id: 'bulk-import', label: 'Bulk Import',     icon: FileSpreadsheet, permission: null, role: 'SUPER_ADMIN', path: '/dashboard/bulk-import' },
   { id: 'settings',    label: 'Settings',        icon: Settings,        permission: null, role: 'SUPER_ADMIN', path: '/dashboard/settings' },
+  { id: 'working-calendar', label: 'Working Calendar', icon: Calendar,  permission: 'calendar.view', path: '/dashboard/working-calendar' },
 ]
 
 function isChildActive(child, pathname) {
@@ -1750,6 +1751,8 @@ export default function Dashboard() {
     ? 'bulk-import'
     : location.pathname.includes('/settings')
     ? 'settings'
+    : location.pathname.includes('/working-calendar')
+    ? 'working-calendar'
     : 'overview'
 
   // Roles that run the system see management-facing wording; everyone else

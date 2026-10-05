@@ -132,6 +132,9 @@ func (f *fakeBidRepo) AddChecklistWithGroup(ctx context.Context, bidID string, t
 func (f *fakeBidRepo) UpdateChecklist(ctx context.Context, checklistID string, title *string, sortOrder *int) error {
 	return nil
 }
+func (f *fakeBidRepo) UpdateChecklistDetails(ctx context.Context, checklistID string, req *domain.UpdateChecklistRequest) error {
+	return nil
+}
 func (f *fakeBidRepo) DeleteChecklist(ctx context.Context, checklistID string) error { return nil }
 func (f *fakeBidRepo) ReorderChecklists(ctx context.Context, items []domain.ReorderChecklistItem) error {
 	return nil

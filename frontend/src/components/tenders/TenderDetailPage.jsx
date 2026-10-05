@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -39,6 +40,7 @@ import { tokenStorage } from '../../services/auth'
 import { ChecklistTab } from './ChecklistTab'
 import { EditTenderDialog } from './EditTenderDialog'
 import { DynamicStageWorkspace, checkStageState } from './StageWorkspaces'
+import { triggerRedZoneNotification, getTenderWorkingDeadline } from '../../services/calendar'
 
 // Module scope (not runtime-dependent) so the URL-backed tab state below can
 // validate against it before the component has even loaded a bid.
@@ -97,8 +99,8 @@ function getBidEndDate(bid) {
 
 function fmtMoney(v) {
   if (!v && v !== 0) return '—'
-  if (v >= 10000000) return `₹${(v/10000000).toFixed(1)}Cr`
-  if (v >= 100000) return `₹${(v/100000).toFixed(1)}L`
+  if (v >= 10000000) return `₹${(v / 10000000).toFixed(1)}Cr`
+  if (v >= 100000) return `₹${(v / 100000).toFixed(1)}L`
   return `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
 }
 
@@ -125,15 +127,15 @@ function WorkflowStepper({ currentStage, stageCompletions = {} }) {
       <div className="flex items-center gap-0 min-w-max">
         {WORKFLOW_STAGES_ORDERED.map((stage, i) => {
           const isExplicitlyDone = stageCompletions[stage] === true
-          const done   = i < idx || isExplicitlyDone
+          const done = i < idx || isExplicitlyDone
           const active = i === idx && !isExplicitlyDone
           return (
             <React.Fragment key={stage}>
               <div className="flex flex-col items-center gap-1">
                 <div className={`size-6 rounded-full flex items-center justify-center text-xs font-semibold border-2 transition-all
-                  ${done   ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
-                  : active ? 'bg-primary/10 border-primary text-primary ring-2 ring-primary/20 font-bold'
-                           : 'bg-background border-border text-muted-foreground'}`}>
+                  ${done ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
+                    : active ? 'bg-primary/10 border-primary text-primary ring-2 ring-primary/20 font-bold'
+                      : 'bg-background border-border text-muted-foreground'}`}>
                   {done ? <CheckCircle2 className="size-3.5" /> : i + 1}
                 </div>
                 <span className={`text-[10px] font-medium max-w-[60px] text-center leading-tight
@@ -174,18 +176,18 @@ function TransitionDialog({ bid, onClose, onDone }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         className="absolute inset-0 bg-foreground/25 backdrop-blur-sm" onClick={onClose} />
       <motion.div
-        initial={{opacity:0,scale:0.95,y:10}} animate={{opacity:1,scale:1,y:0}}
-        exit={{opacity:0,scale:0.95,y:10}}
-        transition={{type:'spring',stiffness:400,damping:30}}
+        initial={{ opacity: 0, scale: 0.95, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+        transition={{ type: 'spring', stiffness: 400, damping: 30 }}
         className="relative z-10 w-full max-w-md bg-card border border-border rounded-xl shadow-xl p-6 space-y-4"
-        onClick={e=>e.stopPropagation()}
+        onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
           <h3 className="font-heading font-semibold text-foreground">Advance Stage</h3>
-          <button onClick={onClose} className="p-1 rounded-md hover:bg-muted text-muted-foreground"><X className="size-4"/></button>
+          <button onClick={onClose} className="p-1 rounded-md hover:bg-muted text-muted-foreground"><X className="size-4" /></button>
         </div>
         <p className="text-xs text-muted-foreground">Current: <StageBadge stage={bid.workflow_stage} /></p>
         <form onSubmit={submit} className="space-y-3">
@@ -211,13 +213,13 @@ function TransitionDialog({ bid, onClose, onDone }) {
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Reason (optional)</Label>
-            <Textarea value={reason} onChange={e=>setReason(e.target.value)}
+            <Textarea value={reason} onChange={e => setReason(e.target.value)}
               placeholder="Briefly describe why this stage is being advanced…" className="text-sm min-h-[60px]" />
           </div>
           <div className="flex gap-2 pt-1">
             <Button type="button" variant="outline" size="sm" className="flex-1" onClick={onClose} disabled={loading}>Cancel</Button>
             <Button type="submit" size="sm" className="flex-1" disabled={loading || allowed.length === 0}>
-              {loading && <Loader2 className="size-3.5 animate-spin mr-1"/>}Move Stage
+              {loading && <Loader2 className="size-3.5 animate-spin mr-1" />}Move Stage
             </Button>
           </div>
         </form>
@@ -229,21 +231,21 @@ function TransitionDialog({ bid, onClose, onDone }) {
 // ── Stage History Tab ────────────────────────────────────────────────────────
 // ── Stage History Tab ────────────────────────────────────────────────────────
 const STAGE_ICONS = {
-  DISCOVERED:             Search,
-  QUALIFICATION_REVIEW:   ShieldCheck,
-  DOCUMENT_COMPILATION:   FileText,
-  OEM_COORDINATION:       Share2,
+  DISCOVERED: Search,
+  QUALIFICATION_REVIEW: ShieldCheck,
+  DOCUMENT_COMPILATION: FileText,
+  OEM_COORDINATION: Share2,
   COMMERCIAL_PREPARATION: Coins,
-  INTERNAL_REVIEW:        Eye,
-  FINAL_APPROVAL:         CheckCircle2,
-  READY_FOR_SUBMISSION:   Send,
-  SUBMITTED:              Upload,
-  RA_ACTIVE:              Activity,
-  AWAITING_RESULT:        Hourglass,
-  WON:                    Trophy,
-  LOST:                   XCircle,
-  CANCELLED:              Ban,
-  CHECKLIST_UPDATE:       CheckSquare,
+  INTERNAL_REVIEW: Eye,
+  FINAL_APPROVAL: CheckCircle2,
+  READY_FOR_SUBMISSION: Send,
+  SUBMITTED: Upload,
+  RA_ACTIVE: Activity,
+  AWAITING_RESULT: Hourglass,
+  WON: Trophy,
+  LOST: XCircle,
+  CANCELLED: Ban,
+  CHECKLIST_UPDATE: CheckSquare,
 }
 
 function getUserDisplayName(actor) {
@@ -312,7 +314,7 @@ function getEventTypeBadge(type) {
 function extractCommercialDetails(entry, bid) {
   if (!entry) return { hasCommercialData: false }
   const details = entry.details || {}
-  
+
   let quotedPrice = details.quoted_price || details.final_price || details.offered_price || details.finalPrice
   let l1Price = details.l1_price || details.l1Price
   let l1Company = details.l1_company_name || details.l1Name || details.l1Distributor
@@ -435,9 +437,8 @@ function StageDetailCard({ entry, isLatest, bid }) {
               <Coins className="size-3.5 text-emerald-600 dark:text-emerald-400" /> Commercial &amp; Final Submitted Value
             </span>
             {comm.outcome && (
-              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider border ${
-                comm.outcome === 'WON' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200' : 'bg-red-100 text-red-800 border-red-300 dark:bg-red-950 dark:text-red-200'
-              }`}>
+              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider border ${comm.outcome === 'WON' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200' : 'bg-red-100 text-red-800 border-red-300 dark:bg-red-950 dark:text-red-200'
+                }`}>
                 {comm.outcome === 'WON' ? '🏆 WON / L1' : '❌ LOST'}
               </span>
             )}
@@ -651,7 +652,7 @@ function StageHistoryTab({ bidId, bid }) {
     return () => observer.disconnect()
   }, [hasMore, loadMore])
 
-  if (loading) return <div className="flex justify-center py-12"><Loader2 className="size-6 animate-spin text-primary"/></div>
+  if (loading) return <div className="flex justify-center py-12"><Loader2 className="size-6 animate-spin text-primary" /></div>
 
   // Filter history
   const filteredHistory = history.filter(item => {
@@ -739,13 +740,12 @@ function StageHistoryTab({ bidId, bid }) {
               <button
                 key={stg}
                 onClick={() => setSelectedStageFilter(isFilterActive ? null : stg)}
-                className={`p-2 rounded-lg border text-left transition-all text-xs flex flex-col justify-between h-16 ${
-                  isFilterActive
-                    ? 'border-primary bg-primary/10 shadow-sm ring-2 ring-primary/20'
-                    : count > 0
+                className={`p-2 rounded-lg border text-left transition-all text-xs flex flex-col justify-between h-16 ${isFilterActive
+                  ? 'border-primary bg-primary/10 shadow-sm ring-2 ring-primary/20'
+                  : count > 0
                     ? 'border-border bg-muted/20 hover:border-primary/50'
                     : 'border-border/40 bg-muted/5 opacity-60 hover:opacity-100'
-                }`}
+                  }`}
               >
                 <div className="flex items-center justify-between w-full">
                   <span className="font-mono text-[9px] font-bold text-muted-foreground">S{i + 1}</span>
@@ -779,11 +779,10 @@ function StageHistoryTab({ bidId, bid }) {
           <button
             key={cat.id}
             onClick={() => setFilterType(cat.id)}
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors border ${
-              filterType === cat.id
-                ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-                : 'bg-card border-border text-muted-foreground hover:text-foreground hover:bg-muted/30'
-            }`}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors border ${filterType === cat.id
+              ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+              : 'bg-card border-border text-muted-foreground hover:text-foreground hover:bg-muted/30'
+              }`}
           >
             {cat.label}
           </button>
@@ -830,16 +829,16 @@ function StageHistoryTab({ bidId, bid }) {
                         ${isSelected
                           ? 'border-primary ring-4 ring-primary/10 scale-110'
                           : isLatest
-                          ? 'border-emerald-500 ring-2 ring-emerald-500/10'
-                          : 'border-border group-hover:border-muted-foreground'
+                            ? 'border-emerald-500 ring-2 ring-emerald-500/10'
+                            : 'border-border group-hover:border-muted-foreground'
                         }`}
                     >
                       <IconComponent className={`size-3 transition-colors
                         ${isSelected
                           ? 'text-primary'
                           : isLatest
-                          ? 'text-emerald-500'
-                          : 'text-muted-foreground group-hover:text-foreground'
+                            ? 'text-emerald-500'
+                            : 'text-muted-foreground group-hover:text-foreground'
                         }`}
                       />
                     </div>
@@ -900,9 +899,8 @@ function StageHistoryTab({ bidId, bid }) {
                               </span>
                             )}
                             {c.outcome && (
-                              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded border uppercase tracking-wider ${
-                                c.outcome === 'WON' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200' : 'bg-red-100 text-red-800 border-red-300 dark:bg-red-950 dark:text-red-200'
-                              }`}>
+                              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded border uppercase tracking-wider ${c.outcome === 'WON' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200' : 'bg-red-100 text-red-800 border-red-300 dark:bg-red-950 dark:text-red-200'
+                                }`}>
                                 {c.outcome === 'WON' ? 'WON / L1' : 'LOST'}
                               </span>
                             )}
@@ -966,8 +964,8 @@ function MembersTab({ bid, onRefresh }) {
     <div className="space-y-4">
       <div className="space-y-2">
         {(bid.members ?? []).length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No members yet.</p>}
-        {(bid.members ?? []).map((m,i)=>(
-          <motion.div key={m.user_id} initial={{opacity:0,y:4}} animate={{opacity:1,y:0}} transition={{delay:i*0.04}}
+        {(bid.members ?? []).map((m, i) => (
+          <motion.div key={m.user_id} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
             className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors">
             <div className="flex items-center gap-3">
               <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary">
@@ -982,9 +980,9 @@ function MembersTab({ bid, onRefresh }) {
               ['OWNER', 'ACCOUNT_MANAGER'].includes(m.role) ? (
                 <span className="text-[10px] text-muted-foreground/70 italic px-1">Reassign via Edit Tender</span>
               ) : (
-                <button onClick={()=>handleRemove(m.user_id)}
+                <button onClick={() => handleRemove(m.user_id)}
                   className="p-1 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors">
-                  <X className="size-3.5"/>
+                  <X className="size-3.5" />
                 </button>
               )
             )}
@@ -1104,7 +1102,7 @@ function StageSectionsTab({ bid, onRefresh, onAdvance, searchParams, setSearchPa
             </button>
           </div>
         </div>
-        
+
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
           {WORKFLOW_STAGES_ORDERED.map((stageKey, idx) => {
             const { isCompleted, isCurrent: isCurrentWorkflow, isLocked, isInReview, isEmdExempt, emdSkipReason } = checkStageState(bid, stageKey)
@@ -1123,42 +1121,40 @@ function StageSectionsTab({ bid, onRefresh, onAdvance, searchParams, setSearchPa
                   }
                   setSelectedStage(stageKey)
                 }}
-                className={`flex flex-col items-start p-2.5 rounded-xl border text-left transition-all relative overflow-hidden group ${
-                  isEmdExempt
-                    ? 'border-border/40 bg-muted/10 opacity-50 cursor-not-allowed'
-                    : isSelected
+                className={`flex flex-col items-start p-2.5 rounded-xl border text-left transition-all relative overflow-hidden group ${isEmdExempt
+                  ? 'border-border/40 bg-muted/10 opacity-50 cursor-not-allowed'
+                  : isSelected
                     ? isInReview
                       ? 'border-orange-500 ring-2 ring-orange-500/60 bg-gradient-to-br from-amber-500/20 via-orange-500/25 to-rose-500/20 shadow-md'
                       : isCompleted
-                      ? 'border-emerald-500 ring-2 ring-emerald-500/40 bg-emerald-50/60 dark:bg-emerald-950/30 shadow-sm'
-                      : isCurrentWorkflow
-                      ? 'border-primary ring-2 ring-primary/40 bg-primary/10 shadow-sm'
-                      : 'border-primary ring-2 ring-primary/20 bg-primary/10 shadow-sm'
+                        ? 'border-emerald-500 ring-2 ring-emerald-500/40 bg-emerald-50/60 dark:bg-emerald-950/30 shadow-sm'
+                        : isCurrentWorkflow
+                          ? 'border-primary ring-2 ring-primary/40 bg-primary/10 shadow-sm'
+                          : 'border-primary ring-2 ring-primary/20 bg-primary/10 shadow-sm'
                     : isInReview
-                    ? 'border-orange-400/90 bg-gradient-to-br from-amber-500/10 via-orange-500/15 to-rose-500/10 dark:from-amber-950/40 dark:via-orange-950/40 dark:to-rose-950/40 dark:border-orange-700 shadow-xs hover:border-orange-500'
-                    : isCompleted
-                    ? 'border-emerald-200 bg-emerald-50/40 hover:bg-emerald-50 dark:bg-emerald-950/15 dark:border-emerald-900/40'
-                    : isCurrentWorkflow
-                    ? 'border-indigo-300 bg-indigo-50/40 hover:bg-indigo-50 dark:bg-indigo-950/20'
-                    : isLocked
-                    ? 'border-amber-200/70 bg-amber-50/20 opacity-80 hover:opacity-100 dark:bg-amber-950/10 dark:border-amber-900/40'
-                    : 'border-border/60 bg-card hover:bg-muted/40'
-                }`}
+                      ? 'border-orange-400/90 bg-gradient-to-br from-amber-500/10 via-orange-500/15 to-rose-500/10 dark:from-amber-950/40 dark:via-orange-950/40 dark:to-rose-950/40 dark:border-orange-700 shadow-xs hover:border-orange-500'
+                      : isCompleted
+                        ? 'border-emerald-200 bg-emerald-50/40 hover:bg-emerald-50 dark:bg-emerald-950/15 dark:border-emerald-900/40'
+                        : isCurrentWorkflow
+                          ? 'border-indigo-300 bg-indigo-50/40 hover:bg-indigo-50 dark:bg-indigo-950/20'
+                          : isLocked
+                            ? 'border-amber-200/70 bg-amber-50/20 opacity-80 hover:opacity-100 dark:bg-amber-950/10 dark:border-amber-900/40'
+                            : 'border-border/60 bg-card hover:bg-muted/40'
+                  }`}
               >
                 <div className="flex items-center justify-between w-full mb-1">
-                  <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${
-                    isEmdExempt
-                      ? 'bg-muted text-muted-foreground/70'
-                      : isInReview
+                  <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${isEmdExempt
+                    ? 'bg-muted text-muted-foreground/70'
+                    : isInReview
                       ? 'bg-gradient-to-r from-orange-500 to-rose-500 text-white shadow-xs'
                       : isLocked
-                      ? 'bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-200'
-                      : isCompleted
-                      ? 'bg-emerald-500 text-white'
-                      : isCurrentWorkflow
-                      ? 'bg-primary text-white'
-                      : 'bg-muted text-muted-foreground'
-                  }`}>
+                        ? 'bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-200'
+                        : isCompleted
+                          ? 'bg-emerald-500 text-white'
+                          : isCurrentWorkflow
+                            ? 'bg-primary text-white'
+                            : 'bg-muted text-muted-foreground'
+                    }`}>
                     #{idx + 1}
                   </span>
 
@@ -1175,31 +1171,29 @@ function StageSectionsTab({ bid, onRefresh, onAdvance, searchParams, setSearchPa
                   ) : null}
                 </div>
 
-                <span className={`text-xs font-bold line-clamp-1 ${
-                  isEmdExempt
-                    ? 'text-muted-foreground'
-                    : isInReview
+                <span className={`text-xs font-bold line-clamp-1 ${isEmdExempt
+                  ? 'text-muted-foreground'
+                  : isInReview
                     ? 'text-orange-950 dark:text-orange-200 font-extrabold'
                     : isSelected
-                    ? 'text-primary'
-                    : isCompleted
-                    ? 'text-emerald-950 dark:text-emerald-200'
-                    : 'text-foreground'
-                }`}>
+                      ? 'text-primary'
+                      : isCompleted
+                        ? 'text-emerald-950 dark:text-emerald-200'
+                        : 'text-foreground'
+                  }`}>
                   {guide?.title?.split('.')[1]?.trim() || STAGE_LABELS[stageKey] || stageKey}
                 </span>
 
-                <span className={`text-[9px] mt-0.5 truncate w-full ${
-                  isEmdExempt
-                    ? 'text-muted-foreground/70'
-                    : isInReview
+                <span className={`text-[9px] mt-0.5 truncate w-full ${isEmdExempt
+                  ? 'text-muted-foreground/70'
+                  : isInReview
                     ? 'text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-0.5'
                     : isCompleted
-                    ? 'text-emerald-600 dark:text-emerald-400 font-medium'
-                    : isCurrentWorkflow
-                    ? 'text-primary font-medium'
-                    : 'text-muted-foreground'
-                }`}>
+                      ? 'text-emerald-600 dark:text-emerald-400 font-medium'
+                      : isCurrentWorkflow
+                        ? 'text-primary font-medium'
+                        : 'text-muted-foreground'
+                  }`}>
                   {isEmdExempt ? (emdSkipReason === 'NOT_APPLICABLE' ? '🚫 No EMD' : '🚫 EMD Exempted') : isInReview ? '⚠️ Marked for Review' : isLocked ? '🔒 Locked' : isCompleted ? '✓ Completed' : isCurrentWorkflow ? '● Active Workflow' : 'Available Stage'}
                 </span>
               </button>
@@ -1533,13 +1527,12 @@ function StageActionPanel({ bid, onSelectStage }) {
                   key={stg.stageKey}
                   type="button"
                   onClick={() => onSelectStage && onSelectStage(stg.stageKey)}
-                  className={`group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-all shadow-2xs cursor-pointer active:scale-95 ${
-                    stg.isCurrent
-                      ? 'bg-primary/15 text-primary border border-primary/40 font-bold hover:bg-primary/20'
-                      : stg.isLocked
+                  className={`group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-all shadow-2xs cursor-pointer active:scale-95 ${stg.isCurrent
+                    ? 'bg-primary/15 text-primary border border-primary/40 font-bold hover:bg-primary/20'
+                    : stg.isLocked
                       ? 'bg-muted/30 text-muted-foreground/60 border border-border/50 hover:bg-muted/50'
                       : 'bg-muted/60 text-muted-foreground border border-border hover:bg-muted hover:text-foreground'
-                  }`}
+                    }`}
                 >
                   {stg.isCurrent ? (
                     <span className="relative flex size-2 shrink-0">
@@ -1581,13 +1574,12 @@ function OutcomePanel({ bid }) {
     <div className="rounded-lg border border-border p-4 space-y-3 bg-muted/10">
       <div className="flex items-center justify-between">
         <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Recorded Outcome</p>
-        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold border ${
-          bid.bid_outcome === 'WON'
-            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-900/50'
-            : bid.bid_outcome === 'LOST'
+        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold border ${bid.bid_outcome === 'WON'
+          ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-900/50'
+          : bid.bid_outcome === 'LOST'
             ? 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/20 dark:text-red-400 dark:border-red-900/50'
             : 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-800'
-        }`}>
+          }`}>
           {bid.bid_outcome === 'WON' ? '🏆 Won' : bid.bid_outcome === 'LOST' ? '❌ Lost' : '🛑 Cancelled'}
         </span>
       </div>
@@ -1624,8 +1616,8 @@ function OutcomePanel({ bid }) {
                     {priceDiffPct > 0
                       ? '(GlobX quoted higher than L1)'
                       : priceDiffPct < 0
-                      ? '(GlobX quoted lower than L1)'
-                      : '(Same price as L1)'}
+                        ? '(GlobX quoted lower than L1)'
+                        : '(Same price as L1)'}
                   </span>
                 </span>
               </div>
@@ -1838,11 +1830,10 @@ function OutcomeDialog({ bid, defaultOutcome = 'WON', lockedOutcome = null, onCl
                     key={o}
                     type="button"
                     onClick={() => setForm(f => ({ ...f, bid_outcome: o }))}
-                    className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
-                      form.bid_outcome === o
-                        ? 'bg-card text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
+                    className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${form.bid_outcome === o
+                      ? 'bg-card text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                      }`}
                   >
                     {o === 'WON' ? '🏆 Won' : o === 'LOST' ? '❌ Lost' : '🛑 Cancelled'}
                   </button>
@@ -1922,7 +1913,7 @@ function OutcomeDialog({ bid, defaultOutcome = 'WON', lockedOutcome = null, onCl
               {/* Competitor Info Section */}
               <div className="space-y-2 border-t border-border pt-3">
                 <Label className="text-xs font-semibold text-foreground">Competitor Information</Label>
-                
+
                 {form.competitor_info.length > 0 && (
                   <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
                     {form.competitor_info.map((comp, idx) => (
@@ -2014,13 +2005,13 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
   const onBack = propOnBack || (() => navigate('/dashboard/tenders'))
 
   const { hasPermission, hasRole, isAdmin, user } = usePermissions()
-  const [bid, setBid]               = useState(null)
+  const [bid, setBid] = useState(null)
   const [pendingEdit, setPendingEdit] = useState(null)
   const [reviewingEdit, setReviewingEdit] = useState(false)
   const [showPendingRejectDlg, setShowPendingRejectDlg] = useState(false)
   const [decidingPending, setDecidingPending] = useState(false)
-  const [loading, setLoading]       = useState(true)
-  const [error, setError]           = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   // Backed by the URL (?tab=&stage=) instead of local state, so refreshing
   // the page or hitting Back lands back on the same page-tab and stage
   // instead of always resetting to Overview / the tender's workflow stage.
@@ -2039,13 +2030,30 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
   const [showOutcome, setShowOutcome] = useState(false)
   const [showCancel, setShowCancel] = useState(false)
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false)
+  const [notifyingRedZone, setNotifyingRedZone] = useState(false)
 
   const loadBid = useCallback(async (showLoader = false) => {
     setLoading(prev => (prev || showLoader ? true : false))
     setError(null)
     try {
       const res = await getBid(bidId)
-      if (res.ok) setBid(res.data)
+      if (res.ok) {
+        setBid(res.data)
+        // Refresh live working calendar deadline calculation
+        try {
+          const dlRes = await getTenderWorkingDeadline(bidId)
+          if (dlRes?.ok && dlRes.data) {
+            setBid(prev => prev ? ({
+              ...prev,
+              calculated_72h_deadline: dlRes.data.calculated_deadline || prev.calculated_72h_deadline,
+              deadline_remaining_working_hours: dlRes.data.remaining_working_hours !== undefined 
+                ? dlRes.data.remaining_working_hours 
+                : prev.deadline_remaining_working_hours,
+              deadline_remaining_working_days: dlRes.data.remaining_working_days,
+            }) : prev)
+          }
+        } catch { /* fallback to cached DB values */ }
+      }
       else setError(res.error?.message ?? 'Failed to load tender')
     } catch { setError('Network error') }
     finally { setLoading(false) }
@@ -2080,12 +2088,12 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
 
   if (loading) return (
     <div className="flex items-center justify-center h-64 gap-3 text-muted-foreground">
-      <Loader2 className="size-5 animate-spin"/><span className="text-sm">Loading tender…</span>
+      <Loader2 className="size-5 animate-spin" /><span className="text-sm">Loading tender…</span>
     </div>
   )
   if (error) return (
     <div className="flex flex-col items-center justify-center h-64 gap-3 text-muted-foreground">
-      <AlertCircle className="size-8 text-destructive/60"/><p className="text-sm">{error}</p>
+      <AlertCircle className="size-8 text-destructive/60" /><p className="text-sm">{error}</p>
       <Button variant="outline" size="sm" onClick={onBack}>Go Back</Button>
     </div>
   )
@@ -2099,9 +2107,9 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
-            <ArrowLeft className="size-4"/>Tenders
+            <ArrowLeft className="size-4" />Tenders
           </button>
-          <ChevronRight className="size-3.5 text-muted-foreground"/>
+          <ChevronRight className="size-3.5 text-muted-foreground" />
           <span className="text-sm text-foreground font-medium truncate max-w-[300px]">{bid.title}</span>
         </div>
       </div>
@@ -2124,62 +2132,62 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
         }
         return (
           <>
-          <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 flex items-center justify-between gap-4 text-amber-900 shadow-sm dark:bg-amber-950/20 dark:border-amber-900/50 dark:text-amber-300">
-            <div className="flex items-start gap-3">
-              <Clock className="size-5 shrink-0 text-amber-600 dark:text-amber-500 mt-0.5" />
-              <div className="space-y-0.5">
-                <p className="font-semibold text-sm">
-                  {isApprover
-                    ? `A ${actionLabel} by ${requesterName} is awaiting your approval`
-                    : `Your ${actionLabel} is awaiting approval`}
-                </p>
-                <p className="text-xs text-amber-700 dark:text-amber-400">
-                  {actionType === 'EDIT'
-                    ? `${pendingEdit.diff?.length ?? 0} field${(pendingEdit.diff?.length ?? 0) === 1 ? '' : 's'} changed — nothing has been applied yet.`
-                    : 'Nothing has been applied yet.'}
-                </p>
+            <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 flex items-center justify-between gap-4 text-amber-900 shadow-sm dark:bg-amber-950/20 dark:border-amber-900/50 dark:text-amber-300">
+              <div className="flex items-start gap-3">
+                <Clock className="size-5 shrink-0 text-amber-600 dark:text-amber-500 mt-0.5" />
+                <div className="space-y-0.5">
+                  <p className="font-semibold text-sm">
+                    {isApprover
+                      ? `A ${actionLabel} by ${requesterName} is awaiting your approval`
+                      : `Your ${actionLabel} is awaiting approval`}
+                  </p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    {actionType === 'EDIT'
+                      ? `${pendingEdit.diff?.length ?? 0} field${(pendingEdit.diff?.length ?? 0) === 1 ? '' : 's'} changed — nothing has been applied yet.`
+                      : 'Nothing has been applied yet.'}
+                  </p>
+                </div>
               </div>
+              {isApprover && (actionType === 'EDIT' ? (
+                <Button
+                  size="sm"
+                  className="gap-1.5 shrink-0 bg-amber-600 hover:bg-amber-700 text-white"
+                  onClick={() => setReviewingEdit(true)}
+                >
+                  <Eye className="size-3.5" />
+                  Review
+                </Button>
+              ) : (
+                <div className="flex gap-2 shrink-0">
+                  <Button size="sm" variant="outline" className="border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-300" onClick={() => setShowPendingRejectDlg(true)}>
+                    Reject
+                  </Button>
+                  <Button size="sm" className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white" onClick={approveNow}>
+                    <Check className="size-3.5" />
+                    Approve
+                  </Button>
+                </div>
+              ))}
             </div>
-            {isApprover && (actionType === 'EDIT' ? (
-              <Button
-                size="sm"
-                className="gap-1.5 shrink-0 bg-amber-600 hover:bg-amber-700 text-white"
-                onClick={() => setReviewingEdit(true)}
-              >
-                <Eye className="size-3.5" />
-                Review
-              </Button>
-            ) : (
-              <div className="flex gap-2 shrink-0">
-                <Button size="sm" variant="outline" className="border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-300" onClick={() => setShowPendingRejectDlg(true)}>
-                  Reject
-                </Button>
-                <Button size="sm" className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white" onClick={approveNow}>
-                  <Check className="size-3.5" />
-                  Approve
-                </Button>
-              </div>
-            ))}
-          </div>
-          <RejectReasonDialog
-            open={showPendingRejectDlg}
-            title={`Reject this ${actionLabel}`}
-            description={`${requesterName} will be notified this ${actionLabel} was not approved, with your reason if you give one.`}
-            loading={decidingPending}
-            onCancel={() => setShowPendingRejectDlg(false)}
-            onConfirm={async (reason) => {
-              setDecidingPending(true)
-              const res = await rejectPendingEdit(pendingEdit.id, reason)
-              setDecidingPending(false)
-              if (res.ok) {
-                setShowPendingRejectDlg(false)
-                toast.success(`${actionLabel[0].toUpperCase()}${actionLabel.slice(1)} rejected`)
-                loadBid()
-              } else {
-                toast.error(res.error?.message ?? 'Failed to reject')
-              }
-            }}
-          />
+            <RejectReasonDialog
+              open={showPendingRejectDlg}
+              title={`Reject this ${actionLabel}`}
+              description={`${requesterName} will be notified this ${actionLabel} was not approved, with your reason if you give one.`}
+              loading={decidingPending}
+              onCancel={() => setShowPendingRejectDlg(false)}
+              onConfirm={async (reason) => {
+                setDecidingPending(true)
+                const res = await rejectPendingEdit(pendingEdit.id, reason)
+                setDecidingPending(false)
+                if (res.ok) {
+                  setShowPendingRejectDlg(false)
+                  toast.success(`${actionLabel[0].toUpperCase()}${actionLabel.slice(1)} rejected`)
+                  loadBid()
+                } else {
+                  toast.error(res.error?.message ?? 'Failed to reject')
+                }
+              }}
+            />
           </>
         )
       })()}
@@ -2192,7 +2200,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
             <div className="space-y-0.5">
               <p className="font-semibold text-sm">Tender in Bin (Soft-Deleted)</p>
               <p className="text-xs text-rose-700 dark:text-rose-400">
-                Deleted on {new Date(bid.deleted_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}. 
+                Deleted on {new Date(bid.deleted_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}.
                 Will be permanently purged after 15 days of retention.
               </p>
             </div>
@@ -2288,18 +2296,18 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
 
           <div className="flex items-center gap-2 flex-wrap">
             {!bid.deleted_at && hasPermission('bid.edit') && !['ARCHIVED', 'CANCELLED', 'WON', 'LOST'].includes(bid.bid_status) && (
-              <Button size="sm" variant="outline" className="gap-1.5 border-primary/20 hover:border-primary/50 text-foreground" onClick={()=>setShowEdit(true)}>
-                <Edit2 className="size-3.5 text-primary"/>Edit Tender
+              <Button size="sm" variant="outline" className="gap-1.5 border-primary/20 hover:border-primary/50 text-foreground" onClick={() => setShowEdit(true)}>
+                <Edit2 className="size-3.5 text-primary" />Edit Tender
               </Button>
             )}
 
             {!bid.deleted_at && hasPermission('bid.edit') && !['CANCELLED', 'WON', 'LOST'].includes(bid.bid_status) && !['CANCELLED', 'WON', 'LOST'].includes(bid.workflow_stage) && (
-              <Button size="sm" variant="outline" className="gap-1.5 border-red-200 hover:border-red-500 text-red-600 hover:bg-red-50/50 dark:border-red-900/50 dark:hover:bg-red-950/20" onClick={()=>setShowCancel(true)}>
-                <XCircle className="size-3.5"/>Cancel Tender
+              <Button size="sm" variant="outline" className="gap-1.5 border-red-200 hover:border-red-500 text-red-600 hover:bg-red-50/50 dark:border-red-900/50 dark:hover:bg-red-950/20" onClick={() => setShowCancel(true)}>
+                <XCircle className="size-3.5" />Cancel Tender
               </Button>
             )}
             {!bid.deleted_at && hasPermission('bid.edit') && (bid.bid_status === 'CANCELLED' || bid.workflow_stage === 'CANCELLED' || bid.bid_outcome === 'CANCELLED') && (
-              <Button size="sm" variant="outline" className="gap-1.5 border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300" onClick={async ()=>{
+              <Button size="sm" variant="outline" className="gap-1.5 border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300" onClick={async () => {
                 try {
                   const res = await transitionBidStage(bid.id, 'DISCOVERED', 'Revoked tender cancellation')
                   if (res.ok) {
@@ -2312,17 +2320,17 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                   toast.error('Network error')
                 }
               }}>
-                <RotateCcw className="size-3.5"/>Revoke Cancellation
+                <RotateCcw className="size-3.5" />Revoke Cancellation
               </Button>
             )}
             {!bid.deleted_at && ['SUBMITTED', 'RA_ACTIVE', 'AWAITING_RESULT'].includes(bid.workflow_stage) && bid.bid_status === 'ACTIVE' && hasPermission('bid.edit') && (
-              <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={()=>setShowOutcome(true)}>
-                <Target className="size-3.5"/>Outcome
+              <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => setShowOutcome(true)}>
+                <Target className="size-3.5" />Outcome
               </Button>
             )}
             {!bid.deleted_at && hasPermission('bid.delete') && !['ARCHIVED', 'CANCELLED', 'WON', 'LOST'].includes(bid.bid_status) && (
-              <Button size="sm" variant="outline" className="border-destructive/20 hover:border-destructive text-destructive hover:bg-destructive/5 p-2 h-8" title="Move to Tender Bin" onClick={()=>setShowArchiveConfirm(true)}>
-                <Trash2 className="size-3.5"/>
+              <Button size="sm" variant="outline" className="border-destructive/20 hover:border-destructive text-destructive hover:bg-destructive/5 p-2 h-8" title="Move to Tender Bin" onClick={() => setShowArchiveConfirm(true)}>
+                <Trash2 className="size-3.5" />
               </Button>
             )}
           </div>
@@ -2336,39 +2344,214 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
         {/* Quick meta */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
           {[
-            { label:'Estimated Value', value: fmtMoney(bid.estimated_value), icon:DollarSign },
-            { label:'EMD Amount',      value: bid.emd_not_applicable ? 'Not Applicable' : bid.emd_exempted ? 'Exempted' : fmtMoney(bid.emd_amount), icon:Target },
-            { label:'Ending Date',      value: getBidEndDate(bid), icon:Calendar },
-            { label:'Owner',           value: bid.bid_owner?.full_name ?? 'Unassigned', icon:Users },
-          ].map(m=>(
+            { label: 'Estimated Value', value: fmtMoney(bid.estimated_value), icon: DollarSign },
+            { label: 'EMD Amount', value: bid.emd_not_applicable ? 'Not Applicable' : bid.emd_exempted ? 'Exempted' : fmtMoney(bid.emd_amount), icon: Target },
+            { label: 'Ending Date', value: getBidEndDate(bid), icon: Calendar },
+            { label: 'Owner', value: bid.bid_owner?.full_name ?? 'Unassigned', icon: Users },
+          ].map(m => (
             <div key={m.label} className="rounded-lg bg-muted/40 p-3">
               <div className="flex items-center gap-1.5 mb-1">
-                <m.icon className="size-3 text-muted-foreground"/>
+                <m.icon className="size-3 text-muted-foreground" />
                 <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">{m.label}</span>
               </div>
               <p className="text-sm font-semibold text-foreground">{m.value}</p>
             </div>
           ))}
         </div>
+
+        {/* 72 Working-Hour / 3 Working-Day Red Zone Due Date Notification Banner */}
+        {(bid.calculated_72h_deadline || bid.closing_date || bid.end_date) && (() => {
+          const remHours = bid.deadline_remaining_working_hours !== undefined && bid.deadline_remaining_working_hours !== null
+            ? Number(bid.deadline_remaining_working_hours)
+            : null
+          const closing = bid.closing_date || bid.end_date || bid.submission_deadline
+          const isClosed = closing ? new Date(closing).getTime() < Date.now() : false
+          const isRedZone = !isClosed && remHours !== null && remHours <= 72.0
+
+          return (
+            <div className={`relative overflow-hidden rounded-2xl border p-4 sm:p-5 shadow-xs transition-all ${
+              isClosed
+                ? 'border-border/80 bg-muted/20 text-muted-foreground'
+                : isRedZone
+                  ? 'border-rose-200/90 dark:border-rose-900/60 bg-gradient-to-br from-rose-50/90 via-white to-rose-50/40 dark:from-rose-950/30 dark:via-card dark:to-rose-950/15'
+                  : 'border-emerald-200/70 dark:border-emerald-900/50 bg-gradient-to-br from-emerald-50/60 via-white to-emerald-50/30 dark:from-emerald-950/20 dark:via-card dark:to-emerald-950/10'
+            }`}>
+              {/* Left Accent Status Strip */}
+              <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${
+                isClosed ? 'bg-muted-foreground/30' : isRedZone ? 'bg-rose-500' : 'bg-emerald-500'
+              }`} />
+
+              <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4 pl-1.5">
+                {/* Left Info & Status Badge */}
+                <div className="space-y-1.5 max-w-2xl">
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    {/* Solid Sticky Indicator Dot (No blinking) */}
+                    <span className="relative flex h-2.5 w-2.5 items-center justify-center shrink-0">
+                      <span className={`h-2.5 w-2.5 rounded-full ${
+                        isClosed 
+                          ? 'bg-zinc-400 dark:bg-zinc-600 ring-2 ring-zinc-300 dark:ring-zinc-700' 
+                          : isRedZone 
+                            ? 'bg-rose-600 ring-4 ring-rose-500/25 shadow-xs shadow-rose-500/40' 
+                            : 'bg-emerald-500 ring-4 ring-emerald-500/25'
+                      }`} />
+                    </span>
+
+                    <span className={`text-xs font-bold uppercase tracking-wider ${
+                      isClosed
+                        ? 'text-muted-foreground'
+                        : isRedZone
+                          ? 'text-rose-700 dark:text-rose-400 font-extrabold'
+                          : 'text-emerald-700 dark:text-emerald-400'
+                    }`}>
+                      {isClosed
+                        ? 'Tender Submission Deadline Passed'
+                        : isRedZone
+                          ? 'Red Zone – Tender Due Date Notification'
+                          : 'Working Calendar Engine'}
+                    </span>
+
+                    <Badge variant="outline" className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${
+                      isClosed
+                        ? 'border-border bg-muted/40 text-muted-foreground'
+                        : isRedZone
+                          ? 'border-rose-200 dark:border-rose-800/80 bg-rose-100/80 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300'
+                          : 'border-emerald-200 dark:border-emerald-800/80 bg-emerald-100/80 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300'
+                    }`}>
+                      {isClosed ? 'Tender Closed' : isRedZone ? '3 Working Days Reached' : 'Within Normal Schedule'}
+                    </Badge>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {isClosed
+                      ? 'The official submission window for this tender has concluded.'
+                      : isRedZone
+                        ? 'Automated email alerts are triggered for all stakeholders 3 working days (72 hours) before deadline, excluding 2nd/4th Saturdays, Sundays, configured holidays & non-working days.'
+                        : 'Calculates trigger times 3 working days backward from the tender deadline, excluding 2nd/4th Saturdays, Sundays, and configured public holidays.'}
+                  </p>
+                </div>
+
+                {/* Right Statistics & Action Controls */}
+                <div className="flex items-center gap-3 flex-wrap sm:flex-nowrap shrink-0">
+                  {/* 3-Day Trigger Date Capsule */}
+                  <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-white/95 dark:bg-card/90 px-3.5 py-2 shadow-2xs">
+                    <div className={`p-2 rounded-lg ${isRedZone ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400' : 'bg-primary/5 text-primary'}`}>
+                      <Calendar className="size-4 shrink-0" />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider block">
+                        3-Day Trigger Time
+                      </span>
+                      <span className="text-xs font-bold text-foreground whitespace-nowrap">
+                        {bid.calculated_72h_deadline
+                          ? formatFullDateTime(bid.calculated_72h_deadline)
+                          : 'Calculated at 3 working days'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Remaining Working Days Capsule */}
+                  {remHours !== null && (
+                    <div className={`flex items-center gap-3 rounded-xl border bg-white/95 dark:bg-card/90 px-3.5 py-2 shadow-2xs ${
+                      isClosed
+                        ? 'border-border/70'
+                        : isRedZone
+                          ? 'border-rose-200 dark:border-rose-900/60'
+                          : 'border-emerald-200/80 dark:border-emerald-900/60'
+                    }`}>
+                      <div className={`p-2 rounded-lg ${
+                        isClosed
+                          ? 'bg-muted text-muted-foreground'
+                          : isRedZone
+                            ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400'
+                            : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400'
+                      }`}>
+                        <Clock className="size-4 shrink-0" />
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider block">
+                          Working Days Left
+                        </span>
+                        <div className="flex items-baseline gap-1.5 whitespace-nowrap">
+                          <span className={`text-xs font-extrabold ${
+                            isClosed
+                              ? 'text-muted-foreground'
+                              : isRedZone
+                                ? 'text-rose-600 dark:text-rose-400'
+                                : 'text-emerald-600 dark:text-emerald-400'
+                          }`}>
+                            {isClosed ? '0.0 days' : `${(remHours / 24.0).toFixed(1)} days`}
+                          </span>
+                          {!isClosed && (
+                            <span className="text-[11px] font-medium text-muted-foreground">
+                              ({remHours.toFixed(1)}h)
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action Button */}
+                  {hasPermission('bid.edit') && !isClosed && (
+                    <Button
+                      variant={isRedZone ? 'default' : 'outline'}
+                      size="sm"
+                      disabled={notifyingRedZone}
+                      className={`h-9 px-4 rounded-xl text-xs font-semibold shrink-0 gap-1.5 shadow-xs transition-all ${
+                        isRedZone
+                          ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-500/20'
+                          : 'hover:bg-primary/5 border-primary/30 text-primary'
+                      }`}
+                      onClick={async () => {
+                        setNotifyingRedZone(true)
+                        try {
+                          const res = await triggerRedZoneNotification(bid.id, true)
+                          if (res.ok) {
+                            toast.success(`Red Zone notification sent to ${res.data?.stakeholders_notified?.length || 'all'} stakeholders!`)
+                            loadBid()
+                          } else {
+                            toast.error(res.error?.message || 'Failed to trigger notification')
+                          }
+                        } catch {
+                          toast.error('Network error')
+                        } finally {
+                          setNotifyingRedZone(false)
+                        }
+                      }}
+                      title="Send Red Zone email notification to all involved stakeholders"
+                    >
+                      {notifyingRedZone ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Send className="size-3.5" />
+                      )}
+                      <span>Notify Stakeholders</span>
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )
+        })()}
       </div>
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-border">
-        {TABS.map(tab=>(
+        {TABS.map(tab => (
           <button key={tab.id}
-            onClick={()=> !tab.disabled && setActiveTab(tab.id)}
+            onClick={() => !tab.disabled && setActiveTab(tab.id)}
             disabled={tab.disabled}
             className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px
               ${tab.disabled ? 'border-transparent text-muted-foreground/40 cursor-not-allowed' :
-                activeTab===tab.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
-            <tab.icon className="size-3.5"/>{tab.label}
+                activeTab === tab.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
+            <tab.icon className="size-3.5" />{tab.label}
           </button>
         ))}
       </div>
 
       {/* Tab content */}
       <AnimatePresence mode="wait">
-        <motion.div key={activeTab} initial={{opacity:0,y:6}} animate={{opacity:1,y:0}} exit={{opacity:0}} transition={{duration:0.15}}>
+        <motion.div key={activeTab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
           {activeTab === 'overview' && (
             <div className="space-y-5">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2387,7 +2570,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                       ['Category / Scope', bid.category || 'Not Specified'],
                       ['Portal Source', bid.portal_source || 'GeM'],
                       ['Bid Scope Type', bid.bid_type || 'CUSTOM_BID'],
-                    ].map(([l,v])=>(
+                    ].map(([l, v]) => (
                       <div key={l} className="flex justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0 last:pb-0">
                         <span className="text-muted-foreground shrink-0">{l}</span>
                         <span className="font-medium text-foreground text-right">{v}</span>
@@ -2414,7 +2597,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                       ]] : []),
                       ['Start Date', getBidStartDate(bid)],
                       ['End Date', getBidEndDate(bid)],
-                    ].map(([l,v])=>(
+                    ].map(([l, v]) => (
                       <div key={l} className="flex justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0 last:pb-0">
                         <span className="text-muted-foreground shrink-0">{l}</span>
                         <span className="font-medium text-foreground text-right">{v}</span>
@@ -2462,21 +2645,21 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
             </div>
           )}
           {activeTab === 'stages' && <StageSectionsTab bid={bid} onRefresh={loadBid} onAdvance={() => setShowTransition(true)} searchParams={searchParams} setSearchParams={setSearchParams} />}
-          {activeTab === 'checklist' && <ChecklistTab bid={bid} onRefresh={loadBid}/>}
+          {activeTab === 'checklist' && <ChecklistTab bid={bid} onRefresh={loadBid} />}
           {activeTab === 'history' && <StageHistoryTab bidId={bid.id} bid={bid} />}
-          {activeTab === 'members' && <MembersTab bid={bid} onRefresh={loadBid}/>}
+          {activeTab === 'members' && <MembersTab bid={bid} onRefresh={loadBid} />}
         </motion.div>
       </AnimatePresence>
-        
+
       {/* Transition Dialog */}
       <AnimatePresence>
         {showTransition && (
-          <TransitionDialog bid={bid} onClose={()=>setShowTransition(false)} onDone={()=>{setShowTransition(false);loadBid()}}/>
+          <TransitionDialog bid={bid} onClose={() => setShowTransition(false)} onDone={() => { setShowTransition(false); loadBid() }} />
         )}
       </AnimatePresence>
 
       {/* Edit Tender Dialog */}
-      <EditTenderDialog open={showEdit} onClose={()=>setShowEdit(false)} bid={bid} onUpdated={loadBid} />
+      <EditTenderDialog open={showEdit} onClose={() => setShowEdit(false)} bid={bid} onUpdated={loadBid} />
       {reviewingEdit && pendingEdit && (
         <EditTenderDialog
           open={reviewingEdit}
@@ -2490,21 +2673,21 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
       {/* Outcome Dialog */}
       <AnimatePresence>
         {showOutcome && (
-          <OutcomeDialog bid={bid} onClose={()=>setShowOutcome(false)} onDone={()=>{setShowOutcome(false);loadBid()}} />
+          <OutcomeDialog bid={bid} onClose={() => setShowOutcome(false)} onDone={() => { setShowOutcome(false); loadBid() }} />
         )}
       </AnimatePresence>
 
       {/* Cancel Dialog */}
       <AnimatePresence>
         {showCancel && (
-          <OutcomeDialog bid={bid} lockedOutcome="CANCELLED" onClose={()=>setShowCancel(false)} onDone={()=>{setShowCancel(false);loadBid()}} />
+          <OutcomeDialog bid={bid} lockedOutcome="CANCELLED" onClose={() => setShowCancel(false)} onDone={() => { setShowCancel(false); loadBid() }} />
         )}
       </AnimatePresence>
 
       {/* Archive Confirmation Dialog */}
       <AnimatePresence>
         {showArchiveConfirm && (
-          <ArchiveConfirmDialog bid={bid} onClose={()=>setShowArchiveConfirm(false)} onDone={()=>{setShowArchiveConfirm(false);loadBid()}} />
+          <ArchiveConfirmDialog bid={bid} onClose={() => setShowArchiveConfirm(false)} onDone={() => { setShowArchiveConfirm(false); loadBid() }} />
         )}
       </AnimatePresence>
     </div>

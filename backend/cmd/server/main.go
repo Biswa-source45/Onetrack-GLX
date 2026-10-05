@@ -23,6 +23,9 @@ import (
 	feedbackHandler "github.com/onetrack/backend/internal/feedback/handler"
 	feedbackRepo "github.com/onetrack/backend/internal/feedback/repository"
 	feedbackService "github.com/onetrack/backend/internal/feedback/service"
+	calendarHandler "github.com/onetrack/backend/internal/calendar/handler"
+	calendarRepo "github.com/onetrack/backend/internal/calendar/repository"
+	calendarService "github.com/onetrack/backend/internal/calendar/service"
 	"github.com/onetrack/backend/internal/middleware"
 	"github.com/onetrack/backend/internal/platform/config"
 	"github.com/onetrack/backend/internal/platform/database"
@@ -145,6 +148,18 @@ func main() {
 	feedbackSvc := feedbackService.NewTicketService(feedbackRepository, alertSvc, bidRepository)
 	feedbackHdlr := feedbackHandler.NewTicketHandler(feedbackSvc, cfg.UploadDir)
 	feedbackHandler.RegisterTicketRoutes(v1, feedbackHdlr, authMiddleware)
+
+	// Initialize Working Calendar, Google Sync & 72-Hour Deadline Engine
+	calendarRepository := calendarRepo.NewPostgresCalendarRepository(dbPool)
+	calendarSvc := calendarService.NewWorkingCalendarService(calendarRepository, alertSvc, emailSvc, systemlogSvc)
+	googleSyncSvc := calendarService.NewGoogleSyncService(calendarRepository, systemlogSvc)
+	calendarHdlr := calendarHandler.NewCalendarHandler(calendarRepository, calendarSvc, googleSyncSvc)
+	calendarHandler.RegisterCalendarRoutes(v1, calendarHdlr, authMiddleware)
+
+	// Start 72-Hour Working Deadline background scheduler
+	deadlineScheduler := calendarService.NewBackgroundScheduler(calendarSvc, 10*time.Minute)
+	deadlineScheduler.Start()
+	defer deadlineScheduler.Stop()
 
 	// Start server
 	srv := &http.Server{

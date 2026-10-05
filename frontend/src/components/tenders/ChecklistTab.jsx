@@ -21,6 +21,7 @@ import {
 import { logStageMicroEvent } from '../../services/auditLogger'
 import { isOemDocItem, readOemDoc, writeOemDoc } from '../../lib/checklistOem'
 import { exportChecklistToExcel } from '../../lib/checklistExport'
+import { updateChecklistPriority } from '../../services/calendar'
 
 // Cycled by OEM index so each OEM reads as a consistent color across every
 // checklist row it appears on, without needing to store a color per OEM.
@@ -425,6 +426,51 @@ export function ChecklistTab({ bid, onRefresh }) {
               </div>
             ) : (
               <>
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  <select
+                    value={item.priority || 'MEDIUM'}
+                    disabled={isLocked}
+                    onChange={async (e) => {
+                      const newP = e.target.value
+                      try {
+                        await updateChecklistPriority(item.id, { priority: newP })
+                        toast.success(`Priority set to ${newP}`)
+                        loadChecklist()
+                      } catch {
+                        toast.error('Failed to update priority')
+                      }
+                    }}
+                    className={`rounded px-1.5 py-0.5 text-[9px] font-bold border transition-colors cursor-pointer ${
+                      (item.priority || 'MEDIUM') === 'HIGH'
+                        ? 'border-rose-500/40 bg-rose-500/10 text-rose-500'
+                        : (item.priority || 'MEDIUM') === 'LOW'
+                        ? 'border-blue-500/40 bg-blue-500/10 text-blue-500'
+                        : 'border-amber-500/40 bg-amber-500/10 text-amber-500'
+                    }`}
+                  >
+                    <option value="HIGH">HIGH</option>
+                    <option value="MEDIUM">MEDIUM</option>
+                    <option value="LOW">LOW</option>
+                  </select>
+
+                  {item.assigned_role && (
+                    <span className="text-[9px] text-muted-foreground bg-muted/60 border border-border/50 px-1.5 py-0.5 rounded">
+                      {item.assigned_role}
+                    </span>
+                  )}
+                  {item.assigned_to && (
+                    <span className="text-[9px] text-primary bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded flex items-center gap-1 font-medium">
+                      <User className="size-2.5" />
+                      {item.assigned_to.full_name || item.assigned_to.username}
+                    </span>
+                  )}
+                  {item.status === 'DELAYED' && (
+                    <span className="text-[9px] font-bold bg-rose-600 text-white px-1.5 py-0.5 rounded animate-pulse">
+                      DELAYED
+                    </span>
+                  )}
+                </div>
+
                 <span className={`text-xs font-semibold block leading-tight break-words text-foreground
                   ${item.is_done ? 'line-through text-muted-foreground/75 font-normal' : ''}`}>
                   {cleanTitle}
