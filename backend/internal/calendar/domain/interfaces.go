@@ -85,12 +85,14 @@ type WorkingCalendarService interface {
 	// Working hour and working day mathematical computations
 	AddWorkingHours(ctx context.Context, calendarID string, fromTime time.Time, hours float64) (time.Time, error)
 	SubtractWorkingHours(ctx context.Context, calendarID string, fromTime time.Time, hours float64) (time.Time, error)
+	SubtractWorkingTime(ctx context.Context, calendarID string, fromTime time.Time, value float64, unit string) (time.Time, error)
 	CalculateRemainingWorkingHours(ctx context.Context, calendarID string, fromTime, toTime time.Time) (float64, error)
 	AddWorkingDays(ctx context.Context, calendarID string, fromTime time.Time, days int) (time.Time, error)
 	SubtractWorkingDays(ctx context.Context, calendarID string, fromTime time.Time, days int) (time.Time, error)
 	CalculateRemainingWorkingDays(ctx context.Context, calendarID string, fromTime, toTime time.Time) (float64, error)
 	CalculateTender72HourDeadline(ctx context.Context, tenderID string) (*CalculateDeadlineResult, error)
 	CalculateArbitraryDeadline(ctx context.Context, calendarID string, closingDate time.Time, targetHours float64) (*CalculateDeadlineResult, error)
+	CalculateArbitraryDeadlineWithUnit(ctx context.Context, calendarID string, closingDate time.Time, targetValue float64, targetUnit string) (*CalculateDeadlineResult, error)
 	GetNextActionableTask(ctx context.Context, tenderID string) (*NextActionableTask, error)
 	GetTenderStakeholders(ctx context.Context, tenderID string) ([]TenderStakeholder, error)
 

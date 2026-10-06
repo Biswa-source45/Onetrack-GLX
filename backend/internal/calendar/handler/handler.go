@@ -10,10 +10,15 @@ import (
 	"github.com/onetrack/backend/internal/platform/response"
 )
 
+type SchedulerTrigger interface {
+	TriggerReset()
+}
+
 type CalendarHandler struct {
-	repo    domain.WorkingCalendarRepository
-	calSvc  domain.WorkingCalendarService
-	syncSvc domain.GoogleSyncService
+	repo      domain.WorkingCalendarRepository
+	calSvc    domain.WorkingCalendarService
+	syncSvc   domain.GoogleSyncService
+	scheduler SchedulerTrigger
 }
 
 func NewCalendarHandler(
@@ -26,6 +31,10 @@ func NewCalendarHandler(
 		calSvc:  calSvc,
 		syncSvc: syncSvc,
 	}
+}
+
+func (h *CalendarHandler) SetScheduler(s SchedulerTrigger) {
+	h.scheduler = s
 }
 
 // ── Calendars ────────────────────────────────────────────────────────────────
@@ -78,6 +87,9 @@ func (h *CalendarHandler) UpdateCalendar(c *gin.Context) {
 	if err != nil {
 		response.InternalError(c, "Failed to update working calendar")
 		return
+	}
+	if h.scheduler != nil {
+		h.scheduler.TriggerReset()
 	}
 	response.Success(c, http.StatusOK, "Working calendar updated successfully", updated)
 }
@@ -318,8 +330,10 @@ func (h *CalendarHandler) ListSyncLogs(c *gin.Context) {
 func (h *CalendarHandler) CalculateArbitraryDeadline(c *gin.Context) {
 	calendarID := c.Param("id")
 	type reqPayload struct {
-		ClosingDate string  `json:"closing_date" binding:"required"`
-		TargetHours float64 `json:"target_hours"`
+		ClosingDate string   `json:"closing_date" binding:"required"`
+		TargetHours float64  `json:"target_hours"`
+		TargetValue *float64 `json:"target_value"`
+		TargetUnit  *string  `json:"target_unit"`
 	}
 	var req reqPayload
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -351,17 +365,35 @@ func (h *CalendarHandler) CalculateArbitraryDeadline(c *gin.Context) {
 		return
 	}
 
-	targetHours := req.TargetHours
-	if targetHours <= 0 {
-		targetHours = 72.0
+	targetValue := 72.0
+	targetUnit := "HOURS"
+
+	if req.TargetValue != nil && *req.TargetValue > 0 {
+		targetValue = *req.TargetValue
+		if req.TargetUnit != nil && *req.TargetUnit != "" {
+			targetUnit = *req.TargetUnit
+		}
+	} else if req.TargetHours > 0 {
+		targetValue = req.TargetHours
+		targetUnit = "HOURS"
+	} else {
+		// Use default from calendar if not provided
+		if cal, err := h.repo.GetCalendarByID(c.Request.Context(), calendarID); err == nil && cal != nil {
+			if cal.DeadlineTriggerValue > 0 {
+				targetValue = cal.DeadlineTriggerValue
+			}
+			if cal.DeadlineTriggerUnit != "" {
+				targetUnit = cal.DeadlineTriggerUnit
+			}
+		}
 	}
 
-	res, err := h.calSvc.CalculateArbitraryDeadline(c.Request.Context(), calendarID, closingTime, targetHours)
+	res, err := h.calSvc.CalculateArbitraryDeadlineWithUnit(c.Request.Context(), calendarID, closingTime, targetValue, targetUnit)
 	if err != nil {
-		response.InternalError(c, "Failed to calculate working-hour deadline: "+err.Error())
+		response.InternalError(c, "Failed to calculate working deadline: "+err.Error())
 		return
 	}
-	response.Success(c, http.StatusOK, "Working-hour deadline calculated", res)
+	response.Success(c, http.StatusOK, "Working deadline calculated", res)
 }
 
 func (h *CalendarHandler) GetTenderWorkingDeadline(c *gin.Context) {

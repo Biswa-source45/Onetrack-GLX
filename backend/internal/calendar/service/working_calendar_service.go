@@ -376,6 +376,55 @@ func (s *workingCalendarService) CalculateRemainingWorkingHours(
 	return math.Round((totalSeconds/3600.0)*100) / 100, nil
 }
 
+// SubtractWorkingTime computes the prior deadline by stepping backwards through
+// working calendar days/hours based on the specified user value and unit.
+// Supported units: "HOURS", "DAYS", "MINUTES", "SECONDS".
+func (s *workingCalendarService) SubtractWorkingTime(
+	ctx context.Context,
+	calendarID string,
+	fromTime time.Time,
+	value float64,
+	unit string,
+) (time.Time, error) {
+	if value <= 0 {
+		return fromTime, nil
+	}
+
+	u := strings.ToUpper(strings.TrimSpace(unit))
+	if u == "" {
+		u = "HOURS"
+	}
+
+	switch u {
+	case "DAYS":
+		targetDays := int(math.Round(value))
+		if targetDays < 1 {
+			targetDays = 1
+		}
+		return s.SubtractWorkingDays(ctx, calendarID, fromTime, targetDays)
+
+	case "HOURS":
+		// When hours are a clean multiple of 24 and >= 24 (e.g. 72h = 3 working days, 48h = 2 working days),
+		// step backward across whole working days preserving the exact closing time.
+		if value >= 24 && math.Mod(value, 24) == 0 {
+			days := int(value / 24)
+			return s.SubtractWorkingDays(ctx, calendarID, fromTime, days)
+		}
+		return s.SubtractWorkingHours(ctx, calendarID, fromTime, value)
+
+	case "MINUTES":
+		hours := value / 60.0
+		return s.SubtractWorkingHours(ctx, calendarID, fromTime, hours)
+
+	case "SECONDS":
+		hours := value / 3600.0
+		return s.SubtractWorkingHours(ctx, calendarID, fromTime, hours)
+
+	default:
+		return s.SubtractWorkingHours(ctx, calendarID, fromTime, value)
+	}
+}
+
 // ── Working Days Calculations Engine ──────────────────────────────────────────
 
 // AddWorkingDays moves forward by working days, skipping non-working days
@@ -514,7 +563,7 @@ func (s *workingCalendarService) CalculateRemainingWorkingDays(
 	return math.Round(totalDays*100) / 100, nil
 }
 
-// CalculateTender72HourDeadline computes the exact 3 working-day (72h) deadline for a tender.
+// CalculateTender72HourDeadline computes the exact configured working deadline for a tender.
 func (s *workingCalendarService) CalculateTender72HourDeadline(
 	ctx context.Context,
 	tenderID string,
@@ -533,7 +582,21 @@ func (s *workingCalendarService) CalculateTender72HourDeadline(
 		calendarID = *candidate.CalendarID
 	}
 
-	res, err := s.CalculateArbitraryDeadline(ctx, calendarID, candidate.ClosingDate, 72.0)
+	cal, err := s.getCalendar(ctx, calendarID)
+	if err != nil {
+		return nil, err
+	}
+
+	triggerVal := cal.DeadlineTriggerValue
+	if triggerVal <= 0 {
+		triggerVal = 72.0
+	}
+	triggerUnit := cal.DeadlineTriggerUnit
+	if triggerUnit == "" {
+		triggerUnit = "HOURS"
+	}
+
+	res, err := s.CalculateArbitraryDeadlineWithUnit(ctx, calendarID, candidate.ClosingDate, triggerVal, triggerUnit)
 	if err != nil {
 		return nil, err
 	}
@@ -564,21 +627,33 @@ func (s *workingCalendarService) CalculateArbitraryDeadline(
 	closingDate time.Time,
 	targetHours float64,
 ) (*domain.CalculateDeadlineResult, error) {
+	if targetHours <= 0 {
+		targetHours = 72.0
+	}
+	return s.CalculateArbitraryDeadlineWithUnit(ctx, calendarID, closingDate, targetHours, "HOURS")
+}
+
+func (s *workingCalendarService) CalculateArbitraryDeadlineWithUnit(
+	ctx context.Context,
+	calendarID string,
+	closingDate time.Time,
+	targetValue float64,
+	targetUnit string,
+) (*domain.CalculateDeadlineResult, error) {
 	cal, err := s.getCalendar(ctx, calendarID)
 	if err != nil {
 		return nil, err
 	}
 
-	// 72 hours means 3 working days. Calculate target working days:
-	targetDays := int(math.Round(targetHours / 24.0))
-	if targetHours <= 10.0 && targetHours > 0 {
-		targetDays = int(targetHours)
+	if targetValue <= 0 {
+		targetValue = 72.0
 	}
-	if targetDays < 1 {
-		targetDays = 1
+	unit := strings.ToUpper(strings.TrimSpace(targetUnit))
+	if unit == "" {
+		unit = "HOURS"
 	}
 
-	deadline, err := s.SubtractWorkingDays(ctx, cal.ID, closingDate, targetDays)
+	deadline, err := s.SubtractWorkingTime(ctx, cal.ID, closingDate, targetValue, unit)
 	if err != nil {
 		return nil, err
 	}
@@ -596,6 +671,25 @@ func (s *workingCalendarService) CalculateArbitraryDeadline(
 	daysSpanned := int(math.Ceil(closingDate.Sub(deadline).Hours() / 24.0))
 	if daysSpanned < 1 {
 		daysSpanned = 1
+	}
+
+	// Determine total working hours and days represented
+	var totalHours float64
+	switch unit {
+	case "DAYS":
+		totalHours = targetValue * 24.0
+	case "HOURS":
+		totalHours = targetValue
+	case "MINUTES":
+		totalHours = targetValue / 60.0
+	case "SECONDS":
+		totalHours = targetValue / 3600.0
+	default:
+		totalHours = targetValue
+	}
+	targetDays := int(math.Ceil(totalHours / 24.0))
+	if targetDays < 1 {
+		targetDays = 1
 	}
 
 	// Collect skipped non-working dates between deadline and closingDate
@@ -616,8 +710,10 @@ func (s *workingCalendarService) CalculateArbitraryDeadline(
 
 	return &domain.CalculateDeadlineResult{
 		ClosingDate:           closingDate,
-		TargetWorkingHours:    float64(targetDays * 24),
+		TargetWorkingHours:    totalHours,
 		TargetWorkingDays:     targetDays,
+		TargetWorkingValue:    targetValue,
+		TargetWorkingUnit:     unit,
 		CalculatedDeadline:    deadline,
 		RemainingWorkingHours: remHours,
 		RemainingWorkingDays:  remDays,
@@ -661,19 +757,28 @@ func (s *workingCalendarService) EvaluateActiveTenders(ctx context.Context) erro
 		}
 		remHours := remDays * 24.0
 
-		// Calculate 3 working days backward from tender closing date (72 hours = 3 working days)
-		deadline, err := s.SubtractWorkingDays(ctx, cal.ID, t.ClosingDate, 3)
+		// Determine user-configured trigger threshold
+		triggerVal := cal.DeadlineTriggerValue
+		if triggerVal <= 0 {
+			triggerVal = 72.0
+		}
+		triggerUnit := cal.DeadlineTriggerUnit
+		if triggerUnit == "" {
+			triggerUnit = "HOURS"
+		}
+
+		deadline, err := s.SubtractWorkingTime(ctx, cal.ID, t.ClosingDate, triggerVal, triggerUnit)
 		if err != nil {
 			continue
 		}
 
-		// Update cache so UI displays live remaining working days/hours and 3-day threshold
+		// Update cache so UI displays live remaining working days/hours and configured threshold
 		_ = s.repo.UpdateTenderDeadlineCache(ctx, t.ID, deadline, remHours)
 
-		// Check if 3 working-day threshold is reached (remDays <= 3.0 or !now.Before(deadline))
-		if (!now.Before(deadline) || remDays <= 3.0) && now.Before(t.ClosingDate) {
+		// Check if threshold is reached (now is at or past deadline, and before closing date)
+		if !now.Before(deadline) && now.Before(t.ClosingDate) {
 			// 1. Red Zone – Tender Due Date Notification:
-			// Trigger an email notification to all respective stakeholders 3 working days before tender due date.
+			// Trigger an email notification to all respective stakeholders before tender due date.
 			// Pass the calculated deadline so extended/updated tender deadlines trigger afresh.
 			sent, _ := s.repo.HasRedZoneNotificationBeenSent(ctx, t.ID, deadline)
 			if !sent {
@@ -733,10 +838,18 @@ func (s *workingCalendarService) TriggerRedZoneNotificationForTender(
 	}
 	remHours := remDays * 24.0
 
-	// 72 hours = 3 working days backward from tender closing date
-	deadline, err := s.SubtractWorkingDays(ctx, cal.ID, candidate.ClosingDate, 3)
+	triggerVal := cal.DeadlineTriggerValue
+	if triggerVal <= 0 {
+		triggerVal = 72.0
+	}
+	triggerUnit := cal.DeadlineTriggerUnit
+	if triggerUnit == "" {
+		triggerUnit = "HOURS"
+	}
+
+	deadline, err := s.SubtractWorkingTime(ctx, cal.ID, candidate.ClosingDate, triggerVal, triggerUnit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to compute 3-working-day deadline: %w", err)
+		return nil, fmt.Errorf("failed to compute tender deadline: %w", err)
 	}
 
 	_ = s.repo.UpdateTenderDeadlineCache(ctx, candidate.ID, deadline, remHours)
@@ -759,8 +872,8 @@ func (s *workingCalendarService) TriggerRedZoneNotificationForTender(
 			}, nil
 		}
 
-		// If not sent, verify that the tender is actually in the 3-working-day Red Zone
-		if now.Before(deadline) && remDays > 3.0 {
+		// If not sent, verify that the tender is actually in the Red Zone
+		if now.Before(deadline) {
 			stakeholders, _ := s.repo.GetTenderStakeholders(ctx, candidate.ID)
 			return &domain.RedZoneNotificationResult{
 				TenderID:              candidate.ID,
@@ -772,12 +885,46 @@ func (s *workingCalendarService) TriggerRedZoneNotificationForTender(
 				StakeholdersNotified:  stakeholders,
 				DeliveryStatus:        "NOT_IN_RED_ZONE",
 				TriggeredAt:           now,
-				Message:               "Tender is not yet in the 3-working-day Red Zone",
+				Message:               fmt.Sprintf("Tender is not yet in the configured Red Zone (%v %s remaining threshold)", triggerVal, strings.ToLower(triggerUnit)),
 			}, nil
 		}
 	}
 
 	return s.sendRedZoneTenderDueDateNotification(ctx, *candidate, deadline, remDays, remHours)
+}
+
+func (s *workingCalendarService) formatThresholdDescription(cal *domain.WorkingCalendar) string {
+	if cal == nil || cal.DeadlineTriggerValue <= 0 {
+		return "3 Working Days (72h)"
+	}
+	u := strings.ToUpper(strings.TrimSpace(cal.DeadlineTriggerUnit))
+	val := cal.DeadlineTriggerValue
+	if u == "HOURS" && val == 72 {
+		return "3 Working Days (72h)"
+	} else if u == "HOURS" && val == 48 {
+		return "2 Working Days (48h)"
+	} else if u == "HOURS" {
+		if val == math.Trunc(val) {
+			return fmt.Sprintf("%.0f Working Hours", val)
+		}
+		return fmt.Sprintf("%.1f Working Hours", val)
+	} else if u == "DAYS" {
+		if val == math.Trunc(val) {
+			return fmt.Sprintf("%.0f Working Days", val)
+		}
+		return fmt.Sprintf("%.1f Working Days", val)
+	} else if u == "MINUTES" {
+		if val == math.Trunc(val) {
+			return fmt.Sprintf("%.0f Minutes", val)
+		}
+		return fmt.Sprintf("%.1f Minutes", val)
+	} else if u == "SECONDS" {
+		if val == math.Trunc(val) {
+			return fmt.Sprintf("%.0f Seconds", val)
+		}
+		return fmt.Sprintf("%.1f Seconds", val)
+	}
+	return fmt.Sprintf("%v %s", val, strings.ToLower(u))
 }
 
 func (s *workingCalendarService) sendRedZoneTenderDueDateNotification(
@@ -861,7 +1008,14 @@ func (s *workingCalendarService) sendRedZoneTenderDueDateNotification(
 		}
 	}
 
-	subject := fmt.Sprintf("🚨 RED ZONE ALERT: 3 Working Days (72h) Remaining – Tender Due Date Approaching (%s)", t.Title)
+	calID := ""
+	if t.CalendarID != nil {
+		calID = *t.CalendarID
+	}
+	cal, _ := s.getCalendar(ctx, calID)
+	thresholdDesc := s.formatThresholdDescription(cal)
+
+	subject := fmt.Sprintf("🚨 RED ZONE ALERT: %s Remaining – Tender Due Date Approaching (%s)", thresholdDesc, t.Title)
 
 	// Build stakeholder rows for email HTML table
 	var stakeholderRows strings.Builder
@@ -890,7 +1044,7 @@ func (s *workingCalendarService) sendRedZoneTenderDueDateNotification(
 	htmlBody := fmt.Sprintf(`
 		<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; max-width: 650px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
 			<div style="background: linear-gradient(135deg, #dc2626 0%%, #991b1b 100%%); color: #ffffff; padding: 12px 20px; border-radius: 8px; font-weight: 800; font-size: 13px; display: inline-flex; align-items: center; gap: 8px; margin-bottom: 20px; letter-spacing: 0.5px;">
-				<span>🚨</span> RED ZONE — TENDER DUE DATE NOTIFICATION (3 WORKING DAYS / 72H)
+				<span>🚨</span> RED ZONE — TENDER DUE DATE NOTIFICATION (%s REMAINING)
 			</div>
 			
 			<h2 style="margin: 0 0 12px 0; color: #0f172a; font-size: 22px; font-weight: 700; line-height: 1.3;">
@@ -898,7 +1052,7 @@ func (s *workingCalendarService) sendRedZoneTenderDueDateNotification(
 			</h2>
 			<p style="font-size: 14px; line-height: 1.6; color: #334155; margin-bottom: 20px;">
 				This automated <strong>Red Zone alert</strong> has been dispatched to all stakeholders involved in this tender. 
-				Exactly <strong>3 working days (72 hours)</strong> remain before the tender submission deadline. Immediate action is required to complete pending tasks and avoid last-minute submission bottlenecks.
+				<strong>%s</strong> remain before the tender submission deadline. Immediate action is required to complete pending tasks and avoid last-minute submission bottlenecks.
 			</p>
 
 			<table style="width: 100%%; border-collapse: collapse; margin: 20px 0; font-size: 13px; background-color: #f8fafc; border-radius: 8px; overflow: hidden; border: 1px solid #e2e8f0;">
@@ -925,7 +1079,7 @@ func (s *workingCalendarService) sendRedZoneTenderDueDateNotification(
 					<td style="padding: 10px 16px; font-weight: 700; color: #b91c1c; font-size: 14px;">%s</td>
 				</tr>
 				<tr style="border-bottom: 1px solid #e2e8f0;">
-					<td style="padding: 10px 16px; font-weight: 600; color: #64748b;">Calculated 3-Day Trigger Time</td>
+					<td style="padding: 10px 16px; font-weight: 600; color: #64748b;">Calculated Trigger Time (%s)</td>
 					<td style="padding: 10px 16px; font-weight: 600; color: #0f172a;">%s</td>
 				</tr>
 				<tr style="border-bottom: 1px solid #e2e8f0;">
@@ -944,7 +1098,7 @@ func (s *workingCalendarService) sendRedZoneTenderDueDateNotification(
 
 			<div style="background-color: #fef2f2; border-left: 4px solid #ef4444; border-radius: 4px; padding: 12px 16px; margin: 20px 0;">
 				<p style="margin: 0; font-size: 12px; line-height: 1.5; color: #991b1b;">
-					<strong>Working Calendar Exclusions:</strong> This trigger date/time was computed backward from the tender due date by <strong>3 working days (72 hours)</strong>, excluding:
+					<strong>Working Calendar Exclusions:</strong> This trigger date/time was computed backward from the tender due date by <strong>%s</strong>, excluding:
 					<strong>2nd and 4th Saturdays</strong> of the month, <strong>Sundays</strong>, <strong>configured public holidays</strong>, and <strong>other non-working days</strong> defined in the corporate working calendar.
 				</p>
 			</div>
@@ -978,18 +1132,22 @@ func (s *workingCalendarService) sendRedZoneTenderDueDateNotification(
 			</div>
 		</div>
 	`,
+		thresholdDesc,
 		t.Title,
+		thresholdDesc,
 		t.Title,
 		refNo,
 		orgDisplay,
 		t.WorkflowStage,
 		t.ClosingDate.Format("02-Jan-2006 15:04 MST"),
+		thresholdDesc,
 		deadline.Format("02-Jan-2006 15:04 MST"),
 		remDays,
 		remHours,
 		nextTaskTitle,
 		nextTaskPriority,
 		nextTaskResponsible,
+		thresholdDesc,
 		len(stakeholders),
 		stakeholderRows.String(),
 	)
@@ -997,19 +1155,24 @@ func (s *workingCalendarService) sendRedZoneTenderDueDateNotification(
 	message := fmt.Sprintf(
 		"🚨 RED ZONE ALERT: Tender '%s' (Ref: %s) has entered the Red Zone.\n\n"+
 			"Tender Due Date: %s\n"+
-			"3 Working-Day Notification Timestamp: %s\n"+
+			"Notification Trigger Timestamp (%s): %s\n"+
 			"Remaining: %.1f working days (%.1f hrs)\n"+
 			"Current Workflow Stage: %s\n"+
-			"Next Required Action: %s [Priority: %s]\n"+
-			"Responsible Person: %s\n\n"+
-			"All %d involved stakeholders have been notified.\n"+
-			"Calculation Exclusions: 2nd/4th Saturdays, Sundays, configured holidays, and non-working calendar days.",
-		t.Title, refNo,
+			"Next Actionable Checklist Task: %s [%s] (Responsible: %s)\n"+
+			"Involved Stakeholders: %d\n\n"+
+			"Calculation Exclusions: 2nd/4th Saturdays, Sundays, configured holidays, and non-working calendar days.\n"+
+			"Please log in to OneTrack to complete all pending checklist items and finalize the bid submission.",
+		t.Title,
+		refNo,
 		t.ClosingDate.Format("02-Jan-2006 15:04 MST"),
+		thresholdDesc,
 		deadline.Format("02-Jan-2006 15:04 MST"),
-		remDays, remHours,
+		remDays,
+		remHours,
 		t.WorkflowStage,
-		nextTaskTitle, nextTaskPriority, nextTaskResponsible,
+		nextTaskTitle,
+		nextTaskPriority,
+		nextTaskResponsible,
 		len(stakeholders),
 	)
 
@@ -1038,9 +1201,9 @@ func (s *workingCalendarService) sendRedZoneTenderDueDateNotification(
 				UserID:  &sh.UserID,
 				BidID:   &t.ID,
 				Type:    "TENDER",
-				Title:   fmt.Sprintf("🚨 RED ZONE: 3 Working Days (72h) Remaining — %s", t.Title),
-				Message: fmt.Sprintf("Tender '%s' is in the Red Zone. Due date: %s. Remaining: %.1f working days. Please complete pending submissions immediately.", 
-					t.Title, t.ClosingDate.Format("02-Jan-2006 15:04 MST"), remDays),
+				Title:   fmt.Sprintf("🚨 RED ZONE: %s Remaining — %s", thresholdDesc, t.Title),
+				Message: fmt.Sprintf("Tender '%s' is in the Red Zone (%s before closing). Due date: %s. Remaining: %.1f working days (%.1f hrs). Please complete pending submissions immediately.", 
+					t.Title, thresholdDesc, t.ClosingDate.Format("02-Jan-2006 15:04 MST"), remDays, remHours),
 			})
 		}
 
@@ -1088,10 +1251,11 @@ func (s *workingCalendarService) sendRedZoneTenderDueDateNotification(
 	// 5. System audit log
 	if s.systemLog != nil {
 		s.systemLog.Record(ctx, "TENDER", "TENDER_RED_ZONE_NOTIFIED", "", nil,
-			fmt.Sprintf("Red Zone 3-working-day notification sent to %d stakeholders for tender %s", len(stakeholders), t.Title),
+			fmt.Sprintf("Red Zone (%s) notification sent to %d stakeholders for tender %s", thresholdDesc, len(stakeholders), t.Title),
 			map[string]interface{}{
 				"tender_id":       t.ID,
 				"tender_title":    t.Title,
+				"threshold":       thresholdDesc,
 				"stakeholders":    len(stakeholders),
 				"remaining_days":  remDays,
 				"remaining_hours": remHours,
@@ -1144,8 +1308,15 @@ func (s *workingCalendarService) sendEscalationNotification(
 		managerName = *t.ManagerName
 	}
 
-	reason := fmt.Sprintf("Task '%s' [Priority: %s] has remained incomplete past the 72 working-hour threshold (Delayed by >%.1f hrs)",
-		task.Title, task.Priority, delayHours)
+	calID := ""
+	if t.CalendarID != nil {
+		calID = *t.CalendarID
+	}
+	cal, _ := s.getCalendar(ctx, calID)
+	thresholdDesc := s.formatThresholdDescription(cal)
+
+	reason := fmt.Sprintf("Task '%s' [Priority: %s] has remained incomplete past the %s working deadline (Delayed by >%.1f hrs)",
+		task.Title, task.Priority, thresholdDesc, delayHours)
 
 	// Send in-app escalation alert to manager
 	if s.alertSvc != nil {
@@ -1153,20 +1324,20 @@ func (s *workingCalendarService) sendEscalationNotification(
 			UserID:  &managerID,
 			BidID:   &t.ID,
 			Type:    "TENDER",
-			Title:   fmt.Sprintf("ESCALATION: Delayed Task on Tender '%s'", t.Title),
+			Title:   fmt.Sprintf("🚨 ESCALATION: Delayed Task on Tender '%s' (%s Threshold)", t.Title, thresholdDesc),
 			Message: reason,
 		})
 	}
 
 	// Send email to manager
 	if s.emailSvc != nil && managerEmail != "" {
-		subject := fmt.Sprintf("ESCALATION: Delayed Task on Tender '%s' – Immediate Manager Action Required", t.Title)
+		subject := fmt.Sprintf("🚨 ESCALATION: Delayed Task on Tender '%s' (%s Threshold) – Immediate Manager Action Required", t.Title, thresholdDesc)
 		htmlBody := fmt.Sprintf(`
 			<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1e293b; max-width: 600px; padding: 24px; border: 2px solid #ef4444; border-radius: 8px;">
 				<div style="background-color: #991b1b; color: white; padding: 8px 16px; border-radius: 6px; font-weight: bold; font-size: 14px; display: inline-block; margin-bottom: 16px;">
 					⚠️ TASK ESCALATION TO REPORTING MANAGER
 				</div>
-				<h2 style="margin: 0 0 16px 0; color: #0f172a;">Delay Escalation: %s</h2>
+				<h2 style="margin: 0 0 16px 0; color: #0f172a;">Delay Escalation: %s (%s Threshold)</h2>
 				<p style="font-size: 14px; line-height: 1.6; color: #334155;">
 					The critical task <strong>%s</strong> on tender <strong>%s</strong> remains pending past the allowed deadline.
 				</p>
@@ -1175,7 +1346,7 @@ func (s *workingCalendarService) sendEscalationNotification(
 				</p>
 				<p style="font-size: 13px; color: #64748b; margin-top: 24px;">Please review this tender in OneTrack to resolve the bottleneck.</p>
 			</div>
-		`, t.Title, task.Title, t.Title, reason)
+		`, t.Title, thresholdDesc, task.Title, t.Title, reason)
 
 		_ = s.emailSvc.SendEmail([]string{managerEmail}, subject, htmlBody)
 	}
@@ -1193,13 +1364,14 @@ func (s *workingCalendarService) sendEscalationNotification(
 	// Audit log (Section 28)
 	if s.systemLog != nil {
 		s.systemLog.Record(ctx, "TENDER", "TENDER_TASK_ESCALATED", "", &managerID,
-			fmt.Sprintf("Task escalation triggered for tender %s", t.Title),
+			fmt.Sprintf("Task escalation (%s threshold) triggered for tender %s", thresholdDesc, t.Title),
 			map[string]interface{}{
 				"tender_title":    t.Title,
 				"checklist_id":    task.ChecklistID,
 				"checklist_title": task.Title,
 				"manager_id":      managerID,
 				"manager_name":    managerName,
+				"threshold":       thresholdDesc,
 				"reason":          reason,
 			},
 		)

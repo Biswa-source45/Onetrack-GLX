@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -27,7 +28,8 @@ func (r *postgresCalendarRepo) GetDefaultCalendar(ctx context.Context) (*domain.
 		SELECT id, name, description, is_default, timezone, working_start_time, working_end_time,
 		       saturday_1_working, saturday_2_working, saturday_3_working, saturday_4_working, saturday_5_working,
 		       sunday_working, monday_working, tuesday_working, wednesday_working, thursday_working, friday_working,
-		       escalation_delay_hours, created_at, updated_at
+		       escalation_delay_hours, deadline_trigger_value, deadline_trigger_unit,
+		       scheduler_interval_value, scheduler_interval_unit, created_at, updated_at
 		FROM calendar.working_calendars
 		WHERE is_default = true
 		LIMIT 1
@@ -40,7 +42,8 @@ func (r *postgresCalendarRepo) GetCalendarByID(ctx context.Context, id string) (
 		SELECT id, name, description, is_default, timezone, working_start_time, working_end_time,
 		       saturday_1_working, saturday_2_working, saturday_3_working, saturday_4_working, saturday_5_working,
 		       sunday_working, monday_working, tuesday_working, wednesday_working, thursday_working, friday_working,
-		       escalation_delay_hours, created_at, updated_at
+		       escalation_delay_hours, deadline_trigger_value, deadline_trigger_unit,
+		       scheduler_interval_value, scheduler_interval_unit, created_at, updated_at
 		FROM calendar.working_calendars
 		WHERE id = $1
 	`, id)
@@ -52,7 +55,8 @@ func (r *postgresCalendarRepo) ListCalendars(ctx context.Context) ([]domain.Work
 		SELECT id, name, description, is_default, timezone, working_start_time, working_end_time,
 		       saturday_1_working, saturday_2_working, saturday_3_working, saturday_4_working, saturday_5_working,
 		       sunday_working, monday_working, tuesday_working, wednesday_working, thursday_working, friday_working,
-		       escalation_delay_hours, created_at, updated_at
+		       escalation_delay_hours, deadline_trigger_value, deadline_trigger_unit,
+		       scheduler_interval_value, scheduler_interval_unit, created_at, updated_at
 		FROM calendar.working_calendars
 		ORDER BY is_default DESC, name ASC
 	`)
@@ -73,6 +77,25 @@ func (r *postgresCalendarRepo) ListCalendars(ctx context.Context) ([]domain.Work
 }
 
 func (r *postgresCalendarRepo) UpdateCalendar(ctx context.Context, id string, req *domain.UpdateCalendarRequest) (*domain.WorkingCalendar, error) {
+	var triggerVal *float64
+	if req.DeadlineTriggerValue != nil && *req.DeadlineTriggerValue > 0 {
+		triggerVal = req.DeadlineTriggerValue
+	}
+	var triggerUnit *string
+	if req.DeadlineTriggerUnit != nil && *req.DeadlineTriggerUnit != "" {
+		u := strings.ToUpper(strings.TrimSpace(*req.DeadlineTriggerUnit))
+		triggerUnit = &u
+	}
+	var schedulerVal *int
+	if req.SchedulerIntervalValue != nil && *req.SchedulerIntervalValue > 0 {
+		schedulerVal = req.SchedulerIntervalValue
+	}
+	var schedulerUnit *string
+	if req.SchedulerIntervalUnit != nil && *req.SchedulerIntervalUnit != "" {
+		su := strings.ToUpper(strings.TrimSpace(*req.SchedulerIntervalUnit))
+		schedulerUnit = &su
+	}
+
 	_, err := r.db.Exec(ctx, `
 		UPDATE calendar.working_calendars
 		SET name = $2, description = $3, working_start_time = $4, working_end_time = $5,
@@ -80,14 +103,20 @@ func (r *postgresCalendarRepo) UpdateCalendar(ctx context.Context, id string, re
 		    saturday_4_working = $9, saturday_5_working = $10,
 		    sunday_working = $11, monday_working = $12, tuesday_working = $13,
 		    wednesday_working = $14, thursday_working = $15, friday_working = $16,
-		    escalation_delay_hours = $17, updated_at = NOW()
+		    escalation_delay_hours = $17,
+		    deadline_trigger_value = COALESCE($18, deadline_trigger_value),
+		    deadline_trigger_unit = COALESCE($19, deadline_trigger_unit),
+		    scheduler_interval_value = COALESCE($20, scheduler_interval_value),
+		    scheduler_interval_unit = COALESCE($21, scheduler_interval_unit),
+		    updated_at = NOW()
 		WHERE id = $1
 	`, id, req.Name, req.Description, req.WorkingStartTime, req.WorkingEndTime,
 		req.Saturday1Working, req.Saturday2Working, req.Saturday3Working,
 		req.Saturday4Working, req.Saturday5Working,
 		req.SundayWorking, req.MondayWorking, req.TuesdayWorking,
 		req.WednesdayWorking, req.ThursdayWorking, req.FridayWorking,
-		req.EscalationDelayHours)
+		req.EscalationDelayHours,
+		triggerVal, triggerUnit, schedulerVal, schedulerUnit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update working calendar: %w", err)
 	}
@@ -97,11 +126,18 @@ func (r *postgresCalendarRepo) UpdateCalendar(ctx context.Context, id string, re
 func (r *postgresCalendarRepo) scanCalendar(row pgx.Row) (*domain.WorkingCalendar, error) {
 	var c domain.WorkingCalendar
 	var desc sql.NullString
+	var triggerVal sql.NullFloat64
+	var triggerUnit sql.NullString
+	var schedulerVal sql.NullInt32
+	var schedulerUnit sql.NullString
+
 	err := row.Scan(
 		&c.ID, &c.Name, &desc, &c.IsDefault, &c.Timezone, &c.WorkingStartTime, &c.WorkingEndTime,
 		&c.Saturday1Working, &c.Saturday2Working, &c.Saturday3Working, &c.Saturday4Working, &c.Saturday5Working,
 		&c.SundayWorking, &c.MondayWorking, &c.TuesdayWorking, &c.WednesdayWorking, &c.ThursdayWorking, &c.FridayWorking,
-		&c.EscalationDelayHours, &c.CreatedAt, &c.UpdatedAt,
+		&c.EscalationDelayHours,
+		&triggerVal, &triggerUnit, &schedulerVal, &schedulerUnit,
+		&c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -111,6 +147,26 @@ func (r *postgresCalendarRepo) scanCalendar(row pgx.Row) (*domain.WorkingCalenda
 	}
 	if desc.Valid {
 		c.Description = &desc.String
+	}
+	if triggerVal.Valid && triggerVal.Float64 > 0 {
+		c.DeadlineTriggerValue = triggerVal.Float64
+	} else {
+		c.DeadlineTriggerValue = 72.0
+	}
+	if triggerUnit.Valid && triggerUnit.String != "" {
+		c.DeadlineTriggerUnit = triggerUnit.String
+	} else {
+		c.DeadlineTriggerUnit = "HOURS"
+	}
+	if schedulerVal.Valid && schedulerVal.Int32 > 0 {
+		c.SchedulerIntervalValue = int(schedulerVal.Int32)
+	} else {
+		c.SchedulerIntervalValue = 10
+	}
+	if schedulerUnit.Valid && schedulerUnit.String != "" {
+		c.SchedulerIntervalUnit = schedulerUnit.String
+	} else {
+		c.SchedulerIntervalUnit = "MINUTES"
 	}
 	return &c, nil
 }

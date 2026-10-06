@@ -127,7 +127,8 @@ export function WorkingCalendarPage() {
   const [selectedTenderId, setSelectedTenderId] = useState('')
   const [selectedTender, setSelectedTender] = useState(null)
   const [sandboxClosingDate, setSandboxClosingDate] = useState('2026-10-20T18:00')
-  const [sandboxHours, setSandboxHours] = useState(72)
+  const [sandboxValue, setSandboxValue] = useState(72)
+  const [sandboxUnit, setSandboxUnit] = useState('HOURS')
   const [sandboxResult, setSandboxResult] = useState(null)
   const [calculating, setCalculating] = useState(false)
 
@@ -138,6 +139,12 @@ export function WorkingCalendarPage() {
       const calRes = await getDefaultCalendar()
       if (calRes.ok && calRes.data) {
         setCalendar(calRes.data)
+        if (calRes.data.deadline_trigger_value) {
+          setSandboxValue(calRes.data.deadline_trigger_value)
+        }
+        if (calRes.data.deadline_trigger_unit) {
+          setSandboxUnit(calRes.data.deadline_trigger_unit)
+        }
         const calId = calRes.data.id
 
         // Load parallel child resources (fetch all holidays so Monthly Calendar has full coverage across all years)
@@ -371,7 +378,8 @@ export function WorkingCalendarPage() {
     try {
       const res = await evaluateDeadlines()
       if (res.ok) {
-        toast.success('72-Hour Deadline Engine evaluated active tenders! Mail alerts processed.')
+        const triggerDesc = `${calendar?.deadline_trigger_value ?? 72} ${calendar?.deadline_trigger_unit || 'HOURS'}`
+        toast.success(`Deadline Engine (${triggerDesc}) evaluated active tenders! Mail alerts processed.`)
       } else {
         toast.error(res.error?.message || 'Failed to trigger deadline evaluation')
       }
@@ -448,7 +456,7 @@ export function WorkingCalendarPage() {
     if (!calendar?.id || !sandboxClosingDate) return
     setCalculating(true)
     try {
-      const res = await calculateArbitraryDeadline(calendar.id, sandboxClosingDate, sandboxHours)
+      const res = await calculateArbitraryDeadline(calendar.id, sandboxClosingDate, sandboxValue, sandboxUnit)
       if (res.ok && res.data) {
         const data = res.data
         const start = new Date(data.calculated_deadline)
@@ -871,10 +879,10 @@ export function WorkingCalendarPage() {
               onClick={handleTriggerDeadlineEvaluation}
               disabled={evaluatingDeadlines}
               className="border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10 font-medium"
-              title="Test 72-Hour Working Deadline Engine: evaluate active tenders and send email alerts"
+              title="Test Working Deadline Engine: evaluate active tenders and send email alerts"
             >
               <Zap className={`mr-2 h-4 w-4 ${evaluatingDeadlines ? 'animate-spin' : ''}`} />
-              {evaluatingDeadlines ? 'Evaluating...' : 'Test 72h Engine & Mail'}
+              {evaluatingDeadlines ? 'Evaluating...' : 'Test Deadline Engine & Mail'}
             </Button>
             <Button
               variant="outline"
@@ -964,11 +972,13 @@ export function WorkingCalendarPage() {
                 <Zap className="h-5 w-5" />
               </div>
               <div>
-                <p className="text-xs font-medium text-muted-foreground">Deadline Threshold</p>
+                <p className="text-xs font-medium text-muted-foreground">Deadline Trigger</p>
                 <p className="text-lg font-semibold tracking-tight text-foreground">
-                  72 Working Hours
+                  {calendar?.deadline_trigger_value ?? 72} {calendar?.deadline_trigger_unit || 'HOURS'}
                 </p>
-                <p className="text-xs text-muted-foreground">8 working days before closing</p>
+                <p className="text-xs text-muted-foreground">
+                  Cadence: every {calendar?.scheduler_interval_value ?? 10} {calendar?.scheduler_interval_unit || 'MINUTES'}
+                </p>
               </div>
             </CardContent>
           </Card>
@@ -1280,6 +1290,218 @@ export function WorkingCalendarPage() {
                   </p>
                 </div>
 
+                {/* User Configurable Deadline Trigger & Scheduler Cadence */}
+                <div className="space-y-4 pt-2">
+                  <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                      <div>
+                        <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                          <Zap className="h-4 w-4 text-emerald-500" />
+                          Tender Red Zone Deadline Trigger (Alert Threshold)
+                        </h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Amount of working duration calculated backwards before tender closing when the Red Zone warning activates and email alerts are sent.
+                        </p>
+                      </div>
+                      <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs self-start sm:self-auto font-mono">
+                        Active: {calendar?.deadline_trigger_value ?? 72} {calendar?.deadline_trigger_unit || 'HOURS'}
+                      </Badge>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-muted-foreground">Threshold Value</label>
+                        <Input
+                          type="number"
+                          min="1"
+                          step="any"
+                          disabled={!canEditCalendar}
+                          value={calendar?.deadline_trigger_value ?? 72}
+                          onChange={(e) =>
+                            setCalendar({
+                              ...calendar,
+                              deadline_trigger_value: parseFloat(e.target.value) || 0,
+                            })
+                          }
+                          placeholder="e.g. 72, 48, 10"
+                          className={!canEditCalendar ? 'bg-muted/40 cursor-not-allowed' : ''}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-muted-foreground">Threshold Unit</label>
+                        <select
+                          disabled={!canEditCalendar}
+                          value={calendar?.deadline_trigger_unit || 'HOURS'}
+                          onChange={(e) =>
+                            setCalendar({
+                              ...calendar,
+                              deadline_trigger_unit: e.target.value,
+                            })
+                          }
+                          className={`w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${
+                            !canEditCalendar ? 'bg-muted/40 cursor-not-allowed' : ''
+                          }`}
+                        >
+                          <option value="HOURS">Hours (Working Hours)</option>
+                          <option value="DAYS">Days (Working Days)</option>
+                          <option value="MINUTES">Minutes (Working Minutes)</option>
+                          <option value="SECONDS">Seconds (Working Seconds)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {canEditCalendar && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-emerald-500/15">
+                        <span className="text-[11px] font-medium text-muted-foreground mr-1">Quick Presets:</span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 text-[11px] px-2"
+                          onClick={() => setCalendar({ ...calendar, deadline_trigger_value: 72, deadline_trigger_unit: 'HOURS' })}
+                        >
+                          72 Hours (Default)
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 text-[11px] px-2"
+                          onClick={() => setCalendar({ ...calendar, deadline_trigger_value: 48, deadline_trigger_unit: 'HOURS' })}
+                        >
+                          48 Hours
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 text-[11px] px-2"
+                          onClick={() => setCalendar({ ...calendar, deadline_trigger_value: 24, deadline_trigger_unit: 'HOURS' })}
+                        >
+                          24 Hours
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 text-[11px] px-2"
+                          onClick={() => setCalendar({ ...calendar, deadline_trigger_value: 3, deadline_trigger_unit: 'DAYS' })}
+                        >
+                          3 Days
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 text-[11px] px-2 border-dashed border-amber-500/50 text-amber-600 hover:bg-amber-500/10"
+                          onClick={() => setCalendar({ ...calendar, deadline_trigger_value: 48, deadline_trigger_unit: 'SECONDS' })}
+                        >
+                          ⚡ 48 Seconds (Live Testing)
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border border-primary/30 bg-primary/5 p-4 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                      <div>
+                        <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                          <Clock className="h-4 w-4 text-primary" />
+                          Background Evaluator Cadence (Evaluation Frequency)
+                        </h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Interval at which the background daemon worker scans all active tenders, recalculates deadlines, and dispatches Red Zone email alerts.
+                        </p>
+                      </div>
+                      <Badge variant="outline" className="border-primary/40 bg-primary/10 text-primary text-xs self-start sm:self-auto font-mono">
+                        Every {calendar?.scheduler_interval_value ?? 10} {calendar?.scheduler_interval_unit || 'MINUTES'}
+                      </Badge>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-muted-foreground">Interval Amount</label>
+                        <Input
+                          type="number"
+                          min="1"
+                          disabled={!canEditCalendar}
+                          value={calendar?.scheduler_interval_value ?? 10}
+                          onChange={(e) =>
+                            setCalendar({
+                              ...calendar,
+                              scheduler_interval_value: parseInt(e.target.value, 10) || 1,
+                            })
+                          }
+                          placeholder="e.g. 10, 5, 30"
+                          className={!canEditCalendar ? 'bg-muted/40 cursor-not-allowed' : ''}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-muted-foreground">Interval Unit</label>
+                        <select
+                          disabled={!canEditCalendar}
+                          value={calendar?.scheduler_interval_unit || 'MINUTES'}
+                          onChange={(e) =>
+                            setCalendar({
+                              ...calendar,
+                              scheduler_interval_unit: e.target.value,
+                            })
+                          }
+                          className={`w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${
+                            !canEditCalendar ? 'bg-muted/40 cursor-not-allowed' : ''
+                          }`}
+                        >
+                          <option value="MINUTES">Minutes</option>
+                          <option value="SECONDS">Seconds</option>
+                          <option value="HOURS">Hours</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {canEditCalendar && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-primary/15">
+                        <span className="text-[11px] font-medium text-muted-foreground mr-1">Quick Presets:</span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 text-[11px] px-2"
+                          onClick={() => setCalendar({ ...calendar, scheduler_interval_value: 10, scheduler_interval_unit: 'MINUTES' })}
+                        >
+                          10 Minutes (Standard)
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 text-[11px] px-2"
+                          onClick={() => setCalendar({ ...calendar, scheduler_interval_value: 5, scheduler_interval_unit: 'MINUTES' })}
+                        >
+                          5 Minutes
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 text-[11px] px-2"
+                          onClick={() => setCalendar({ ...calendar, scheduler_interval_value: 1, scheduler_interval_unit: 'MINUTES' })}
+                        >
+                          1 Minute
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 text-[11px] px-2 border-dashed border-amber-500/50 text-amber-600 hover:bg-amber-500/10"
+                          onClick={() => setCalendar({ ...calendar, scheduler_interval_value: 30, scheduler_interval_unit: 'SECONDS' })}
+                        >
+                          ⚡ 30 Seconds (Live Testing)
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <label className="text-xs font-semibold text-muted-foreground">
@@ -1297,7 +1519,7 @@ export function WorkingCalendarPage() {
                       className={!canEditCalendar ? 'bg-muted/40 cursor-not-allowed' : ''}
                     />
                     <p className="text-[11px] text-muted-foreground">
-                      Hours past the 72h deadline after which incomplete tasks are marked DELAYED and escalated to the manager.
+                      Hours past the calculated deadline after which incomplete tasks are marked DELAYED and escalated to the manager.
                     </p>
                   </div>
                   <div className="space-y-2">
@@ -2486,16 +2708,79 @@ export function WorkingCalendarPage() {
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="font-semibold text-muted-foreground">Target Working Days</label>
-                <Input
-                  type="number"
-                  min="1"
-                  max="60"
-                  value={sandboxHours <= 10 ? sandboxHours : Math.round(sandboxHours / 24)}
-                  onChange={(e) => setSandboxHours(parseFloat(e.target.value) || 3)}
-                />
-                <p className="text-[11px] text-muted-foreground">Specification standard: 3 working days (72 hours)</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-muted-foreground">Target Value</label>
+                  <Input
+                    type="number"
+                    min="1"
+                    step="any"
+                    value={sandboxValue}
+                    onChange={(e) => setSandboxValue(parseFloat(e.target.value) || 1)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="font-semibold text-muted-foreground">Unit</label>
+                  <select
+                    value={sandboxUnit}
+                    onChange={(e) => setSandboxUnit(e.target.value)}
+                    className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                  >
+                    <option value="HOURS">Hours</option>
+                    <option value="DAYS">Days</option>
+                    <option value="MINUTES">Minutes</option>
+                    <option value="SECONDS">Seconds</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                <span className="text-[10px] font-medium text-muted-foreground mr-0.5">Presets:</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-6 text-[10px] px-1.5"
+                  onClick={() => { setSandboxValue(72); setSandboxUnit('HOURS') }}
+                >
+                  72 Hours
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-6 text-[10px] px-1.5"
+                  onClick={() => { setSandboxValue(48); setSandboxUnit('HOURS') }}
+                >
+                  48 Hours
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-6 text-[10px] px-1.5"
+                  onClick={() => { setSandboxValue(3); setSandboxUnit('DAYS') }}
+                >
+                  3 Days
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-6 text-[10px] px-1.5"
+                  onClick={() => { setSandboxValue(10); setSandboxUnit('MINUTES') }}
+                >
+                  10 Min
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-6 text-[10px] px-1.5 border-dashed border-amber-500/50 text-amber-600 hover:bg-amber-500/10"
+                  onClick={() => { setSandboxValue(48); setSandboxUnit('SECONDS') }}
+                >
+                  ⚡ 48 Sec
+                </Button>
               </div>
 
               <Button
@@ -2504,7 +2789,7 @@ export function WorkingCalendarPage() {
                 className="w-full gap-2"
               >
                 <Play className="h-3.5 w-3.5" />
-                {calculating ? 'Computing Intervals...' : 'Simulate 3-Day (72h) Calculation'}
+                {calculating ? 'Computing Intervals...' : `Simulate Calculation (${sandboxValue} ${sandboxUnit})`}
               </Button>
             </CardContent>
           </Card>
@@ -2557,7 +2842,7 @@ export function WorkingCalendarPage() {
 
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                        Computed 3 Working-Day (72h) Preparation Deadline
+                        Computed {sandboxResult.target_value ?? sandboxValue} {sandboxResult.target_unit ?? sandboxUnit} Preparation Deadline
                       </p>
                       <p className="mt-1 text-2xl font-bold tracking-tight text-primary">
                         {new Date(sandboxResult.calculated_deadline).toLocaleString('en-IN', {
@@ -2566,7 +2851,7 @@ export function WorkingCalendarPage() {
                         })}
                       </p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
-                        Document preparation threshold calculated backward by working days, skipping 2nd/4th Saturdays, Sundays & holidays.
+                        Document preparation threshold calculated backward by working intervals, skipping non-working Saturdays, Sundays & holidays.
                       </p>
                     </div>
 
@@ -2585,7 +2870,7 @@ export function WorkingCalendarPage() {
                         <span className={`text-xs font-bold block mt-0.5 ${
                           sandboxResult.remaining_working_hours <= 0
                             ? 'text-rose-500'
-                            : sandboxResult.remaining_working_hours <= 72
+                            : sandboxResult.remaining_working_hours <= (sandboxUnit === 'HOURS' ? sandboxValue : 72)
                             ? 'text-amber-500'
                             : 'text-emerald-500'
                         }`}>
@@ -2611,9 +2896,9 @@ export function WorkingCalendarPage() {
                       </p>
                     </div>
                     <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
-                      <span className="text-muted-foreground block text-[11px]">Working Days Allocated</span>
+                      <span className="text-muted-foreground block text-[11px]">Working Allocated Window</span>
                       <p className="mt-1 font-bold text-emerald-500">
-                        {sandboxResult.target_working_days || 3} Working Days (72h)
+                        {sandboxResult.target_value ?? sandboxValue} {sandboxResult.target_unit ?? sandboxUnit}
                       </p>
                     </div>
                     <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
@@ -2628,7 +2913,7 @@ export function WorkingCalendarPage() {
                   {sandboxResult.skipped_dates && sandboxResult.skipped_dates.length > 0 && (
                     <div className="space-y-2">
                       <h4 className="text-xs font-semibold text-foreground">
-                        Skipped Non-Working Dates During 72h Calculation:
+                        Skipped Non-Working Dates During Calculation:
                       </h4>
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                         {sandboxResult.skipped_dates.map((item, idx) => (
@@ -2649,7 +2934,7 @@ export function WorkingCalendarPage() {
               ) : (
                 <div className="flex h-56 flex-col items-center justify-center text-center text-muted-foreground">
                   <Calculator className="h-8 w-8 text-muted-foreground/40" />
-                  <p className="mt-2 text-xs">Select a tender closing time and click "Simulate 72h Calculation" to see the engine in action.</p>
+                  <p className="mt-2 text-xs">Select a tender closing time and click "Simulate Calculation" to see the engine in action.</p>
                 </div>
               )}
             </CardContent>
@@ -2786,7 +3071,7 @@ export function WorkingCalendarPage() {
                   <span className="text-xs text-muted-foreground">
                     {selectedDayInfo.isWorkingDay
                       ? `Working hours: ${calendar?.working_start_time || '09:00'} - ${calendar?.working_end_time || '18:00'}`
-                      : 'Excluded from backward 72h calculation'}
+                      : 'Excluded from backward deadline calculation'}
                   </span>
                 </div>
               </div>

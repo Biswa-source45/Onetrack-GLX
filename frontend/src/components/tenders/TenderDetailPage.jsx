@@ -2050,6 +2050,9 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                 ? dlRes.data.remaining_working_hours 
                 : prev.deadline_remaining_working_hours,
               deadline_remaining_working_days: dlRes.data.remaining_working_days,
+              deadline_target_value: dlRes.data.target_working_value,
+              deadline_target_unit: dlRes.data.target_working_unit,
+              deadline_is_threshold_reached: dlRes.data.is_threshold_reached,
             }) : prev)
           }
         } catch { /* fallback to cached DB values */ }
@@ -2359,14 +2362,38 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
           ))}
         </div>
 
-        {/* 72 Working-Hour / 3 Working-Day Red Zone Due Date Notification Banner */}
+        {/* Dynamic Working Time Red Zone Due Date Notification Banner */}
         {(bid.calculated_72h_deadline || bid.closing_date || bid.end_date) && (() => {
           const remHours = bid.deadline_remaining_working_hours !== undefined && bid.deadline_remaining_working_hours !== null
             ? Number(bid.deadline_remaining_working_hours)
             : null
           const closing = bid.closing_date || bid.end_date || bid.submission_deadline
           const isClosed = closing ? new Date(closing).getTime() < Date.now() : false
-          const isRedZone = !isClosed && remHours !== null && remHours <= 72.0
+
+          const targetVal = bid.deadline_target_value !== undefined && bid.deadline_target_value !== null
+            ? Number(bid.deadline_target_value)
+            : 72
+          const targetUnit = (bid.deadline_target_unit || 'HOURS').toUpperCase()
+
+          let thresholdLabel = `${targetVal} Working Hours`
+          if (targetUnit === 'HOURS' && targetVal === 72) thresholdLabel = '3 Working Days (72h)'
+          else if (targetUnit === 'HOURS' && targetVal === 48) thresholdLabel = '2 Working Days (48h)'
+          else if (targetUnit === 'HOURS') thresholdLabel = `${targetVal} Working Hours`
+          else if (targetUnit === 'DAYS') thresholdLabel = `${targetVal} Working Days`
+          else if (targetUnit === 'MINUTES') thresholdLabel = `${targetVal} Minutes`
+          else if (targetUnit === 'SECONDS') thresholdLabel = `${targetVal} Seconds`
+
+          let targetHours = targetVal
+          if (targetUnit === 'DAYS') targetHours = targetVal * 24.0
+          else if (targetUnit === 'MINUTES') targetHours = targetVal / 60.0
+          else if (targetUnit === 'SECONDS') targetHours = targetVal / 3600.0
+
+          const deadlineTimestamp = bid.calculated_72h_deadline ? new Date(bid.calculated_72h_deadline).getTime() : null
+          const isRedZone = !isClosed && (
+            bid.deadline_is_threshold_reached !== undefined && bid.deadline_is_threshold_reached !== null
+              ? Boolean(bid.deadline_is_threshold_reached)
+              : (deadlineTimestamp ? Date.now() >= deadlineTimestamp : (remHours !== null ? remHours <= targetHours : false))
+          )
 
           return (
             <div className={`relative overflow-hidden rounded-2xl border p-4 sm:p-5 shadow-xs transition-all ${
@@ -2406,7 +2433,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                       {isClosed
                         ? 'Tender Submission Deadline Passed'
                         : isRedZone
-                          ? 'Red Zone – Tender Due Date Notification'
+                          ? `Red Zone – ${thresholdLabel} Threshold Reached`
                           : 'Working Calendar Engine'}
                     </span>
 
@@ -2417,7 +2444,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                           ? 'border-rose-200 dark:border-rose-800/80 bg-rose-100/80 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300'
                           : 'border-emerald-200 dark:border-emerald-800/80 bg-emerald-100/80 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300'
                     }`}>
-                      {isClosed ? 'Tender Closed' : isRedZone ? '3 Working Days Reached' : 'Within Normal Schedule'}
+                      {isClosed ? 'Tender Closed' : isRedZone ? `${thresholdLabel} Reached` : 'Within Normal Schedule'}
                     </Badge>
                   </div>
 
@@ -2425,26 +2452,26 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                     {isClosed
                       ? 'The official submission window for this tender has concluded.'
                       : isRedZone
-                        ? 'Automated email alerts are triggered for all stakeholders 3 working days (72 hours) before deadline, excluding 2nd/4th Saturdays, Sundays, configured holidays & non-working days.'
-                        : 'Calculates trigger times 3 working days backward from the tender deadline, excluding 2nd/4th Saturdays, Sundays, and configured public holidays.'}
+                        ? `Automated email alerts are triggered for all stakeholders ${thresholdLabel.toLowerCase()} before deadline, excluding 2nd/4th Saturdays, Sundays, configured holidays & non-working days.`
+                        : `Calculates trigger times ${thresholdLabel.toLowerCase()} backward from the tender deadline, excluding 2nd/4th Saturdays, Sundays, and configured public holidays.`}
                   </p>
                 </div>
 
                 {/* Right Statistics & Action Controls */}
                 <div className="flex items-center gap-3 flex-wrap sm:flex-nowrap shrink-0">
-                  {/* 3-Day Trigger Date Capsule */}
+                  {/* Dynamic Trigger Date Capsule */}
                   <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-white/95 dark:bg-card/90 px-3.5 py-2 shadow-2xs">
                     <div className={`p-2 rounded-lg ${isRedZone ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400' : 'bg-primary/5 text-primary'}`}>
                       <Calendar className="size-4 shrink-0" />
                     </div>
                     <div>
                       <span className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider block">
-                        3-Day Trigger Time
+                        Trigger Time ({thresholdLabel})
                       </span>
                       <span className="text-xs font-bold text-foreground whitespace-nowrap">
                         {bid.calculated_72h_deadline
                           ? formatFullDateTime(bid.calculated_72h_deadline)
-                          : 'Calculated at 3 working days'}
+                          : `Calculated at ${thresholdLabel}`}
                       </span>
                     </div>
                   </div>
@@ -2479,11 +2506,15 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                                 ? 'text-rose-600 dark:text-rose-400'
                                 : 'text-emerald-600 dark:text-emerald-400'
                           }`}>
-                            {isClosed ? '0.0 days' : `${(remHours / 24.0).toFixed(1)} days`}
+                            {isClosed
+                              ? '0.0 days'
+                              : remHours < 1.0
+                                ? `${Math.max(0, Math.round(remHours * 60))} min`
+                                : `${(remHours / 24.0).toFixed(1)} days`}
                           </span>
                           {!isClosed && (
                             <span className="text-[11px] font-medium text-muted-foreground">
-                              ({remHours.toFixed(1)}h)
+                              {remHours < 1.0 ? `(${Math.max(0, Math.round(remHours * 3600))}s)` : `(${remHours.toFixed(1)}h)`}
                             </span>
                           )}
                         </div>
@@ -2507,7 +2538,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                         try {
                           const res = await triggerRedZoneNotification(bid.id, true)
                           if (res.ok) {
-                            toast.success(`Red Zone notification sent to ${res.data?.stakeholders_notified?.length || 'all'} stakeholders!`)
+                            toast.success(`Red Zone notification (${thresholdLabel}) sent to ${res.data?.stakeholders_notified?.length || 'all'} stakeholders!`)
                             loadBid()
                           } else {
                             toast.error(res.error?.message || 'Failed to trigger notification')

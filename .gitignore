@@ -23,3 +23,8 @@ graphify-out/cost.json
 # docker-compose.yml), user-uploaded content, not repo content.
 /feedback-assets/
 backend/uploads/
+
+# Memurai / Redis local files
+memurai-log.txt
+dump.rdb
+

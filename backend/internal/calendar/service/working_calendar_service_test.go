@@ -883,6 +883,49 @@ func TestWorkingDaysCalculation_3DaysRedZone(t *testing.T) {
 	assert.Equal(t, 15, res.CalculatedDeadline.Hour())
 }
 
+func TestCustomizableDeadlineAndIntervalUnits(t *testing.T) {
+	repo := newMockCalendarRepo()
+	svc := NewWorkingCalendarService(repo, nil, nil, nil)
+	ctx := context.Background()
+	loc, _ := time.LoadLocation("Asia/Kolkata")
+
+	// Friday Oct 16, 2026, 15:30:00 (during business hours 09:00 - 18:00)
+	friday := time.Date(2026, 10, 16, 15, 30, 0, 0, loc)
+
+	// 1. Test 48 Hours: exactly 2 working days backward -> Wednesday Oct 14, 15:30
+	res48h, err := svc.CalculateArbitraryDeadlineWithUnit(ctx, "cal-default", friday, 48.0, "HOURS")
+	require.NoError(t, err)
+	assert.Equal(t, 14, res48h.CalculatedDeadline.Day(), "48 hours backward from Fri Oct 16 must be Wed Oct 14")
+	assert.Equal(t, 15, res48h.CalculatedDeadline.Hour())
+	assert.Equal(t, 30, res48h.CalculatedDeadline.Minute())
+	assert.Equal(t, "HOURS", res48h.TargetWorkingUnit)
+
+	// 2. Test 48 Seconds: exactly 48 seconds backward -> Friday Oct 16, 15:29:12
+	res48s, err := svc.CalculateArbitraryDeadlineWithUnit(ctx, "cal-default", friday, 48.0, "SECONDS")
+	require.NoError(t, err)
+	assert.Equal(t, 16, res48s.CalculatedDeadline.Day())
+	assert.Equal(t, 15, res48s.CalculatedDeadline.Hour())
+	assert.Equal(t, 29, res48s.CalculatedDeadline.Minute())
+	assert.Equal(t, 12, res48s.CalculatedDeadline.Second(), "48 seconds backward from 15:30:00 must be 15:29:12")
+	assert.Equal(t, "SECONDS", res48s.TargetWorkingUnit)
+
+	// 3. Test 10 Minutes: exactly 10 minutes backward -> Friday Oct 16, 15:20:00
+	res10m, err := svc.CalculateArbitraryDeadlineWithUnit(ctx, "cal-default", friday, 10.0, "MINUTES")
+	require.NoError(t, err)
+	assert.Equal(t, 16, res10m.CalculatedDeadline.Day())
+	assert.Equal(t, 15, res10m.CalculatedDeadline.Hour())
+	assert.Equal(t, 20, res10m.CalculatedDeadline.Minute())
+	assert.Equal(t, "MINUTES", res10m.TargetWorkingUnit)
+
+	// 4. Test 3 Days: 3 working days backward -> Tuesday Oct 13, 15:30:00
+	res3d, err := svc.CalculateArbitraryDeadlineWithUnit(ctx, "cal-default", friday, 3.0, "DAYS")
+	require.NoError(t, err)
+	assert.Equal(t, 13, res3d.CalculatedDeadline.Day())
+	assert.Equal(t, 15, res3d.CalculatedDeadline.Hour())
+	assert.Equal(t, 30, res3d.CalculatedDeadline.Minute())
+	assert.Equal(t, "DAYS", res3d.TargetWorkingUnit)
+}
+
 func strPtr(s string) *string {
 	return &s
 }

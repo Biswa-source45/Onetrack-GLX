@@ -76,9 +76,13 @@ type WorkingCalendar struct {
 	WednesdayWorking     bool      `json:"wednesday_working"`
 	ThursdayWorking      bool      `json:"thursday_working"`
 	FridayWorking        bool      `json:"friday_working"`
-	EscalationDelayHours int       `json:"escalation_delay_hours"`
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
+	EscalationDelayHours   int       `json:"escalation_delay_hours"`
+	DeadlineTriggerValue   float64   `json:"deadline_trigger_value"`
+	DeadlineTriggerUnit    string    `json:"deadline_trigger_unit"` // "HOURS", "DAYS", "MINUTES", "SECONDS"
+	SchedulerIntervalValue int       `json:"scheduler_interval_value"`
+	SchedulerIntervalUnit  string    `json:"scheduler_interval_unit"` // "MINUTES", "SECONDS", "HOURS"
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 type Holiday struct {
@@ -210,6 +214,8 @@ type CalculateDeadlineResult struct {
 	ClosingDate           time.Time           `json:"closing_date"`
 	TargetWorkingHours    float64             `json:"target_working_hours"`
 	TargetWorkingDays     int                 `json:"target_working_days"`
+	TargetWorkingValue    float64             `json:"target_working_value,omitempty"`
+	TargetWorkingUnit     string              `json:"target_working_unit,omitempty"`
 	CalculatedDeadline    time.Time           `json:"calculated_deadline"`
 	RemainingWorkingHours float64             `json:"remaining_working_hours"`
 	RemainingWorkingDays  float64             `json:"remaining_working_days"`
@@ -236,22 +242,26 @@ type NextActionableTask struct {
 
 // DTO Requests
 type UpdateCalendarRequest struct {
-	Name                 string  `json:"name"`
-	Description          *string `json:"description,omitempty"`
-	WorkingStartTime     string  `json:"working_start_time"`
-	WorkingEndTime       string  `json:"working_end_time"`
-	Saturday1Working     bool    `json:"saturday_1_working"`
-	Saturday2Working     bool    `json:"saturday_2_working"`
-	Saturday3Working     bool    `json:"saturday_3_working"`
-	Saturday4Working     bool    `json:"saturday_4_working"`
-	Saturday5Working     bool    `json:"saturday_5_working"`
-	SundayWorking        bool    `json:"sunday_working"`
-	MondayWorking        bool    `json:"monday_working"`
-	TuesdayWorking       bool    `json:"tuesday_working"`
-	WednesdayWorking     bool    `json:"wednesday_working"`
-	ThursdayWorking      bool    `json:"thursday_working"`
-	FridayWorking        bool    `json:"friday_working"`
-	EscalationDelayHours int     `json:"escalation_delay_hours"`
+	Name                   string   `json:"name"`
+	Description            *string  `json:"description,omitempty"`
+	WorkingStartTime       string   `json:"working_start_time"`
+	WorkingEndTime         string   `json:"working_end_time"`
+	Saturday1Working       bool     `json:"saturday_1_working"`
+	Saturday2Working       bool     `json:"saturday_2_working"`
+	Saturday3Working       bool     `json:"saturday_3_working"`
+	Saturday4Working       bool     `json:"saturday_4_working"`
+	Saturday5Working       bool     `json:"saturday_5_working"`
+	SundayWorking          bool     `json:"sunday_working"`
+	MondayWorking          bool     `json:"monday_working"`
+	TuesdayWorking         bool     `json:"tuesday_working"`
+	WednesdayWorking       bool     `json:"wednesday_working"`
+	ThursdayWorking        bool     `json:"thursday_working"`
+	FridayWorking          bool     `json:"friday_working"`
+	EscalationDelayHours   int      `json:"escalation_delay_hours"`
+	DeadlineTriggerValue   *float64 `json:"deadline_trigger_value,omitempty"`
+	DeadlineTriggerUnit    *string  `json:"deadline_trigger_unit,omitempty"`
+	SchedulerIntervalValue *int     `json:"scheduler_interval_value,omitempty"`
+	SchedulerIntervalUnit  *string  `json:"scheduler_interval_unit,omitempty"`
 }
 
 type CreateHolidayRequest struct {

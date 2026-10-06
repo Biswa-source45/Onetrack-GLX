@@ -182,7 +182,7 @@ export async function getSyncLogs(calendarId, limit = 20) {
 
 // ── Deadline Engine & Sandbox ────────────────────────────────────────────────
 
-export async function calculateArbitraryDeadline(calendarId, closingDate, targetHours = 72) {
+export async function calculateArbitraryDeadline(calendarId, closingDate, targetValue = 72, targetUnit = 'HOURS') {
   try {
     let formattedDate = closingDate
     if (typeof closingDate === 'string') {
@@ -190,12 +190,26 @@ export async function calculateArbitraryDeadline(calendarId, closingDate, target
         formattedDate = closingDate + ':00'
       }
     }
+
+    let val = targetValue
+    let unit = targetUnit
+
+    // If options object was passed
+    if (typeof targetValue === 'object' && targetValue !== null) {
+      val = targetValue.target_value ?? targetValue.target_hours ?? 72
+      unit = targetValue.target_unit ?? 'HOURS'
+    }
+
+    const payload = {
+      closing_date: formattedDate,
+      target_value: Number(val),
+      target_unit: String(unit).toUpperCase(),
+      target_hours: String(unit).toUpperCase() === 'HOURS' ? Number(val) : (String(unit).toUpperCase() === 'DAYS' ? Number(val) * 24 : Number(val) / 3600),
+    }
+
     const res = await apiFetch(`/api/v1/calendars/${calendarId}/calculate`, {
       method: 'POST',
-      body: JSON.stringify({
-        closing_date: formattedDate,
-        target_hours: Number(targetHours),
-      }),
+      body: JSON.stringify(payload),
     })
     const data = await res.json()
     return { ok: res.ok, status: res.status, ...data }
@@ -270,5 +284,4 @@ export async function getTenderStakeholders(tenderId) {
     return { ok: false, error: { message: err?.message || 'Failed to fetch tender stakeholders' } }
   }
 }
-
 

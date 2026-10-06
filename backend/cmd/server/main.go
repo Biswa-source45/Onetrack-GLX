@@ -156,8 +156,9 @@ func main() {
 	calendarHdlr := calendarHandler.NewCalendarHandler(calendarRepository, calendarSvc, googleSyncSvc)
 	calendarHandler.RegisterCalendarRoutes(v1, calendarHdlr, authMiddleware)
 
-	// Start 72-Hour Working Deadline background scheduler
-	deadlineScheduler := calendarService.NewBackgroundScheduler(calendarSvc, 10*time.Minute)
+	// Start Working Deadline background scheduler (dynamic interval from calendar configuration)
+	deadlineScheduler := calendarService.NewBackgroundScheduler(calendarSvc, calendarRepository, 10*time.Minute)
+	calendarHdlr.SetScheduler(deadlineScheduler)
 	deadlineScheduler.Start()
 	defer deadlineScheduler.Stop()
 
