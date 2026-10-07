@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  X, Check, AlertCircle, Loader2, Upload, FileText, CheckCircle2,
-  DollarSign, User, ShieldCheck, ArrowRight, ArrowLeft, Clock, HelpCircle,
-  ExternalLink, Ban, Layers, RefreshCw
+  X, Check, AlertCircle, Loader2, FileText, CheckCircle2,
+  DollarSign, User, ShieldCheck, ArrowRight, ArrowLeft, Clock,
+  ExternalLink, RefreshCw
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,7 +14,7 @@ import { toast } from 'sonner'
 import {
   getEmdDetails, updateBasicEmd, submitEmdForMdApproval,
   recordEmdPayment, verifyEmdPayment, updateEmdRefund, uploadEmdReceipt,
-  EMD_STATUS_CONFIG, REFUND_STATUS_CONFIG
+  EMD_STATUS_CONFIG, REFUND_STATUS_CONFIG, safeReceiptUrl, openReceipt
 } from '../../services/emd'
 import { usePermissions } from '../../hooks/usePermissions'
 
@@ -40,9 +40,8 @@ function fmtMoney(v) {
 }
 
 export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
-  const { hasRole, isAdmin } = usePermissions()
-  const isFinance = hasRole('FINANCE')
-  const canEdit = isFinance || isAdmin // maintained by Finance users only (with admin view/override)
+  const { hasRole } = usePermissions()
+  const canEdit = hasRole('FINANCE') || hasRole('ADMIN') || hasRole('SUPER_ADMIN')
 
   const [activeSection, setActiveSection] = useState('basic')
   const [loading, setLoading] = useState(true)
@@ -54,7 +53,6 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
   const [basicDueDate, setBasicDueDate] = useState('')
   const [basicRefNo, setBasicRefNo] = useState('')
   const [basicPurpose, setBasicPurpose] = useState('')
-  const [basicStatus, setBasicStatus] = useState('Pending')
   const [basicRemarks, setBasicRemarks] = useState('')
 
   // Section C: Payment Form State
@@ -62,7 +60,6 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
   const [paymentAmount, setPaymentAmount] = useState('')
   const [paymentDate, setPaymentDate] = useState('')
   const [paymentStatus, setPaymentStatus] = useState('Successful')
-  const [paymentRef, setPaymentRef] = useState('')
   const [paymentReceiptUrl, setPaymentReceiptUrl] = useState('')
   const [uploadingReceipt, setUploadingReceipt] = useState(false)
 
@@ -126,7 +123,7 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
 
   // Step completion indicators
   const isBasicDone = Boolean(emd && (emd.emd_amount > 0 || parseFloat(basicAmount) > 0) && (emd.due_date || basicDueDate) && (emd.reference_number || basicRefNo))
-  const isApprovalDone = Boolean(emd && (emd.is_md_approved || emd.status === 'MD Approved' || emd.status === 'Paid' || emd.status === 'Verified' || emd.status === 'Released' || emd.status === 'Refunded' || emd.is_paid))
+  const isApprovalDone = Boolean(emd?.is_md_approved)
   const isPaymentDone = Boolean(emd && (emd.payment_amount > 0 || (paymentAmount && !isPaymentMismatched)) && (emd.payment_date || paymentDate))
   const isDepositorDone = Boolean(emd && (emd.depositor_name?.trim() || depName?.trim()))
   const isVerificationDone = Boolean(emd && emd.verification_status === 'Verified')
@@ -155,7 +152,6 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
         setBasicDueDate(fmtDate(d.due_date))
         setBasicRefNo(d.reference_number || '')
         setBasicPurpose(d.purpose || `EMD for ${bid.title}`)
-        setBasicStatus(d.status || 'Pending')
         setBasicRemarks(d.remarks || '')
 
         // Initialize Payment
@@ -163,8 +159,7 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
         setPaymentAmount(d.payment_amount ? String(d.payment_amount) : String(d.emd_amount || ''))
         setPaymentDate(fmtDate(d.payment_date) || fmtDate(new Date()))
         setPaymentStatus(d.payment_status || 'Successful')
-        setPaymentRef(d.payment_reference || '')
-        setPaymentReceiptUrl(d.payment_receipt_url || '')
+        setPaymentReceiptUrl(safeReceiptUrl(bid.id, d.payment_receipt_url))
 
         // Parse Mode details
         if (d.payment_details) {
@@ -222,7 +217,7 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
         setRefUtr(d.refund_transaction_id || '')
         setRefMode(d.refund_mode || 'Online')
         setRefRemarks(d.refund_remarks || '')
-        setRefReceiptUrl(d.refund_receipt_url || '')
+        setRefReceiptUrl(safeReceiptUrl(bid.id, d.refund_receipt_url))
       }
     } catch {
       toast.error('Failed to load EMD details')
@@ -238,6 +233,10 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
   }, [open, bid?.id])
 
   if (!open) return null
+
+  const handleOpenReceipt = (url) => {
+    openReceipt(url).catch(() => toast.error('Could not open the receipt'))
+  }
 
   // ── Handler for Saving Basic Info ──────────────────────────────────────────
   const handleSaveBasic = async (e) => {
@@ -267,11 +266,9 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
     setSaving(true)
     try {
       const res = await updateBasicEmd(bid.id, {
-        emd_amount: amt,
         due_date: basicDueDate,
         reference_number: basicRefNo.trim(),
         purpose: basicPurpose.trim(),
-        status: basicStatus,
         remarks: basicRemarks.trim(),
       })
       if (res.ok) {
@@ -305,7 +302,6 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
     try {
       // Save basic details first to ensure DB is current
       await updateBasicEmd(bid.id, {
-        emd_amount: amt,
         due_date: basicDueDate,
         reference_number: basicRefNo.trim(),
         purpose: basicPurpose.trim(),
@@ -316,7 +312,6 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
       if (res.ok) {
         toast.success('EMD submitted for MD Approval! The Managing Director has been notified.')
         setEmd(res.data)
-        setBasicStatus('Pending MD Approval')
         onSuccess?.()
       } else {
         toast.error(res.message || 'Failed to submit for MD Approval')
@@ -796,16 +791,12 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">EMD Amount (₹) *</Label>
+                      <Label className="text-xs font-semibold">EMD Amount (₹) — set on the tender</Label>
                       <Input
                         type="number"
-                        min="1"
-                        step="0.01"
-                        required
-                        disabled={!canEdit}
+                        disabled
                         value={basicAmount}
-                        onChange={(e) => setBasicAmount(e.target.value)}
-                        placeholder="50000"
+                        readOnly
                         className="text-xs font-mono font-medium"
                       />
                     </div>
@@ -837,18 +828,7 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
 
                     <div className="space-y-1.5">
                       <Label className="text-xs font-semibold">EMD Status</Label>
-                      <select
-                        disabled={!canEdit}
-                        value={basicStatus}
-                        onChange={(e) => setBasicStatus(e.target.value)}
-                        className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                      >
-                        {Object.keys(EMD_STATUS_CONFIG).map((s) => (
-                          <option key={s} value={s} disabled={s === 'MD Approved' && !isAdmin}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="h-9 flex items-center text-xs font-semibold">{emd?.status || 'Pending'}</div>
                     </div>
                   </div>
 
@@ -959,7 +939,7 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
                     </div>
                   )}
 
-                  {(emd?.is_md_approved || emd?.status === 'Paid' || emd?.status === 'Verified' || emd?.is_paid) && (
+                  {emd?.is_md_approved && (
                     <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900 text-xs text-emerald-900 dark:text-emerald-300 flex items-center gap-2">
                       <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
                       <span>EMD has been officially MD Approved / Paid! Payment details and depositor information recorded directly.</span>
@@ -973,7 +953,7 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
                     </div>
                   )}
 
-                  {!emd?.is_md_approved && emd?.status !== 'Pending MD Approval' && emd?.status !== 'Paid' && emd?.status !== 'Verified' && !emd?.is_paid && canEdit && (
+                  {(emd?.status === 'Pending' || emd?.status === 'Rejected') && canEdit && (
                     <div className="pt-2">
                       <Button
                         type="button"
@@ -983,7 +963,7 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
                         className="gap-1.5 text-xs font-semibold bg-orange-600 hover:bg-orange-700 text-white"
                       >
                         <Clock className="size-3.5" />
-                        Submit for MD Approval Now
+                        {emd.status === 'Rejected' ? 'Re-submit for MD Approval' : 'Submit for MD Approval Now'}
                       </Button>
                     </div>
                   )}
@@ -1326,14 +1306,13 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
                     <Label className="text-xs font-semibold flex items-center justify-between">
                       <span>Payment Receipt / Scanned Proof</span>
                       {paymentReceiptUrl && (
-                        <a
-                          href={paymentReceiptUrl}
-                          target="_blank"
-                          rel="noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => handleOpenReceipt(paymentReceiptUrl)}
                           className="text-primary hover:underline flex items-center gap-1 text-[11px]"
                         >
                           <ExternalLink className="size-3" /> View Uploaded Receipt
-                        </a>
+                        </button>
                       )}
                     </Label>
                     <div className="flex items-center gap-2">
@@ -1748,14 +1727,13 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
                     <Label className="text-xs font-semibold flex items-center justify-between">
                       <span>Refund Proof / Bank Statement Receipt</span>
                       {refReceiptUrl && (
-                        <a
-                          href={refReceiptUrl}
-                          target="_blank"
-                          rel="noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => handleOpenReceipt(refReceiptUrl)}
                           className="text-primary hover:underline flex items-center gap-1 text-[11px]"
                         >
                           <ExternalLink className="size-3" /> View Refund Proof
-                        </a>
+                        </button>
                       )}
                     </Label>
                     <div className="flex items-center gap-2">
@@ -1789,7 +1767,7 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
         <div className="p-3.5 border-t border-border bg-muted/20 flex items-center justify-between">
           <span className="text-[11px] text-muted-foreground">
             {canEdit
-              ? (isFinance ? 'Role: Finance Manager (Authorized Editor)' : 'Role: Administrator (Authorized Editor)')
+              ? (hasRole('FINANCE') ? 'Role: Finance Manager (Authorized Editor)' : 'Role: Administrator (Authorized Editor)')
               : 'Role: Read-Only Viewer (Only Super Admin, Admin & FM can add/edit EMD)'}
           </span>
           <Button variant="outline" size="sm" onClick={onClose} className="text-xs">

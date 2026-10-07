@@ -22,10 +22,19 @@ type Config struct {
 	// lead (<lead-folder>/docs/...). Bind-mounted to ./leads-assets in
 	// docker-compose.yml, same reasoning as UploadDir.
 	LeadsUploadDir string
+	// EMDUploadDir holds EMD payment/refund receipts, one folder per tender.
+	// Bind-mounted to ./emd-assets in docker-compose.yml.
+	EMDUploadDir string
 	// AppBaseURL is the public frontend origin (e.g. http://192.168.1.10),
 	// used to turn alert deep links into clickable email buttons. Empty
 	// leaves emails without the button.
 	AppBaseURL string
+	// CalendarSchedulerEnabled turns on the background 72-working-hour deadline
+	// engine. Only the literal "true" enables it; off by default so a fresh
+	// deploy never sends alerts on its own.
+	CalendarSchedulerEnabled bool
+	// GoogleCalendarAPIKey is the key for the Google holiday sync; wins over a key stored in the DB.
+	GoogleCalendarAPIKey string
 }
 
 type ServerConfig struct {
@@ -109,7 +118,11 @@ func Load() (*Config, error) {
 		},
 		UploadDir:      getEnv("UPLOAD_DIR", "./uploads/feedback"),
 		LeadsUploadDir: getEnv("LEADS_UPLOAD_DIR", "./uploads/leads"),
+		EMDUploadDir:   getEnv("EMD_UPLOAD_DIR", "./uploads/emd"),
 		AppBaseURL:     getEnv("APP_BASE_URL", ""),
+
+		CalendarSchedulerEnabled: getEnv("CALENDAR_SCHEDULER_ENABLED", "false") == "true",
+		GoogleCalendarAPIKey:     getEnv("GOOGLE_CALENDAR_API_KEY", ""),
 	}
 
 	return cfg, nil

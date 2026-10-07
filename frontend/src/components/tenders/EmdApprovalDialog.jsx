@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { CheckCircle2, XCircle, AlertCircle, X, Loader2, ShieldCheck, DollarSign } from 'lucide-react'
+import { CheckCircle2, XCircle, X, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'

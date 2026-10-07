@@ -330,7 +330,9 @@ type UpdateChecklistRequest struct {
 	AssignedTo   *string    `json:"assigned_to"`
 	AssignedRole *string    `json:"assigned_role"`
 	DueAt        *time.Time `json:"due_at"`
-	Status       *string    `json:"status"`
+	// ClearDueAt removes the due date (a null due_at cannot be told apart from an omitted one).
+	ClearDueAt bool    `json:"clear_due_at"`
+	Status     *string `json:"status"`
 }
 
 type ReorderChecklistItem struct {

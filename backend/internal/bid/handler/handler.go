@@ -13,11 +13,12 @@ import (
 )
 
 type BidHandler struct {
-	svc domain.BidService
+	svc          domain.BidService
+	emdUploadDir string
 }
 
-func NewBidHandler(svc domain.BidService) *BidHandler {
-	return &BidHandler{svc: svc}
+func NewBidHandler(svc domain.BidService, emdUploadDir string) *BidHandler {
+	return &BidHandler{svc: svc, emdUploadDir: emdUploadDir}
 }
 
 func (h *BidHandler) CreateBid(c *gin.Context) {
@@ -540,6 +541,10 @@ func (h *BidHandler) AddChecklist(c *gin.Context) {
 	}
 	item, err := h.svc.AddChecklist(c.Request.Context(), bidID, &req)
 	if err != nil {
+		if errors.Is(err, domain.ErrValidation) {
+			response.BadRequest(c, err.Error(), nil)
+			return
+		}
 		response.InternalError(c, err.Error())
 		return
 	}
@@ -556,6 +561,10 @@ func (h *BidHandler) UpdateChecklist(c *gin.Context) {
 	}
 	item, err := h.svc.UpdateChecklist(c.Request.Context(), bidID, checklistID, &req)
 	if err != nil {
+		if errors.Is(err, domain.ErrValidation) {
+			response.BadRequest(c, err.Error(), nil)
+			return
+		}
 		response.NotFound(c, err.Error())
 		return
 	}

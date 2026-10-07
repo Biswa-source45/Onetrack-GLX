@@ -1,17 +1,17 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useState, useEffect, useCallback } from 'react'
+import { motion } from 'framer-motion'
 import {
   DollarSign, CheckCircle2, Clock, XCircle, FileText, User,
   ArrowRight, ShieldCheck, History, Edit2, Plus, RefreshCw,
-  AlertCircle, AlertTriangle, ExternalLink, HelpCircle,
+  AlertCircle, ExternalLink,
   Eye, Download, CreditCard, Receipt, FileCheck, Phone, Mail,
-  X, Building2, Tag, Calendar, Loader2
+  X, Loader2
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import {
-  getEmdDetails, submitEmdForMdApproval, EMD_STATUS_CONFIG, REFUND_STATUS_CONFIG
+  getEmdDetails, submitEmdForMdApproval, fetchReceiptBlob, safeReceiptUrl, EMD_STATUS_CONFIG, REFUND_STATUS_CONFIG
 } from '../../services/emd'
 import { usePermissions } from '../../hooks/usePermissions'
 import { EmdDetailsDialog } from './EmdDetailsDialog'
@@ -36,7 +36,7 @@ function ReceiptPreviewModal({ open, onClose, url, title }) {
   const [loadingDoc, setLoadingDoc] = useState(true)
   const [docError, setDocError] = useState(false)
 
-  const isPdf = Boolean(url && (url.toLowerCase().includes('.pdf') || url.toLowerCase().endsWith('.pdf')))
+  const isPdf = Boolean(url?.toLowerCase().endsWith('.pdf'))
 
   useEffect(() => {
     if (!open || !url) {
@@ -50,16 +50,7 @@ function ReceiptPreviewModal({ open, onClose, url, title }) {
     setLoadingDoc(true)
     setDocError(false)
 
-    const token = localStorage.getItem('onetrack_access_token') || ''
-    const headers = token ? { Authorization: `Bearer ${token}` } : {}
-
-    fetch(url, { headers })
-      .then(async (res) => {
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`)
-        }
-        return res.blob()
-      })
+    fetchReceiptBlob(url)
       .then((blob) => {
         if (active) {
           const objUrl = URL.createObjectURL(blob)
@@ -90,13 +81,10 @@ function ReceiptPreviewModal({ open, onClose, url, title }) {
 
   if (!open || !url) return null
 
-  const token = localStorage.getItem('onetrack_access_token') || ''
-  const directUrlWithToken = token ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}` : url
-
   const handleDownload = () => {
-    const downloadTarget = blobUrl || directUrlWithToken
+    if (!blobUrl) return
     const a = document.createElement('a')
-    a.href = downloadTarget
+    a.href = blobUrl
     const ext = url.split('.').pop()?.split('?')[0] || (isPdf ? 'pdf' : 'png')
     a.download = `emd_receipt_${Date.now()}.${ext}`
     document.body.appendChild(a)
@@ -105,11 +93,7 @@ function ReceiptPreviewModal({ open, onClose, url, title }) {
   }
 
   const handleOpenNewTab = () => {
-    if (blobUrl) {
-      window.open(blobUrl, '_blank')
-    } else {
-      window.open(directUrlWithToken, '_blank')
-    }
+    if (blobUrl) window.open(blobUrl, '_blank')
   }
 
   return (
@@ -134,14 +118,16 @@ function ReceiptPreviewModal({ open, onClose, url, title }) {
             <button
               type="button"
               onClick={handleOpenNewTab}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+              disabled={!blobUrl}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <ExternalLink className="size-3.5" /> Open in New Tab
             </button>
             <button
               type="button"
               onClick={handleDownload}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors shadow-xs cursor-pointer"
+              disabled={!blobUrl}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors shadow-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Download className="size-3.5" /> Download
             </button>
@@ -173,32 +159,16 @@ function ReceiptPreviewModal({ open, onClose, url, title }) {
                   The file might be temporarily unreachable or permissions need to be refreshed.
                 </p>
               </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleDownload}
-                  className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold"
-                >
-                  Download Directly
-                </button>
-                <button
-                  type="button"
-                  onClick={handleOpenNewTab}
-                  className="px-3 py-1.5 rounded-lg border border-border text-xs font-medium text-foreground hover:bg-muted"
-                >
-                  Open in New Tab
-                </button>
-              </div>
             </div>
           ) : isPdf ? (
             <iframe
-              src={blobUrl || directUrlWithToken}
+              src={blobUrl}
               title={title}
               className="w-full h-[72vh] rounded-lg border border-border bg-white"
             />
           ) : (
             <img
-              src={blobUrl || directUrlWithToken}
+              src={blobUrl}
               alt={title}
               className="max-h-[75vh] w-auto max-w-full object-contain rounded-lg border border-border shadow-sm bg-background"
             />
@@ -209,13 +179,25 @@ function ReceiptPreviewModal({ open, onClose, url, title }) {
   )
 }
 
+// Mode-specific payment details arrive as JSON (an object, or a string).
+function parsePaymentDetails(raw) {
+  if (typeof raw !== 'string') return raw || {}
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return {}
+  }
+}
+
 export function EmdLifecycleCard({ bid, onRefresh }) {
-  const { hasRole, isAdmin } = usePermissions()
+  const { hasRole, user } = usePermissions()
   const isFinance = hasRole('FINANCE')
-  const canEdit = isFinance || isAdmin
+  const isMD = hasRole('ADMIN') || hasRole('SUPER_ADMIN')
+  const canEdit = isFinance || isMD
+  const notRequired = Boolean(bid?.emd_exempted || bid?.emd_not_applicable)
 
   const [emd, setEmd] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(!notRequired)
   const [showDetailsModal, setShowDetailsModal] = useState(false)
   const [showApprovalModal, setShowApprovalModal] = useState(false)
   const [approvalMode, setApprovalMode] = useState('approve')
@@ -225,40 +207,33 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
   // Receipt Preview State
   const [previewProof, setPreviewProof] = useState({ open: false, url: '', title: '' })
 
+  const bidId = bid?.id
   const loadEmd = useCallback(async () => {
-    if (!bid?.id) return
+    if (!bidId || notRequired) return
     setLoading(true)
     try {
-      const res = await getEmdDetails(bid.id)
+      const res = await getEmdDetails(bidId)
       if (res.ok) {
         setEmd(res.data)
+      } else {
+        toast.error(res.message || 'Could not load EMD details')
       }
     } catch {
-      // quiet fail on initial fetch
+      toast.error('Network error while loading EMD details')
     } finally {
       setLoading(false)
     }
-  }, [bid?.id])
+  }, [bidId, notRequired])
 
   useEffect(() => {
     loadEmd()
   }, [loadEmd, bid?.updated_at])
 
-  // Safely parse mode-specific payment details (JSONB)
-  const paymentDetails = useMemo(() => {
-    if (!emd?.payment_details) return {}
-    if (typeof emd.payment_details === 'string') {
-      try {
-        return JSON.parse(emd.payment_details)
-      } catch {
-        return {}
-      }
-    }
-    return emd.payment_details || {}
-  }, [emd?.payment_details])
+  const paymentDetails = parsePaymentDetails(emd?.payment_details)
 
-  // Payment receipt document URL (from direct column or nested details)
-  const effectiveReceiptUrl = emd?.payment_receipt_url || paymentDetails.receipt_url || ''
+  // Receipt links are shown only if they are the exact shape the server issues.
+  const paymentReceiptUrl = safeReceiptUrl(bid?.id, emd?.payment_receipt_url || paymentDetails.receipt_url)
+  const refundReceiptUrl = safeReceiptUrl(bid?.id, emd?.refund_receipt_url)
 
   // Is MD Approval button enabled?
   const isRequiredInfoComplete = Boolean(
@@ -270,8 +245,11 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
   )
 
   const isPendingMDApproval = emd?.status === 'Pending MD Approval'
-  const isMDApproved = emd?.is_md_approved || emd?.status === 'Approved' || emd?.status === 'MD Approved' || emd?.status === 'Paid' || emd?.status === 'Verified' || emd?.status === 'Released' || emd?.status === 'Refunded' || emd?.is_paid
-  const canSubmitForApproval = canEdit && isRequiredInfoComplete && !isPendingMDApproval && !isMDApproved
+  const isRejected = emd?.status === 'Rejected'
+  const isMDApproved = Boolean(emd?.is_md_approved)
+  const canSubmitForApproval = canEdit && isRequiredInfoComplete && (emd?.status === 'Pending' || isRejected)
+  // The approver must be someone other than whoever submitted.
+  const submittedBySelf = Boolean(user?.id && emd?.md_submitted_by?.id === user.id)
 
   const handleSubmitForApproval = async () => {
     if (!isRequiredInfoComplete) {
@@ -309,6 +287,19 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
 
   const paymentModeName = emd?.payment_mode || bid?.emd_type || 'Online'
 
+  if (notRequired) {
+    return (
+      <div className="rounded-2xl border border-border bg-muted/20 px-5 py-4 flex items-center gap-2.5 text-xs">
+        <ShieldCheck className="size-4 text-muted-foreground shrink-0" />
+        <span className="font-semibold text-foreground">
+          {bid.emd_exempted
+            ? `EMD Exempted — ${fmtMoney(bid.emd_amount)} waived${bid.emd_exemption_type ? ` (${bid.emd_exemption_type}${bid.emd_exemption_reason ? `: ${bid.emd_exemption_reason}` : ''})` : ''}`
+            : 'No EMD required for this tender'}
+        </span>
+      </div>
+    )
+  }
+
   return (
     <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
       {/* Header Banner */}
@@ -336,15 +327,17 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
         </div>
 
         <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowAuditModal(true)}
-            className="text-xs gap-1.5 text-muted-foreground hover:text-foreground h-8"
-          >
-            <History className="size-3.5" />
-            Audit History
-          </Button>
+          {canEdit && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowAuditModal(true)}
+              className="text-xs gap-1.5 text-muted-foreground hover:text-foreground h-8"
+            >
+              <History className="size-3.5" />
+              Audit History
+            </Button>
+          )}
 
           <Button
             variant="outline"
@@ -370,12 +363,14 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
             </span>
           </div>
 
-          <div className="flex justify-between items-center py-1.5 border-b border-border/50">
-            <span className="text-muted-foreground">Payment Status</span>
-            <span className="font-semibold text-foreground">
-              {emd?.payment_status || (emd?.is_paid ? 'Paid' : 'Unpaid')}
-            </span>
-          </div>
+          {canEdit && (
+            <div className="flex justify-between items-center py-1.5 border-b border-border/50">
+              <span className="text-muted-foreground">Payment Status</span>
+              <span className="font-semibold text-foreground">
+                {emd?.payment_status || (emd?.is_paid ? 'Paid' : 'Unpaid')}
+              </span>
+            </div>
+          )}
 
           <div className="flex justify-between items-center py-1.5 border-b border-border/50">
             <span className="text-muted-foreground">EMD Status</span>
@@ -384,12 +379,14 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
             </span>
           </div>
 
-          <div className="flex justify-between items-center py-1.5 border-b border-border/50">
-            <span className="text-muted-foreground">Payment Mode</span>
-            <span className="font-medium text-foreground">
-              {emd?.payment_mode || (bid?.emd_type || 'Online')}
-            </span>
-          </div>
+          {canEdit && (
+            <div className="flex justify-between items-center py-1.5 border-b border-border/50">
+              <span className="text-muted-foreground">Payment Mode</span>
+              <span className="font-medium text-foreground">
+                {emd?.payment_mode || (bid?.emd_type || 'Online')}
+              </span>
+            </div>
+          )}
 
           <div className="flex justify-between items-center py-1.5 border-b border-border/50">
             <span className="text-muted-foreground">Due / Submission Date</span>
@@ -398,12 +395,14 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
             </span>
           </div>
 
-          <div className="flex justify-between items-center py-1.5 border-b border-border/50">
-            <span className="text-muted-foreground">Payment Reference</span>
-            <span className="font-mono font-medium text-foreground">
-              {emd?.payment_reference || '—'}
-            </span>
-          </div>
+          {canEdit && (
+            <div className="flex justify-between items-center py-1.5 border-b border-border/50">
+              <span className="text-muted-foreground">Payment Reference</span>
+              <span className="font-mono font-medium text-foreground">
+                {emd?.payment_reference || '—'}
+              </span>
+            </div>
+          )}
 
           <div className="flex justify-between items-center py-1.5 border-b border-border/50">
             <span className="text-muted-foreground">EMD Reference Number</span>
@@ -412,14 +411,17 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
             </span>
           </div>
 
-          <div className="flex justify-between items-center py-1.5 border-b border-border/50">
-            <span className="text-muted-foreground">Payment Date</span>
-            <span className="font-medium text-foreground">
-              {fmtDate(emd?.payment_date)}
-            </span>
-          </div>
+          {canEdit && (
+            <div className="flex justify-between items-center py-1.5 border-b border-border/50">
+              <span className="text-muted-foreground">Payment Date</span>
+              <span className="font-medium text-foreground">
+                {fmtDate(emd?.payment_date)}
+              </span>
+            </div>
+          )}
         </div>
 
+        {canEdit && (<>
         {/* Section 2: Mode-Specific Payment Details (All Payment Mode Details) */}
         <div className="p-4 rounded-xl border border-blue-200/80 bg-blue-50/20 dark:bg-blue-950/10 space-y-3">
           <div className="flex items-center justify-between">
@@ -617,32 +619,20 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
                     EMD Payment Proof / Receipt
                   </span>
                   <span className="text-[10px] text-muted-foreground block truncate">
-                    {effectiveReceiptUrl ? 'Document attached & verified' : 'No document uploaded yet'}
+                    {paymentReceiptUrl ? 'Document attached' : 'No document uploaded yet'}
                   </span>
                 </div>
               </div>
 
-              {effectiveReceiptUrl ? (
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleViewProof(effectiveReceiptUrl, 'EMD Payment Receipt')}
-                    className="h-7 px-2.5 text-[11px] gap-1 text-primary hover:bg-primary/5 font-medium"
-                  >
-                    <Eye className="size-3" /> View Proof
-                  </Button>
-                  <a
-                    href={effectiveReceiptUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    download
-                    className="inline-flex items-center justify-center size-7 rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                    title="Download receipt"
-                  >
-                    <Download className="size-3" />
-                  </a>
-                </div>
+              {paymentReceiptUrl ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleViewProof(paymentReceiptUrl, 'EMD Payment Receipt')}
+                  className="h-7 px-2.5 text-[11px] gap-1 text-primary hover:bg-primary/5 font-medium shrink-0"
+                >
+                  <Eye className="size-3" /> View Proof
+                </Button>
               ) : (
                 <Button
                   size="sm"
@@ -666,32 +656,20 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
                     Refund Advice / Proof
                   </span>
                   <span className="text-[10px] text-muted-foreground block truncate">
-                    {emd?.refund_receipt_url ? 'Refund advice uploaded' : 'Pending release/refund'}
+                    {refundReceiptUrl ? 'Refund advice uploaded' : 'Pending release/refund'}
                   </span>
                 </div>
               </div>
 
-              {emd?.refund_receipt_url ? (
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleViewProof(emd.refund_receipt_url, 'Refund Advice / Proof')}
-                    className="h-7 px-2.5 text-[11px] gap-1 text-teal-700 hover:bg-teal-50 font-medium"
-                  >
-                    <Eye className="size-3" /> View Proof
-                  </Button>
-                  <a
-                    href={emd.refund_receipt_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    download
-                    className="inline-flex items-center justify-center size-7 rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                    title="Download refund proof"
-                  >
-                    <Download className="size-3" />
-                  </a>
-                </div>
+              {refundReceiptUrl ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleViewProof(refundReceiptUrl, 'Refund Advice / Proof')}
+                  className="h-7 px-2.5 text-[11px] gap-1 text-teal-700 hover:bg-teal-50 font-medium shrink-0"
+                >
+                  <Eye className="size-3" /> View Proof
+                </Button>
               ) : (
                 <span className="text-[11px] text-muted-foreground pr-2 italic">
                   {emd?.refund_status === 'Refunded' ? 'Not uploaded' : '—'}
@@ -821,6 +799,8 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
           </div>
         </div>
 
+        </>)}
+
         {/* Dynamic Alerts based on State */}
         {isPendingMDApproval && (
           <div className="p-3.5 rounded-xl bg-orange-50/70 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-900 text-xs text-orange-900 dark:text-orange-300 flex items-center justify-between gap-2">
@@ -830,7 +810,10 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
                 <strong>Awaiting MD Approval:</strong> Submitted by {emd?.md_submitted_by?.full_name || 'Finance'}. Payment details will unlock once signed off.
               </span>
             </div>
-            {isAdmin && (
+            {isMD && submittedBySelf && (
+              <span className="text-[11px] italic shrink-0">You submitted this, so another administrator must decide.</span>
+            )}
+            {isMD && !submittedBySelf && (
               <div className="flex items-center gap-2 shrink-0">
                 <Button
                   size="sm"
@@ -852,13 +835,13 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
           </div>
         )}
 
-        {emd?.status === 'Rejected' && (
+        {isRejected && (
           <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900 text-xs text-rose-900 dark:text-rose-300 flex items-center gap-2">
             <AlertCircle className="size-4 shrink-0 text-rose-600" />
             <div>
               <span className="font-bold">Rejected by MD:</span> "{emd?.md_decision_remarks || 'Discrepancy found'}"
               <p className="text-[11px] text-rose-700 dark:text-rose-400 mt-0.5">
-                Returned to Finance for correction. Click "Edit EMD Details" below to resolve and re-submit.
+                Returned to Finance for correction.{canEdit && ' Fix the details with "Edit EMD Details", then re-submit for approval.'}
               </p>
             </div>
           </div>
@@ -889,7 +872,7 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
                 className="gap-1.5 border-orange-300 text-orange-900 dark:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-950/40 text-xs font-semibold disabled:opacity-50"
               >
                 <Clock className="size-3.5 text-orange-600" />
-                {isMDApproved ? 'MD Approved ✓' : isPendingMDApproval ? 'Pending MD Approval' : 'MD Approval'}
+                {isMDApproved ? 'MD Approved ✓' : isPendingMDApproval ? 'Pending MD Approval' : isRejected ? 'Re-submit for Approval' : 'MD Approval'}
               </Button>
             </span>
           )}
@@ -905,11 +888,11 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
           </Button>
 
           {/* Quick View Proof shortcut in footer if receipt exists */}
-          {effectiveReceiptUrl && (
+          {canEdit && paymentReceiptUrl && (
             <Button
               size="sm"
               variant="outline"
-              onClick={() => handleViewProof(effectiveReceiptUrl, 'EMD Payment Receipt')}
+              onClick={() => handleViewProof(paymentReceiptUrl, 'EMD Payment Receipt')}
               className="gap-1.5 text-xs font-medium border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
             >
               <Eye className="size-3.5 text-emerald-600" /> View Receipt Proof

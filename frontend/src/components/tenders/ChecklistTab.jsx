@@ -433,7 +433,11 @@ export function ChecklistTab({ bid, onRefresh }) {
                     onChange={async (e) => {
                       const newP = e.target.value
                       try {
-                        await updateChecklistPriority(item.id, { priority: newP })
+                        const res = await updateChecklistPriority(item.id, { priority: newP })
+                        if (!res.ok) {
+                          toast.error(res.error?.message ?? 'Failed to update priority')
+                          return
+                        }
                         toast.success(`Priority set to ${newP}`)
                         loadChecklist()
                       } catch {

@@ -7,17 +7,20 @@ import (
 
 // EMD Lifecycle Statuses
 const (
-	EMDStatusPending            = "Pending"
-	EMDStatusSubmitted          = "Submitted"
-	EMDStatusUnderVerification  = "Under Verification"
-	EMDStatusPendingMDApproval  = "Pending MD Approval"
-	EMDStatusApproved           = "Approved"
-	EMDStatusMDApproved         = "MD Approved"
-	EMDStatusRejected           = "Rejected"
-	EMDStatusPaid               = "Paid"
-	EMDStatusVerified           = "Verified"
-	EMDStatusReleased           = "Released"
-	EMDStatusRefunded           = "Refunded"
+	EMDStatusPending              = "Pending"
+	EMDStatusPendingMDApproval    = "Pending MD Approval"
+	EMDStatusApproved             = "Approved"
+	EMDStatusMDApproved           = "MD Approved"
+	EMDStatusRejected             = "Rejected"
+	EMDStatusPaid                 = "Paid"
+	EMDStatusVerified             = "Verified"
+	EMDStatusVerificationRejected = "Verification Rejected"
+	EMDStatusReleased             = "Released"
+	EMDStatusRefunded             = "Refunded"
+	// Closed: the tender was switched to exempted / not applicable while the
+	// lifecycle was still open. Exempted is only ever a read-only view status.
+	EMDStatusNotApplicable = "Not Applicable"
+	EMDStatusExempted      = "Exempted"
 )
 
 // Payment Modes
@@ -64,8 +67,8 @@ const (
 
 // EMD Audit Actions
 const (
-	EMDActionCreated              = "CREATED"
 	EMDActionUpdated              = "UPDATED"
+	EMDActionClosed               = "CLOSED"
 	EMDActionSubmittedMDApproval  = "SUBMITTED_MD_APPROVAL"
 	EMDActionMDApproved           = "MD_APPROVED"
 	EMDActionMDRejected           = "MD_REJECTED"
@@ -80,48 +83,48 @@ const (
 // ────────────────────────────────────────
 
 type TenderEMDDetails struct {
-	ID                  string     `json:"id"`
-	BidID               string     `json:"bid_id"`
-	EMDAmount           float64    `json:"emd_amount"`
-	DueDate             *time.Time `json:"due_date,omitempty"`
-	ReferenceNumber     *string    `json:"reference_number,omitempty"`
-	Purpose             *string    `json:"purpose,omitempty"`
-	Status              string     `json:"status"`
-	Remarks             *string    `json:"remarks,omitempty"`
+	ID              string     `json:"id"`
+	BidID           string     `json:"bid_id"`
+	EMDAmount       float64    `json:"emd_amount"`
+	DueDate         *time.Time `json:"due_date,omitempty"`
+	ReferenceNumber *string    `json:"reference_number,omitempty"`
+	Purpose         *string    `json:"purpose,omitempty"`
+	Status          string     `json:"status"`
+	Remarks         *string    `json:"remarks,omitempty"`
 
 	// Payment Details
-	PaymentMode         *string    `json:"payment_mode,omitempty"`
-	PaymentAmount       *float64   `json:"payment_amount,omitempty"`
-	PaymentDate         *time.Time `json:"payment_date,omitempty"`
-	PaymentStatus       *string    `json:"payment_status,omitempty"`
-	PaymentReference    *string    `json:"payment_reference,omitempty"`
-	PaymentDetails      []byte     `json:"-"` // raw JSONB
-	PaymentReceiptURL   *string    `json:"payment_receipt_url,omitempty"`
-	PaymentEnteredBy    *string    `json:"payment_entered_by,omitempty"`
-	PaymentEnteredAt    *time.Time `json:"payment_entered_at,omitempty"`
+	PaymentMode       *string    `json:"payment_mode,omitempty"`
+	PaymentAmount     *float64   `json:"payment_amount,omitempty"`
+	PaymentDate       *time.Time `json:"payment_date,omitempty"`
+	PaymentStatus     *string    `json:"payment_status,omitempty"`
+	PaymentReference  *string    `json:"payment_reference,omitempty"`
+	PaymentDetails    []byte     `json:"-"` // raw JSONB
+	PaymentReceiptURL *string    `json:"payment_receipt_url,omitempty"`
+	PaymentEnteredBy  *string    `json:"payment_entered_by,omitempty"`
+	PaymentEnteredAt  *time.Time `json:"payment_entered_at,omitempty"`
 
 	// Depositor / Person Details
-	DepositorName       *string    `json:"depositor_name,omitempty"`
-	DepositorEmployeeID *string    `json:"depositor_employee_id,omitempty"`
-	DepositorDepartment *string    `json:"depositor_department,omitempty"`
-	DepositorDesignation *string   `json:"depositor_designation,omitempty"`
-	DepositorContact    *string    `json:"depositor_contact,omitempty"`
-	DepositorEmail      *string    `json:"depositor_email,omitempty"`
-	DepositDate         *time.Time `json:"deposit_date,omitempty"`
-	DepositorRemarks    *string    `json:"depositor_remarks,omitempty"`
+	DepositorName        *string    `json:"depositor_name,omitempty"`
+	DepositorEmployeeID  *string    `json:"depositor_employee_id,omitempty"`
+	DepositorDepartment  *string    `json:"depositor_department,omitempty"`
+	DepositorDesignation *string    `json:"depositor_designation,omitempty"`
+	DepositorContact     *string    `json:"depositor_contact,omitempty"`
+	DepositorEmail       *string    `json:"depositor_email,omitempty"`
+	DepositDate          *time.Time `json:"deposit_date,omitempty"`
+	DepositorRemarks     *string    `json:"depositor_remarks,omitempty"`
 
 	// Verification
-	VerificationStatus   string     `json:"verification_status"`
-	VerificationRemarks  *string    `json:"verification_remarks,omitempty"`
-	VerifiedBy           *string    `json:"verified_by,omitempty"`
-	VerifiedAt           *time.Time `json:"verified_at,omitempty"`
+	VerificationStatus  string     `json:"verification_status"`
+	VerificationRemarks *string    `json:"verification_remarks,omitempty"`
+	VerifiedBy          *string    `json:"verified_by,omitempty"`
+	VerifiedAt          *time.Time `json:"verified_at,omitempty"`
 
 	// MD Approval
-	MDSubmittedBy       *string    `json:"md_submitted_by,omitempty"`
-	MDSubmittedAt       *time.Time `json:"md_submitted_at,omitempty"`
-	MDDecidedBy         *string    `json:"md_decided_by,omitempty"`
-	MDDecidedAt         *time.Time `json:"md_decided_at,omitempty"`
-	MDDecisionRemarks   *string    `json:"md_decision_remarks,omitempty"`
+	MDSubmittedBy     *string    `json:"md_submitted_by,omitempty"`
+	MDSubmittedAt     *time.Time `json:"md_submitted_at,omitempty"`
+	MDDecidedBy       *string    `json:"md_decided_by,omitempty"`
+	MDDecidedAt       *time.Time `json:"md_decided_at,omitempty"`
+	MDDecisionRemarks *string    `json:"md_decision_remarks,omitempty"`
 
 	// Release / Refund Tracking
 	RefundStatus        string     `json:"refund_status"`
@@ -137,10 +140,10 @@ type TenderEMDDetails struct {
 	RefundUpdatedAt     *time.Time `json:"refund_updated_at,omitempty"`
 
 	// Metadata
-	CreatedBy           *string    `json:"created_by,omitempty"`
-	UpdatedBy           *string    `json:"updated_by,omitempty"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
+	CreatedBy *string   `json:"created_by,omitempty"`
+	UpdatedBy *string   `json:"updated_by,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type TenderEMDAuditLog struct {
@@ -160,13 +163,13 @@ type TenderEMDAuditLog struct {
 // Request DTOs
 // ────────────────────────────────────────
 
+// The amount lives on the tender (bid_workspaces.emd_amount) and status only
+// moves through the lifecycle actions, so neither is editable here.
 type UpdateBasicEMDRequest struct {
-	EMDAmount       *float64 `json:"emd_amount"`
-	DueDate         *string  `json:"due_date"`
-	ReferenceNumber *string  `json:"reference_number"`
-	Purpose         *string  `json:"purpose"`
-	Status          *string  `json:"status"`
-	Remarks         *string  `json:"remarks"`
+	DueDate         *string `json:"due_date"`
+	ReferenceNumber *string `json:"reference_number"`
+	Purpose         *string `json:"purpose"`
+	Remarks         *string `json:"remarks"`
 }
 
 type SubmitMDApprovalRequest struct {
@@ -178,60 +181,60 @@ type MDDecisionRequest struct {
 }
 
 type OnlinePaymentDetails struct {
-	TransactionID       string   `json:"transaction_id"`
-	PaymentGateway      string   `json:"payment_gateway"`
-	BankName            *string  `json:"bank_name,omitempty"`
-	TransactionDateTime string   `json:"transaction_datetime"`
-	PaymentAmount       float64  `json:"payment_amount"`
-	PaymentStatus       string   `json:"payment_status"`
-	ReceiptURL          *string  `json:"receipt_url,omitempty"`
+	TransactionID       string  `json:"transaction_id"`
+	PaymentGateway      string  `json:"payment_gateway"`
+	BankName            *string `json:"bank_name,omitempty"`
+	TransactionDateTime string  `json:"transaction_datetime"`
+	PaymentAmount       float64 `json:"payment_amount"`
+	PaymentStatus       string  `json:"payment_status"`
+	ReceiptURL          *string `json:"receipt_url,omitempty"`
 }
 
 type ChequePaymentDetails struct {
-	ChequeNumber      string   `json:"cheque_number"`
-	ChequeDate        string   `json:"cheque_date"`
-	BankName          string   `json:"bank_name"`
-	BranchName        *string  `json:"branch_name,omitempty"`
-	AccountHolderName *string  `json:"account_holder_name,omitempty"`
-	Amount            float64  `json:"amount"`
-	SubmissionDate    string   `json:"submission_date"`
-	ChequeStatus      string   `json:"cheque_status"`
-	ReceiptURL        *string  `json:"receipt_url,omitempty"`
+	ChequeNumber      string  `json:"cheque_number"`
+	ChequeDate        string  `json:"cheque_date"`
+	BankName          string  `json:"bank_name"`
+	BranchName        *string `json:"branch_name,omitempty"`
+	AccountHolderName *string `json:"account_holder_name,omitempty"`
+	Amount            float64 `json:"amount"`
+	SubmissionDate    string  `json:"submission_date"`
+	ChequeStatus      string  `json:"cheque_status"`
+	ReceiptURL        *string `json:"receipt_url,omitempty"`
 }
 
 type ChallanPaymentDetails struct {
-	ChallanNumber string   `json:"challan_number"`
-	ChallanDate   string   `json:"challan_date"`
-	BankName      string   `json:"bank_name"`
-	BranchName    *string  `json:"branch_name,omitempty"`
-	Amount        float64  `json:"amount"`
-	ChallanType   string   `json:"challan_type"`
-	ChallanStatus string   `json:"challan_status"`
-	ReceiptURL    *string  `json:"receipt_url,omitempty"`
+	ChallanNumber string  `json:"challan_number"`
+	ChallanDate   string  `json:"challan_date"`
+	BankName      string  `json:"bank_name"`
+	BranchName    *string `json:"branch_name,omitempty"`
+	Amount        float64 `json:"amount"`
+	ChallanType   string  `json:"challan_type"`
+	ChallanStatus string  `json:"challan_status"`
+	ReceiptURL    *string `json:"receipt_url,omitempty"`
 }
 
 type DepositorDetailsDTO struct {
-	Name           string  `json:"name"`
-	EmployeeID     *string `json:"employee_id,omitempty"`
-	Department     string  `json:"department"`
-	Designation    *string `json:"designation,omitempty"`
-	ContactNumber  *string `json:"contact_number,omitempty"`
-	EmailID        *string `json:"email_id,omitempty"`
-	DepositDate    string  `json:"deposit_date"`
-	Remarks        *string `json:"remarks,omitempty"`
+	Name          string  `json:"name"`
+	EmployeeID    *string `json:"employee_id,omitempty"`
+	Department    string  `json:"department"`
+	Designation   *string `json:"designation,omitempty"`
+	ContactNumber *string `json:"contact_number,omitempty"`
+	EmailID       *string `json:"email_id,omitempty"`
+	DepositDate   string  `json:"deposit_date"`
+	Remarks       *string `json:"remarks,omitempty"`
 }
 
 type RecordEMDPaymentRequest struct {
-	PaymentMode       string                  `json:"payment_mode" binding:"required,oneof=Online Cheque Challan"`
-	PaymentAmount     float64                 `json:"payment_amount" binding:"required"`
-	PaymentDate       string                  `json:"payment_date" binding:"required"`
-	PaymentStatus     string                  `json:"payment_status" binding:"required"`
-	PaymentReference  *string                 `json:"payment_reference"`
-	PaymentReceiptURL *string                 `json:"payment_receipt_url"`
-	OnlineDetails     *OnlinePaymentDetails   `json:"online_details,omitempty"`
-	ChequeDetails     *ChequePaymentDetails   `json:"cheque_details,omitempty"`
-	ChallanDetails    *ChallanPaymentDetails  `json:"challan_details,omitempty"`
-	Depositor         DepositorDetailsDTO     `json:"depositor" binding:"required"`
+	PaymentMode       string                 `json:"payment_mode" binding:"required,oneof=Online Cheque Challan"`
+	PaymentAmount     float64                `json:"payment_amount" binding:"required"`
+	PaymentDate       string                 `json:"payment_date" binding:"required"`
+	PaymentStatus     string                 `json:"payment_status" binding:"required"`
+	PaymentReference  *string                `json:"payment_reference"`
+	PaymentReceiptURL *string                `json:"payment_receipt_url"`
+	OnlineDetails     *OnlinePaymentDetails  `json:"online_details,omitempty"`
+	ChequeDetails     *ChequePaymentDetails  `json:"cheque_details,omitempty"`
+	ChallanDetails    *ChallanPaymentDetails `json:"challan_details,omitempty"`
+	Depositor         DepositorDetailsDTO    `json:"depositor" binding:"required"`
 }
 
 type VerifyEMDPaymentRequest struct {
@@ -256,71 +259,68 @@ type UpdateEMDRefundRequest struct {
 // ────────────────────────────────────────
 
 type TenderEMDResponse struct {
-	ID                  string          `json:"id"`
-	BidID               string          `json:"bid_id"`
-	EMDAmount           float64         `json:"emd_amount"`
-	DueDate             *time.Time      `json:"due_date,omitempty"`
-	ReferenceNumber     *string         `json:"reference_number,omitempty"`
-	Purpose             *string         `json:"purpose,omitempty"`
-	Status              string          `json:"status"`
-	Remarks             *string         `json:"remarks,omitempty"`
+	ID              string     `json:"id"`
+	BidID           string     `json:"bid_id"`
+	EMDAmount       float64    `json:"emd_amount"`
+	DueDate         *time.Time `json:"due_date,omitempty"`
+	ReferenceNumber *string    `json:"reference_number,omitempty"`
+	Purpose         *string    `json:"purpose,omitempty"`
+	Status          string     `json:"status"`
+	Remarks         *string    `json:"remarks,omitempty"`
 
 	// Payment Details
-	PaymentMode         *string         `json:"payment_mode,omitempty"`
-	PaymentAmount       *float64        `json:"payment_amount,omitempty"`
-	PaymentDate         *time.Time      `json:"payment_date,omitempty"`
-	PaymentStatus       *string         `json:"payment_status,omitempty"`
-	PaymentReference    *string         `json:"payment_reference,omitempty"`
-	PaymentDetails      json.RawMessage `json:"payment_details,omitempty"`
-	PaymentReceiptURL   *string         `json:"payment_receipt_url,omitempty"`
-	PaymentEnteredBy    *UserSummary    `json:"payment_entered_by,omitempty"`
-	PaymentEnteredAt    *time.Time      `json:"payment_entered_at,omitempty"`
+	PaymentMode       *string         `json:"payment_mode,omitempty"`
+	PaymentAmount     *float64        `json:"payment_amount,omitempty"`
+	PaymentDate       *time.Time      `json:"payment_date,omitempty"`
+	PaymentStatus     *string         `json:"payment_status,omitempty"`
+	PaymentReference  *string         `json:"payment_reference,omitempty"`
+	PaymentDetails    json.RawMessage `json:"payment_details,omitempty"`
+	PaymentReceiptURL *string         `json:"payment_receipt_url,omitempty"`
+	PaymentEnteredAt  *time.Time      `json:"payment_entered_at,omitempty"`
 
 	// Depositor / Person Details
-	DepositorName       *string         `json:"depositor_name,omitempty"`
-	DepositorEmployeeID *string         `json:"depositor_employee_id,omitempty"`
-	DepositorDepartment *string         `json:"depositor_department,omitempty"`
-	DepositorDesignation *string        `json:"depositor_designation,omitempty"`
-	DepositorContact    *string         `json:"depositor_contact,omitempty"`
-	DepositorEmail      *string         `json:"depositor_email,omitempty"`
-	DepositDate         *time.Time      `json:"deposit_date,omitempty"`
-	DepositorRemarks    *string         `json:"depositor_remarks,omitempty"`
+	DepositorName        *string    `json:"depositor_name,omitempty"`
+	DepositorEmployeeID  *string    `json:"depositor_employee_id,omitempty"`
+	DepositorDepartment  *string    `json:"depositor_department,omitempty"`
+	DepositorDesignation *string    `json:"depositor_designation,omitempty"`
+	DepositorContact     *string    `json:"depositor_contact,omitempty"`
+	DepositorEmail       *string    `json:"depositor_email,omitempty"`
+	DepositDate          *time.Time `json:"deposit_date,omitempty"`
+	DepositorRemarks     *string    `json:"depositor_remarks,omitempty"`
 
 	// Verification
-	VerificationStatus   string         `json:"verification_status"`
-	VerificationRemarks  *string        `json:"verification_remarks,omitempty"`
-	VerifiedBy           *UserSummary   `json:"verified_by,omitempty"`
-	VerifiedAt           *time.Time     `json:"verified_at,omitempty"`
+	VerificationStatus  string       `json:"verification_status"`
+	VerificationRemarks *string      `json:"verification_remarks,omitempty"`
+	VerifiedBy          *UserSummary `json:"verified_by,omitempty"`
+	VerifiedAt          *time.Time   `json:"verified_at,omitempty"`
 
 	// MD Approval
-	MDSubmittedBy       *UserSummary    `json:"md_submitted_by,omitempty"`
-	MDSubmittedAt       *time.Time      `json:"md_submitted_at,omitempty"`
-	MDDecidedBy         *UserSummary    `json:"md_decided_by,omitempty"`
-	MDDecidedAt         *time.Time      `json:"md_decided_at,omitempty"`
-	MDDecisionRemarks   *string         `json:"md_decision_remarks,omitempty"`
+	MDSubmittedBy     *UserSummary `json:"md_submitted_by,omitempty"`
+	MDSubmittedAt     *time.Time   `json:"md_submitted_at,omitempty"`
+	MDDecidedBy       *UserSummary `json:"md_decided_by,omitempty"`
+	MDDecidedAt       *time.Time   `json:"md_decided_at,omitempty"`
+	MDDecisionRemarks *string      `json:"md_decision_remarks,omitempty"`
 
 	// Release / Refund Tracking
-	RefundStatus        string          `json:"refund_status"`
-	ExpectedRefundDate  *time.Time      `json:"expected_refund_date,omitempty"`
-	ActualRefundDate    *time.Time      `json:"actual_refund_date,omitempty"`
-	RefundAmount        *float64        `json:"refund_amount,omitempty"`
-	RefundReferenceNo   *string         `json:"refund_reference_no,omitempty"`
-	RefundTransactionID *string         `json:"refund_transaction_id,omitempty"`
-	RefundMode          *string         `json:"refund_mode,omitempty"`
-	RefundRemarks       *string         `json:"refund_remarks,omitempty"`
-	RefundReceiptURL    *string         `json:"refund_receipt_url,omitempty"`
-	RefundUpdatedBy     *UserSummary    `json:"refund_updated_by,omitempty"`
-	RefundUpdatedAt     *time.Time      `json:"refund_updated_at,omitempty"`
+	RefundStatus        string     `json:"refund_status"`
+	ExpectedRefundDate  *time.Time `json:"expected_refund_date,omitempty"`
+	ActualRefundDate    *time.Time `json:"actual_refund_date,omitempty"`
+	RefundAmount        *float64   `json:"refund_amount,omitempty"`
+	RefundReferenceNo   *string    `json:"refund_reference_no,omitempty"`
+	RefundTransactionID *string    `json:"refund_transaction_id,omitempty"`
+	RefundMode          *string    `json:"refund_mode,omitempty"`
+	RefundRemarks       *string    `json:"refund_remarks,omitempty"`
+	RefundReceiptURL    *string    `json:"refund_receipt_url,omitempty"`
+	RefundUpdatedAt     *time.Time `json:"refund_updated_at,omitempty"`
 
-	// Audit Metadata
-	CreatedBy           *UserSummary    `json:"created_by,omitempty"`
-	UpdatedBy           *UserSummary    `json:"updated_by,omitempty"`
-	CreatedAt           time.Time       `json:"created_at"`
-	UpdatedAt           time.Time       `json:"updated_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 
-	// Summary Flags for UI convenience
-	IsMDApproved        bool            `json:"is_md_approved"`
-	IsPaid              bool            `json:"is_paid"`
-	IsVerified          bool            `json:"is_verified"`
-	IsRefunded          bool            `json:"is_refunded"`
+	// Derived from Status only.
+	IsMDApproved bool `json:"is_md_approved"`
+	IsPaid       bool `json:"is_paid"`
+
+	// Set only on the read-only view of an exempted / not-applicable tender.
+	ExemptionType   *string `json:"exemption_type,omitempty"`
+	ExemptionReason *string `json:"exemption_reason,omitempty"`
 }

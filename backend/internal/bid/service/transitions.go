@@ -35,11 +35,17 @@ var allowedTransitions = map[string]map[string][]string{
 	},
 }
 
+// emdNotRequired reports a tender with no EMD to process: exempted or not
+// applicable. It has no lifecycle, approval or payment.
+func emdNotRequired(bid *domain.BidWorkspace) bool {
+	return bid.EMDExempted || bid.EMDNotApplicable
+}
+
 // skipEMDStage keeps the workflow pointer off EMD Processing when the tender
 // has no EMD to process (exempted or not applicable): landing there moves it
 // straight on to Internal Approval.
-func skipEMDStage(stage string, emdNotRequired bool) string {
-	if emdNotRequired && stage == domain.StageEMDProcessing {
+func skipEMDStage(stage string, notRequired bool) string {
+	if notRequired && stage == domain.StageEMDProcessing {
 		return domain.StageInternalApproval
 	}
 	return stage

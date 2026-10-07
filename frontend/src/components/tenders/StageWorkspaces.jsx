@@ -3647,11 +3647,13 @@ export function Stage6Workspace({ bid, onRefresh }) {
   const [alertRemarks, setAlertRemarks] = useState('')
   const [handoffRemarks, setHandoffRemarks] = useState('')
   const [showEmdDecision, setShowEmdDecision] = useState(false)
-  const { hasRole, isAdmin } = usePermissions()
+  const { hasRole } = usePermissions()
+  // Role check, not the admin.system permission: the override is an ADMIN/SUPER_ADMIN action server-side.
+  const isMD = hasRole('ADMIN') || hasRole('SUPER_ADMIN')
   const isFinance = hasRole('FINANCE')
   // EMD alerts must be triggered by someone other than Finance — Bid Executive,
   // Manager, or Admin — so Finance can't self-trigger its own processing request.
-  const canTriggerEmdAlert = isAdmin || hasRole('MANAGER') || hasRole('ACCOUNT_MANAGER') || hasRole('BID_EXECUTIVE')
+  const canTriggerEmdAlert = isMD || hasRole('MANAGER') || hasRole('ACCOUNT_MANAGER') || hasRole('BID_EXECUTIVE')
   // EMD isn't required, so completing THIS stage is handled by Stage 5
   // instead — Internal-Approval readiness is only framed here when EMD
   // actually has to be processed (mirrors Stage5Workspace's emdNotRequired).
@@ -3809,7 +3811,7 @@ export function Stage6Workspace({ bid, onRefresh }) {
               🔒 EMD alert must be triggered by a Bid Executive/Manager/Admin
             </span>
           ) : null}
-          {(isFinance || isAdmin) && !bid.emd_ready && (
+          {(isFinance || isMD) && !bid.emd_ready && (
             <span title={isFinance ? undefined : 'Super Admin override — this bypasses Finance confirmation and is recorded as such.'}>
               <Button size="sm" onClick={handleMarkEmdReady} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold">
                 <CheckCircle2 className="size-3.5" /> {isFinance ? 'Mark EMD Ready' : 'Mark EMD Ready (Admin Override)'}
@@ -3872,7 +3874,7 @@ export function Stage6Workspace({ bid, onRefresh }) {
         </div>
       ) : (
         <div className="px-3.5 py-2 rounded-lg bg-muted/40 border border-border text-xs font-medium text-muted-foreground flex items-center gap-1.5 max-w-md">
-          <Hourglass className="size-3.5" /> {(isFinance || isAdmin) ? 'Click "Mark EMD Ready" once EMD is processed' : 'Awaiting confirmation from the Finance team'}
+          <Hourglass className="size-3.5" /> {(isFinance || isMD) ? 'Click "Mark EMD Ready" once EMD is processed' : 'Awaiting confirmation from the Finance team'}
         </div>
       )}
 

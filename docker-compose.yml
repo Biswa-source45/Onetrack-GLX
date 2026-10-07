@@ -58,11 +58,14 @@ services:
       - ./feedback-assets:/app/uploads/feedback
       # Lead documents: one folder per lead, <lead>/docs/[<Category>/]<file>.
       - ./leads-assets:/app/uploads/leads
+      # EMD payment/refund receipts: one folder per tender.
+      - ./emd-assets:/app/uploads/emd
     environment:
       - SERVER_PORT=8081
       - GIN_MODE=release
       - UPLOAD_DIR=/app/uploads/feedback
       - LEADS_UPLOAD_DIR=/app/uploads/leads
+      - EMD_UPLOAD_DIR=/app/uploads/emd
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_USER=postgres
@@ -82,6 +85,10 @@ services:
       - EMAIL_USERNAME=${EMAIL_USERNAME:-}
       - EMAIL_PASSWORD=${EMAIL_PASSWORD:-}
       - APP_BASE_URL=${APP_BASE_URL:-}
+      # 72-working-hour deadline engine: off unless explicitly "true". The first
+      # run after enabling only records already-in-window tenders; it sends nothing.
+      - CALENDAR_SCHEDULER_ENABLED=${CALENDAR_SCHEDULER_ENABLED:-false}
+      - GOOGLE_CALENDAR_API_KEY=${GOOGLE_CALENDAR_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

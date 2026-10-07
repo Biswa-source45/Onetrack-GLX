@@ -44,7 +44,11 @@ type fakeBidRepo struct {
 	pricingCandidates []domain.PricingWorkspaceRow
 	pricingWindow     int
 
-	emd *domain.TenderEMDDetails
+	emd         *domain.TenderEMDDetails
+	emdLogs     []*domain.TenderEMDAuditLog
+	emdClosed   bool
+	checklists  []domain.BidChecklist
+	lastToggled string // status ToggleChecklist was asked to set
 }
 
 type memberCall struct {
@@ -123,7 +127,7 @@ func (f *fakeBidRepo) BulkInsertChecklistsWithGroup(ctx context.Context, bidID s
 	return nil
 }
 func (f *fakeBidRepo) GetChecklists(ctx context.Context, bidID string) ([]domain.BidChecklist, error) {
-	return nil, nil
+	return f.checklists, nil
 }
 func (f *fakeBidRepo) GetChecklistsByGroup(ctx context.Context, bidID string, group string) ([]domain.BidChecklist, error) {
 	return nil, nil
@@ -134,9 +138,6 @@ func (f *fakeBidRepo) AddChecklist(ctx context.Context, bidID string, title stri
 func (f *fakeBidRepo) AddChecklistWithGroup(ctx context.Context, bidID string, title string, sortOrder int, group string) (*domain.BidChecklist, error) {
 	return nil, nil
 }
-func (f *fakeBidRepo) UpdateChecklist(ctx context.Context, checklistID string, title *string, sortOrder *int) error {
-	return nil
-}
 func (f *fakeBidRepo) UpdateChecklistDetails(ctx context.Context, checklistID string, req *domain.UpdateChecklistRequest) error {
 	return nil
 }
@@ -144,7 +145,8 @@ func (f *fakeBidRepo) DeleteChecklist(ctx context.Context, checklistID string) e
 func (f *fakeBidRepo) ReorderChecklists(ctx context.Context, items []domain.ReorderChecklistItem) error {
 	return nil
 }
-func (f *fakeBidRepo) ToggleChecklist(ctx context.Context, checklistID string, isDone bool, doneBy string) error {
+func (f *fakeBidRepo) ToggleChecklist(ctx context.Context, checklistID string, isDone bool, doneBy, status string) error {
+	f.lastToggled = status
 	return nil
 }
 func (f *fakeBidRepo) RecordFieldSuggestions(ctx context.Context, entries map[string][]string) error {
@@ -212,23 +214,56 @@ func (f *fakeBidRepo) DecidePendingEdit(ctx context.Context, editID string, stat
 }
 
 func (f *fakeBidRepo) GetEMDDetails(ctx context.Context, bidID string) (*domain.TenderEMDDetails, error) {
-	if f.emd == nil {
-		f.emd = &domain.TenderEMDDetails{BidID: bidID, EMDAmount: 50000, Status: domain.EMDStatusPending}
-	}
 	return f.emd, nil
-}
-
-func (f *fakeBidRepo) UpsertEMDDetails(ctx context.Context, emd *domain.TenderEMDDetails) error {
-	f.emd = emd
-	return nil
-}
-
-func (f *fakeBidRepo) LogEMDAction(ctx context.Context, log *domain.TenderEMDAuditLog) error {
-	return nil
 }
 
 func (f *fakeBidRepo) GetEMDAuditLogs(ctx context.Context, bidID string) ([]domain.TenderEMDAuditLog, error) {
 	return nil, nil
+}
+
+func (f *fakeBidRepo) CloseOpenEMD(ctx context.Context, bidID string) error {
+	f.emdClosed = true
+	return nil
+}
+
+// WithEMDTx runs fn against the in-memory row and puts it back if fn fails,
+// like a rolled-back transaction.
+func (f *fakeBidRepo) WithEMDTx(ctx context.Context, bidID string, fn func(tx domain.EMDTx) error) error {
+	savedEMD, savedLogs, savedReady := f.emd, len(f.emdLogs), f.bid.EMDReady
+	if err := fn(fakeEMDTx{f}); err != nil {
+		f.emd, f.emdLogs, f.bid.EMDReady = savedEMD, f.emdLogs[:savedLogs], savedReady
+		return err
+	}
+	return nil
+}
+
+type fakeEMDTx struct{ f *fakeBidRepo }
+
+func (t fakeEMDTx) Lock(ctx context.Context, def *domain.TenderEMDDetails) (*domain.TenderEMDDetails, error) {
+	if t.f.emd == nil {
+		c := *def
+		c.ID = "emd-1"
+		t.f.emd = &c
+	}
+	c := *t.f.emd
+	return &c, nil
+}
+func (t fakeEMDTx) Save(ctx context.Context, emd *domain.TenderEMDDetails) error {
+	c := *emd
+	t.f.emd = &c
+	return nil
+}
+func (t fakeEMDTx) Log(ctx context.Context, entry *domain.TenderEMDAuditLog) error {
+	t.f.emdLogs = append(t.f.emdLogs, entry)
+	return nil
+}
+func (t fakeEMDTx) MarkBidEMDReady(ctx context.Context, at time.Time) error {
+	t.f.bid.EMDReady = true
+	return nil
+}
+func (t fakeEMDTx) MarkBidEMDReturned(ctx context.Context, at time.Time) error {
+	t.f.bid.EMDReturned = true
+	return nil
 }
 
 // fakeSystemLog is a no-op Recorder — tests that don't assert on System

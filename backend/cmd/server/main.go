@@ -139,7 +139,7 @@ func main() {
 	// Initialize bid module
 	bidRepository := bidRepo.NewPostgresBidRepository(dbPool)
 	bidSvc := bidService.NewBidService(bidRepository, alertSvc, systemlogSvc)
-	bidHdlr := bidHandler.NewBidHandler(bidSvc)
+	bidHdlr := bidHandler.NewBidHandler(bidSvc, cfg.EMDUploadDir)
 	bidImportHdlr := bidHandler.NewBulkImportHandler(dbPool)
 	bidHandler.RegisterBidRoutes(v1, bidHdlr, bidImportHdlr, authMiddleware)
 
@@ -156,16 +156,17 @@ func main() {
 	leadHandler.RegisterLeadRoutes(v1, leadHdlr, authMiddleware)
 	// Initialize Working Calendar, Google Sync & 72-Hour Deadline Engine
 	calendarRepository := calendarRepo.NewPostgresCalendarRepository(dbPool)
-	calendarSvc := calendarService.NewWorkingCalendarService(calendarRepository, alertSvc, emailSvc, systemlogSvc)
-	googleSyncSvc := calendarService.NewGoogleSyncService(calendarRepository, systemlogSvc)
+	calendarSvc := calendarService.NewWorkingCalendarService(calendarRepository, alertSvc, systemlogSvc)
+	googleSyncSvc := calendarService.NewGoogleSyncService(calendarRepository, systemlogSvc, cfg.GoogleCalendarAPIKey)
 	calendarHdlr := calendarHandler.NewCalendarHandler(calendarRepository, calendarSvc, googleSyncSvc)
 	calendarHandler.RegisterCalendarRoutes(v1, calendarHdlr, authMiddleware)
 
-	// Start Working Deadline background scheduler (dynamic interval from calendar configuration)
-	deadlineScheduler := calendarService.NewBackgroundScheduler(calendarSvc, calendarRepository, 10*time.Minute)
-	calendarHdlr.SetScheduler(deadlineScheduler)
-	deadlineScheduler.Start()
-	defer deadlineScheduler.Stop()
+	// The deadline engine sends alerts, so it only runs when CALENDAR_SCHEDULER_ENABLED=true.
+	if cfg.CalendarSchedulerEnabled {
+		deadlineScheduler := calendarService.NewBackgroundScheduler(calendarSvc, calendarRepository)
+		deadlineScheduler.Start()
+		defer deadlineScheduler.Stop()
+	}
 
 	// Start server
 	srv := &http.Server{

@@ -5,31 +5,32 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onetrack/backend/internal/bid/domain"
 )
 
-// GetEMDDetails fetches the EMD record for a bid workspace.
-// If no record exists yet, it initializes one lazily from the tender workspace.
-func (r *postgresBidRepo) GetEMDDetails(ctx context.Context, bidID string) (*domain.TenderEMDDetails, error) {
-	query := `
-		SELECT id, bid_id, emd_amount, due_date, reference_number, purpose, status, remarks,
-		       payment_mode, payment_amount, payment_date, payment_status, payment_reference,
-		       COALESCE(payment_details, '{}'::jsonb), payment_receipt_url, payment_entered_by, payment_entered_at,
-		       depositor_name, depositor_employee_id, depositor_department, depositor_designation,
-		       depositor_contact, depositor_email, deposit_date, depositor_remarks,
-		       verification_status, verification_remarks, verified_by, verified_at,
-		       md_submitted_by, md_submitted_at, md_decided_by, md_decided_at, md_decision_remarks,
-		       refund_status, expected_refund_date, actual_refund_date, refund_amount,
-		       refund_reference_no, refund_transaction_id, refund_mode, refund_remarks,
-		       refund_receipt_url, refund_updated_by, refund_updated_at,
-		       created_by, updated_by, created_at, updated_at
-		FROM bid.tender_emd_details
-		WHERE bid_id = $1
-	`
+const emdSelect = `
+	SELECT id, bid_id, emd_amount, due_date, reference_number, purpose, status, remarks,
+	       payment_mode, payment_amount, payment_date, payment_status, payment_reference,
+	       COALESCE(payment_details, '{}'::jsonb), payment_receipt_url, payment_entered_by, payment_entered_at,
+	       depositor_name, depositor_employee_id, depositor_department, depositor_designation,
+	       depositor_contact, depositor_email, deposit_date, depositor_remarks,
+	       verification_status, verification_remarks, verified_by, verified_at,
+	       md_submitted_by, md_submitted_at, md_decided_by, md_decided_at, md_decision_remarks,
+	       refund_status, expected_refund_date, actual_refund_date, refund_amount,
+	       refund_reference_no, refund_transaction_id, refund_mode, refund_remarks,
+	       refund_receipt_url, refund_updated_by, refund_updated_at,
+	       created_by, updated_by, created_at, updated_at
+	FROM bid.tender_emd_details
+	WHERE bid_id = $1`
+
+func scanEMD(row pgx.Row) (*domain.TenderEMDDetails, error) {
 	emd := &domain.TenderEMDDetails{}
-	err := r.pool.QueryRow(ctx, query, bidID).Scan(
+	err := row.Scan(
 		&emd.ID, &emd.BidID, &emd.EMDAmount, &emd.DueDate, &emd.ReferenceNumber, &emd.Purpose, &emd.Status, &emd.Remarks,
 		&emd.PaymentMode, &emd.PaymentAmount, &emd.PaymentDate, &emd.PaymentStatus, &emd.PaymentReference,
 		&emd.PaymentDetails, &emd.PaymentReceiptURL, &emd.PaymentEnteredBy, &emd.PaymentEnteredAt,
@@ -42,204 +43,175 @@ func (r *postgresBidRepo) GetEMDDetails(ctx context.Context, bidID string) (*dom
 		&emd.RefundReceiptURL, &emd.RefundUpdatedBy, &emd.RefundUpdatedAt,
 		&emd.CreatedBy, &emd.UpdatedBy, &emd.CreatedAt, &emd.UpdatedAt,
 	)
+	return emd, err
+}
 
-	if err == nil {
-		return emd, nil
+// GetEMDDetails reads the lifecycle row without creating it; nil means the
+// tender has none yet.
+func (r *postgresBidRepo) GetEMDDetails(ctx context.Context, bidID string) (*domain.TenderEMDDetails, error) {
+	emd, err := scanEMD(r.pool.QueryRow(ctx, emdSelect, bidID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
 	}
-
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if err != nil {
 		return nil, fmt.Errorf("query tender emd details: %w", err)
 	}
+	return emd, nil
+}
 
-	// Record doesn't exist yet: initialize lazily from bid_workspaces
-	bid, err := r.GetByID(ctx, bidID)
+func (r *postgresBidRepo) WithEMDTx(ctx context.Context, bidID string, fn func(tx domain.EMDTx) error) error {
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("lookup tender for emd init: %w", err)
+		return fmt.Errorf("begin emd tx: %w", err)
 	}
-
-	initialAmount := 0.0
-	if bid.EMDAmount != nil {
-		initialAmount = *bid.EMDAmount
+	defer tx.Rollback(ctx)
+	if err := fn(&pgEMDTx{tx: tx, bidID: bidID}); err != nil {
+		return err
 	}
-
-	initialRef := ""
-	if bid.GemBidNo != nil && *bid.GemBidNo != "" {
-		initialRef = *bid.GemBidNo
-	} else if bid.BidNo != nil {
-		initialRef = *bid.BidNo
-	}
-
-	initialPurpose := "Tender EMD for " + bid.Title
-
-	initialStatus := domain.EMDStatusPending
-	if bid.EMDReady {
-		initialStatus = domain.EMDStatusPaid
-	}
-
-	initialPaymentMode := "Online"
-	if bid.EMDType != nil && *bid.EMDType != "" {
-		if *bid.EMDType == "DD" {
-			initialPaymentMode = "Cheque"
-		} else {
-			initialPaymentMode = "Online"
-		}
-	}
-
-	newEMD := &domain.TenderEMDDetails{
-		BidID:               bidID,
-		EMDAmount:           initialAmount,
-		DueDate:             bid.ClosingDate,
-		ReferenceNumber:     &initialRef,
-		Purpose:             &initialPurpose,
-		Status:              initialStatus,
-		VerificationStatus:  domain.VerificationStatusPending,
-		RefundStatus:        domain.RefundStatusPending,
-		PaymentMode:         &initialPaymentMode,
-		PaymentDetails:      []byte("{}"),
-		CreatedBy:           &bid.CreatedBy,
-		UpdatedBy:           &bid.CreatedBy,
-	}
-
-	if err := r.UpsertEMDDetails(ctx, newEMD); err != nil {
-		return nil, fmt.Errorf("auto-initialize emd record: %w", err)
-	}
-
-	// Re-fetch to populate returned IDs and generated timestamps
-	return r.GetEMDDetails(ctx, bidID)
+	return tx.Commit(ctx)
 }
 
-// UpsertEMDDetails inserts or updates the 1-to-1 EMD details for a bid workspace.
-func (r *postgresBidRepo) UpsertEMDDetails(ctx context.Context, emd *domain.TenderEMDDetails) error {
-	paymentDetailsJSON := emd.PaymentDetails
-	if len(paymentDetailsJSON) == 0 {
-		paymentDetailsJSON = []byte("{}")
-	}
-
-	query := `
-		INSERT INTO bid.tender_emd_details (
-			bid_id, emd_amount, due_date, reference_number, purpose, status, remarks,
-			payment_mode, payment_amount, payment_date, payment_status, payment_reference,
-			payment_details, payment_receipt_url, payment_entered_by, payment_entered_at,
-			depositor_name, depositor_employee_id, depositor_department, depositor_designation,
-			depositor_contact, depositor_email, deposit_date, depositor_remarks,
-			verification_status, verification_remarks, verified_by, verified_at,
-			md_submitted_by, md_submitted_at, md_decided_by, md_decided_at, md_decision_remarks,
-			refund_status, expected_refund_date, actual_refund_date, refund_amount,
-			refund_reference_no, refund_transaction_id, refund_mode, refund_remarks,
-			refund_receipt_url, refund_updated_by, refund_updated_at,
-			created_by, updated_by, updated_at
-		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7,
-			$8, $9, $10, $11, $12,
-			$13, $14, $15, $16,
-			$17, $18, $19, $20,
-			$21, $22, $23, $24,
-			$25, $26, $27, $28,
-			$29, $30, $31, $32, $33,
-			$34, $35, $36, $37,
-			$38, $39, $40, $41,
-			$42, $43, $44,
-			$45, $46, NOW()
+// CloseOpenEMD retires rows that never reached payment, leaving an audit entry.
+func (r *postgresBidRepo) CloseOpenEMD(ctx context.Context, bidID string) error {
+	_, err := r.pool.Exec(ctx, `
+		WITH closed AS (
+			UPDATE bid.tender_emd_details SET status = $2, updated_at = NOW()
+			WHERE bid_id = $1 AND status IN ('Pending', 'Pending MD Approval', 'Approved', 'MD Approved', 'Rejected')
+			RETURNING id, bid_id
 		)
-		ON CONFLICT (bid_id) DO UPDATE SET
-			emd_amount = EXCLUDED.emd_amount,
-			due_date = EXCLUDED.due_date,
-			reference_number = EXCLUDED.reference_number,
-			purpose = EXCLUDED.purpose,
-			status = EXCLUDED.status,
-			remarks = EXCLUDED.remarks,
-			payment_mode = EXCLUDED.payment_mode,
-			payment_amount = EXCLUDED.payment_amount,
-			payment_date = EXCLUDED.payment_date,
-			payment_status = EXCLUDED.payment_status,
-			payment_reference = EXCLUDED.payment_reference,
-			payment_details = EXCLUDED.payment_details,
-			payment_receipt_url = EXCLUDED.payment_receipt_url,
-			payment_entered_by = EXCLUDED.payment_entered_by,
-			payment_entered_at = EXCLUDED.payment_entered_at,
-			depositor_name = EXCLUDED.depositor_name,
-			depositor_employee_id = EXCLUDED.depositor_employee_id,
-			depositor_department = EXCLUDED.depositor_department,
-			depositor_designation = EXCLUDED.depositor_designation,
-			depositor_contact = EXCLUDED.depositor_contact,
-			depositor_email = EXCLUDED.depositor_email,
-			deposit_date = EXCLUDED.deposit_date,
-			depositor_remarks = EXCLUDED.depositor_remarks,
-			verification_status = EXCLUDED.verification_status,
-			verification_remarks = EXCLUDED.verification_remarks,
-			verified_by = EXCLUDED.verified_by,
-			verified_at = EXCLUDED.verified_at,
-			md_submitted_by = EXCLUDED.md_submitted_by,
-			md_submitted_at = EXCLUDED.md_submitted_at,
-			md_decided_by = EXCLUDED.md_decided_by,
-			md_decided_at = EXCLUDED.md_decided_at,
-			md_decision_remarks = EXCLUDED.md_decision_remarks,
-			refund_status = EXCLUDED.refund_status,
-			expected_refund_date = EXCLUDED.expected_refund_date,
-			actual_refund_date = EXCLUDED.actual_refund_date,
-			refund_amount = EXCLUDED.refund_amount,
-			refund_reference_no = EXCLUDED.refund_reference_no,
-			refund_transaction_id = EXCLUDED.refund_transaction_id,
-			refund_mode = EXCLUDED.refund_mode,
-			refund_remarks = EXCLUDED.refund_remarks,
-			refund_receipt_url = EXCLUDED.refund_receipt_url,
-			refund_updated_by = EXCLUDED.refund_updated_by,
-			refund_updated_at = EXCLUDED.refund_updated_at,
-			updated_by = EXCLUDED.updated_by,
-			updated_at = NOW()
-		RETURNING id, created_at, updated_at
-	`
-
-	return r.pool.QueryRow(ctx, query,
-		emd.BidID, emd.EMDAmount, emd.DueDate, emd.ReferenceNumber, emd.Purpose, emd.Status, emd.Remarks,
-		emd.PaymentMode, emd.PaymentAmount, emd.PaymentDate, emd.PaymentStatus, emd.PaymentReference,
-		paymentDetailsJSON, emd.PaymentReceiptURL, emd.PaymentEnteredBy, emd.PaymentEnteredAt,
-		emd.DepositorName, emd.DepositorEmployeeID, emd.DepositorDepartment, emd.DepositorDesignation,
-		emd.DepositorContact, emd.DepositorEmail, emd.DepositDate, emd.DepositorRemarks,
-		emd.VerificationStatus, emd.VerificationRemarks, emd.VerifiedBy, emd.VerifiedAt,
-		emd.MDSubmittedBy, emd.MDSubmittedAt, emd.MDDecidedBy, emd.MDDecidedAt, emd.MDDecisionRemarks,
-		emd.RefundStatus, emd.ExpectedRefundDate, emd.ActualRefundDate, emd.RefundAmount,
-		emd.RefundReferenceNo, emd.RefundTransactionID, emd.RefundMode, emd.RefundRemarks,
-		emd.RefundReceiptURL, emd.RefundUpdatedBy, emd.RefundUpdatedAt,
-		emd.CreatedBy, emd.UpdatedBy,
-	).Scan(&emd.ID, &emd.CreatedAt, &emd.UpdatedAt)
+		INSERT INTO bid.tender_emd_audit_logs (bid_id, emd_id, action, remarks)
+		SELECT bid_id, id, $3, 'Tender marked EMD exempted / not applicable' FROM closed`,
+		bidID, domain.EMDStatusNotApplicable, domain.EMDActionClosed)
+	return err
 }
 
-// LogEMDAction writes an immutable audit log entry for EMD actions.
-func (r *postgresBidRepo) LogEMDAction(ctx context.Context, log *domain.TenderEMDAuditLog) error {
-	detailsJSON := log.Details
-	if len(detailsJSON) == 0 {
-		detailsJSON = json.RawMessage("{}")
+type pgEMDTx struct {
+	tx    pgx.Tx
+	bidID string
+}
+
+func (t *pgEMDTx) Lock(ctx context.Context, def *domain.TenderEMDDetails) (*domain.TenderEMDDetails, error) {
+	if _, err := t.tx.Exec(ctx, `
+		INSERT INTO bid.tender_emd_details (
+			bid_id, emd_amount, due_date, reference_number, purpose, status,
+			payment_mode, refund_status, created_by, updated_by
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+		ON CONFLICT (bid_id) DO NOTHING`,
+		t.bidID, def.EMDAmount, def.DueDate, def.ReferenceNumber, def.Purpose, def.Status,
+		def.PaymentMode, def.RefundStatus, def.CreatedBy,
+	); err != nil {
+		return nil, fmt.Errorf("init emd row: %w", err)
+	}
+	emd, err := scanEMD(t.tx.QueryRow(ctx, emdSelect+" FOR UPDATE", t.bidID))
+	if err != nil {
+		return nil, fmt.Errorf("lock emd row: %w", err)
+	}
+	return emd, nil
+}
+
+func (t *pgEMDTx) Save(ctx context.Context, emd *domain.TenderEMDDetails) error {
+	args := []any{emd.ID}
+	var sets []string
+	set := func(col string, v any) {
+		args = append(args, v)
+		sets = append(sets, fmt.Sprintf("%s = $%d", col, len(args)))
+	}
+	paymentDetails := emd.PaymentDetails
+	if len(paymentDetails) == 0 {
+		paymentDetails = []byte("{}")
 	}
 
-	query := `
-		INSERT INTO bid.tender_emd_audit_logs (
-			bid_id, emd_id, action, actor_id, actor_name, actor_role, remarks, details
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, created_at
-	`
+	set("emd_amount", emd.EMDAmount)
+	set("due_date", emd.DueDate)
+	set("reference_number", emd.ReferenceNumber)
+	set("purpose", emd.Purpose)
+	set("status", emd.Status)
+	set("remarks", emd.Remarks)
+	set("payment_mode", emd.PaymentMode)
+	set("payment_amount", emd.PaymentAmount)
+	set("payment_date", emd.PaymentDate)
+	set("payment_status", emd.PaymentStatus)
+	set("payment_reference", emd.PaymentReference)
+	set("payment_details", paymentDetails)
+	set("payment_receipt_url", emd.PaymentReceiptURL)
+	set("payment_entered_by", emd.PaymentEnteredBy)
+	set("payment_entered_at", emd.PaymentEnteredAt)
+	set("depositor_name", emd.DepositorName)
+	set("depositor_employee_id", emd.DepositorEmployeeID)
+	set("depositor_department", emd.DepositorDepartment)
+	set("depositor_designation", emd.DepositorDesignation)
+	set("depositor_contact", emd.DepositorContact)
+	set("depositor_email", emd.DepositorEmail)
+	set("deposit_date", emd.DepositDate)
+	set("depositor_remarks", emd.DepositorRemarks)
+	set("verification_status", emd.VerificationStatus)
+	set("verification_remarks", emd.VerificationRemarks)
+	set("verified_by", emd.VerifiedBy)
+	set("verified_at", emd.VerifiedAt)
+	set("md_submitted_by", emd.MDSubmittedBy)
+	set("md_submitted_at", emd.MDSubmittedAt)
+	set("md_decided_by", emd.MDDecidedBy)
+	set("md_decided_at", emd.MDDecidedAt)
+	set("md_decision_remarks", emd.MDDecisionRemarks)
+	set("refund_status", emd.RefundStatus)
+	set("expected_refund_date", emd.ExpectedRefundDate)
+	set("actual_refund_date", emd.ActualRefundDate)
+	set("refund_amount", emd.RefundAmount)
+	set("refund_reference_no", emd.RefundReferenceNo)
+	set("refund_transaction_id", emd.RefundTransactionID)
+	set("refund_mode", emd.RefundMode)
+	set("refund_remarks", emd.RefundRemarks)
+	set("refund_receipt_url", emd.RefundReceiptURL)
+	set("refund_updated_by", emd.RefundUpdatedBy)
+	set("refund_updated_at", emd.RefundUpdatedAt)
+	set("updated_by", emd.UpdatedBy)
 
-	return r.pool.QueryRow(ctx, query,
-		log.BidID, log.EMDID, log.Action, log.ActorID, log.ActorName, log.ActorRole, log.Remarks, detailsJSON,
-	).Scan(&log.ID, &log.CreatedAt)
+	err := t.tx.QueryRow(ctx,
+		"UPDATE bid.tender_emd_details SET "+strings.Join(sets, ", ")+", updated_at = NOW() WHERE id = $1 RETURNING updated_at",
+		args...).Scan(&emd.UpdatedAt)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return fmt.Errorf("%w: this payment reference is already recorded against another EMD", domain.ErrValidation)
+	}
+	return err
+}
+
+func (t *pgEMDTx) Log(ctx context.Context, entry *domain.TenderEMDAuditLog) error {
+	details := entry.Details
+	if len(details) == 0 {
+		details = json.RawMessage("{}")
+	}
+	return t.tx.QueryRow(ctx, `
+		INSERT INTO bid.tender_emd_audit_logs (bid_id, emd_id, action, actor_id, actor_name, actor_role, remarks, details)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, created_at`,
+		entry.BidID, entry.EMDID, entry.Action, entry.ActorID, entry.ActorName, entry.ActorRole, entry.Remarks, details,
+	).Scan(&entry.ID, &entry.CreatedAt)
+}
+
+func (t *pgEMDTx) MarkBidEMDReady(ctx context.Context, at time.Time) error {
+	_, err := t.tx.Exec(ctx, `UPDATE bid.bid_workspaces SET emd_ready = true, emd_ready_date = $2, updated_at = NOW() WHERE id = $1`, t.bidID, at)
+	return err
+}
+
+func (t *pgEMDTx) MarkBidEMDReturned(ctx context.Context, at time.Time) error {
+	_, err := t.tx.Exec(ctx, `UPDATE bid.bid_workspaces SET emd_returned = true, emd_returned_date = $2, updated_at = NOW() WHERE id = $1`, t.bidID, at)
+	return err
 }
 
 // GetEMDAuditLogs fetches all EMD audit logs for a bid, newest first.
 func (r *postgresBidRepo) GetEMDAuditLogs(ctx context.Context, bidID string) ([]domain.TenderEMDAuditLog, error) {
-	query := `
+	rows, err := r.pool.Query(ctx, `
 		SELECT id, bid_id, emd_id, action, actor_id, actor_name, actor_role, remarks, details, created_at
 		FROM bid.tender_emd_audit_logs
 		WHERE bid_id = $1
-		ORDER BY created_at DESC
-	`
-
-	rows, err := r.pool.Query(ctx, query, bidID)
+		ORDER BY created_at DESC`, bidID)
 	if err != nil {
 		return nil, fmt.Errorf("query emd audit logs: %w", err)
 	}
 	defer rows.Close()
 
-	var logs []domain.TenderEMDAuditLog
+	logs := []domain.TenderEMDAuditLog{}
 	for rows.Next() {
 		var l domain.TenderEMDAuditLog
 		if err := rows.Scan(
@@ -249,6 +221,5 @@ func (r *postgresBidRepo) GetEMDAuditLogs(ctx context.Context, bidID string) ([]
 		}
 		logs = append(logs, l)
 	}
-
 	return logs, rows.Err()
 }

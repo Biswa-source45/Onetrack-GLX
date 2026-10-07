@@ -9,16 +9,6 @@ export const EMD_STATUS_CONFIG = {
     color: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800',
     dot: 'bg-amber-500',
   },
-  'Submitted': {
-    label: 'Submitted',
-    color: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-400 dark:border-blue-800',
-    dot: 'bg-blue-500',
-  },
-  'Under Verification': {
-    label: 'Under Verification',
-    color: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/30 dark:text-purple-400 dark:border-purple-800',
-    dot: 'bg-purple-500',
-  },
   'Pending MD Approval': {
     label: 'Pending MD Approval',
     color: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/30 dark:text-orange-400 dark:border-orange-800 animate-pulse',
@@ -49,6 +39,21 @@ export const EMD_STATUS_CONFIG = {
     color: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/30 dark:text-indigo-400 dark:border-indigo-800',
     dot: 'bg-indigo-500',
   },
+  'Verification Rejected': {
+    label: 'Verification Rejected',
+    color: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/30 dark:text-rose-400 dark:border-rose-800',
+    dot: 'bg-rose-500',
+  },
+  'Exempted': {
+    label: 'Exempted',
+    color: 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-950/30 dark:text-slate-400 dark:border-slate-800',
+    dot: 'bg-slate-400',
+  },
+  'Not Applicable': {
+    label: 'Not Applicable',
+    color: 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-950/30 dark:text-slate-400 dark:border-slate-800',
+    dot: 'bg-slate-400',
+  },
   'Released': {
     label: 'Released',
     color: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/30 dark:text-sky-400 dark:border-sky-800',
@@ -72,93 +77,56 @@ export const REFUND_STATUS_CONFIG = {
 
 // ── API Functions ─────────────────────────────────────────────────────────────
 
-export async function getEmdDetails(bidId) {
-  const res = await apiFetch(`${BASE}/bids/${bidId}/emd`)
-  const data = await res.json()
-  return { ok: res.ok, status: res.status, ...data }
+// Every call resolves to { ok, status, data, message }; message is the server's
+// error text when the call failed, so callers can toast it as-is.
+async function call(path, init) {
+  const res = await apiFetch(`${BASE}/bids/${path}`, init)
+  const data = await res.json().catch(() => ({}))
+  return { ok: res.ok, status: res.status, ...data, message: data.error?.message || data.message }
 }
 
-export async function updateBasicEmd(bidId, payload) {
-  const res = await apiFetch(`${BASE}/bids/${bidId}/emd`, {
-    method: 'PUT',
-    body: JSON.stringify(payload),
-  })
-  const data = await res.json()
-  return { ok: res.ok, status: res.status, ...data }
-}
+const send = (bidId, path, method, body) => call(`${bidId}/emd${path}`, { method, body: JSON.stringify(body) })
 
-export async function submitEmdForMdApproval(bidId, remarks = '') {
-  const res = await apiFetch(`${BASE}/bids/${bidId}/emd/submit-approval`, {
-    method: 'POST',
-    body: JSON.stringify({ remarks }),
-  })
-  const data = await res.json()
-  return { ok: res.ok, status: res.status, ...data }
-}
+export const getEmdDetails = (bidId) => call(`${bidId}/emd`)
+export const updateBasicEmd = (bidId, payload) => send(bidId, '', 'PUT', payload)
+export const submitEmdForMdApproval = (bidId, remarks = '') => send(bidId, '/submit-approval', 'POST', { remarks })
+export const approveEmd = (bidId, remarks = '') => send(bidId, '/approve', 'POST', { remarks })
+export const rejectEmd = (bidId, remarks) => send(bidId, '/reject', 'POST', { remarks })
+export const recordEmdPayment = (bidId, payload) => send(bidId, '/payment', 'POST', payload)
+export const verifyEmdPayment = (bidId, payload) => send(bidId, '/verify', 'POST', payload)
+export const updateEmdRefund = (bidId, payload) => send(bidId, '/refund', 'POST', payload)
+export const getEmdAuditLogs = (bidId) => call(`${bidId}/emd/audit-history`)
 
-export async function approveEmd(bidId, remarks = '') {
-  const res = await apiFetch(`${BASE}/bids/${bidId}/emd/approve`, {
-    method: 'POST',
-    body: JSON.stringify({ remarks }),
-  })
-  const data = await res.json()
-  return { ok: res.ok, status: res.status, ...data }
-}
-
-export async function rejectEmd(bidId, remarks) {
-  const res = await apiFetch(`${BASE}/bids/${bidId}/emd/reject`, {
-    method: 'POST',
-    body: JSON.stringify({ remarks }),
-  })
-  const data = await res.json()
-  return { ok: res.ok, status: res.status, ...data }
-}
-
-export async function recordEmdPayment(bidId, payload) {
-  const res = await apiFetch(`${BASE}/bids/${bidId}/emd/payment`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
-  const data = await res.json()
-  return { ok: res.ok, status: res.status, ...data }
-}
-
-export async function verifyEmdPayment(bidId, payload) {
-  const res = await apiFetch(`${BASE}/bids/${bidId}/emd/verify`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
-  const data = await res.json()
-  return { ok: res.ok, status: res.status, ...data }
-}
-
-export async function updateEmdRefund(bidId, payload) {
-  const res = await apiFetch(`${BASE}/bids/${bidId}/emd/refund`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
-  const data = await res.json()
-  return { ok: res.ok, status: res.status, ...data }
-}
-
-export async function getEmdAuditLogs(bidId) {
-  const res = await apiFetch(`${BASE}/bids/${bidId}/emd/audit-history`)
-  const data = await res.json()
-  return { ok: res.ok, status: res.status, ...data }
-}
-
-export async function uploadEmdReceipt(bidId, file) {
+export function uploadEmdReceipt(bidId, file) {
   const formData = new FormData()
   formData.append('file', file)
+  return call(`${bidId}/emd/upload-receipt`, { method: 'POST', body: formData })
+}
 
-  const token = localStorage.getItem('onetrack_access_token') || ''
-  const res = await fetch(`${BASE}/bids/${bidId}/emd/upload-receipt`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-    body: formData,
-  })
-  const data = await res.json()
-  return { ok: res.ok, status: res.status, ...data }
+// A receipt is only ever linked if it is the exact shape the server issues —
+// anything else (e.g. a javascript: URL) is ignored.
+const RECEIPT_RE = /^\/api\/v1\/bids\/([0-9a-fA-F-]{36})\/emd\/receipt\/[0-9a-f]{32}\.(jpg|png|webp|pdf)$/
+export function safeReceiptUrl(bidId, url) {
+  const m = RECEIPT_RE.exec(url || '')
+  return m && m[1] === bidId ? url : ''
+}
+
+// Receipts need the Bearer header, so they are fetched and handed to the
+// browser as a blob.
+export async function fetchReceiptBlob(url) {
+  const res = await apiFetch(url)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.blob()
+}
+
+// Opens a receipt in a new tab. The tab is opened synchronously so the
+// browser doesn't treat it as a blocked pop-up.
+export async function openReceipt(url) {
+  const tab = window.open('', '_blank')
+  try {
+    tab.location.href = URL.createObjectURL(await fetchReceiptBlob(url))
+  } catch (err) {
+    tab?.close()
+    throw err
+  }
 }

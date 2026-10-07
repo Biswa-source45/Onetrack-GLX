@@ -50,13 +50,10 @@ func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, importHandl
 		bids.POST("/:id/emd/payment", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.RecordEMDPayment)
 		bids.POST("/:id/emd/verify", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.VerifyEMDPayment)
 		bids.POST("/:id/emd/refund", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.UpdateEMDRefund)
-		bids.GET("/:id/emd/audit-history", authMiddleware.RequirePermission("bid.view"), handler.GetEMDAuditLogs)
+		bids.GET("/:id/emd/audit-history", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.GetEMDAuditLogs)
 		bids.POST("/:id/emd/upload-receipt", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.UploadEMDReceipt)
+		bids.GET("/:id/emd/receipt/:filename", authMiddleware.RequirePermission("bid.view"), handler.GetEMDReceiptFile)
 	}
-
-	// Receipt Streaming (capability-based unguessable filename):
-	// Mounted on router directly so browser <img> tags and direct downloads don't get blocked by Bearer token requirement
-	router.GET("/bids/:id/emd/receipt/:filename", handler.GetEMDReceiptFile)
 
 	// Stage-Level Access Control lives in the bid module (the restriction
 	// logic and enforcement checks belong next to workflow-stage semantics)

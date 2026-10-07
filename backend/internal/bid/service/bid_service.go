@@ -690,7 +690,25 @@ func (s *bidService) GetChecklists(ctx context.Context, bidID string) ([]domain.
 	return items, nil
 }
 
+var (
+	checklistPriorities = map[string]bool{"HIGH": true, "MEDIUM": true, "LOW": true}
+	checklistStatuses   = map[string]bool{"PENDING": true, "COMPLETED": true, "DELAYED": true, "CANCELLED": true}
+)
+
+func validateChecklistFields(priority, status *string) error {
+	if priority != nil && !checklistPriorities[*priority] {
+		return fmt.Errorf("%w: priority must be HIGH, MEDIUM or LOW", domain.ErrValidation)
+	}
+	if status != nil && !checklistStatuses[*status] {
+		return fmt.Errorf("%w: status must be PENDING, COMPLETED, DELAYED or CANCELLED", domain.ErrValidation)
+	}
+	return nil
+}
+
 func (s *bidService) AddChecklist(ctx context.Context, bidID string, req *domain.AddChecklistRequest) (*domain.BidChecklistItem, error) {
+	if err := validateChecklistFields(req.Priority, nil); err != nil {
+		return nil, err
+	}
 	sortOrder := 0
 	if req.SortOrder != nil {
 		sortOrder = *req.SortOrder
@@ -705,12 +723,14 @@ func (s *bidService) AddChecklist(ctx context.Context, bidID string, req *domain
 		return nil, err
 	}
 	if req.Priority != nil || req.AssignedTo != nil || req.AssignedRole != nil || req.DueAt != nil {
-		_ = s.repo.UpdateChecklistDetails(ctx, c.ID, &domain.UpdateChecklistRequest{
+		if err := s.repo.UpdateChecklistDetails(ctx, c.ID, &domain.UpdateChecklistRequest{
 			Priority:     req.Priority,
 			AssignedTo:   req.AssignedTo,
 			AssignedRole: req.AssignedRole,
 			DueAt:        req.DueAt,
-		})
+		}); err != nil {
+			return nil, err
+		}
 		checklists, err := s.repo.GetChecklists(ctx, bidID)
 		if err == nil {
 			for _, item := range checklists {
@@ -726,6 +746,9 @@ func (s *bidService) AddChecklist(ctx context.Context, bidID string, req *domain
 }
 
 func (s *bidService) UpdateChecklist(ctx context.Context, bidID string, checklistID string, req *domain.UpdateChecklistRequest) (*domain.BidChecklistItem, error) {
+	if err := validateChecklistFields(req.Priority, req.Status); err != nil {
+		return nil, err
+	}
 	if err := s.repo.UpdateChecklistDetails(ctx, checklistID, req); err != nil {
 		return nil, err
 	}
@@ -754,7 +777,11 @@ func (s *bidService) ReorderChecklists(ctx context.Context, bidID string, req *d
 }
 
 func (s *bidService) ToggleChecklist(ctx context.Context, bidID string, checklistID string, isDone bool, actorID string) (*domain.BidChecklistItem, error) {
-	if err := s.repo.ToggleChecklist(ctx, checklistID, isDone, actorID); err != nil {
+	status := "PENDING"
+	if isDone {
+		status = "COMPLETED"
+	}
+	if err := s.repo.ToggleChecklist(ctx, checklistID, isDone, actorID, status); err != nil {
 		return nil, err
 	}
 	checklists, err := s.repo.GetChecklists(ctx, bidID)
@@ -1223,8 +1250,26 @@ func (s *bidService) applyUpdate(ctx context.Context, id string, req *domain.Upd
 		}
 	}
 
+	// One advance gate: Finance cannot declare EMD ready while the MD sign-off
+	// is outstanding or refused. An administrator can still override.
+	if req.EMDReady != nil && *req.EMDReady && !bid.EMDReady && !(mergedEMDExempted || mergedEMDNotApplicable) && !isAdminRole(actorRoles) {
+		emd, err := s.repo.GetEMDDetails(ctx, id)
+		if err != nil {
+			return err
+		}
+		if emd != nil && emdAwaitingApproval(emd.Status) {
+			return emdForbidden("EMD cannot be marked ready while its MD approval is %q; an Administrator can override", emd.Status)
+		}
+	}
+
 	if err := s.repo.Update(ctx, id, req); err != nil {
 		return err
+	}
+
+	// ponytail: best effort — an open row left behind is harmless, every EMD
+	// mutation and read already refuses an exempted tender.
+	if (mergedEMDExempted || mergedEMDNotApplicable) && !emdNotRequired(bid) {
+		_ = s.repo.CloseOpenEMD(ctx, id)
 	}
 
 	// Field Memory: remember every free-text value typed on this update too —
@@ -1871,7 +1916,7 @@ func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain
 		return nil, err
 	}
 
-	req.TargetStage = skipEMDStage(req.TargetStage, bid.EMDExempted || bid.EMDNotApplicable)
+	req.TargetStage = skipEMDStage(req.TargetStage, emdNotRequired(bid))
 
 	// Blocks a restricted actor from leaving OR entering a locked stage.
 	if err := s.checkStageAccess(ctx, actorID, bid.WorkflowStage); err != nil {

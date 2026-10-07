@@ -1103,32 +1103,6 @@ func (r *postgresBidRepo) AddChecklist(ctx context.Context, bidID string, title 
 	return &c, nil
 }
 
-func (r *postgresBidRepo) UpdateChecklist(ctx context.Context, checklistID string, title *string, sortOrder *int) error {
-	sets := []string{}
-	args := []interface{}{}
-	idx := 1
-	if title != nil {
-		sets = append(sets, fmt.Sprintf("title = $%d", idx))
-		args = append(args, *title)
-		idx++
-	}
-	if sortOrder != nil {
-		sets = append(sets, fmt.Sprintf("sort_order = $%d", idx))
-		args = append(args, *sortOrder)
-		idx++
-	}
-	if len(sets) == 0 {
-		return nil
-	}
-	args = append(args, checklistID)
-	_, err := r.pool.Exec(ctx,
-		fmt.Sprintf("UPDATE bid.bid_checklists SET %s WHERE id = $%d",
-			strings.Join(sets, ", "), idx),
-		args...,
-	)
-	return err
-}
-
 func (r *postgresBidRepo) UpdateChecklistDetails(ctx context.Context, checklistID string, req *domain.UpdateChecklistRequest) error {
 	sets := []string{}
 	args := []interface{}{}
@@ -1168,7 +1142,9 @@ func (r *postgresBidRepo) UpdateChecklistDetails(ctx context.Context, checklistI
 		args = append(args, *req.AssignedRole)
 		idx++
 	}
-	if req.DueAt != nil {
+	if req.ClearDueAt {
+		sets = append(sets, "due_at = NULL")
+	} else if req.DueAt != nil {
 		sets = append(sets, fmt.Sprintf("due_at = $%d", idx))
 		args = append(args, *req.DueAt)
 		idx++
@@ -1206,19 +1182,18 @@ func (r *postgresBidRepo) ReorderChecklists(ctx context.Context, items []domain.
 	return nil
 }
 
-func (r *postgresBidRepo) ToggleChecklist(ctx context.Context, checklistID string, isDone bool, doneBy string) error {
-	var err error
+func (r *postgresBidRepo) ToggleChecklist(ctx context.Context, checklistID string, isDone bool, doneBy, status string) error {
 	if isDone {
-		_, err = r.pool.Exec(ctx,
-			`UPDATE bid.bid_checklists SET is_done = true, done_by = $1, done_at = NOW() WHERE id = $2`,
-			doneBy, checklistID,
+		_, err := r.pool.Exec(ctx,
+			`UPDATE bid.bid_checklists SET is_done = true, done_by = $1, done_at = NOW(), status = $3 WHERE id = $2`,
+			doneBy, checklistID, status,
 		)
-	} else {
-		_, err = r.pool.Exec(ctx,
-			`UPDATE bid.bid_checklists SET is_done = false, done_by = NULL, done_at = NULL WHERE id = $1`,
-			checklistID,
-		)
+		return err
 	}
+	_, err := r.pool.Exec(ctx,
+		`UPDATE bid.bid_checklists SET is_done = false, done_by = NULL, done_at = NULL, status = $2 WHERE id = $1`,
+		checklistID, status,
+	)
 	return err
 }
 

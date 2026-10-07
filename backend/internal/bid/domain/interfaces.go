@@ -47,11 +47,11 @@ type BidRepository interface {
 	GetChecklistsByGroup(ctx context.Context, bidID string, group string) ([]BidChecklist, error)
 	AddChecklist(ctx context.Context, bidID string, title string, sortOrder int) (*BidChecklist, error)
 	AddChecklistWithGroup(ctx context.Context, bidID string, title string, sortOrder int, group string) (*BidChecklist, error)
-	UpdateChecklist(ctx context.Context, checklistID string, title *string, sortOrder *int) error
 	UpdateChecklistDetails(ctx context.Context, checklistID string, req *UpdateChecklistRequest) error
 	DeleteChecklist(ctx context.Context, checklistID string) error
 	ReorderChecklists(ctx context.Context, items []ReorderChecklistItem) error
-	ToggleChecklist(ctx context.Context, checklistID string, isDone bool, doneBy string) error
+	// ToggleChecklist flips is_done and sets the matching status in one statement.
+	ToggleChecklist(ctx context.Context, checklistID string, isDone bool, doneBy, status string) error
 
 	// Field Memory — non-AI autocomplete. entries maps a field key
 	// ("organization_name", "oem", ...) to every raw value typed for it in
@@ -87,10 +87,27 @@ type BidRepository interface {
 	GetPricingSuggestionWindow(ctx context.Context) (int, error)
 
 	// EMD Lifecycle Management
+	// GetEMDDetails returns nil (no error) while the tender has no lifecycle row.
 	GetEMDDetails(ctx context.Context, bidID string) (*TenderEMDDetails, error)
-	UpsertEMDDetails(ctx context.Context, emd *TenderEMDDetails) error
-	LogEMDAction(ctx context.Context, log *TenderEMDAuditLog) error
 	GetEMDAuditLogs(ctx context.Context, bidID string) ([]TenderEMDAuditLog, error)
+	// WithEMDTx runs fn in one transaction; every EMD mutation goes through it.
+	WithEMDTx(ctx context.Context, bidID string, fn func(tx EMDTx) error) error
+	// CloseOpenEMD retires a not-yet-paid lifecycle row once the tender is
+	// exempted / not applicable.
+	CloseOpenEMD(ctx context.Context, bidID string) error
+}
+
+// EMDTx is the unit of work behind one EMD mutation.
+type EMDTx interface {
+	// Lock returns the tender's row locked FOR UPDATE, inserting def first
+	// when none exists yet.
+	Lock(ctx context.Context, def *TenderEMDDetails) (*TenderEMDDetails, error)
+	Save(ctx context.Context, emd *TenderEMDDetails) error
+	// Log appends to the audit trail (insert only).
+	Log(ctx context.Context, entry *TenderEMDAuditLog) error
+	// MarkBidEMDReady / MarkBidEMDReturned set the bid_workspaces gate flags.
+	MarkBidEMDReady(ctx context.Context, at time.Time) error
+	MarkBidEMDReturned(ctx context.Context, at time.Time) error
 }
 
 // PricingWorkspaceRow is one tender's raw pricing data as read for the
@@ -178,7 +195,12 @@ type BidService interface {
 	GetPricingSuggestion(ctx context.Context, productDesc string) (*PricingSuggestion, error)
 
 	// EMD Lifecycle Management
-	GetEMDDetails(ctx context.Context, bidID string) (*TenderEMDResponse, error)
+	// GetEMDDetails never writes. Exempted / not-applicable tenders get a
+	// read-only view; callers without a Finance/Admin role get status and
+	// amount only.
+	GetEMDDetails(ctx context.Context, bidID string, actorRoles []string) (*TenderEMDResponse, error)
+	// EnsureEMDRequired errors (ErrValidation) when the tender needs no EMD.
+	EnsureEMDRequired(ctx context.Context, bidID string) error
 	UpdateBasicEMD(ctx context.Context, bidID string, req *UpdateBasicEMDRequest, actorID string, actorRoles []string) (*TenderEMDResponse, error)
 	SubmitEMDForMDApproval(ctx context.Context, bidID string, req *SubmitMDApprovalRequest, actorID string, actorRoles []string) (*TenderEMDResponse, error)
 	ApproveEMD(ctx context.Context, bidID string, req *MDDecisionRequest, actorID string, actorRoles []string) (*TenderEMDResponse, error)

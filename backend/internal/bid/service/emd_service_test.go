@@ -2,332 +2,491 @@ package service
 
 import (
 	"context"
-	"strings"
+	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/onetrack/backend/internal/bid/domain"
 )
 
+const (
+	finance = "user-fm"
+	mdOne   = "user-md1"
+	mdTwo   = "user-md2"
+)
+
+var (
+	financeRoles = []string{"FINANCE"}
+	adminRoles   = []string{"ADMIN"}
+	superRoles   = []string{"SUPER_ADMIN"}
+)
+
 type emdTestSetup struct {
-	svc  domain.BidService
-	repo *fakeBidRepo
+	svc    domain.BidService
+	repo   *fakeBidRepo
+	alerts *fakeAlertSvc
 }
 
 func newEMDTestSetup() *emdTestSetup {
 	repo := &fakeBidRepo{
 		bid: &domain.BidWorkspace{
-			ID:            "bid-123",
-			Title:         "Procurement of IT Hardware",
-			EMDAmount:     float64Ptr(50000),
-			WorkflowStage: domain.StageEMDProcessing,
-			CreatedBy:     "user-admin",
+			ID:               "bid-123",
+			Title:            "Procurement of IT Hardware",
+			EMDAmount:        float64Ptr(50000),
+			WorkflowStage:    domain.StageEMDProcessing,
+			CreationMode:     domain.CreationModeManual,
+			CreatedBy:        "user-admin",
+			BidOwnerID:       "owner-1",
+			EMDType:          strPtr("ONLINE"),
+			StageCompletions: []byte(`{}`),
 		},
 	}
-	alertSvc := &fakeAlertSvc{}
-	sysLog := &fakeSystemLog{}
-	svc := NewBidService(repo, alertSvc, sysLog)
-	return &emdTestSetup{svc: svc, repo: repo}
+	alerts := &fakeAlertSvc{}
+	return &emdTestSetup{svc: NewBidService(repo, alerts, &fakeSystemLog{}), repo: repo, alerts: alerts}
 }
 
-func float64Ptr(v float64) *float64 {
-	return &v
-}
+func float64Ptr(v float64) *float64 { return &v }
 
-func TestUpdateBasicEMD_Validation(t *testing.T) {
-	s := newEMDTestSetup()
-	ctx := context.Background()
-
-	// Zero or negative amount should fail
-	_, err := s.svc.UpdateBasicEMD(ctx, "bid-123", &domain.UpdateBasicEMDRequest{
-		EMDAmount: float64Ptr(0),
-	}, "user-fm", []string{"FINANCE"})
-	if err == nil || !strings.Contains(err.Error(), "greater than zero") {
-		t.Fatalf("expected error for zero EMD amount, got %v", err)
-	}
-
-	// Valid amount should succeed
-	resp, err := s.svc.UpdateBasicEMD(ctx, "bid-123", &domain.UpdateBasicEMDRequest{
-		EMDAmount: float64Ptr(75000),
-		Purpose:   strPtr("Tender security deposit"),
-	}, "user-fm", []string{"FINANCE"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.EMDAmount != 75000 {
-		t.Errorf("expected EMDAmount 75000, got %f", resp.EMDAmount)
+func wantErr(t *testing.T, err, target error, what string) {
+	t.Helper()
+	if !errors.Is(err, target) {
+		t.Fatalf("%s: err = %v, want %v", what, err, target)
 	}
 }
 
-func TestSubmitEMDForMDApproval(t *testing.T) {
-	s := newEMDTestSetup()
-	ctx := context.Background()
-
-	// Set initial valid basic details
-	now := time.Now().Format("2006-01-02")
-	_, err := s.svc.UpdateBasicEMD(ctx, "bid-123", &domain.UpdateBasicEMDRequest{
-		EMDAmount:       float64Ptr(50000),
-		DueDate:         &now,
+// fill gives the lifecycle the due date, reference and purpose submission needs.
+func (s *emdTestSetup) fill(t *testing.T) {
+	t.Helper()
+	_, err := s.svc.UpdateBasicEMD(context.Background(), "bid-123", &domain.UpdateBasicEMDRequest{
+		DueDate:         strPtr(time.Now().Format("2006-01-02")),
 		ReferenceNumber: strPtr("REF-001"),
 		Purpose:         strPtr("GeM Bid Deposit"),
-	}, "user-fm", []string{"FINANCE"})
+	}, finance, financeRoles)
 	if err != nil {
-		t.Fatalf("failed to update basic emd: %v", err)
-	}
-
-	// Submit for MD approval
-	resp, err := s.svc.SubmitEMDForMDApproval(ctx, "bid-123", &domain.SubmitMDApprovalRequest{
-		Remarks: strPtr("Verified and ready for MD review"),
-	}, "user-fm", []string{"FINANCE"})
-	if err != nil {
-		t.Fatalf("failed to submit for MD approval: %v", err)
-	}
-	if resp.Status != domain.EMDStatusPendingMDApproval {
-		t.Errorf("expected status %s, got %s", domain.EMDStatusPendingMDApproval, resp.Status)
+		t.Fatalf("fill: %v", err)
 	}
 }
 
-func TestMDApprovalAndRejection(t *testing.T) {
-	s := newEMDTestSetup()
-	ctx := context.Background()
-
-	// Finance user cannot approve
-	_, err := s.svc.ApproveEMD(ctx, "bid-123", &domain.MDDecisionRequest{
-		Remarks: "Approved",
-	}, "user-fm", []string{"FINANCE"})
-	if err == nil {
-		t.Fatal("expected error when Finance user tries to approve EMD")
-	}
-
-	// Super Admin / Admin approves
-	resp, err := s.svc.ApproveEMD(ctx, "bid-123", &domain.MDDecisionRequest{
-		Remarks: "Approved by MD",
-	}, "user-md", []string{"SUPER_ADMIN"})
-	if err != nil {
-		t.Fatalf("unexpected error approving EMD: %v", err)
-	}
-	if resp.Status != domain.EMDStatusMDApproved {
-		t.Errorf("expected status %s, got %s", domain.EMDStatusMDApproved, resp.Status)
-	}
-	if !resp.IsMDApproved {
-		t.Errorf("expected IsMDApproved to be true")
-	}
-
-	// Rejection requires remarks
-	_, err = s.svc.RejectEMD(ctx, "bid-123", &domain.MDDecisionRequest{
-		Remarks: "",
-	}, "user-md", []string{"SUPER_ADMIN"})
-	if err == nil {
-		t.Fatal("expected error when rejecting without remarks")
-	}
-
-	// Rejection with remarks succeeds
-	rejectResp, err := s.svc.RejectEMD(ctx, "bid-123", &domain.MDDecisionRequest{
-		Remarks: "Discrepancy in due date vs tender schedule",
-	}, "user-md", []string{"SUPER_ADMIN"})
-	if err != nil {
-		t.Fatalf("unexpected error rejecting EMD: %v", err)
-	}
-	if rejectResp.Status != domain.EMDStatusRejected {
-		t.Errorf("expected status %s, got %s", domain.EMDStatusRejected, rejectResp.Status)
+func (s *emdTestSetup) submit(t *testing.T) {
+	t.Helper()
+	if _, err := s.svc.SubmitEMDForMDApproval(context.Background(), "bid-123", &domain.SubmitMDApprovalRequest{}, finance, financeRoles); err != nil {
+		t.Fatalf("submit: %v", err)
 	}
 }
 
-func TestRecordEMDPayment_OnlineAndCheque(t *testing.T) {
-	s := newEMDTestSetup()
-	ctx := context.Background()
-
-	// Approve EMD first
-	_, _ = s.svc.ApproveEMD(ctx, "bid-123", &domain.MDDecisionRequest{Remarks: "OK"}, "user-md", []string{"SUPER_ADMIN"})
-
-	// Record payment: Online missing UTR should fail
-	_, err := s.svc.RecordEMDPayment(ctx, "bid-123", &domain.RecordEMDPaymentRequest{
-		PaymentMode:   domain.PaymentModeOnline,
-		PaymentAmount: 50000,
-		PaymentDate:   time.Now().Format("2006-01-02"),
-		PaymentStatus: "Successful",
-		OnlineDetails: &domain.OnlinePaymentDetails{
-			TransactionID:  "",
-			PaymentGateway: "Razorpay",
-		},
-		Depositor: domain.DepositorDetailsDTO{
-			Name:        "Rahul Kumar",
-			Department:  "Finance",
-			DepositDate: time.Now().Format("2006-01-02"),
-		},
-	}, "user-fm", []string{"FINANCE"})
-	if err == nil {
-		t.Fatal("expected error when transaction ID is missing for online payment")
+func (s *emdTestSetup) approve(t *testing.T) {
+	t.Helper()
+	if _, err := s.svc.ApproveEMD(context.Background(), "bid-123", &domain.MDDecisionRequest{Remarks: "ok"}, mdOne, adminRoles); err != nil {
+		t.Fatalf("approve: %v", err)
 	}
+}
 
-	// Valid Online payment succeeds
-	resp, err := s.svc.RecordEMDPayment(ctx, "bid-123", &domain.RecordEMDPaymentRequest{
+func onlinePayment(amount float64) *domain.RecordEMDPaymentRequest {
+	today := time.Now().Format("2006-01-02")
+	return &domain.RecordEMDPaymentRequest{
 		PaymentMode:   domain.PaymentModeOnline,
-		PaymentAmount: 50000,
-		PaymentDate:   time.Now().Format("2006-01-02"),
+		PaymentAmount: amount,
+		PaymentDate:   today,
 		PaymentStatus: "Successful",
 		OnlineDetails: &domain.OnlinePaymentDetails{
 			TransactionID:       "UTR99238411",
 			PaymentGateway:      "Razorpay",
 			TransactionDateTime: time.Now().Format(time.RFC3339),
-			PaymentStatus:       "Successful",
 		},
-		Depositor: domain.DepositorDetailsDTO{
-			Name:        "Rahul Kumar",
-			Department:  "Finance",
-			DepositDate: time.Now().Format("2006-01-02"),
-		},
-	}, "user-fm", []string{"FINANCE"})
-	if err != nil {
-		t.Fatalf("unexpected error recording online payment: %v", err)
-	}
-	if resp.Status != domain.EMDStatusPaid {
-		t.Errorf("expected status %s, got %s", domain.EMDStatusPaid, resp.Status)
-	}
-	if !resp.IsPaid {
-		t.Errorf("expected IsPaid to be true")
+		Depositor: domain.DepositorDetailsDTO{Name: "Rahul Kumar", Department: "Finance", DepositDate: today},
 	}
 }
 
-func TestUpdateEMDRefund(t *testing.T) {
-	s := newEMDTestSetup()
-	ctx := context.Background()
-
-	// Refund amount exceeding EMD should fail
-	_, err := s.svc.UpdateEMDRefund(ctx, "bid-123", &domain.UpdateEMDRefundRequest{
-		RefundStatus: domain.RefundStatusInitiated,
-		RefundAmount: float64Ptr(999999),
-	}, "user-fm", []string{"FINANCE"})
-	if err == nil {
-		t.Fatal("expected error when refund amount exceeds EMD amount")
-	}
-
-	// Refunded status requires ActualRefundDate
-	_, err = s.svc.UpdateEMDRefund(ctx, "bid-123", &domain.UpdateEMDRefundRequest{
-		RefundStatus:     domain.RefundStatusRefunded,
-		ActualRefundDate: nil,
-	}, "user-fm", []string{"FINANCE"})
-	if err == nil {
-		t.Fatal("expected error when actual refund date is missing for Refunded status")
-	}
-
-	// Valid refund update succeeds
-	today := time.Now().Format("2006-01-02")
-	resp, err := s.svc.UpdateEMDRefund(ctx, "bid-123", &domain.UpdateEMDRefundRequest{
-		RefundStatus:          domain.RefundStatusRefunded,
-		ActualRefundDate:      &today,
-		RefundAmount:          float64Ptr(50000),
-		RefundMode:            strPtr("Online"),
-		RefundTransactionID:   strPtr("REF-UTR-883"),
-		RefundReferenceNumber: strPtr("REF-UTR-883"),
-	}, "user-fm", []string{"FINANCE"})
+// pay walks a fresh tender to Paid.
+func (s *emdTestSetup) pay(t *testing.T) *domain.TenderEMDResponse {
+	t.Helper()
+	s.fill(t)
+	s.submit(t)
+	s.approve(t)
+	resp, err := s.svc.RecordEMDPayment(context.Background(), "bid-123", onlinePayment(50000), finance, financeRoles)
 	if err != nil {
-		t.Fatalf("unexpected error updating refund: %v", err)
+		t.Fatalf("pay: %v", err)
 	}
-	if resp.Status != domain.EMDStatusRefunded {
-		t.Errorf("expected status %s, got %s", domain.EMDStatusRefunded, resp.Status)
-	}
-	if !resp.IsRefunded {
-		t.Errorf("expected IsRefunded to be true")
+	return resp
+}
+
+func TestEMD_ExemptedTenderRejectsEveryMutationAndGetIsReadOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		set        func(b *domain.BidWorkspace)
+		wantStatus string
+	}{
+		{"exempted", func(b *domain.BidWorkspace) { b.EMDExempted = true; b.EMDExemptionType = strPtr("STARTUP") }, domain.EMDStatusExempted},
+		{"not applicable", func(b *domain.BidWorkspace) { b.EMDNotApplicable = true }, domain.EMDStatusNotApplicable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newEMDTestSetup()
+			tc.set(s.repo.bid)
+			ctx := context.Background()
+
+			calls := map[string]func() error{
+				"basic": func() error {
+					_, e := s.svc.UpdateBasicEMD(ctx, "bid-123", &domain.UpdateBasicEMDRequest{Purpose: strPtr("x")}, finance, financeRoles)
+					return e
+				},
+				"submit": func() error {
+					_, e := s.svc.SubmitEMDForMDApproval(ctx, "bid-123", nil, finance, financeRoles)
+					return e
+				},
+				"approve": func() error {
+					_, e := s.svc.ApproveEMD(ctx, "bid-123", &domain.MDDecisionRequest{}, mdOne, adminRoles)
+					return e
+				},
+				"reject": func() error {
+					_, e := s.svc.RejectEMD(ctx, "bid-123", &domain.MDDecisionRequest{Remarks: "no"}, mdOne, adminRoles)
+					return e
+				},
+				"pay": func() error {
+					_, e := s.svc.RecordEMDPayment(ctx, "bid-123", onlinePayment(50000), finance, financeRoles)
+					return e
+				},
+				"verify": func() error {
+					_, e := s.svc.VerifyEMDPayment(ctx, "bid-123", &domain.VerifyEMDPaymentRequest{Status: "Verified"}, finance, financeRoles)
+					return e
+				},
+				"refund": func() error {
+					_, e := s.svc.UpdateEMDRefund(ctx, "bid-123", &domain.UpdateEMDRefundRequest{RefundStatus: domain.RefundStatusPending}, finance, financeRoles)
+					return e
+				},
+				"upload": func() error { return s.svc.EnsureEMDRequired(ctx, "bid-123") },
+			}
+			for name, call := range calls {
+				wantErr(t, call(), domain.ErrValidation, name)
+			}
+
+			resp, err := s.svc.GetEMDDetails(ctx, "bid-123", financeRoles)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.Status != tc.wantStatus || resp.EMDAmount != 50000 {
+				t.Fatalf("view = %q / %v, want %q / 50000", resp.Status, resp.EMDAmount, tc.wantStatus)
+			}
+			if s.repo.emd != nil || len(s.alerts.created) != 0 {
+				t.Fatal("an exempted tender must get no EMD row and no alert")
+			}
+			logs, err := s.svc.GetEMDAuditLogs(ctx, "bid-123")
+			if err != nil || len(logs) != 0 {
+				t.Fatalf("audit logs = %v, %v", logs, err)
+			}
+		})
 	}
 }
 
-func TestRecordEMDPayment_AmountValidation(t *testing.T) {
+func TestEMD_GetNeverWritesAndHidesDetailsFromOthers(t *testing.T) {
 	s := newEMDTestSetup()
 	ctx := context.Background()
 
-	// Initial EMD amount is 50000 on bid-123
-	today := time.Now().Format("2006-01-02")
-	baseReq := domain.RecordEMDPaymentRequest{
-		PaymentMode:   domain.PaymentModeOnline,
-		PaymentDate:   today,
-		PaymentStatus: "Successful",
-		OnlineDetails: &domain.OnlinePaymentDetails{
-			TransactionID:       "UTR-TEST-123",
-			PaymentGateway:      "Razorpay",
-			TransactionDateTime: time.Now().Format(time.RFC3339),
-			PaymentStatus:       "Successful",
-		},
-		Depositor: domain.DepositorDetailsDTO{
-			Name:        "Rahul Kumar",
-			Department:  "Finance",
-			DepositDate: today,
-		},
-	}
-
-	// 1. Payment amount LESS than EMD amount (e.g. 40000 < 50000) should fail
-	lessReq := baseReq
-	lessReq.PaymentAmount = 40000
-	_, err := s.svc.RecordEMDPayment(ctx, "bid-123", &lessReq, "user-fm", []string{"FINANCE"})
-	if err == nil || !strings.Contains(err.Error(), "cannot be less than") {
-		t.Fatalf("expected error when payment amount is less than EMD amount, got %v", err)
-	}
-
-	// 2. Payment amount GREATER than EMD amount (e.g. 60000 > 50000) should fail
-	greaterReq := baseReq
-	greaterReq.PaymentAmount = 60000
-	_, err = s.svc.RecordEMDPayment(ctx, "bid-123", &greaterReq, "user-fm", []string{"FINANCE"})
-	if err == nil || !strings.Contains(err.Error(), "cannot be greater than") {
-		t.Fatalf("expected error when payment amount is greater than EMD amount, got %v", err)
-	}
-
-	// 3. Exact matching payment amount (50000 == 50000) should succeed
-	exactReq := baseReq
-	exactReq.PaymentAmount = 50000
-	resp, err := s.svc.RecordEMDPayment(ctx, "bid-123", &exactReq, "user-fm", []string{"FINANCE"})
+	resp, err := s.svc.GetEMDDetails(ctx, "bid-123", financeRoles)
 	if err != nil {
-		t.Fatalf("unexpected error when payment amount exactly matches: %v", err)
+		t.Fatal(err)
 	}
-	if resp.Status != domain.EMDStatusPaid {
-		t.Errorf("expected status %s, got %s", domain.EMDStatusPaid, resp.Status)
+	if resp.Status != domain.EMDStatusPending || resp.EMDAmount != 50000 {
+		t.Fatalf("default view = %q / %v", resp.Status, resp.EMDAmount)
+	}
+	if s.repo.emd != nil {
+		t.Fatal("GET must not insert a row")
+	}
+
+	s.pay(t)
+	full, _ := s.svc.GetEMDDetails(ctx, "bid-123", financeRoles)
+	if full.DepositorName == nil || full.PaymentReference == nil {
+		t.Fatal("Finance should see depositor and payment details")
+	}
+	limited, err := s.svc.GetEMDDetails(ctx, "bid-123", []string{"BID_EXECUTIVE"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if limited.DepositorName != nil || limited.PaymentReference != nil || limited.PaymentDetails != nil {
+		t.Fatal("other roles must not see depositor or bank details")
+	}
+	if limited.Status != domain.EMDStatusPaid || limited.EMDAmount != 50000 {
+		t.Fatalf("limited view = %q / %v", limited.Status, limited.EMDAmount)
 	}
 }
 
-func TestEMD_RoleRestrictions(t *testing.T) {
+func TestEMD_RejectResubmitApprovePay(t *testing.T) {
+	s := newEMDTestSetup()
+	ctx := context.Background()
+	s.fill(t)
+
+	// Nothing can be paid before approval.
+	_, err := s.svc.RecordEMDPayment(ctx, "bid-123", onlinePayment(50000), finance, financeRoles)
+	wantErr(t, err, domain.ErrValidation, "pay before approval")
+
+	s.submit(t)
+	_, err = s.svc.RejectEMD(ctx, "bid-123", &domain.MDDecisionRequest{}, mdOne, adminRoles)
+	wantErr(t, err, domain.ErrValidation, "reject without a reason")
+	rej, err := s.svc.RejectEMD(ctx, "bid-123", &domain.MDDecisionRequest{Remarks: "wrong due date"}, mdOne, adminRoles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rej.Status != domain.EMDStatusRejected || rej.IsMDApproved {
+		t.Fatalf("rejected: status=%q approved=%v", rej.Status, rej.IsMDApproved)
+	}
+	_, err = s.svc.RecordEMDPayment(ctx, "bid-123", onlinePayment(50000), finance, financeRoles)
+	wantErr(t, err, domain.ErrValidation, "pay after rejection")
+
+	// Re-submitting clears the old decision.
+	re, err := s.svc.SubmitEMDForMDApproval(ctx, "bid-123", &domain.SubmitMDApprovalRequest{}, finance, financeRoles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if re.Status != domain.EMDStatusPendingMDApproval || re.MDDecidedAt != nil || re.MDDecisionRemarks != nil || re.IsMDApproved {
+		t.Fatalf("resubmitted: %+v", re)
+	}
+
+	s.approve(t)
+	if s.repo.bid.EMDReady {
+		t.Fatal("approval alone must not make the EMD ready")
+	}
+	paid, err := s.svc.RecordEMDPayment(ctx, "bid-123", onlinePayment(50000), finance, financeRoles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paid.Status != domain.EMDStatusPaid || !paid.IsPaid || !paid.IsMDApproved {
+		t.Fatalf("paid: %+v", paid)
+	}
+	if !s.repo.bid.EMDReady {
+		t.Fatal("payment must set emd_ready")
+	}
+
+	// Same record the Mark-EMD-Ready button leaves: a FINANCE stage event plus a requester alert.
+	var found bool
+	for _, h := range s.repo.addedHistory {
+		if h.EventType != nil && *h.EventType == "FINANCE" {
+			var d map[string]string
+			_ = json.Unmarshal(h.Details, &d)
+			found = d["approvedBy"] == "FINANCE"
+		}
+	}
+	if !found {
+		t.Fatal("missing FINANCE stage-history event with approvedBy=FINANCE")
+	}
+	var notified bool
+	for _, a := range s.alerts.created {
+		notified = notified || (a.Type == "EMD" && a.UserID != nil && *a.UserID == "owner-1")
+	}
+	if !notified {
+		t.Fatal("requester was not notified")
+	}
+}
+
+func TestEMD_MakerCannotBeChecker(t *testing.T) {
+	s := newEMDTestSetup()
+	ctx := context.Background()
+	s.fill(t)
+	if _, err := s.svc.SubmitEMDForMDApproval(ctx, "bid-123", nil, mdOne, adminRoles); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.svc.ApproveEMD(ctx, "bid-123", &domain.MDDecisionRequest{}, mdOne, adminRoles)
+	wantErr(t, err, domain.ErrForbidden, "self approval")
+	_, err = s.svc.RejectEMD(ctx, "bid-123", &domain.MDDecisionRequest{Remarks: "x"}, mdOne, adminRoles)
+	wantErr(t, err, domain.ErrForbidden, "self rejection")
+	if _, err := s.svc.ApproveEMD(ctx, "bid-123", &domain.MDDecisionRequest{}, mdTwo, superRoles); err != nil {
+		t.Fatalf("a different admin must be able to approve: %v", err)
+	}
+	_, err = s.svc.ApproveEMD(ctx, "bid-123", &domain.MDDecisionRequest{}, mdTwo, superRoles)
+	wantErr(t, err, domain.ErrValidation, "approving twice")
+}
+
+func TestEMD_SubmitAlertsSuperAdminAndAdmin(t *testing.T) {
+	s := newEMDTestSetup()
+	s.fill(t)
+	s.submit(t)
+	roles := map[string]bool{}
+	for _, a := range s.alerts.created {
+		roles[a.TargetRole] = true
+	}
+	if !roles["SUPER_ADMIN"] || !roles["ADMIN"] {
+		t.Fatalf("alert targets = %v", roles)
+	}
+}
+
+func TestEMD_BasicUpdateCannotTouchStatusAndLocksWhilePending(t *testing.T) {
+	s := newEMDTestSetup()
+	ctx := context.Background()
+	s.fill(t)
+	if s.repo.emd.Status != domain.EMDStatusPending {
+		t.Fatalf("status = %q", s.repo.emd.Status)
+	}
+	s.submit(t)
+	_, err := s.svc.UpdateBasicEMD(ctx, "bid-123", &domain.UpdateBasicEMDRequest{Purpose: strPtr("changed")}, finance, financeRoles)
+	wantErr(t, err, domain.ErrValidation, "edit while pending approval")
+	_, err = s.svc.UpdateBasicEMD(ctx, "bid-123", &domain.UpdateBasicEMDRequest{}, "user-exec", []string{"BID_EXECUTIVE"})
+	wantErr(t, err, domain.ErrForbidden, "non-finance edit")
+}
+
+func TestEMD_PaymentValidation(t *testing.T) {
+	s := newEMDTestSetup()
+	ctx := context.Background()
+	s.fill(t)
+	s.submit(t)
+	s.approve(t)
+
+	for amount, word := range map[float64]string{40000: "less", 60000: "greater", 49999.99: "less"} {
+		_, err := s.svc.RecordEMDPayment(ctx, "bid-123", onlinePayment(amount), finance, financeRoles)
+		wantErr(t, err, domain.ErrValidation, "amount "+word)
+	}
+
+	missingUTR := onlinePayment(50000)
+	missingUTR.OnlineDetails.TransactionID = ""
+	_, err := s.svc.RecordEMDPayment(ctx, "bid-123", missingUTR, finance, financeRoles)
+	wantErr(t, err, domain.ErrValidation, "missing UTR")
+
+	badMode := onlinePayment(50000)
+	badMode.PaymentMode = "Cash"
+	_, err = s.svc.RecordEMDPayment(ctx, "bid-123", badMode, finance, financeRoles)
+	wantErr(t, err, domain.ErrValidation, "invalid payment mode")
+
+	for _, u := range []string{"javascript:alert(1)", "/api/v1/bids/other-bid/emd/receipt/" + "0123456789abcdef0123456789abcdef.pdf", "/api/v1/bids/bid-123/emd/receipt/../x.pdf"} {
+		bad := onlinePayment(50000)
+		bad.PaymentReceiptURL = strPtr(u)
+		_, err = s.svc.RecordEMDPayment(ctx, "bid-123", bad, finance, financeRoles)
+		wantErr(t, err, domain.ErrValidation, "receipt url "+u)
+	}
+	if s.repo.emd.Status != domain.EMDStatusMDApproved || s.repo.bid.EMDReady {
+		t.Fatal("failed payments must leave the EMD untouched")
+	}
+
+	good := onlinePayment(50000)
+	good.PaymentReceiptURL = strPtr("/api/v1/bids/bid-123/emd/receipt/0123456789abcdef0123456789abcdef.pdf")
+	if _, err := s.svc.RecordEMDPayment(ctx, "bid-123", good, finance, financeRoles); err != nil {
+		t.Fatalf("valid payment: %v", err)
+	}
+	// A recorded payment is only correctable by an administrator.
+	_, err = s.svc.RecordEMDPayment(ctx, "bid-123", onlinePayment(50000), finance, financeRoles)
+	wantErr(t, err, domain.ErrForbidden, "finance re-recording")
+	if _, err := s.svc.RecordEMDPayment(ctx, "bid-123", onlinePayment(50000), mdOne, adminRoles); err != nil {
+		t.Fatalf("admin correction: %v", err)
+	}
+	if got := s.repo.emdLogs[len(s.repo.emdLogs)-1]; got.ActorRole == nil || *got.ActorRole != "ADMIN" {
+		t.Fatalf("audit actor role = %v", got.ActorRole)
+	}
+}
+
+func TestEMD_VerifyAndRefund(t *testing.T) {
 	s := newEMDTestSetup()
 	ctx := context.Background()
 
-	// Non-authorized roles (BID_EXECUTIVE, BID_MANAGER, SALES) should fail
-	_, err := s.svc.UpdateBasicEMD(ctx, "bid-123", &domain.UpdateBasicEMDRequest{
-		EMDAmount: float64Ptr(50000),
-	}, "user-exec", []string{"BID_EXECUTIVE"})
-	if err == nil {
-		t.Fatal("expected error when BID_EXECUTIVE tries to update basic EMD")
+	_, err := s.svc.VerifyEMDPayment(ctx, "bid-123", &domain.VerifyEMDPaymentRequest{Status: "Verified"}, finance, financeRoles)
+	wantErr(t, err, domain.ErrValidation, "verify before payment")
+	_, err = s.svc.UpdateEMDRefund(ctx, "bid-123", &domain.UpdateEMDRefundRequest{RefundStatus: domain.RefundStatusInitiated}, finance, financeRoles)
+	wantErr(t, err, domain.ErrValidation, "refund before payment")
+
+	s.pay(t)
+
+	_, err = s.svc.VerifyEMDPayment(ctx, "bid-123", &domain.VerifyEMDPaymentRequest{Status: "Bogus"}, finance, financeRoles)
+	wantErr(t, err, domain.ErrValidation, "invalid verification status")
+	rej, err := s.svc.VerifyEMDPayment(ctx, "bid-123", &domain.VerifyEMDPaymentRequest{Status: "Rejected"}, finance, financeRoles)
+	if err != nil || rej.Status != domain.EMDStatusVerificationRejected {
+		t.Fatalf("verification rejected: %v %+v", err, rej)
+	}
+	// Re-recording the payment restarts verification.
+	if _, err := s.svc.RecordEMDPayment(ctx, "bid-123", onlinePayment(50000), finance, financeRoles); err != nil {
+		t.Fatal(err)
+	}
+	ver, err := s.svc.VerifyEMDPayment(ctx, "bid-123", &domain.VerifyEMDPaymentRequest{Status: "Verified"}, finance, financeRoles)
+	if err != nil || ver.Status != domain.EMDStatusVerified {
+		t.Fatalf("verified: %v %+v", err, ver)
 	}
 
 	today := time.Now().Format("2006-01-02")
-	payReq := &domain.RecordEMDPaymentRequest{
-		PaymentMode:   domain.PaymentModeOnline,
-		PaymentAmount: 50000,
-		PaymentDate:   today,
-		PaymentStatus: "Successful",
-		OnlineDetails: &domain.OnlinePaymentDetails{
-			TransactionID:       "UTR-TEST-123",
-			PaymentGateway:      "Razorpay",
-			TransactionDateTime: time.Now().Format(time.RFC3339),
-			PaymentStatus:       "Successful",
-		},
-		Depositor: domain.DepositorDetailsDTO{
-			Name:        "Rahul Kumar",
-			Department:  "Finance",
-			DepositDate: today,
-		},
+	for name, req := range map[string]*domain.UpdateEMDRefundRequest{
+		"unknown status":   {RefundStatus: "Bogus"},
+		"more than paid":   {RefundStatus: domain.RefundStatusInitiated, RefundAmount: float64Ptr(50000.01)},
+		"zero amount":      {RefundStatus: domain.RefundStatusInitiated, RefundAmount: float64Ptr(0)},
+		"refunded no date": {RefundStatus: domain.RefundStatusRefunded},
+		"bad receipt url":  {RefundStatus: domain.RefundStatusInitiated, RefundReceiptURL: strPtr("javascript:1")},
+	} {
+		_, err := s.svc.UpdateEMDRefund(ctx, "bid-123", req, finance, financeRoles)
+		wantErr(t, err, domain.ErrValidation, name)
 	}
 
-	_, err = s.svc.RecordEMDPayment(ctx, "bid-123", payReq, "user-exec", []string{"BID_EXECUTIVE"})
-	if err == nil {
-		t.Fatal("expected error when BID_EXECUTIVE tries to record EMD payment")
+	part, err := s.svc.UpdateEMDRefund(ctx, "bid-123", &domain.UpdateEMDRefundRequest{RefundStatus: domain.RefundStatusInitiated, RefundAmount: float64Ptr(20000)}, finance, financeRoles)
+	if err != nil || part.Status != domain.EMDStatusVerified || s.repo.bid.EMDReturned {
+		t.Fatalf("partial refund: %v %+v", err, part)
 	}
+	done, err := s.svc.UpdateEMDRefund(ctx, "bid-123", &domain.UpdateEMDRefundRequest{
+		RefundStatus: domain.RefundStatusRefunded, ActualRefundDate: &today, RefundAmount: float64Ptr(50000),
+		RefundMode: strPtr("Online"), RefundTransactionID: strPtr("REF-UTR-883"),
+	}, finance, financeRoles)
+	if err != nil || done.Status != domain.EMDStatusRefunded || !s.repo.bid.EMDReturned {
+		t.Fatalf("refund: %v %+v", err, done)
+	}
+	_, err = s.svc.UpdateEMDRefund(ctx, "bid-123", &domain.UpdateEMDRefundRequest{RefundStatus: domain.RefundStatusPending}, finance, financeRoles)
+	wantErr(t, err, domain.ErrValidation, "refund after refunded")
+}
 
-	// Authorized role (ADMIN, SUPER_ADMIN, FINANCE) should succeed
-	adminResp, err := s.svc.UpdateBasicEMD(ctx, "bid-123", &domain.UpdateBasicEMDRequest{
-		EMDAmount: float64Ptr(50000),
-		Purpose:   strPtr("Updated by Admin"),
-	}, "user-admin", []string{"ADMIN"})
-	if err != nil {
-		t.Fatalf("expected ADMIN to succeed, got %v", err)
+func TestEMD_ReadyGate(t *testing.T) {
+	ready := &domain.UpdateBidRequest{EMDReady: boolPtr(true)}
+	for _, tc := range []struct {
+		name   string
+		status string // "" = no lifecycle row
+		roles  []string
+		want   error
+	}{
+		{"no lifecycle row", "", financeRoles, nil},
+		{"pending but not submitted", domain.EMDStatusPending, financeRoles, nil},
+		{"awaiting approval, finance", domain.EMDStatusPendingMDApproval, financeRoles, domain.ErrForbidden},
+		{"rejected, finance", domain.EMDStatusRejected, financeRoles, domain.ErrForbidden},
+		{"awaiting approval, admin override", domain.EMDStatusPendingMDApproval, adminRoles, nil},
+		{"rejected, super admin override", domain.EMDStatusRejected, superRoles, nil},
+		{"approved, finance", domain.EMDStatusMDApproved, financeRoles, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newEMDTestSetup()
+			if tc.status != "" {
+				s.repo.emd = &domain.TenderEMDDetails{BidID: "bid-123", Status: tc.status}
+			}
+			err := s.svc.UpdateBid(context.Background(), "bid-123", ready, "actor-1", tc.roles)
+			if tc.want == nil && err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if tc.want != nil {
+				wantErr(t, err, tc.want, tc.name)
+			}
+		})
 	}
-	if adminResp == nil {
-		t.Fatal("expected response for ADMIN")
+}
+
+func TestEMD_SwitchingToExemptClosesOpenRow(t *testing.T) {
+	s := newEMDTestSetup()
+	s.repo.emd = &domain.TenderEMDDetails{BidID: "bid-123", Status: domain.EMDStatusPendingMDApproval}
+	req := &domain.UpdateBidRequest{EMDNotApplicable: boolPtr(true)}
+	if err := s.svc.UpdateBid(context.Background(), "bid-123", req, "actor-1", adminRoles); err != nil {
+		t.Fatal(err)
 	}
+	if !s.repo.emdClosed {
+		t.Fatal("open lifecycle row was not closed")
+	}
+}
+
+func TestChecklist_ToggleKeepsStatusInSync(t *testing.T) {
+	s := newEMDTestSetup()
+	ctx := context.Background()
+	s.repo.checklists = []domain.BidChecklist{{ID: "c1", BidID: "bid-123", Title: "t"}}
+
+	if _, err := s.svc.ToggleChecklist(ctx, "bid-123", "c1", true, "u"); err != nil || s.repo.lastToggled != "COMPLETED" {
+		t.Fatalf("done: %v status=%q", err, s.repo.lastToggled)
+	}
+	if _, err := s.svc.ToggleChecklist(ctx, "bid-123", "c1", false, "u"); err != nil || s.repo.lastToggled != "PENDING" {
+		t.Fatalf("undone: %v status=%q", err, s.repo.lastToggled)
+	}
+}
+
+func TestChecklist_ValidatesPriorityAndStatus(t *testing.T) {
+	s := newEMDTestSetup()
+	ctx := context.Background()
+	_, err := s.svc.AddChecklist(ctx, "bid-123", &domain.AddChecklistRequest{Title: "t", Priority: strPtr("URGENT")})
+	wantErr(t, err, domain.ErrValidation, "add with bad priority")
+	_, err = s.svc.UpdateChecklist(ctx, "bid-123", "c1", &domain.UpdateChecklistRequest{Status: strPtr("DONE")})
+	wantErr(t, err, domain.ErrValidation, "update with bad status")
+	_, err = s.svc.UpdateChecklist(ctx, "bid-123", "c1", &domain.UpdateChecklistRequest{Priority: strPtr("low")})
+	wantErr(t, err, domain.ErrValidation, "priority is case sensitive")
 }

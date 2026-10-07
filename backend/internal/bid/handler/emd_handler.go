@@ -1,18 +1,21 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
+	"regexp"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/onetrack/backend/internal/bid/domain"
 	"github.com/onetrack/backend/internal/platform/response"
 )
@@ -26,24 +29,27 @@ var allowedEMDReceiptTypes = map[string]string{
 	"application/pdf": ".pdf",
 }
 
-func validateReceiptUpload(size int64, head []byte, declaredName string) (string, error) {
+var (
+	// Both come from the URL and end up in a file path, so they are pinned to
+	// the exact shapes this module writes.
+	bidIDRe       = regexp.MustCompile(`^[0-9a-fA-F-]{36}$`)
+	receiptNameRe = regexp.MustCompile(`^[0-9a-f]{32}\.(jpg|png|webp|pdf)$`)
+)
+
+func validateReceiptUpload(size int64, head []byte) (string, error) {
 	if size > maxEMDReceiptBytes {
 		return "", fmt.Errorf("file exceeds the %d MB limit", maxEMDReceiptBytes>>20)
 	}
-
-	detected := http.DetectContentType(head)
-	ext, ok := allowedEMDReceiptTypes[detected]
+	ext, ok := allowedEMDReceiptTypes[http.DetectContentType(head)]
 	if !ok {
-		// DetectContentType can sometimes report "application/octet-stream" for PDF
-		if strings.HasSuffix(strings.ToLower(declaredName), ".pdf") && strings.HasPrefix(string(head), "%PDF-") {
-			return ".pdf", nil
-		}
 		return "", fmt.Errorf("only JPEG, PNG, WebP images or PDF documents are allowed")
 	}
 	return ext, nil
 }
 
-func saveReceiptFile(fh *multipart.FileHeader, uploadDir string) (string, error) {
+// saveReceiptFile stores the upload under dir (one folder per tender) with a
+// random name and returns that name.
+func saveReceiptFile(fh *multipart.FileHeader, dir string) (string, error) {
 	f, err := fh.Open()
 	if err != nil {
 		return "", fmt.Errorf("could not read the uploaded file: %w", err)
@@ -52,7 +58,7 @@ func saveReceiptFile(fh *multipart.FileHeader, uploadDir string) (string, error)
 
 	head := make([]byte, 512)
 	n, _ := io.ReadFull(f, head)
-	ext, err := validateReceiptUpload(fh.Size, head[:n], fh.Filename)
+	ext, err := validateReceiptUpload(fh.Size, head[:n])
 	if err != nil {
 		return "", err
 	}
@@ -63,13 +69,10 @@ func saveReceiptFile(fh *multipart.FileHeader, uploadDir string) (string, error)
 	}
 	filename := hex.EncodeToString(nameBytes) + ext
 
-	emdDir := filepath.Join(uploadDir, "emd")
-	if err := os.MkdirAll(emdDir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("could not create emd upload directory: %w", err)
 	}
-
-	fullPath := filepath.Join(emdDir, filename)
-	out, err := os.Create(fullPath)
+	out, err := os.Create(filepath.Join(dir, filename))
 	if err != nil {
 		return "", fmt.Errorf("could not save receipt file: %w", err)
 	}
@@ -81,272 +84,171 @@ func saveReceiptFile(fh *multipart.FileHeader, uploadDir string) (string, error)
 	if _, err := io.Copy(out, f); err != nil {
 		return "", fmt.Errorf("could not write file: %w", err)
 	}
-
 	return filename, nil
 }
 
-// ────────────────────────────────────────
-// EMD Handler Endpoints
-// ────────────────────────────────────────
+func mapServiceError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, domain.ErrForbidden):
+		response.Forbidden(c, err.Error())
+	case errors.Is(err, domain.ErrValidation):
+		response.BadRequest(c, err.Error(), nil)
+	case errors.Is(err, pgx.ErrNoRows):
+		response.NotFound(c, "Bid not found")
+	default:
+		log.Printf("emd: %v", err)
+		response.InternalError(c, "Could not complete the EMD request")
+	}
+}
 
-func (h *BidHandler) GetEMDDetails(c *gin.Context) {
-	bidID := c.Param("id")
-	emd, err := h.svc.GetEMDDetails(c.Request.Context(), bidID)
+func actorRoles(c *gin.Context) []string {
+	roles, _ := c.Get("roles")
+	r, _ := roles.([]string)
+	return r
+}
+
+// emdAction runs one lifecycle action for the calling user and writes the response.
+func (h *BidHandler) emdAction(c *gin.Context, message string, do func(ctx context.Context, bidID, actorID string, roles []string) (*domain.TenderEMDResponse, error)) {
+	resp, err := do(c.Request.Context(), c.Param("id"), c.GetString("user_id"), actorRoles(c))
 	if err != nil {
-		response.InternalError(c, err.Error())
+		mapServiceError(c, err)
 		return
 	}
-	response.Success(c, http.StatusOK, "EMD details retrieved", emd)
+	response.Success(c, http.StatusOK, message, resp)
+}
+
+func (h *BidHandler) GetEMDDetails(c *gin.Context) {
+	resp, err := h.svc.GetEMDDetails(c.Request.Context(), c.Param("id"), actorRoles(c))
+	if err != nil {
+		mapServiceError(c, err)
+		return
+	}
+	response.Success(c, http.StatusOK, "EMD details retrieved", resp)
 }
 
 func (h *BidHandler) UpdateBasicEMD(c *gin.Context) {
-	bidID := c.Param("id")
 	var req domain.UpdateBasicEMDRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error(), nil)
 		return
 	}
-
-	actorID := c.GetString("user_id")
-	rolesVal, _ := c.Get("roles")
-	actorRoles, _ := rolesVal.([]string)
-
-	resp, err := h.svc.UpdateBasicEMD(c.Request.Context(), bidID, &req, actorID, actorRoles)
-	if err != nil {
-		if errors.Is(err, domain.ErrForbidden) {
-			response.Forbidden(c, err.Error())
-			return
-		}
-		if errors.Is(err, domain.ErrValidation) {
-			response.BadRequest(c, err.Error(), nil)
-			return
-		}
-		response.InternalError(c, err.Error())
-		return
-	}
-
-	response.Success(c, http.StatusOK, "Basic EMD details updated", resp)
+	h.emdAction(c, "Basic EMD details updated", func(ctx context.Context, id, actor string, roles []string) (*domain.TenderEMDResponse, error) {
+		return h.svc.UpdateBasicEMD(ctx, id, &req, actor, roles)
+	})
 }
 
 func (h *BidHandler) SubmitEMDForMDApproval(c *gin.Context) {
-	bidID := c.Param("id")
 	var req domain.SubmitMDApprovalRequest
 	_ = c.ShouldBindJSON(&req) // remarks optional
-
-	actorID := c.GetString("user_id")
-	rolesVal, _ := c.Get("roles")
-	actorRoles, _ := rolesVal.([]string)
-
-	resp, err := h.svc.SubmitEMDForMDApproval(c.Request.Context(), bidID, &req, actorID, actorRoles)
-	if err != nil {
-		if errors.Is(err, domain.ErrForbidden) {
-			response.Forbidden(c, err.Error())
-			return
-		}
-		if errors.Is(err, domain.ErrValidation) {
-			response.BadRequest(c, err.Error(), nil)
-			return
-		}
-		response.InternalError(c, err.Error())
-		return
-	}
-
-	response.Success(c, http.StatusOK, "EMD details submitted for MD Approval", resp)
+	h.emdAction(c, "EMD details submitted for MD Approval", func(ctx context.Context, id, actor string, roles []string) (*domain.TenderEMDResponse, error) {
+		return h.svc.SubmitEMDForMDApproval(ctx, id, &req, actor, roles)
+	})
 }
 
 func (h *BidHandler) ApproveEMD(c *gin.Context) {
-	bidID := c.Param("id")
 	var req domain.MDDecisionRequest
-	_ = c.ShouldBindJSON(&req)
-
-	actorID := c.GetString("user_id")
-	rolesVal, _ := c.Get("roles")
-	actorRoles, _ := rolesVal.([]string)
-
-	resp, err := h.svc.ApproveEMD(c.Request.Context(), bidID, &req, actorID, actorRoles)
-	if err != nil {
-		if errors.Is(err, domain.ErrForbidden) {
-			response.Forbidden(c, err.Error())
-			return
-		}
-		if errors.Is(err, domain.ErrValidation) {
-			response.BadRequest(c, err.Error(), nil)
-			return
-		}
-		response.InternalError(c, err.Error())
-		return
-	}
-
-	response.Success(c, http.StatusOK, "EMD approved by MD successfully", resp)
+	_ = c.ShouldBindJSON(&req) // remarks optional
+	h.emdAction(c, "EMD approved by MD successfully", func(ctx context.Context, id, actor string, roles []string) (*domain.TenderEMDResponse, error) {
+		return h.svc.ApproveEMD(ctx, id, &req, actor, roles)
+	})
 }
 
 func (h *BidHandler) RejectEMD(c *gin.Context) {
-	bidID := c.Param("id")
 	var req domain.MDDecisionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Rejection remarks are required", nil)
 		return
 	}
-
-	actorID := c.GetString("user_id")
-	rolesVal, _ := c.Get("roles")
-	actorRoles, _ := rolesVal.([]string)
-
-	resp, err := h.svc.RejectEMD(c.Request.Context(), bidID, &req, actorID, actorRoles)
-	if err != nil {
-		if errors.Is(err, domain.ErrForbidden) {
-			response.Forbidden(c, err.Error())
-			return
-		}
-		if errors.Is(err, domain.ErrValidation) {
-			response.BadRequest(c, err.Error(), nil)
-			return
-		}
-		response.InternalError(c, err.Error())
-		return
-	}
-
-	response.Success(c, http.StatusOK, "EMD rejected and returned to Finance", resp)
+	h.emdAction(c, "EMD rejected and returned to Finance", func(ctx context.Context, id, actor string, roles []string) (*domain.TenderEMDResponse, error) {
+		return h.svc.RejectEMD(ctx, id, &req, actor, roles)
+	})
 }
 
 func (h *BidHandler) RecordEMDPayment(c *gin.Context) {
-	bidID := c.Param("id")
 	var req domain.RecordEMDPaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error(), nil)
 		return
 	}
-
-	actorID := c.GetString("user_id")
-	rolesVal, _ := c.Get("roles")
-	actorRoles, _ := rolesVal.([]string)
-
-	resp, err := h.svc.RecordEMDPayment(c.Request.Context(), bidID, &req, actorID, actorRoles)
-	if err != nil {
-		if errors.Is(err, domain.ErrForbidden) {
-			response.Forbidden(c, err.Error())
-			return
-		}
-		if errors.Is(err, domain.ErrValidation) {
-			response.BadRequest(c, err.Error(), nil)
-			return
-		}
-		response.InternalError(c, err.Error())
-		return
-	}
-
-	response.Success(c, http.StatusOK, "EMD payment recorded successfully", resp)
+	h.emdAction(c, "EMD payment recorded successfully", func(ctx context.Context, id, actor string, roles []string) (*domain.TenderEMDResponse, error) {
+		return h.svc.RecordEMDPayment(ctx, id, &req, actor, roles)
+	})
 }
 
 func (h *BidHandler) VerifyEMDPayment(c *gin.Context) {
-	bidID := c.Param("id")
 	var req domain.VerifyEMDPaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error(), nil)
 		return
 	}
-
-	actorID := c.GetString("user_id")
-	rolesVal, _ := c.Get("roles")
-	actorRoles, _ := rolesVal.([]string)
-
-	resp, err := h.svc.VerifyEMDPayment(c.Request.Context(), bidID, &req, actorID, actorRoles)
-	if err != nil {
-		if errors.Is(err, domain.ErrForbidden) {
-			response.Forbidden(c, err.Error())
-			return
-		}
-		if errors.Is(err, domain.ErrValidation) {
-			response.BadRequest(c, err.Error(), nil)
-			return
-		}
-		response.InternalError(c, err.Error())
-		return
-	}
-
-	response.Success(c, http.StatusOK, "EMD payment verification updated", resp)
+	h.emdAction(c, "EMD payment verification updated", func(ctx context.Context, id, actor string, roles []string) (*domain.TenderEMDResponse, error) {
+		return h.svc.VerifyEMDPayment(ctx, id, &req, actor, roles)
+	})
 }
 
 func (h *BidHandler) UpdateEMDRefund(c *gin.Context) {
-	bidID := c.Param("id")
 	var req domain.UpdateEMDRefundRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error(), nil)
 		return
 	}
-
-	actorID := c.GetString("user_id")
-	rolesVal, _ := c.Get("roles")
-	actorRoles, _ := rolesVal.([]string)
-
-	resp, err := h.svc.UpdateEMDRefund(c.Request.Context(), bidID, &req, actorID, actorRoles)
-	if err != nil {
-		if errors.Is(err, domain.ErrForbidden) {
-			response.Forbidden(c, err.Error())
-			return
-		}
-		if errors.Is(err, domain.ErrValidation) {
-			response.BadRequest(c, err.Error(), nil)
-			return
-		}
-		response.InternalError(c, err.Error())
-		return
-	}
-
-	response.Success(c, http.StatusOK, "EMD release/refund tracking updated", resp)
+	h.emdAction(c, "EMD release/refund tracking updated", func(ctx context.Context, id, actor string, roles []string) (*domain.TenderEMDResponse, error) {
+		return h.svc.UpdateEMDRefund(ctx, id, &req, actor, roles)
+	})
 }
 
 func (h *BidHandler) GetEMDAuditLogs(c *gin.Context) {
-	bidID := c.Param("id")
-	logs, err := h.svc.GetEMDAuditLogs(c.Request.Context(), bidID)
+	logs, err := h.svc.GetEMDAuditLogs(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		response.InternalError(c, err.Error())
+		mapServiceError(c, err)
 		return
 	}
 	response.Success(c, http.StatusOK, "EMD audit logs retrieved", logs)
 }
 
+// UploadEMDReceipt: the route already limits this to Finance and admins.
 func (h *BidHandler) UploadEMDReceipt(c *gin.Context) {
-	rolesVal, _ := c.Get("roles")
-	actorRoles, _ := rolesVal.([]string)
-	hasAllowedRole := false
-	for _, r := range actorRoles {
-		if strings.EqualFold(r, "SUPER_ADMIN") || strings.EqualFold(r, "ADMIN") || strings.EqualFold(r, "FINANCE") {
-			hasAllowedRole = true
-			break
-		}
+	bidID := c.Param("id")
+	if !bidIDRe.MatchString(bidID) {
+		response.BadRequest(c, "Invalid tender id", nil)
+		return
 	}
-	if !hasAllowedRole {
-		response.Forbidden(c, "only Finance team or Administrators can upload EMD receipts")
+	if err := h.svc.EnsureEMDRequired(c.Request.Context(), bidID); err != nil {
+		mapServiceError(c, err)
 		return
 	}
 
+	// A little headroom over the file limit for the multipart framing.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxEMDReceiptBytes+(1<<20))
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
-		response.BadRequest(c, "File is required (field name: 'file')", nil)
+		response.BadRequest(c, "File is required (field name: 'file', max 10 MB)", nil)
 		return
 	}
-
-	uploadDir := "./uploads"
-	filename, err := saveReceiptFile(fileHeader, uploadDir)
+	filename, err := saveReceiptFile(fileHeader, filepath.Join(h.emdUploadDir, bidID))
 	if err != nil {
 		response.BadRequest(c, err.Error(), nil)
 		return
 	}
 
-	receiptURL := fmt.Sprintf("/api/v1/bids/%s/emd/receipt/%s", c.Param("id"), filename)
 	response.Success(c, http.StatusOK, "Receipt uploaded successfully", gin.H{
 		"filename":    filename,
-		"receipt_url": receiptURL,
+		"receipt_url": fmt.Sprintf("/api/v1/bids/%s/emd/receipt/%s", bidID, filename),
 	})
 }
 
+// GetEMDReceiptFile serves a receipt only under the tender it was uploaded for.
 func (h *BidHandler) GetEMDReceiptFile(c *gin.Context) {
-	filename := filepath.Base(c.Param("filename"))
-	fullPath := filepath.Join("./uploads/emd", filename)
-	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+	bidID, name := c.Param("id"), c.Param("filename")
+	if !bidIDRe.MatchString(bidID) || !receiptNameRe.MatchString(name) {
 		response.NotFound(c, "Receipt file not found")
 		return
 	}
+	fullPath := filepath.Join(h.emdUploadDir, bidID, name)
+	if _, err := os.Stat(fullPath); err != nil {
+		response.NotFound(c, "Receipt file not found")
+		return
+	}
+	c.Header("X-Content-Type-Options", "nosniff")
 	c.File(fullPath)
 }

@@ -27,6 +27,9 @@ backend/uploads/
 # Lead documents — bind-mounted host folder, user-uploaded content.
 /leads-assets/
 
+# EMD payment/refund receipts — bind-mounted host folder, user-uploaded content.
+/emd-assets/
+
 # Build output / compiled binaries — built from source by the Dockerfiles, never versioned.
 backend/bin/
 /frontend/dist/
