@@ -53,7 +53,7 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 			bid_result, ai_source_document_id, ai_extraction_confidence, stage_completions,
 			emd_not_applicable,
 			account_manager_id, presales_id, location, bg_duration_months, requested_products,
-			emd_exemption_types, alert_note, tender_link
+			emd_exemption_types, alert_note, tender_link, calendar_id
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9,
@@ -70,7 +70,7 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 			$42, $43, $44, $45, $46, $47, $48, '{"DISCOVERED": true}'::jsonb,
 			$49,
 			$52, $53, $54, $55, $56,
-			$57, $58, $59
+			$57, $58, $59, $60
 		) RETURNING id
 	`
 	var id string
@@ -92,7 +92,7 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 		params.EMDNotApplicable,
 		params.Quantity, params.OurRank,
 		params.AccountManagerID, params.PresalesID, params.Location, params.BGDurationMonths, params.RequestedProducts,
-		params.EMDExemptionTypes, params.AlertNote, params.TenderLink,
+		params.EMDExemptionTypes, params.AlertNote, params.TenderLink, params.CalendarID,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("failed to create bid: %w", err)
@@ -162,7 +162,8 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 		       emd_not_applicable,
 		       account_manager_id, presales_id, location, bg_duration_months,
 		       requested_products, primary_review, alert_note, tender_link,
-		       ` + derivedStatusExpr + ` AS derived_status
+		       ` + derivedStatusExpr + ` AS derived_status,
+		       calendar_id, calculated_72h_deadline, deadline_remaining_working_hours, deadline_last_computed_at
 		FROM bid.bid_workspaces b
 		WHERE b.id = $1
 	`
@@ -388,7 +389,8 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		       b.emd_not_applicable,
 		       b.account_manager_id, b.presales_id, b.location, b.bg_duration_months,
 		       b.requested_products, b.primary_review, b.alert_note, b.tender_link,
-		       ` + derivedStatusExpr + ` AS derived_status
+		       ` + derivedStatusExpr + ` AS derived_status,
+		       b.calendar_id, b.calculated_72h_deadline, b.deadline_remaining_working_hours, b.deadline_last_computed_at
 		FROM bid.bid_workspaces b
 		LEFT JOIN auth.users u ON b.bid_owner_id = u.id
 		%s
@@ -780,6 +782,15 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	if req.QualificationStatus != nil {
 		addSet("qualification_status", *req.QualificationStatus)
 	}
+	if req.CalendarID != nil {
+		if strings.TrimSpace(*req.CalendarID) == "" {
+			sets = append(sets, fmt.Sprintf("calendar_id = $%d", idx))
+			args = append(args, nil)
+			idx++
+		} else {
+			addSet("calendar_id", *req.CalendarID)
+		}
+	}
 
 	args = append(args, id)
 	query := fmt.Sprintf("UPDATE bid.bid_workspaces SET %s WHERE id = $%d AND archived_at IS NULL",
@@ -1051,7 +1062,8 @@ func (r *postgresBidRepo) BulkInsertChecklists(ctx context.Context, bidID string
 
 func (r *postgresBidRepo) GetChecklists(ctx context.Context, bidID string) ([]domain.BidChecklist, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, bid_id, title, is_done, done_by, done_at, sort_order, checklist_group, created_at
+		`SELECT id, bid_id, title, is_done, done_by, done_at, sort_order, checklist_group,
+		        COALESCE(priority, 'MEDIUM'), assigned_to, assigned_role, due_at, COALESCE(status, 'PENDING'), created_at
 		 FROM bid.bid_checklists WHERE bid_id = $1 ORDER BY sort_order ASC, created_at ASC`,
 		bidID,
 	)
@@ -1063,7 +1075,8 @@ func (r *postgresBidRepo) GetChecklists(ctx context.Context, bidID string) ([]do
 	var items []domain.BidChecklist
 	for rows.Next() {
 		var c domain.BidChecklist
-		if err := rows.Scan(&c.ID, &c.BidID, &c.Title, &c.IsDone, &c.DoneBy, &c.DoneAt, &c.SortOrder, &c.ChecklistGroup, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.BidID, &c.Title, &c.IsDone, &c.DoneBy, &c.DoneAt, &c.SortOrder, &c.ChecklistGroup,
+			&c.Priority, &c.AssignedTo, &c.AssignedRole, &c.DueAt, &c.Status, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, c)
@@ -1079,9 +1092,11 @@ func (r *postgresBidRepo) AddChecklist(ctx context.Context, bidID string, title 
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO bid.bid_checklists (bid_id, title, sort_order, checklist_group)
 		 VALUES ($1, $2, $3, 'CUSTOM')
-		 RETURNING id, bid_id, title, is_done, done_by, done_at, sort_order, checklist_group, created_at`,
+		 RETURNING id, bid_id, title, is_done, done_by, done_at, sort_order, checklist_group,
+		           COALESCE(priority, 'MEDIUM'), assigned_to, assigned_role, due_at, COALESCE(status, 'PENDING'), created_at`,
 		bidID, title, sortOrder,
-	).Scan(&c.ID, &c.BidID, &c.Title, &c.IsDone, &c.DoneBy, &c.DoneAt, &c.SortOrder, &c.ChecklistGroup, &c.CreatedAt)
+	).Scan(&c.ID, &c.BidID, &c.Title, &c.IsDone, &c.DoneBy, &c.DoneAt, &c.SortOrder, &c.ChecklistGroup,
+		&c.Priority, &c.AssignedTo, &c.AssignedRole, &c.DueAt, &c.Status, &c.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -1100,6 +1115,62 @@ func (r *postgresBidRepo) UpdateChecklist(ctx context.Context, checklistID strin
 	if sortOrder != nil {
 		sets = append(sets, fmt.Sprintf("sort_order = $%d", idx))
 		args = append(args, *sortOrder)
+		idx++
+	}
+	if len(sets) == 0 {
+		return nil
+	}
+	args = append(args, checklistID)
+	_, err := r.pool.Exec(ctx,
+		fmt.Sprintf("UPDATE bid.bid_checklists SET %s WHERE id = $%d",
+			strings.Join(sets, ", "), idx),
+		args...,
+	)
+	return err
+}
+
+func (r *postgresBidRepo) UpdateChecklistDetails(ctx context.Context, checklistID string, req *domain.UpdateChecklistRequest) error {
+	sets := []string{}
+	args := []interface{}{}
+	idx := 1
+	if req.Title != nil {
+		sets = append(sets, fmt.Sprintf("title = $%d", idx))
+		args = append(args, *req.Title)
+		idx++
+	}
+	if req.SortOrder != nil {
+		sets = append(sets, fmt.Sprintf("sort_order = $%d", idx))
+		args = append(args, *req.SortOrder)
+		idx++
+	}
+	if req.Priority != nil {
+		sets = append(sets, fmt.Sprintf("priority = $%d", idx))
+		args = append(args, *req.Priority)
+		idx++
+	}
+	if req.Status != nil {
+		sets = append(sets, fmt.Sprintf("status = $%d", idx))
+		args = append(args, *req.Status)
+		idx++
+	}
+	if req.AssignedTo != nil {
+		if strings.TrimSpace(*req.AssignedTo) == "" {
+			sets = append(sets, fmt.Sprintf("assigned_to = $%d", idx))
+			args = append(args, nil)
+		} else {
+			sets = append(sets, fmt.Sprintf("assigned_to = $%d", idx))
+			args = append(args, *req.AssignedTo)
+		}
+		idx++
+	}
+	if req.AssignedRole != nil {
+		sets = append(sets, fmt.Sprintf("assigned_role = $%d", idx))
+		args = append(args, *req.AssignedRole)
+		idx++
+	}
+	if req.DueAt != nil {
+		sets = append(sets, fmt.Sprintf("due_at = $%d", idx))
+		args = append(args, *req.DueAt)
 		idx++
 	}
 	if len(sets) == 0 {
@@ -1300,6 +1371,7 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 		&b.AccountManagerID, &b.PresalesID, &b.Location, &b.BGDurationMonths,
 		&b.RequestedProducts, &b.PrimaryReview, &b.AlertNote, &b.TenderLink,
 		&b.DerivedStatus,
+		&b.CalendarID, &b.Calculated72hDeadline, &b.DeadlineRemainingWorkingHours, &b.DeadlineLastComputedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan bid: %w", err)
@@ -1322,7 +1394,8 @@ func (r *postgresBidRepo) BulkInsertChecklistsWithGroup(ctx context.Context, bid
 
 func (r *postgresBidRepo) GetChecklistsByGroup(ctx context.Context, bidID string, group string) ([]domain.BidChecklist, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, bid_id, title, is_done, done_by, done_at, sort_order, checklist_group, created_at
+		`SELECT id, bid_id, title, is_done, done_by, done_at, sort_order, checklist_group,
+		        COALESCE(priority, 'MEDIUM'), assigned_to, assigned_role, due_at, COALESCE(status, 'PENDING'), created_at
 		 FROM bid.bid_checklists WHERE bid_id = $1 AND checklist_group = $2 ORDER BY sort_order ASC, created_at ASC`,
 		bidID, group,
 	)
@@ -1333,7 +1406,8 @@ func (r *postgresBidRepo) GetChecklistsByGroup(ctx context.Context, bidID string
 	var items []domain.BidChecklist
 	for rows.Next() {
 		var c domain.BidChecklist
-		if err := rows.Scan(&c.ID, &c.BidID, &c.Title, &c.IsDone, &c.DoneBy, &c.DoneAt, &c.SortOrder, &c.ChecklistGroup, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.BidID, &c.Title, &c.IsDone, &c.DoneBy, &c.DoneAt, &c.SortOrder, &c.ChecklistGroup,
+			&c.Priority, &c.AssignedTo, &c.AssignedRole, &c.DueAt, &c.Status, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, c)
@@ -1349,9 +1423,11 @@ func (r *postgresBidRepo) AddChecklistWithGroup(ctx context.Context, bidID strin
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO bid.bid_checklists (bid_id, title, sort_order, checklist_group)
 		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, bid_id, title, is_done, done_by, done_at, sort_order, checklist_group, created_at`,
+		 RETURNING id, bid_id, title, is_done, done_by, done_at, sort_order, checklist_group,
+		           COALESCE(priority, 'MEDIUM'), assigned_to, assigned_role, due_at, COALESCE(status, 'PENDING'), created_at`,
 		bidID, title, sortOrder, group,
-	).Scan(&c.ID, &c.BidID, &c.Title, &c.IsDone, &c.DoneBy, &c.DoneAt, &c.SortOrder, &c.ChecklistGroup, &c.CreatedAt)
+	).Scan(&c.ID, &c.BidID, &c.Title, &c.IsDone, &c.DoneBy, &c.DoneAt, &c.SortOrder, &c.ChecklistGroup,
+		&c.Priority, &c.AssignedTo, &c.AssignedRole, &c.DueAt, &c.Status, &c.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

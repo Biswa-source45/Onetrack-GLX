@@ -402,6 +402,7 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 		BidType:            req.BidType,
 		GemBidType:         req.GemBidType,
 		Remarks:            req.Remarks,
+		CalendarID:         req.CalendarID,
 		Metadata:           []byte(`{"stage_completions":{"DISCOVERED":true}}`),
 	}
 
@@ -642,24 +643,39 @@ func (s *bidService) GetBid(ctx context.Context, id string) (*domain.BidResponse
 
 	checklistItems := make([]domain.BidChecklistItem, 0, len(checklists))
 	for _, c := range checklists {
-		item := domain.BidChecklistItem{
-			ID:        c.ID,
-			Title:     c.Title,
-			IsDone:    c.IsDone,
-			DoneAt:    c.DoneAt,
-			SortOrder: c.SortOrder,
-			CreatedAt: c.CreatedAt,
-		}
-		if c.DoneBy != nil {
-			u, err := s.repo.GetUserSummary(ctx, *c.DoneBy)
-			if err == nil {
-				item.DoneBy = u
-			}
-		}
-		checklistItems = append(checklistItems, item)
+		checklistItems = append(checklistItems, s.mapChecklistToItem(ctx, c))
 	}
 
 	return buildBidResponse(bid, owner, reportingManager, accountManager, presales, members, checklistItems), nil
+}
+
+func (s *bidService) mapChecklistToItem(ctx context.Context, c domain.BidChecklist) domain.BidChecklistItem {
+	item := domain.BidChecklistItem{
+		ID:             c.ID,
+		Title:          c.Title,
+		IsDone:         c.IsDone,
+		DoneAt:         c.DoneAt,
+		SortOrder:      c.SortOrder,
+		ChecklistGroup: c.ChecklistGroup,
+		Priority:       c.Priority,
+		AssignedRole:   c.AssignedRole,
+		DueAt:          c.DueAt,
+		Status:         c.Status,
+		CreatedAt:      c.CreatedAt,
+	}
+	if c.DoneBy != nil {
+		u, err := s.repo.GetUserSummary(ctx, *c.DoneBy)
+		if err == nil {
+			item.DoneBy = u
+		}
+	}
+	if c.AssignedTo != nil {
+		u, err := s.repo.GetUserSummary(ctx, *c.AssignedTo)
+		if err == nil {
+			item.AssignedTo = u
+		}
+	}
+	return item
 }
 
 func (s *bidService) GetChecklists(ctx context.Context, bidID string) ([]domain.BidChecklistItem, error) {
@@ -669,19 +685,7 @@ func (s *bidService) GetChecklists(ctx context.Context, bidID string) ([]domain.
 	}
 	items := make([]domain.BidChecklistItem, 0, len(checklists))
 	for _, c := range checklists {
-		item := domain.BidChecklistItem{
-			ID:        c.ID,
-			Title:     c.Title,
-			IsDone:    c.IsDone,
-			DoneAt:    c.DoneAt,
-			SortOrder: c.SortOrder,
-			CreatedAt: c.CreatedAt,
-		}
-		if c.DoneBy != nil {
-			u, _ := s.repo.GetUserSummary(ctx, *c.DoneBy)
-			item.DoneBy = u
-		}
-		items = append(items, item)
+		items = append(items, s.mapChecklistToItem(ctx, c))
 	}
 	return items, nil
 }
@@ -700,17 +704,29 @@ func (s *bidService) AddChecklist(ctx context.Context, bidID string, req *domain
 	if err != nil {
 		return nil, err
 	}
-	return &domain.BidChecklistItem{
-		ID:        c.ID,
-		Title:     c.Title,
-		IsDone:    c.IsDone,
-		SortOrder: c.SortOrder,
-		CreatedAt: c.CreatedAt,
-	}, nil
+	if req.Priority != nil || req.AssignedTo != nil || req.AssignedRole != nil || req.DueAt != nil {
+		_ = s.repo.UpdateChecklistDetails(ctx, c.ID, &domain.UpdateChecklistRequest{
+			Priority:     req.Priority,
+			AssignedTo:   req.AssignedTo,
+			AssignedRole: req.AssignedRole,
+			DueAt:        req.DueAt,
+		})
+		checklists, err := s.repo.GetChecklists(ctx, bidID)
+		if err == nil {
+			for _, item := range checklists {
+				if item.ID == c.ID {
+					mapped := s.mapChecklistToItem(ctx, item)
+					return &mapped, nil
+				}
+			}
+		}
+	}
+	item := s.mapChecklistToItem(ctx, *c)
+	return &item, nil
 }
 
 func (s *bidService) UpdateChecklist(ctx context.Context, bidID string, checklistID string, req *domain.UpdateChecklistRequest) (*domain.BidChecklistItem, error) {
-	if err := s.repo.UpdateChecklist(ctx, checklistID, req.Title, req.SortOrder); err != nil {
+	if err := s.repo.UpdateChecklistDetails(ctx, checklistID, req); err != nil {
 		return nil, err
 	}
 	checklists, err := s.repo.GetChecklists(ctx, bidID)
@@ -719,19 +735,8 @@ func (s *bidService) UpdateChecklist(ctx context.Context, bidID string, checklis
 	}
 	for _, c := range checklists {
 		if c.ID == checklistID {
-			item := &domain.BidChecklistItem{
-				ID:        c.ID,
-				Title:     c.Title,
-				IsDone:    c.IsDone,
-				DoneAt:    c.DoneAt,
-				SortOrder: c.SortOrder,
-				CreatedAt: c.CreatedAt,
-			}
-			if c.DoneBy != nil {
-				u, _ := s.repo.GetUserSummary(ctx, *c.DoneBy)
-				item.DoneBy = u
-			}
-			return item, nil
+			item := s.mapChecklistToItem(ctx, c)
+			return &item, nil
 		}
 	}
 	return nil, fmt.Errorf("checklist item not found")
@@ -758,19 +763,8 @@ func (s *bidService) ToggleChecklist(ctx context.Context, bidID string, checklis
 	}
 	for _, c := range checklists {
 		if c.ID == checklistID {
-			item := &domain.BidChecklistItem{
-				ID:        c.ID,
-				Title:     c.Title,
-				IsDone:    c.IsDone,
-				DoneAt:    c.DoneAt,
-				SortOrder: c.SortOrder,
-				CreatedAt: c.CreatedAt,
-			}
-			if c.DoneBy != nil {
-				u, _ := s.repo.GetUserSummary(ctx, *c.DoneBy)
-				item.DoneBy = u
-			}
-			return item, nil
+			item := s.mapChecklistToItem(ctx, c)
+			return &item, nil
 		}
 	}
 	return nil, fmt.Errorf("checklist item not found")
@@ -2391,11 +2385,15 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, repor
 		EMDBranch:                 bid.EMDBranch,
 		EMDBeneficiary:            bid.EMDBeneficiary,
 		EMDPayableAt:              bid.EMDPayableAt,
-		CreatedAt:                 bid.CreatedAt,
-		UpdatedAt:                 bid.UpdatedAt,
-		ArchivedAt:                bid.ArchivedAt,
-		ResultDate:                bid.ResultDate,
-		DaysRemaining:             calcDaysRemaining(bid.ArchivedAt),
+		CreatedAt:                     bid.CreatedAt,
+		UpdatedAt:                     bid.UpdatedAt,
+		ArchivedAt:                    bid.ArchivedAt,
+		ResultDate:                    bid.ResultDate,
+		DaysRemaining:                 calcDaysRemaining(bid.ArchivedAt),
+		CalendarID:                    bid.CalendarID,
+		Calculated72hDeadline:         bid.Calculated72hDeadline,
+		DeadlineRemainingWorkingHours: bid.DeadlineRemainingWorkingHours,
+		DeadlineLastComputedAt:        bid.DeadlineLastComputedAt,
 	}
 }
 

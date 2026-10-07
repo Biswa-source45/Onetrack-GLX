@@ -30,5 +30,7 @@ backend/uploads/
 # Build output / compiled binaries — built from source by the Dockerfiles, never versioned.
 backend/bin/
 /frontend/dist/
-backend/dump.rdb
+# Local Memurai/Redis files
+dump.rdb
 memurai-log.txt
+

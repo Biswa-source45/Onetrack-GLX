@@ -43,6 +43,8 @@ type fakeBidRepo struct {
 
 	pricingCandidates []domain.PricingWorkspaceRow
 	pricingWindow     int
+
+	emd *domain.TenderEMDDetails
 }
 
 type memberCall struct {
@@ -135,6 +137,9 @@ func (f *fakeBidRepo) AddChecklistWithGroup(ctx context.Context, bidID string, t
 func (f *fakeBidRepo) UpdateChecklist(ctx context.Context, checklistID string, title *string, sortOrder *int) error {
 	return nil
 }
+func (f *fakeBidRepo) UpdateChecklistDetails(ctx context.Context, checklistID string, req *domain.UpdateChecklistRequest) error {
+	return nil
+}
 func (f *fakeBidRepo) DeleteChecklist(ctx context.Context, checklistID string) error { return nil }
 func (f *fakeBidRepo) ReorderChecklists(ctx context.Context, items []domain.ReorderChecklistItem) error {
 	return nil
@@ -204,6 +209,26 @@ func (f *fakeBidRepo) DecidePendingEdit(ctx context.Context, editID string, stat
 	}
 	e.DecidedBy = &domain.UserSummary{ID: decidedBy}
 	return nil
+}
+
+func (f *fakeBidRepo) GetEMDDetails(ctx context.Context, bidID string) (*domain.TenderEMDDetails, error) {
+	if f.emd == nil {
+		f.emd = &domain.TenderEMDDetails{BidID: bidID, EMDAmount: 50000, Status: domain.EMDStatusPending}
+	}
+	return f.emd, nil
+}
+
+func (f *fakeBidRepo) UpsertEMDDetails(ctx context.Context, emd *domain.TenderEMDDetails) error {
+	f.emd = emd
+	return nil
+}
+
+func (f *fakeBidRepo) LogEMDAction(ctx context.Context, log *domain.TenderEMDAuditLog) error {
+	return nil
+}
+
+func (f *fakeBidRepo) GetEMDAuditLogs(ctx context.Context, bidID string) ([]domain.TenderEMDAuditLog, error) {
+	return nil, nil
 }
 
 // fakeSystemLog is a no-op Recorder — tests that don't assert on System
@@ -601,7 +626,6 @@ func TestUpdateBid_OwnerReassignment(t *testing.T) {
 	})
 }
 
-func strPtr(s string) *string { return &s }
 func boolPtr(b bool) *bool       { return &b }
 
 // TestExtractProductFields covers the JSON-parsing edge cases Field Memory

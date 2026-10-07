@@ -13,6 +13,7 @@ import { isHttpUrl } from '../../lib/tenderSpec'
 import { TenderPrintSheet } from './TenderPrintSheet'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -41,6 +42,7 @@ import { tokenStorage } from '../../services/auth'
 import { ChecklistTab } from './ChecklistTab'
 import { EditTenderDialog } from './EditTenderDialog'
 import { DynamicStageWorkspace, checkStageState } from './StageWorkspaces'
+import { triggerRedZoneNotification, getTenderWorkingDeadline } from '../../services/calendar'
 
 // Module scope (not runtime-dependent) so the URL-backed tab state below can
 // validate against it before the component has even loaded a bid.
@@ -2110,13 +2112,33 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
   const [showOutcome, setShowOutcome] = useState(false)
   const [showCancel, setShowCancel] = useState(false)
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false)
+  const [notifyingRedZone, setNotifyingRedZone] = useState(false)
 
   const loadBid = useCallback(async (showLoader = false) => {
     setLoading(prev => (prev || showLoader ? true : false))
     setError(null)
     try {
       const res = await getBid(bidId)
-      if (res.ok) setBid(res.data)
+      if (res.ok) {
+        setBid(res.data)
+        // Refresh live working calendar deadline calculation
+        try {
+          const dlRes = await getTenderWorkingDeadline(bidId)
+          if (dlRes?.ok && dlRes.data) {
+            setBid(prev => prev ? ({
+              ...prev,
+              calculated_72h_deadline: dlRes.data.calculated_deadline || prev.calculated_72h_deadline,
+              deadline_remaining_working_hours: dlRes.data.remaining_working_hours !== undefined 
+                ? dlRes.data.remaining_working_hours 
+                : prev.deadline_remaining_working_hours,
+              deadline_remaining_working_days: dlRes.data.remaining_working_days,
+              deadline_target_value: dlRes.data.target_working_value,
+              deadline_target_unit: dlRes.data.target_working_unit,
+              deadline_is_threshold_reached: dlRes.data.is_threshold_reached,
+            }) : prev)
+          }
+        } catch { /* fallback to cached DB values */ }
+      }
       else setError(res.error?.message ?? 'Failed to load tender')
     } catch { setError('Network error') }
     finally { setLoading(false) }
@@ -2442,6 +2464,209 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
             </div>
           ))}
         </div>
+
+        {/* Dynamic Working Time Red Zone Due Date Notification Banner */}
+        {(bid.calculated_72h_deadline || bid.closing_date || bid.end_date) && (() => {
+          const remHours = bid.deadline_remaining_working_hours !== undefined && bid.deadline_remaining_working_hours !== null
+            ? Number(bid.deadline_remaining_working_hours)
+            : null
+          const closing = bid.closing_date || bid.end_date || bid.submission_deadline
+          const isClosed = closing ? new Date(closing).getTime() < Date.now() : false
+
+          const targetVal = bid.deadline_target_value !== undefined && bid.deadline_target_value !== null
+            ? Number(bid.deadline_target_value)
+            : 72
+          const targetUnit = (bid.deadline_target_unit || 'HOURS').toUpperCase()
+
+          let thresholdLabel = `${targetVal} Working Hours`
+          if (targetUnit === 'HOURS' && targetVal === 72) thresholdLabel = '3 Working Days (72h)'
+          else if (targetUnit === 'HOURS' && targetVal === 48) thresholdLabel = '2 Working Days (48h)'
+          else if (targetUnit === 'HOURS') thresholdLabel = `${targetVal} Working Hours`
+          else if (targetUnit === 'DAYS') thresholdLabel = `${targetVal} Working Days`
+          else if (targetUnit === 'MINUTES') thresholdLabel = `${targetVal} Minutes`
+          else if (targetUnit === 'SECONDS') thresholdLabel = `${targetVal} Seconds`
+
+          let targetHours = targetVal
+          if (targetUnit === 'DAYS') targetHours = targetVal * 24.0
+          else if (targetUnit === 'MINUTES') targetHours = targetVal / 60.0
+          else if (targetUnit === 'SECONDS') targetHours = targetVal / 3600.0
+
+          const deadlineTimestamp = bid.calculated_72h_deadline ? new Date(bid.calculated_72h_deadline).getTime() : null
+          const isRedZone = !isClosed && (
+            bid.deadline_is_threshold_reached !== undefined && bid.deadline_is_threshold_reached !== null
+              ? Boolean(bid.deadline_is_threshold_reached)
+              : (deadlineTimestamp ? Date.now() >= deadlineTimestamp : (remHours !== null ? remHours <= targetHours : false))
+          )
+
+          return (
+            <div className={`relative overflow-hidden rounded-2xl border p-4 sm:p-5 shadow-xs transition-all ${
+              isClosed
+                ? 'border-border/80 bg-muted/20 text-muted-foreground'
+                : isRedZone
+                  ? 'border-rose-200/90 dark:border-rose-900/60 bg-gradient-to-br from-rose-50/90 via-white to-rose-50/40 dark:from-rose-950/30 dark:via-card dark:to-rose-950/15'
+                  : 'border-emerald-200/70 dark:border-emerald-900/50 bg-gradient-to-br from-emerald-50/60 via-white to-emerald-50/30 dark:from-emerald-950/20 dark:via-card dark:to-emerald-950/10'
+            }`}>
+              {/* Left Accent Status Strip */}
+              <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${
+                isClosed ? 'bg-muted-foreground/30' : isRedZone ? 'bg-rose-500' : 'bg-emerald-500'
+              }`} />
+
+              <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4 pl-1.5">
+                {/* Left Info & Status Badge */}
+                <div className="space-y-1.5 max-w-2xl">
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    {/* Solid Sticky Indicator Dot (No blinking) */}
+                    <span className="relative flex h-2.5 w-2.5 items-center justify-center shrink-0">
+                      <span className={`h-2.5 w-2.5 rounded-full ${
+                        isClosed 
+                          ? 'bg-zinc-400 dark:bg-zinc-600 ring-2 ring-zinc-300 dark:ring-zinc-700' 
+                          : isRedZone 
+                            ? 'bg-rose-600 ring-4 ring-rose-500/25 shadow-xs shadow-rose-500/40' 
+                            : 'bg-emerald-500 ring-4 ring-emerald-500/25'
+                      }`} />
+                    </span>
+
+                    <span className={`text-xs font-bold uppercase tracking-wider ${
+                      isClosed
+                        ? 'text-muted-foreground'
+                        : isRedZone
+                          ? 'text-rose-700 dark:text-rose-400 font-extrabold'
+                          : 'text-emerald-700 dark:text-emerald-400'
+                    }`}>
+                      {isClosed
+                        ? 'Tender Submission Deadline Passed'
+                        : isRedZone
+                          ? `Red Zone – ${thresholdLabel} Threshold Reached`
+                          : 'Working Calendar Engine'}
+                    </span>
+
+                    <Badge variant="outline" className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${
+                      isClosed
+                        ? 'border-border bg-muted/40 text-muted-foreground'
+                        : isRedZone
+                          ? 'border-rose-200 dark:border-rose-800/80 bg-rose-100/80 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300'
+                          : 'border-emerald-200 dark:border-emerald-800/80 bg-emerald-100/80 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300'
+                    }`}>
+                      {isClosed ? 'Tender Closed' : isRedZone ? `${thresholdLabel} Reached` : 'Within Normal Schedule'}
+                    </Badge>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {isClosed
+                      ? 'The official submission window for this tender has concluded.'
+                      : isRedZone
+                        ? `Automated email alerts are triggered for all stakeholders ${thresholdLabel.toLowerCase()} before deadline, excluding 2nd/4th Saturdays, Sundays, configured holidays & non-working days.`
+                        : `Calculates trigger times ${thresholdLabel.toLowerCase()} backward from the tender deadline, excluding 2nd/4th Saturdays, Sundays, and configured public holidays.`}
+                  </p>
+                </div>
+
+                {/* Right Statistics & Action Controls */}
+                <div className="flex items-center gap-3 flex-wrap sm:flex-nowrap shrink-0">
+                  {/* Dynamic Trigger Date Capsule */}
+                  <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-white/95 dark:bg-card/90 px-3.5 py-2 shadow-2xs">
+                    <div className={`p-2 rounded-lg ${isRedZone ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400' : 'bg-primary/5 text-primary'}`}>
+                      <Calendar className="size-4 shrink-0" />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider block">
+                        Trigger Time ({thresholdLabel})
+                      </span>
+                      <span className="text-xs font-bold text-foreground whitespace-nowrap">
+                        {bid.calculated_72h_deadline
+                          ? formatFullDateTime(bid.calculated_72h_deadline)
+                          : `Calculated at ${thresholdLabel}`}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Remaining Working Days Capsule */}
+                  {remHours !== null && (
+                    <div className={`flex items-center gap-3 rounded-xl border bg-white/95 dark:bg-card/90 px-3.5 py-2 shadow-2xs ${
+                      isClosed
+                        ? 'border-border/70'
+                        : isRedZone
+                          ? 'border-rose-200 dark:border-rose-900/60'
+                          : 'border-emerald-200/80 dark:border-emerald-900/60'
+                    }`}>
+                      <div className={`p-2 rounded-lg ${
+                        isClosed
+                          ? 'bg-muted text-muted-foreground'
+                          : isRedZone
+                            ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400'
+                            : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400'
+                      }`}>
+                        <Clock className="size-4 shrink-0" />
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider block">
+                          Working Days Left
+                        </span>
+                        <div className="flex items-baseline gap-1.5 whitespace-nowrap">
+                          <span className={`text-xs font-extrabold ${
+                            isClosed
+                              ? 'text-muted-foreground'
+                              : isRedZone
+                                ? 'text-rose-600 dark:text-rose-400'
+                                : 'text-emerald-600 dark:text-emerald-400'
+                          }`}>
+                            {isClosed
+                              ? '0.0 days'
+                              : remHours < 1.0
+                                ? `${Math.max(0, Math.round(remHours * 60))} min`
+                                : `${(remHours / 24.0).toFixed(1)} days`}
+                          </span>
+                          {!isClosed && (
+                            <span className="text-[11px] font-medium text-muted-foreground">
+                              {remHours < 1.0 ? `(${Math.max(0, Math.round(remHours * 3600))}s)` : `(${remHours.toFixed(1)}h)`}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action Button */}
+                  {hasPermission('bid.edit') && !isClosed && (
+                    <Button
+                      variant={isRedZone ? 'default' : 'outline'}
+                      size="sm"
+                      disabled={notifyingRedZone}
+                      className={`h-9 px-4 rounded-xl text-xs font-semibold shrink-0 gap-1.5 shadow-xs transition-all ${
+                        isRedZone
+                          ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-500/20'
+                          : 'hover:bg-primary/5 border-primary/30 text-primary'
+                      }`}
+                      onClick={async () => {
+                        setNotifyingRedZone(true)
+                        try {
+                          const res = await triggerRedZoneNotification(bid.id, true)
+                          if (res.ok) {
+                            toast.success(`Red Zone notification (${thresholdLabel}) sent to ${res.data?.stakeholders_notified?.length || 'all'} stakeholders!`)
+                            loadBid()
+                          } else {
+                            toast.error(res.error?.message || 'Failed to trigger notification')
+                          }
+                        } catch {
+                          toast.error('Network error')
+                        } finally {
+                          setNotifyingRedZone(false)
+                        }
+                      }}
+                      title="Send Red Zone email notification to all involved stakeholders"
+                    >
+                      {notifyingRedZone ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Send className="size-3.5" />
+                      )}
+                      <span>Notify Stakeholders</span>
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )
+        })()}
       </div>
 
       {/* Tabs */}

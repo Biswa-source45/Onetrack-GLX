@@ -40,7 +40,23 @@ func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, importHandl
 		bids.GET("/field-suggestions", authMiddleware.RequirePermission("bid.view"), handler.ListFieldSuggestions)
 		// Pricing Request "suggested price/margin" hint — /bids/pricing-suggestion?desc=...
 		bids.GET("/pricing-suggestion", authMiddleware.RequirePermission("bid.view"), handler.GetPricingSuggestion)
+
+		// EMD Lifecycle Management (Strictly restricted to SUPER_ADMIN, ADMIN, and FINANCE for modifications)
+		bids.GET("/:id/emd", authMiddleware.RequirePermission("bid.view"), handler.GetEMDDetails)
+		bids.PUT("/:id/emd", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.UpdateBasicEMD)
+		bids.POST("/:id/emd/submit-approval", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.SubmitEMDForMDApproval)
+		bids.POST("/:id/emd/approve", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN"), handler.ApproveEMD)
+		bids.POST("/:id/emd/reject", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN"), handler.RejectEMD)
+		bids.POST("/:id/emd/payment", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.RecordEMDPayment)
+		bids.POST("/:id/emd/verify", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.VerifyEMDPayment)
+		bids.POST("/:id/emd/refund", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.UpdateEMDRefund)
+		bids.GET("/:id/emd/audit-history", authMiddleware.RequirePermission("bid.view"), handler.GetEMDAuditLogs)
+		bids.POST("/:id/emd/upload-receipt", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.UploadEMDReceipt)
 	}
+
+	// Receipt Streaming (capability-based unguessable filename):
+	// Mounted on router directly so browser <img> tags and direct downloads don't get blocked by Bearer token requirement
+	router.GET("/bids/:id/emd/receipt/:filename", handler.GetEMDReceiptFile)
 
 	// Stage-Level Access Control lives in the bid module (the restriction
 	// logic and enforcement checks belong next to workflow-stage semantics)

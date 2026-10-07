@@ -23,6 +23,7 @@ import { SettingsPage } from "./components/admin/SettingsPage"
 import { LeadsPage } from "./components/leads/LeadsPage"
 import { AddLeadPage } from "./components/leads/AddLeadPage"
 import { LeadDetailPage } from "./components/leads/LeadDetailPage"
+import { WorkingCalendarPage } from "./components/admin/WorkingCalendarPage"
 
 // Auth Guard to protect routes
 function AuthGuard() {
@@ -148,6 +149,11 @@ export default function App() {
                 <Route path="bulk-import" element={<BulkImportPage />} />
                 <Route path="system-logs" element={<SystemLogsPage />} />
                 <Route path="settings" element={<SettingsPage />} />
+              </Route>
+
+              {/* Working Calendar — Section 20 Admin UI */}
+              <Route element={<PermissionGuard permission="calendar.view" />}>
+                <Route path="working-calendar" element={<WorkingCalendarPage />} />
               </Route>
 
               {/* Redirect any other dashboard path to index */}

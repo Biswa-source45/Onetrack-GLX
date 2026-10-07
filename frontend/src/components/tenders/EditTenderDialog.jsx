@@ -63,6 +63,7 @@ import {
   TENDER_LINK_ERROR,
   isHttpUrl,
 } from "../../lib/tenderSpec";
+import { triggerRedZoneNotification } from "../../services/calendar";
 
 function useMacOSDialog(open, originX, originY) {
   const centerX = typeof window !== "undefined" ? window.innerWidth / 2 : 0;
@@ -736,6 +737,8 @@ export function EditTenderDialog({
         });
 
         toast.success("Tender updated successfully");
+        // Immediately check if the tender has entered the Red Zone with the updated date
+        triggerRedZoneNotification(bid.id, false).catch(() => {});
         onUpdated(res.data);
         onClose();
       } else {

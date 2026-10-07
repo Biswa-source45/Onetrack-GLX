@@ -273,6 +273,12 @@ type BidWorkspace struct {
 	FinancialEvaluationStatus *string    `json:"financial_evaluation_status,omitempty"`
 	POReceivedStatus          *string    `json:"po_received_status,omitempty"`
 	BidResult                 *string    `json:"bid_result,omitempty"`
+
+	// Working Calendar & 72 Working-Hour Deadline
+	CalendarID                    *string    `json:"calendar_id,omitempty"`
+	Calculated72hDeadline         *time.Time `json:"calculated_72h_deadline,omitempty"`
+	DeadlineRemainingWorkingHours *float64   `json:"deadline_remaining_working_hours,omitempty"`
+	DeadlineLastComputedAt        *time.Time `json:"deadline_last_computed_at,omitempty"`
 }
 
 type BidChecklist struct {
@@ -284,6 +290,11 @@ type BidChecklist struct {
 	DoneAt         *time.Time `json:"done_at,omitempty"`
 	SortOrder      int        `json:"sort_order"`
 	ChecklistGroup string     `json:"checklist_group"`
+	Priority       string     `json:"priority"`
+	AssignedTo     *string    `json:"assigned_to,omitempty"`
+	AssignedRole   *string    `json:"assigned_role,omitempty"`
+	DueAt          *time.Time `json:"due_at,omitempty"`
+	Status         string     `json:"status"`
 	CreatedAt      time.Time  `json:"created_at"`
 }
 
@@ -295,17 +306,31 @@ type BidChecklistItem struct {
 	DoneAt         *time.Time   `json:"done_at,omitempty"`
 	SortOrder      int          `json:"sort_order"`
 	ChecklistGroup string       `json:"checklist_group"`
+	Priority       string       `json:"priority"`
+	AssignedTo     *UserSummary `json:"assigned_to,omitempty"`
+	AssignedRole   *string      `json:"assigned_role,omitempty"`
+	DueAt          *time.Time   `json:"due_at,omitempty"`
+	Status         string       `json:"status"`
 	CreatedAt      time.Time    `json:"created_at"`
 }
 
 type AddChecklistRequest struct {
-	Title     string `json:"title" binding:"required"`
-	SortOrder *int   `json:"sort_order"`
+	Title        string     `json:"title" binding:"required"`
+	SortOrder    *int       `json:"sort_order"`
+	Priority     *string    `json:"priority"`
+	AssignedTo   *string    `json:"assigned_to"`
+	AssignedRole *string    `json:"assigned_role"`
+	DueAt        *time.Time `json:"due_at"`
 }
 
 type UpdateChecklistRequest struct {
-	Title     *string `json:"title"`
-	SortOrder *int    `json:"sort_order"`
+	Title        *string    `json:"title"`
+	SortOrder    *int       `json:"sort_order"`
+	Priority     *string    `json:"priority"`
+	AssignedTo   *string    `json:"assigned_to"`
+	AssignedRole *string    `json:"assigned_role"`
+	DueAt        *time.Time `json:"due_at"`
+	Status       *string    `json:"status"`
 }
 
 type ReorderChecklistItem struct {
@@ -521,9 +546,11 @@ type CreateBidRequest struct {
 	FinancialEvaluationStatus *string  `json:"financial_evaluation_status,omitempty"`
 	POReceivedStatus          *string  `json:"po_received_status,omitempty"`
 	BidResult                 *string  `json:"bid_result,omitempty"`
+	CalendarID                *string  `json:"calendar_id,omitempty"`
 }
 
 type UpdateBidRequest struct {
+	CalendarID         *string  `json:"calendar_id,omitempty"`
 	Title              *string  `json:"title"`
 	BidNo              *string  `json:"bid_no"`
 	GemBidNo           *string  `json:"gem_bid_no"`
@@ -803,6 +830,12 @@ type BidResponse struct {
 	ArchivedAt                *time.Time         `json:"archived_at"`
 	ResultDate                *time.Time         `json:"result_date,omitempty"`
 	DaysRemaining             *int               `json:"days_remaining,omitempty"`
+
+	// Working Calendar & 72 Working-Hour Deadline
+	CalendarID                    *string    `json:"calendar_id,omitempty"`
+	Calculated72hDeadline         *time.Time `json:"calculated_72h_deadline,omitempty"`
+	DeadlineRemainingWorkingHours *float64   `json:"deadline_remaining_working_hours,omitempty"`
+	DeadlineLastComputedAt        *time.Time `json:"deadline_last_computed_at,omitempty"`
 }
 
 type BidListItem struct {
@@ -965,6 +998,7 @@ type CreateBidParams struct {
 	// AI-mode fields (nil for MANUAL)
 	AISourceDocumentID     *string
 	AIExtractionConfidence *float64
+	CalendarID             *string
 }
 
 // ────────────────────────────────────────

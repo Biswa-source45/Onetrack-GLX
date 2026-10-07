@@ -25,6 +25,9 @@ import (
 	feedbackService "github.com/onetrack/backend/internal/feedback/service"
 	leadHandler "github.com/onetrack/backend/internal/lead/handler"
 	leadRepo "github.com/onetrack/backend/internal/lead/repository"
+	calendarHandler "github.com/onetrack/backend/internal/calendar/handler"
+	calendarRepo "github.com/onetrack/backend/internal/calendar/repository"
+	calendarService "github.com/onetrack/backend/internal/calendar/service"
 	"github.com/onetrack/backend/internal/middleware"
 	"github.com/onetrack/backend/internal/platform/config"
 	"github.com/onetrack/backend/internal/platform/database"
@@ -151,6 +154,18 @@ func main() {
 	// Leads — standalone pre-tender pipeline, own schema, no bid coupling.
 	leadHdlr := leadHandler.NewLeadHandler(leadRepo.NewPostgresLeadRepository(dbPool), cfg.LeadsUploadDir, alertSvc)
 	leadHandler.RegisterLeadRoutes(v1, leadHdlr, authMiddleware)
+	// Initialize Working Calendar, Google Sync & 72-Hour Deadline Engine
+	calendarRepository := calendarRepo.NewPostgresCalendarRepository(dbPool)
+	calendarSvc := calendarService.NewWorkingCalendarService(calendarRepository, alertSvc, emailSvc, systemlogSvc)
+	googleSyncSvc := calendarService.NewGoogleSyncService(calendarRepository, systemlogSvc)
+	calendarHdlr := calendarHandler.NewCalendarHandler(calendarRepository, calendarSvc, googleSyncSvc)
+	calendarHandler.RegisterCalendarRoutes(v1, calendarHdlr, authMiddleware)
+
+	// Start Working Deadline background scheduler (dynamic interval from calendar configuration)
+	deadlineScheduler := calendarService.NewBackgroundScheduler(calendarSvc, calendarRepository, 10*time.Minute)
+	calendarHdlr.SetScheduler(deadlineScheduler)
+	deadlineScheduler.Start()
+	defer deadlineScheduler.Stop()
 
 	// Start server
 	srv := &http.Server{
