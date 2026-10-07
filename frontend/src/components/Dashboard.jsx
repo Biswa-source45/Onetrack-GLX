@@ -6,7 +6,7 @@ import {
   Users, LayoutDashboard, Menu, X, ChevronRight,
   FileText, TrendingUp, Activity, BarChart2, ShieldCheck, Bell,
   Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Pencil,
-  FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass, ScrollText, Settings } from 'lucide-react'
+  FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass, ScrollText, Settings, Target } from 'lucide-react'
 import { toast } from 'sonner'
 import { toBlob } from 'html-to-image'
 
@@ -22,6 +22,7 @@ import { getMyProfile, updateUserProfile } from '../services/users'
 import { getAlerts } from '../services/alerts'
 import { getOpenTicketCount } from '../services/tickets'
 import { usePermissions } from '../hooks/usePermissions'
+import { RouteErrorBoundary } from './RouteErrorBoundary'
 import { useFeedbackDraftStore } from '../store/useFeedbackDraftStore'
 import { guessFeedbackCategory } from '../lib/feedbackCategoryMap'
 import { UserManagement } from './admin/UserManagement'
@@ -57,6 +58,7 @@ const NAV_ITEMS = [
       { id: 'tenders-owned', label: 'Owned Tenders', icon: UserCheck, path: '/dashboard/tenders/owned' }
     ]
   },
+  { id: 'leads',      label: 'Leads',            icon: Target,          permission: 'lead.view' },
   {
     id: 'analytics',
     label: 'Analytics',
@@ -955,7 +957,7 @@ export function OverviewPanel() {
                 label="Submitted Pipeline ₹"
                 value={formatCurrency(pipelineSummary.submittedPipelineValue)}
                 tone="brightBlue"
-                explain="Cumulative value of every tender we actually filed a bid for, regardless of outcome — can exceed Total Pipeline. Click to see the tenders."
+                explain="Cumulative value of every tender we actually filed a bid for, won or lost (cancelled tenders are excluded) — can exceed Total Pipeline. Click to see the tenders."
                 onClick={() => openMasterSheetDrill(navigate, { title: 'Submitted Pipeline', subtitle: 'Every tender we actually filed a bid for', bids: pipelineSummary.submittedBidsList })}
               />
               <PipelineKpiBand
@@ -1734,6 +1736,8 @@ export default function Dashboard() {
 
   const activeSection = location.pathname.includes('/analytics')
     ? 'analytics'
+    : location.pathname.includes('/leads')
+    ? 'leads'
     : location.pathname.includes('/tenders')
     ? 'tenders'
     : location.pathname.includes('/alerts')
@@ -2015,7 +2019,9 @@ export default function Dashboard() {
         {/* ── Main Content ─────────────────────────────────────────────────── */}
         <div className="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden bg-background">
           <main className="w-full min-w-0 p-6 md:p-6">
-            <Outlet context={{ user, onOpenProfile: () => setShowProfileModal(true), unreadAlertsCount, refreshAlertsCount: fetchAlertsCount, openTicketsCount, refreshTicketsCount: fetchTicketsCount }} />
+            <RouteErrorBoundary key={location.pathname}>
+              <Outlet context={{ user, onOpenProfile: () => setShowProfileModal(true), unreadAlertsCount, refreshAlertsCount: fetchAlertsCount, openTicketsCount, refreshTicketsCount: fetchTicketsCount }} />
+            </RouteErrorBoundary>
           </main>
         </div>
       </div>

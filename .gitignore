@@ -23,3 +23,6 @@ graphify-out/cost.json
 # docker-compose.yml), user-uploaded content, not repo content.
 /feedback-assets/
 backend/uploads/
+
+# Lead documents — bind-mounted host folder, user-uploaded content.
+/leads-assets/

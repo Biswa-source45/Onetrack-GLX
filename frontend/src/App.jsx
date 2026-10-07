@@ -20,6 +20,9 @@ import { FeedbackPage } from "./components/feedback/FeedbackPage"
 import { TicketsPage } from "./components/feedback/TicketsPage"
 import { SystemLogsPage } from "./components/admin/SystemLogsPage"
 import { SettingsPage } from "./components/admin/SettingsPage"
+import { LeadsPage } from "./components/leads/LeadsPage"
+import { AddLeadPage } from "./components/leads/AddLeadPage"
+import { LeadDetailPage } from "./components/leads/LeadDetailPage"
 
 // Auth Guard to protect routes
 function AuthGuard() {
@@ -101,6 +104,17 @@ export default function App() {
                 <Route path="tenders/master/:drillId" element={<MasterSheetPage />} />
                 <Route path="tenders/:bidId" element={<TenderDetailPage />} />
                 <Route path="alerts" element={<AlertsPage />} />
+              </Route>
+
+              {/* Leads — own permissions, independent of tenders */}
+              <Route element={<PermissionGuard permission="lead.create" />}>
+                <Route path="leads/new" element={<AddLeadPage />} />
+              </Route>
+              <Route element={<PermissionGuard permission="lead.view" />}>
+                <Route path="leads" element={<LeadsPage />} />
+                <Route path="leads/:leadId" element={<LeadDetailPage />} />
+                {/* Who may edit is decided per lead by the server (can_edit). */}
+                <Route path="leads/:leadId/edit" element={<AddLeadPage />} />
               </Route>
 
               {/* Feedback Loop — Feedback is open to every authenticated

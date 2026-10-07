@@ -23,6 +23,8 @@ import (
 	feedbackHandler "github.com/onetrack/backend/internal/feedback/handler"
 	feedbackRepo "github.com/onetrack/backend/internal/feedback/repository"
 	feedbackService "github.com/onetrack/backend/internal/feedback/service"
+	leadHandler "github.com/onetrack/backend/internal/lead/handler"
+	leadRepo "github.com/onetrack/backend/internal/lead/repository"
 	"github.com/onetrack/backend/internal/middleware"
 	"github.com/onetrack/backend/internal/platform/config"
 	"github.com/onetrack/backend/internal/platform/database"
@@ -145,6 +147,10 @@ func main() {
 	feedbackSvc := feedbackService.NewTicketService(feedbackRepository, alertSvc, bidRepository)
 	feedbackHdlr := feedbackHandler.NewTicketHandler(feedbackSvc, cfg.UploadDir)
 	feedbackHandler.RegisterTicketRoutes(v1, feedbackHdlr, authMiddleware)
+
+	// Leads — standalone pre-tender pipeline, own schema, no bid coupling.
+	leadHdlr := leadHandler.NewLeadHandler(leadRepo.NewPostgresLeadRepository(dbPool), cfg.LeadsUploadDir, alertSvc)
+	leadHandler.RegisterLeadRoutes(v1, leadHdlr, authMiddleware)
 
 	// Start server
 	srv := &http.Server{

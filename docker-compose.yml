@@ -56,10 +56,13 @@ services:
     # DEPLOYMENT.md.)
     volumes:
       - ./feedback-assets:/app/uploads/feedback
+      # Lead documents: one folder per lead, <lead>/docs/[<Category>/]<file>.
+      - ./leads-assets:/app/uploads/leads
     environment:
       - SERVER_PORT=8081
       - GIN_MODE=release
       - UPLOAD_DIR=/app/uploads/feedback
+      - LEADS_UPLOAD_DIR=/app/uploads/leads
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_USER=postgres
