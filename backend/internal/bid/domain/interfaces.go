@@ -81,6 +81,12 @@ type BidRepository interface {
 	// GetPricingSuggestionWindow reads the 'pricing_suggestion_window' system
 	// config (auth.system_configurations), defaulting to 5 if unset/unparsable.
 	GetPricingSuggestionWindow(ctx context.Context) (int, error)
+
+	// EMD Lifecycle Management
+	GetEMDDetails(ctx context.Context, bidID string) (*TenderEMDDetails, error)
+	UpsertEMDDetails(ctx context.Context, emd *TenderEMDDetails) error
+	LogEMDAction(ctx context.Context, log *TenderEMDAuditLog) error
+	GetEMDAuditLogs(ctx context.Context, bidID string) ([]TenderEMDAuditLog, error)
 }
 
 // PricingWorkspaceRow is one tender's raw pricing data as read for the
@@ -160,6 +166,17 @@ type BidService interface {
 	// hint for productDesc (matched case/whitespace-insensitively against past
 	// APPROVED pricing deals). Count is 0, not an error, when never priced.
 	GetPricingSuggestion(ctx context.Context, productDesc string) (*PricingSuggestion, error)
+
+	// EMD Lifecycle Management
+	GetEMDDetails(ctx context.Context, bidID string) (*TenderEMDResponse, error)
+	UpdateBasicEMD(ctx context.Context, bidID string, req *UpdateBasicEMDRequest, actorID string, actorRoles []string) (*TenderEMDResponse, error)
+	SubmitEMDForMDApproval(ctx context.Context, bidID string, req *SubmitMDApprovalRequest, actorID string, actorRoles []string) (*TenderEMDResponse, error)
+	ApproveEMD(ctx context.Context, bidID string, req *MDDecisionRequest, actorID string, actorRoles []string) (*TenderEMDResponse, error)
+	RejectEMD(ctx context.Context, bidID string, req *MDDecisionRequest, actorID string, actorRoles []string) (*TenderEMDResponse, error)
+	RecordEMDPayment(ctx context.Context, bidID string, req *RecordEMDPaymentRequest, actorID string, actorRoles []string) (*TenderEMDResponse, error)
+	VerifyEMDPayment(ctx context.Context, bidID string, req *VerifyEMDPaymentRequest, actorID string, actorRoles []string) (*TenderEMDResponse, error)
+	UpdateEMDRefund(ctx context.Context, bidID string, req *UpdateEMDRefundRequest, actorID string, actorRoles []string) (*TenderEMDResponse, error)
+	GetEMDAuditLogs(ctx context.Context, bidID string) ([]TenderEMDAuditLog, error)
 }
 
 type TransitionResult struct {

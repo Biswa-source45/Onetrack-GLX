@@ -41,6 +41,8 @@ type fakeBidRepo struct {
 
 	pricingCandidates []domain.PricingWorkspaceRow
 	pricingWindow     int
+
+	emd *domain.TenderEMDDetails
 }
 
 type memberCall struct {
@@ -204,6 +206,26 @@ func (f *fakeBidRepo) DecidePendingEdit(ctx context.Context, editID string, stat
 	}
 	e.DecidedBy = &domain.UserSummary{ID: decidedBy}
 	return nil
+}
+
+func (f *fakeBidRepo) GetEMDDetails(ctx context.Context, bidID string) (*domain.TenderEMDDetails, error) {
+	if f.emd == nil {
+		f.emd = &domain.TenderEMDDetails{BidID: bidID, EMDAmount: 50000, Status: domain.EMDStatusPending}
+	}
+	return f.emd, nil
+}
+
+func (f *fakeBidRepo) UpsertEMDDetails(ctx context.Context, emd *domain.TenderEMDDetails) error {
+	f.emd = emd
+	return nil
+}
+
+func (f *fakeBidRepo) LogEMDAction(ctx context.Context, log *domain.TenderEMDAuditLog) error {
+	return nil
+}
+
+func (f *fakeBidRepo) GetEMDAuditLogs(ctx context.Context, bidID string) ([]domain.TenderEMDAuditLog, error) {
+	return nil, nil
 }
 
 // fakeSystemLog is a no-op Recorder — tests that don't assert on System
@@ -490,8 +512,6 @@ func TestUpdateBid_OwnerReassignment(t *testing.T) {
 		}
 	})
 }
-
-func strPtr(s string) *string { return &s }
 
 // TestExtractProductFields covers the JSON-parsing edge cases Field Memory
 // relies on: OEM and product-name values pulled out of requested_products

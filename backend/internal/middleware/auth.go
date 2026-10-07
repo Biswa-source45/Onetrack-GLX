@@ -160,11 +160,11 @@ func hasPermission(userPermissions []string, required string) bool {
 func extractBearerToken(c *gin.Context) string {
 	authHeader := c.GetHeader("Authorization")
 	if authHeader == "" {
-		return ""
+		return c.Query("token")
 	}
 	parts := strings.SplitN(authHeader, " ", 2)
 	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-		return ""
+		return c.Query("token")
 	}
 	return parts[1]
 }

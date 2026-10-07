@@ -30,6 +30,7 @@ import { PricingSuggestionHint } from './PricingSuggestionHint'
 import { logStageMicroEvent } from '../../services/auditLogger'
 import { useBidStore } from '../../store/useBidStore'
 import { buildAlertNoteHtml } from '../../lib/tenderFormat'
+import { EmdLifecycleCard } from './EmdLifecycleCard'
 
 function fmtMoney(v) {
   if (!v && v !== 0) return '—'
@@ -3725,30 +3726,7 @@ export function Stage6Workspace({ bid, onRefresh }) {
         </div>
       )}
 
-      <div className="p-4 rounded-xl border border-border bg-card space-y-2 text-xs max-w-md">
-        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">EMD Requirements</h4>
-        <div className="flex justify-between"><span className="text-muted-foreground">Status:</span><span className="font-semibold">{bid.emd_exempted ? 'EXEMPTED' : 'REQUIRED'}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">EMD Amount:</span><span className="font-bold font-mono">{fmtMoney(bid.emd_amount)}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">Payment Mode:</span><span className="font-medium">{bid.emd_exempted ? 'EXEMPTED' : (bid.emd_type || 'ONLINE')}</span></div>
-
-        {!bid.emd_exempted && bid.emd_type === 'ONLINE' && (
-          <div className="mt-3 pt-3 border-t border-border/60 space-y-1.5">
-            <span className="text-[11px] font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider block">Online Payment Details</span>
-            <div className="flex justify-between"><span className="text-muted-foreground">Bank Name:</span><span className="font-medium text-foreground">{bid.emd_bank_name || '—'}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Account Number:</span><span className="font-mono font-medium text-foreground">{bid.emd_account_number || '—'}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">IFSC Code:</span><span className="font-mono font-medium text-foreground">{bid.emd_ifsc_code || '—'}</span></div>
-            {bid.emd_branch && <div className="flex justify-between"><span className="text-muted-foreground">Branch:</span><span className="font-medium text-foreground">{bid.emd_branch}</span></div>}
-          </div>
-        )}
-
-        {!bid.emd_exempted && bid.emd_type === 'DD' && (
-          <div className="mt-3 pt-3 border-t border-border/60 space-y-1.5">
-            <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider block">Demand Draft (DD) Details</span>
-            <div className="flex justify-between"><span className="text-muted-foreground">Beneficiary:</span><span className="font-medium text-foreground">{bid.emd_beneficiary || '—'}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Payable At:</span><span className="font-medium text-foreground">{bid.emd_payable_at || '—'}</span></div>
-          </div>
-        )}
-      </div>
+      <EmdLifecycleCard bid={bid} onRefresh={onRefresh} />
 
       {showAlertDlg && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
@@ -4908,6 +4886,8 @@ export function EmdReturnWorkspace({ bid, onRefresh }) {
           </div>
         </label>
       </div>
+
+      <EmdLifecycleCard bid={bid} onRefresh={onRefresh} />
 
       {showModal && (
         <CompleteStageModal
