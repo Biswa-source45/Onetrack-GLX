@@ -26,3 +26,9 @@ backend/uploads/
 
 # Lead documents — bind-mounted host folder, user-uploaded content.
 /leads-assets/
+
+# Build output / compiled binaries — built from source by the Dockerfiles, never versioned.
+backend/bin/
+/frontend/dist/
+backend/dump.rdb
+memurai-log.txt
