@@ -14,11 +14,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_task_notifications_tender_recipient_type
     ON calendar.task_notifications (tender_id, recipient_user_id, notification_type)
     WHERE checklist_id IS NULL;
 
--- 4. Create unique index for task-specific notifications (if checklist_id is present)
-CREATE UNIQUE INDEX IF NOT EXISTS uq_task_notifications_tender_task_recipient_type
-    ON calendar.task_notifications (tender_id, checklist_id, recipient_user_id, notification_type)
-    WHERE checklist_id IS NOT NULL;
-
--- 5. Helpful index for recipient lookup
+-- 4. Helpful index for recipient lookup
 CREATE INDEX IF NOT EXISTS idx_task_notifications_recipient_id
     ON calendar.task_notifications (recipient_user_id);

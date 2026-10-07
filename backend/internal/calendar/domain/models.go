@@ -1,8 +1,15 @@
 package domain
 
 import (
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
 	"time"
 )
+
+// ErrTenderNotFound means the tender is missing, archived, submitted or has no closing date.
+var ErrTenderNotFound = errors.New("tender not found or not eligible for deadline tracking")
 
 // Holiday Types
 const (
@@ -39,48 +46,42 @@ const (
 	SourceGoogleCalendar = "GOOGLE_CALENDAR"
 )
 
-// Notification Types
-const (
-	NotificationType72HourReminder = "72_HOUR_REMINDER"
-	NotificationTypeRedZoneDueDate = "RED_ZONE_72H"
-	NotificationTypeTaskDelay      = "TASK_DELAY"
-	NotificationTypeEscalation     = "ESCALATION"
-	NotificationTypeEMDAlert       = "EMD_ALERT"
-)
+// NotificationTypeRedZoneDueDate is the dedup key for the working-deadline alert.
+const NotificationTypeRedZoneDueDate = "RED_ZONE_72H"
 
-// Task Statuses
+// Deadline trigger units. A HOURS value is hours / 24 working days (72h = 3,
+// 48h = 2, 36h = 1.5); the fractional part is measured in that calendar's
+// working hours. DAYS is that many working days.
 const (
-	TaskStatusPending    = "PENDING"
-	TaskStatusInProgress = "IN_PROGRESS"
-	TaskStatusCompleted  = "COMPLETED"
-	TaskStatusDelayed    = "DELAYED"
-	TaskStatusCancelled  = "CANCELLED"
+	TriggerUnitHours = "HOURS"
+	TriggerUnitDays  = "DAYS"
+	// MaxTriggerDays bounds the trigger so the SQL pre-filter window and day scans stay finite.
+	MaxTriggerDays = 60
 )
 
 type WorkingCalendar struct {
-	ID                   string    `json:"id"`
-	Name                 string    `json:"name"`
-	Description          *string   `json:"description,omitempty"`
-	IsDefault            bool      `json:"is_default"`
-	Timezone             string    `json:"timezone"`
-	WorkingStartTime     string    `json:"working_start_time"` // "09:00"
-	WorkingEndTime       string    `json:"working_end_time"`   // "18:00"
-	Saturday1Working     bool      `json:"saturday_1_working"`
-	Saturday2Working     bool      `json:"saturday_2_working"` // Default: false (holiday)
-	Saturday3Working     bool      `json:"saturday_3_working"`
-	Saturday4Working     bool      `json:"saturday_4_working"` // Default: false (holiday)
-	Saturday5Working     bool      `json:"saturday_5_working"`
-	SundayWorking        bool      `json:"sunday_working"`     // Default: false
-	MondayWorking        bool      `json:"monday_working"`
-	TuesdayWorking       bool      `json:"tuesday_working"`
-	WednesdayWorking     bool      `json:"wednesday_working"`
-	ThursdayWorking      bool      `json:"thursday_working"`
-	FridayWorking        bool      `json:"friday_working"`
-	EscalationDelayHours   int       `json:"escalation_delay_hours"`
-	DeadlineTriggerValue   float64   `json:"deadline_trigger_value"`
-	DeadlineTriggerUnit    string    `json:"deadline_trigger_unit"` // "HOURS", "DAYS", "MINUTES", "SECONDS"
+	ID                   string  `json:"id"`
+	Name                 string  `json:"name"`
+	Description          *string `json:"description,omitempty"`
+	IsDefault            bool    `json:"is_default"`
+	Timezone             string  `json:"timezone"`
+	WorkingStartTime     string  `json:"working_start_time"` // "09:00"
+	WorkingEndTime       string  `json:"working_end_time"`   // "18:00"
+	Saturday1Working     bool    `json:"saturday_1_working"`
+	Saturday2Working     bool    `json:"saturday_2_working"` // Default: false (holiday)
+	Saturday3Working     bool    `json:"saturday_3_working"`
+	Saturday4Working     bool    `json:"saturday_4_working"` // Default: false (holiday)
+	Saturday5Working     bool    `json:"saturday_5_working"`
+	SundayWorking        bool    `json:"sunday_working"` // Default: false
+	MondayWorking        bool    `json:"monday_working"`
+	TuesdayWorking       bool    `json:"tuesday_working"`
+	WednesdayWorking     bool    `json:"wednesday_working"`
+	ThursdayWorking      bool    `json:"thursday_working"`
+	FridayWorking        bool    `json:"friday_working"`
+	DeadlineTriggerValue float64 `json:"deadline_trigger_value"`
+	DeadlineTriggerUnit  string  `json:"deadline_trigger_unit"` // HOURS or DAYS
+	// SchedulerIntervalValue is the evaluation cadence in minutes.
 	SchedulerIntervalValue int       `json:"scheduler_interval_value"`
-	SchedulerIntervalUnit  string    `json:"scheduler_interval_unit"` // "MINUTES", "SECONDS", "HOURS"
 	CreatedAt              time.Time `json:"created_at"`
 	UpdatedAt              time.Time `json:"updated_at"`
 }
@@ -121,7 +122,9 @@ type GoogleCalendarIntegration struct {
 	CalendarID         string     `json:"calendar_id"`
 	GoogleCalendarID   string     `json:"google_calendar_id"`
 	GoogleCalendarName string     `json:"google_calendar_name"`
-	APIKey             *string    `json:"api_key,omitempty"`
+	APIKey             *string    `json:"api_key,omitempty"` // cleared before any response; clients see APIKeySet/APIKeyHint
+	APIKeySet          bool       `json:"api_key_set"`
+	APIKeyHint         string     `json:"api_key_hint,omitempty"` // last 4 characters
 	SyncEnabled        bool       `json:"sync_enabled"`
 	SyncIntervalHours  int        `json:"sync_interval_hours"`
 	LastSyncAt         *time.Time `json:"last_sync_at,omitempty"`
@@ -132,37 +135,35 @@ type GoogleCalendarIntegration struct {
 }
 
 type GoogleCalendarSyncLog struct {
-	ID             string    `json:"id"`
-	IntegrationID  string    `json:"integration_id"`
-	Status         string    `json:"status"` // SUCCESS, FAILED
-	ImportedCount  int       `json:"imported_count"`
-	UpdatedCount   int       `json:"updated_count"`
-	SkippedCount   int       `json:"skipped_count"`
-	FailedCount    int       `json:"failed_count"`
-	ErrorDetails   *string   `json:"error_details,omitempty"`
-	SyncedBy       *string   `json:"synced_by,omitempty"`
-	SyncedByName   *string   `json:"synced_by_name,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID            string    `json:"id"`
+	IntegrationID string    `json:"integration_id"`
+	Status        string    `json:"status"` // SUCCESS, FAILED
+	ImportedCount int       `json:"imported_count"`
+	UpdatedCount  int       `json:"updated_count"`
+	SkippedCount  int       `json:"skipped_count"`
+	FailedCount   int       `json:"failed_count"`
+	ErrorDetails  *string   `json:"error_details,omitempty"`
+	SyncedBy      *string   `json:"synced_by,omitempty"`
+	SyncedByName  *string   `json:"synced_by_name,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type TaskNotification struct {
-	ID              string     `json:"id"`
-	TenderID        string     `json:"tender_id"`
-	ChecklistID     *string    `json:"checklist_id,omitempty"`
-	RecipientUserID string     `json:"recipient_user_id"`
-	RecipientName   *string    `json:"recipient_name,omitempty"`
-	RecipientEmail  *string    `json:"recipient_email,omitempty"`
-	RecipientRole   *string    `json:"recipient_role,omitempty"`
-	NotificationType string    `json:"notification_type"`
-	ScheduledAt     time.Time  `json:"scheduled_at"`
-	TriggeredAt     time.Time  `json:"triggered_at"`
-	SentAt          *time.Time `json:"sent_at,omitempty"`
-	DeliveryStatus  string     `json:"delivery_status"`
-	Subject         string     `json:"subject"`
-	Message         string     `json:"message"`
-	ErrorMessage    *string    `json:"error_message,omitempty"`
-	RetryCount      int        `json:"retry_count"`
-	CreatedAt       time.Time  `json:"created_at"`
+	ID               string     `json:"id"`
+	TenderID         string     `json:"tender_id"`
+	RecipientUserID  string     `json:"recipient_user_id"`
+	RecipientName    *string    `json:"recipient_name,omitempty"`
+	RecipientEmail   *string    `json:"recipient_email,omitempty"`
+	RecipientRole    *string    `json:"recipient_role,omitempty"`
+	NotificationType string     `json:"notification_type"`
+	ScheduledAt      time.Time  `json:"scheduled_at"`
+	TriggeredAt      time.Time  `json:"triggered_at"`
+	SentAt           *time.Time `json:"sent_at,omitempty"`
+	DeliveryStatus   string     `json:"delivery_status"`
+	Subject          string     `json:"subject"`
+	Message          string     `json:"message"`
+	ErrorMessage     *string    `json:"error_message,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
 }
 
 type TenderStakeholder struct {
@@ -180,22 +181,18 @@ type RedZoneNotificationResult struct {
 	RemainingWorkingHours float64             `json:"remaining_working_hours"`
 	RemainingWorkingDays  float64             `json:"remaining_working_days"`
 	StakeholdersNotified  []TenderStakeholder `json:"stakeholders_notified"`
-	DeliveryStatus        string              `json:"delivery_status"`
+	DeliveryStatus        string              `json:"delivery_status"` // SENT, ALREADY_SENT, NOT_IN_RED_ZONE, FAILED
 	TriggeredAt           time.Time           `json:"triggered_at"`
 	Message               string              `json:"message"`
 }
 
-type TaskEscalation struct {
-	ID               string    `json:"id"`
-	TenderID         string    `json:"tender_id"`
-	ChecklistID      *string   `json:"checklist_id,omitempty"`
-	ManagerUserID    string    `json:"manager_user_id"`
-	ManagerName      *string   `json:"manager_name,omitempty"`
-	ManagerEmail     *string   `json:"manager_email,omitempty"`
-	EscalationReason string    `json:"escalation_reason"`
-	EscalatedAt      time.Time `json:"escalated_at"`
-	Status           string    `json:"status"`
-	CreatedAt        time.Time `json:"created_at"`
+// EvaluationSummary reports what one scheduler/manual evaluation did.
+type EvaluationSummary struct {
+	Baselined bool `json:"baselined"` // first run: in-window tenders were recorded as already notified, nothing sent
+	Evaluated int  `json:"evaluated"`
+	InRedZone int  `json:"in_red_zone"`
+	Notified  int  `json:"notified"` // recipients alerted (capped per run)
+	Skipped   bool `json:"skipped"`  // another instance holds the evaluation lock
 }
 
 type WorkingInterval struct {
@@ -212,13 +209,14 @@ type CalculateDeadlineResult struct {
 	TenderID              string              `json:"tender_id,omitempty"`
 	TenderTitle           string              `json:"tender_title,omitempty"`
 	ClosingDate           time.Time           `json:"closing_date"`
-	TargetWorkingHours    float64             `json:"target_working_hours"`
+	TargetWorkingHours    float64             `json:"target_working_hours"` // working hours the trigger spans (days x workday length)
 	TargetWorkingDays     int                 `json:"target_working_days"`
 	TargetWorkingValue    float64             `json:"target_working_value,omitempty"`
 	TargetWorkingUnit     string              `json:"target_working_unit,omitempty"`
 	CalculatedDeadline    time.Time           `json:"calculated_deadline"`
 	RemainingWorkingHours float64             `json:"remaining_working_hours"`
-	RemainingWorkingDays  float64             `json:"remaining_working_days"`
+	RemainingWorkingDays  float64             `json:"remaining_working_days"` // remaining hours / working day length
+	WorkingDayHours       float64             `json:"working_day_hours"`
 	CalendarDaysSpanned   int                 `json:"calendar_days_spanned"`
 	SkippedDates          []SkippedDateInfo   `json:"skipped_dates,omitempty"`
 	IsThresholdReached    bool                `json:"is_threshold_reached"`
@@ -229,39 +227,110 @@ type CalculateDeadlineResult struct {
 }
 
 type NextActionableTask struct {
-	ChecklistID   string     `json:"checklist_id"`
-	Title         string     `json:"title"`
-	Priority      string     `json:"priority"` // HIGH, MEDIUM, LOW
+	ChecklistID    string     `json:"checklist_id"`
+	Title          string     `json:"title"`
+	Priority       string     `json:"priority"` // HIGH, MEDIUM, LOW
 	AssignedToID   *string    `json:"assigned_to_id,omitempty"`
 	AssignedToName *string    `json:"assigned_to_name,omitempty"`
 	AssignedRole   *string    `json:"assigned_role,omitempty"`
-	SortOrder     int        `json:"sort_order"`
-	DueAt         *time.Time `json:"due_at,omitempty"`
-	Status        string     `json:"status"`
+	SortOrder      int        `json:"sort_order"`
+	DueAt          *time.Time `json:"due_at,omitempty"`
+	Status         string     `json:"status"`
 }
 
 // DTO Requests
+
+// UpdateCalendarRequest is a partial update: nil fields keep the stored value,
+// so a partial PUT can never flip omitted working days off.
 type UpdateCalendarRequest struct {
-	Name                   string   `json:"name"`
-	Description            *string  `json:"description,omitempty"`
-	WorkingStartTime       string   `json:"working_start_time"`
-	WorkingEndTime         string   `json:"working_end_time"`
-	Saturday1Working       bool     `json:"saturday_1_working"`
-	Saturday2Working       bool     `json:"saturday_2_working"`
-	Saturday3Working       bool     `json:"saturday_3_working"`
-	Saturday4Working       bool     `json:"saturday_4_working"`
-	Saturday5Working       bool     `json:"saturday_5_working"`
-	SundayWorking          bool     `json:"sunday_working"`
-	MondayWorking          bool     `json:"monday_working"`
-	TuesdayWorking         bool     `json:"tuesday_working"`
-	WednesdayWorking       bool     `json:"wednesday_working"`
-	ThursdayWorking        bool     `json:"thursday_working"`
-	FridayWorking          bool     `json:"friday_working"`
-	EscalationDelayHours   int      `json:"escalation_delay_hours"`
-	DeadlineTriggerValue   *float64 `json:"deadline_trigger_value,omitempty"`
-	DeadlineTriggerUnit    *string  `json:"deadline_trigger_unit,omitempty"`
-	SchedulerIntervalValue *int     `json:"scheduler_interval_value,omitempty"`
-	SchedulerIntervalUnit  *string  `json:"scheduler_interval_unit,omitempty"`
+	Name                   *string  `json:"name"`
+	Description            *string  `json:"description"`
+	WorkingStartTime       *string  `json:"working_start_time"`
+	WorkingEndTime         *string  `json:"working_end_time"`
+	Saturday1Working       *bool    `json:"saturday_1_working"`
+	Saturday2Working       *bool    `json:"saturday_2_working"`
+	Saturday3Working       *bool    `json:"saturday_3_working"`
+	Saturday4Working       *bool    `json:"saturday_4_working"`
+	Saturday5Working       *bool    `json:"saturday_5_working"`
+	SundayWorking          *bool    `json:"sunday_working"`
+	MondayWorking          *bool    `json:"monday_working"`
+	TuesdayWorking         *bool    `json:"tuesday_working"`
+	WednesdayWorking       *bool    `json:"wednesday_working"`
+	ThursdayWorking        *bool    `json:"thursday_working"`
+	FridayWorking          *bool    `json:"friday_working"`
+	DeadlineTriggerValue   *float64 `json:"deadline_trigger_value"`
+	DeadlineTriggerUnit    *string  `json:"deadline_trigger_unit"`
+	SchedulerIntervalValue *int     `json:"scheduler_interval_value"` // minutes
+}
+
+var hmPattern = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
+
+// ValidateTrigger checks a deadline trigger and returns the normalised unit.
+func ValidateTrigger(value float64, unit string) (string, error) {
+	u := strings.ToUpper(strings.TrimSpace(unit))
+	if u == "" {
+		u = TriggerUnitHours
+	}
+	if u != TriggerUnitHours && u != TriggerUnitDays {
+		return "", fmt.Errorf("trigger unit must be HOURS or DAYS")
+	}
+	if value <= 0 || TriggerDays(value, u) > MaxTriggerDays {
+		return "", fmt.Errorf("trigger value must be greater than 0 and at most %d working days", MaxTriggerDays)
+	}
+	return u, nil
+}
+
+// TriggerDays converts a trigger value to working days.
+func TriggerDays(value float64, unit string) float64 {
+	if unit == TriggerUnitHours {
+		return value / 24
+	}
+	return value
+}
+
+// Validate normalises the request in place and checks it against the stored calendar.
+// Messages are safe to show to the admin.
+func (r *UpdateCalendarRequest) Validate(cur *WorkingCalendar) error {
+	if r.Name != nil {
+		n := strings.TrimSpace(*r.Name)
+		if n == "" {
+			return fmt.Errorf("calendar name is required")
+		}
+		r.Name = &n
+	}
+	start, end := cur.WorkingStartTime, cur.WorkingEndTime
+	if r.WorkingStartTime != nil {
+		start = *r.WorkingStartTime
+	}
+	if r.WorkingEndTime != nil {
+		end = *r.WorkingEndTime
+	}
+	if !hmPattern.MatchString(start) || !hmPattern.MatchString(end) {
+		return fmt.Errorf("working hours must be in HH:MM format")
+	}
+	if end <= start { // zero-padded HH:MM compares lexically
+		return fmt.Errorf("working end time must be after start time")
+	}
+	if r.DeadlineTriggerValue != nil || r.DeadlineTriggerUnit != nil {
+		val, unit := cur.DeadlineTriggerValue, cur.DeadlineTriggerUnit
+		if r.DeadlineTriggerValue != nil {
+			val = *r.DeadlineTriggerValue
+		}
+		if r.DeadlineTriggerUnit != nil {
+			unit = *r.DeadlineTriggerUnit
+		}
+		u, err := ValidateTrigger(val, unit)
+		if err != nil {
+			return err
+		}
+		if r.DeadlineTriggerUnit != nil {
+			r.DeadlineTriggerUnit = &u
+		}
+	}
+	if r.SchedulerIntervalValue != nil && (*r.SchedulerIntervalValue < 1 || *r.SchedulerIntervalValue > 1440) {
+		return fmt.Errorf("scheduler interval must be between 1 and 1440 minutes")
+	}
+	return nil
 }
 
 type CreateHolidayRequest struct {
@@ -274,10 +343,10 @@ type CreateHolidayRequest struct {
 }
 
 type UpdateHolidayRequest struct {
-	HolidayName   *string `json:"holiday_name,omitempty"`
-	HolidayType   *string `json:"holiday_type,omitempty"`
-	WorkingStatus *string `json:"working_status,omitempty"`
-	Priority      *string `json:"priority,omitempty"`
+	HolidayName     *string `json:"holiday_name,omitempty"`
+	HolidayType     *string `json:"holiday_type,omitempty"`
+	WorkingStatus   *string `json:"working_status,omitempty"`
+	Priority        *string `json:"priority,omitempty"`
 	IsActive        *bool   `json:"is_active,omitempty"`
 	IsAdminOverride *bool   `json:"is_admin_override,omitempty"`
 	Description     *string `json:"description,omitempty"`
@@ -292,7 +361,7 @@ type CreateExceptionRequest struct {
 type ConfigureGoogleSyncRequest struct {
 	GoogleCalendarID   string  `json:"google_calendar_id" binding:"required"`
 	GoogleCalendarName string  `json:"google_calendar_name"`
-	APIKey             *string `json:"api_key,omitempty"`
+	APIKey             *string `json:"api_key,omitempty"` // empty or a masked placeholder keeps the stored key
 	SyncEnabled        bool    `json:"sync_enabled"`
 	SyncIntervalHours  int     `json:"sync_interval_hours"`
 }
@@ -310,5 +379,4 @@ type UpdateChecklistPriorityRequest struct {
 	Priority     string  `json:"priority" binding:"required"` // HIGH, MEDIUM, LOW
 	AssignedToID *string `json:"assigned_to_id,omitempty"`
 	AssignedRole *string `json:"assigned_role,omitempty"`
-	Status       *string `json:"status,omitempty"`
 }

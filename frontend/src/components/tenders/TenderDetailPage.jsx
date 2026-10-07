@@ -2132,6 +2132,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                 ? dlRes.data.remaining_working_hours 
                 : prev.deadline_remaining_working_hours,
               deadline_remaining_working_days: dlRes.data.remaining_working_days,
+              deadline_working_day_hours: dlRes.data.working_day_hours,
               deadline_target_value: dlRes.data.target_working_value,
               deadline_target_unit: dlRes.data.target_working_unit,
               deadline_is_threshold_reached: dlRes.data.is_threshold_reached,
@@ -2478,24 +2479,22 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
             : 72
           const targetUnit = (bid.deadline_target_unit || 'HOURS').toUpperCase()
 
-          let thresholdLabel = `${targetVal} Working Hours`
-          if (targetUnit === 'HOURS' && targetVal === 72) thresholdLabel = '3 Working Days (72h)'
-          else if (targetUnit === 'HOURS' && targetVal === 48) thresholdLabel = '2 Working Days (48h)'
-          else if (targetUnit === 'HOURS') thresholdLabel = `${targetVal} Working Hours`
-          else if (targetUnit === 'DAYS') thresholdLabel = `${targetVal} Working Days`
-          else if (targetUnit === 'MINUTES') thresholdLabel = `${targetVal} Minutes`
-          else if (targetUnit === 'SECONDS') thresholdLabel = `${targetVal} Seconds`
+          // HOURS count 24 per working day (72h = 3 working days); DAYS are working days.
+          const fmtNum = (n) => String(Math.round(n * 10) / 10)
+          const targetDays = targetUnit === 'DAYS' ? targetVal : targetVal / 24
+          const thresholdLabel = `${fmtNum(targetDays)} working ${targetDays === 1 ? 'day' : 'days'}${targetUnit === 'HOURS' ? ` (${fmtNum(targetVal)}h)` : ''}`
 
-          let targetHours = targetVal
-          if (targetUnit === 'DAYS') targetHours = targetVal * 24.0
-          else if (targetUnit === 'MINUTES') targetHours = targetVal / 60.0
-          else if (targetUnit === 'SECONDS') targetHours = targetVal / 3600.0
+          // A working day is as long as the calendar says (default 09:00-18:00), not 24h.
+          const dayHours = Number(bid.deadline_working_day_hours) || 9
+          const remDays = bid.deadline_remaining_working_days !== undefined && bid.deadline_remaining_working_days !== null
+            ? Number(bid.deadline_remaining_working_days)
+            : (remHours !== null ? remHours / dayHours : null)
 
           const deadlineTimestamp = bid.calculated_72h_deadline ? new Date(bid.calculated_72h_deadline).getTime() : null
           const isRedZone = !isClosed && (
             bid.deadline_is_threshold_reached !== undefined && bid.deadline_is_threshold_reached !== null
               ? Boolean(bid.deadline_is_threshold_reached)
-              : (deadlineTimestamp ? Date.now() >= deadlineTimestamp : (remHours !== null ? remHours <= targetHours : false))
+              : (deadlineTimestamp ? Date.now() >= deadlineTimestamp : (remDays !== null ? remDays <= targetDays : false))
           )
 
           return (
@@ -2613,7 +2612,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                               ? '0.0 days'
                               : remHours < 1.0
                                 ? `${Math.max(0, Math.round(remHours * 60))} min`
-                                : `${(remHours / 24.0).toFixed(1)} days`}
+                                : `${remDays.toFixed(1)} days`}
                           </span>
                           {!isClosed && (
                             <span className="text-[11px] font-medium text-muted-foreground">
@@ -2626,7 +2625,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                   )}
 
                   {/* Action Button */}
-                  {hasPermission('bid.edit') && !isClosed && (
+                  {(hasRole('SUPER_ADMIN') || hasRole('ADMIN')) && !isClosed && (
                     <Button
                       variant={isRedZone ? 'default' : 'outline'}
                       size="sm"
@@ -2639,9 +2638,13 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                       onClick={async () => {
                         setNotifyingRedZone(true)
                         try {
-                          const res = await triggerRedZoneNotification(bid.id, true)
+                          // First attempt is never forced: already-sent alerts are reported, not repeated.
+                          const res = await triggerRedZoneNotification(bid.id, false)
                           if (res.ok) {
-                            toast.success(`Red Zone notification (${thresholdLabel}) sent to ${res.data?.stakeholders_notified?.length || 'all'} stakeholders!`)
+                            const outcome = res.data?.delivery_status
+                            if (outcome === 'SENT') toast.success(`Red Zone notification (${thresholdLabel}) sent to ${res.data?.stakeholders_notified?.length ?? 0} stakeholders`)
+                            else if (outcome === 'FAILED') toast.error(res.data?.message || 'Notification could not be delivered')
+                            else toast.info(res.data?.message || 'No notification sent')
                             loadBid()
                           } else {
                             toast.error(res.error?.message || 'Failed to trigger notification')

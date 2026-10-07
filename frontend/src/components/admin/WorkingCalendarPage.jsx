@@ -48,10 +48,11 @@ import {
   configureGoogleIntegration,
   triggerGoogleSync,
   getSyncLogs,
-  calculateArbitraryDeadline,
   evaluateDeadlines,
 } from '../../services/calendar'
-import { listBids } from '../../services/bids'
+
+const CURRENT_YEAR = new Date().getFullYear()
+const YEAR_OPTIONS = Array.from({ length: 5 }, (_, i) => CURRENT_YEAR - 2 + i)
 
 export function WorkingCalendarPage() {
   const { user, roles, isAdmin, hasRole } = usePermissions()
@@ -85,7 +86,7 @@ export function WorkingCalendarPage() {
 
   // Holidays state
   const [holidays, setHolidays] = useState([])
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear() || 2026)
+  const [selectedYear, setSelectedYear] = useState(CURRENT_YEAR)
   const [holidaySearch, setHolidaySearch] = useState('')
   const [holidayTypeFilter, setHolidayTypeFilter] = useState('ALL')
   const [holidayModalOpen, setHolidayModalOpen] = useState(false)
@@ -122,16 +123,6 @@ export function WorkingCalendarPage() {
   })
   const [savingGoogleConfig, setSavingGoogleConfig] = useState(false)
 
-  // Sandbox state
-  const [activeTenders, setActiveTenders] = useState([])
-  const [selectedTenderId, setSelectedTenderId] = useState('')
-  const [selectedTender, setSelectedTender] = useState(null)
-  const [sandboxClosingDate, setSandboxClosingDate] = useState('2026-10-20T18:00')
-  const [sandboxValue, setSandboxValue] = useState(72)
-  const [sandboxUnit, setSandboxUnit] = useState('HOURS')
-  const [sandboxResult, setSandboxResult] = useState(null)
-  const [calculating, setCalculating] = useState(false)
-
   // Fetch initial calendar data
   const loadCalendarData = async () => {
     setLoading(true)
@@ -139,23 +130,18 @@ export function WorkingCalendarPage() {
       const calRes = await getDefaultCalendar()
       if (calRes.ok && calRes.data) {
         setCalendar(calRes.data)
-        if (calRes.data.deadline_trigger_value) {
-          setSandboxValue(calRes.data.deadline_trigger_value)
-        }
-        if (calRes.data.deadline_trigger_unit) {
-          setSandboxUnit(calRes.data.deadline_trigger_unit)
-        }
         const calId = calRes.data.id
 
         // Load parallel child resources (fetch all holidays so Monthly Calendar has full coverage across all years)
-        const [holsRes, excRes, gRes, logsRes, bidsRes] = await Promise.all([
+        const [holsRes, excRes, gRes, logsRes] = await Promise.all([
           getHolidays(calId),
           getExceptions(calId),
           getGoogleIntegration(calId),
           getSyncLogs(calId, 10),
-          listBids({ limit: 100, in_bin: false }),
         ])
 
+        const failed = [holsRes, excRes, gRes, logsRes].find((r) => !r.ok)
+        if (failed) toast.error(failed.error?.message || 'Some working calendar data could not be loaded')
         if (holsRes.ok) setHolidays(holsRes.data?.holidays || (Array.isArray(holsRes.data) ? holsRes.data : []))
         if (excRes.ok) setExceptions(excRes.data?.exceptions || (Array.isArray(excRes.data) ? excRes.data : []))
         if (gRes.ok) {
@@ -164,17 +150,12 @@ export function WorkingCalendarPage() {
           setGoogleForm({
             google_calendar_id: cfg?.google_calendar_id || 'en.indian#holiday@group.v.calendar.google.com',
             google_calendar_name: cfg?.google_calendar_name || 'Indian National Holidays',
-            api_key: cfg?.api_key || '',
+            api_key: '', // the server never returns the key; blank keeps the stored one
             sync_interval_hours: cfg?.sync_interval_hours || 24,
             sync_enabled: cfg?.sync_enabled ?? true,
           })
         }
         if (logsRes.ok) setSyncLogs(logsRes.data?.logs || (Array.isArray(logsRes.data) ? logsRes.data : []))
-        if (bidsRes && bidsRes.ok) {
-          const raw = bidsRes.data
-          const list = Array.isArray(raw) ? raw : (raw?.bids || raw?.items || [])
-          setActiveTenders(list)
-        }
       } else {
         toast.error('Could not load default working calendar')
       }
@@ -199,8 +180,8 @@ export function WorkingCalendarPage() {
     }
     setSaving(true)
     try {
-      const payload = { ...calendar, ...changes }
-      const res = await updateCalendar(calendar.id, payload)
+      // The API applies only the fields sent, so a partial change never touches the rest.
+      const res = await updateCalendar(calendar.id, changes)
       if (res.ok) {
         setCalendar(res.data)
         toast.success('Working calendar updated successfully. Monthly Calendar synchronized.')
@@ -281,7 +262,7 @@ export function WorkingCalendarPage() {
         toast.success(`Holiday "${name}" removed. Monthly Calendar updated.`)
         setHolidays((prev) => prev.filter((h) => h.id !== holidayId))
       } else {
-        toast.error('Failed to delete holiday')
+        toast.error(res.error?.message || 'Failed to delete holiday')
       }
     } catch {
       toast.error('Network error deleting holiday')
@@ -335,7 +316,7 @@ export function WorkingCalendarPage() {
         toast.success('Exception removed. Monthly Calendar restored to default.')
         setExceptions((prev) => prev.filter((e) => e.id !== excId))
       } else {
-        toast.error('Failed to remove exception')
+        toast.error(res.error?.message || 'Failed to remove exception')
       }
     } catch {
       toast.error('Network error removing exception')
@@ -351,7 +332,10 @@ export function WorkingCalendarPage() {
     setSyncing(true)
     try {
       const res = await triggerGoogleSync(calendar.id)
-      if (res.ok) {
+      if (res.ok && res.data?.status === 'FAILED') {
+        setLastSyncResult(res.data)
+        toast.error(res.data.message || 'Google Calendar sync failed')
+      } else if (res.ok) {
         setLastSyncResult(res.data)
         toast.success(res.data?.message || 'Google Calendar sync completed successfully')
         // Refresh holidays across all years and sync logs
@@ -378,8 +362,10 @@ export function WorkingCalendarPage() {
     try {
       const res = await evaluateDeadlines()
       if (res.ok) {
-        const triggerDesc = `${calendar?.deadline_trigger_value ?? 72} ${calendar?.deadline_trigger_unit || 'HOURS'}`
-        toast.success(`Deadline Engine (${triggerDesc}) evaluated active tenders! Mail alerts processed.`)
+        const s = res.data || {}
+        if (s.skipped) toast.info('Another evaluation is already running')
+        else if (s.baselined) toast.success(`First run: ${s.in_red_zone ?? 0} tender(s) already in the red zone were recorded as notified. No alerts were sent.`)
+        else toast.success(`Evaluated ${s.evaluated ?? 0} tenders: ${s.in_red_zone ?? 0} in the red zone, ${s.notified ?? 0} alert(s) sent.`)
       } else {
         toast.error(res.error?.message || 'Failed to trigger deadline evaluation')
       }
@@ -406,6 +392,7 @@ export function WorkingCalendarPage() {
       if (res.ok) {
         toast.success('Google Calendar settings and API Key saved')
         setGoogleConfig(res.data?.integration || res.data)
+        setGoogleForm((f) => ({ ...f, api_key: '' }))
         setShowGoogleConfigModal(false)
       } else {
         toast.error(res.error?.message || 'Failed to save Google configuration')
@@ -414,71 +401,6 @@ export function WorkingCalendarPage() {
       toast.error('Network error saving Google configuration')
     } finally {
       setSavingGoogleConfig(false)
-    }
-  }
-
-  const handleSelectTender = (tenderId) => {
-    setSelectedTenderId(tenderId)
-    if (!tenderId) {
-      setSelectedTender(null)
-      return
-    }
-    const tender = activeTenders.find((t) => t.id === tenderId)
-    if (tender) {
-      setSelectedTender(tender)
-      const rawDate = tender.closing_date || tender.end_date || tender.submission_deadline
-      if (rawDate) {
-        const d = new Date(rawDate)
-        if (!isNaN(d.getTime())) {
-          const pad = (n) => String(n).padStart(2, '0')
-          const formatted = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-          setSandboxClosingDate(formatted)
-        }
-      }
-    }
-  }
-
-  const getDaysSpanned = (res) => {
-    if (res?.calendar_days_spanned && Number.isFinite(res.calendar_days_spanned) && res.calendar_days_spanned > 0) {
-      return res.calendar_days_spanned
-    }
-    if (res?.calculated_deadline && res?.closing_date) {
-      const start = new Date(res.calculated_deadline).getTime()
-      const end = new Date(res.closing_date).getTime()
-      if (!isNaN(start) && !isNaN(end)) {
-        return Math.max(1, Math.round(Math.abs(end - start) / (1000 * 60 * 60 * 24)))
-      }
-    }
-    return 1
-  }
-
-  const handleRunSandbox = async () => {
-    if (!calendar?.id || !sandboxClosingDate) return
-    setCalculating(true)
-    try {
-      const res = await calculateArbitraryDeadline(calendar.id, sandboxClosingDate, sandboxValue, sandboxUnit)
-      if (res.ok && res.data) {
-        const data = res.data
-        const start = new Date(data.calculated_deadline)
-        const end = new Date(data.closing_date)
-        const daysSpanned = data.calendar_days_spanned || (
-          !isNaN(start.getTime()) && !isNaN(end.getTime())
-            ? Math.max(1, Math.round(Math.abs(end - start) / (1000 * 60 * 60 * 24)))
-            : 1
-        )
-        setSandboxResult({
-          ...data,
-          calendar_days_spanned: daysSpanned,
-          selected_tender: selectedTender,
-        })
-        toast.success('Deadline calculated successfully')
-      } else {
-        toast.error(res.error?.message || 'Calculation error')
-      }
-    } catch {
-      toast.error('Network error calculating deadline')
-    } finally {
-      setCalculating(false)
     }
   }
 
@@ -882,7 +804,7 @@ export function WorkingCalendarPage() {
               title="Test Working Deadline Engine: evaluate active tenders and send email alerts"
             >
               <Zap className={`mr-2 h-4 w-4 ${evaluatingDeadlines ? 'animate-spin' : ''}`} />
-              {evaluatingDeadlines ? 'Evaluating...' : 'Test Deadline Engine & Mail'}
+              {evaluatingDeadlines ? 'Evaluating...' : 'Run Deadline Engine Now'}
             </Button>
             <Button
               variant="outline"
@@ -977,7 +899,7 @@ export function WorkingCalendarPage() {
                   {calendar?.deadline_trigger_value ?? 72} {calendar?.deadline_trigger_unit || 'HOURS'}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Cadence: every {calendar?.scheduler_interval_value ?? 10} {calendar?.scheduler_interval_unit || 'MINUTES'}
+                  Cadence: every {calendar?.scheduler_interval_value ?? 10} min
                 </p>
               </div>
             </CardContent>
@@ -1300,7 +1222,7 @@ export function WorkingCalendarPage() {
                           Tender Red Zone Deadline Trigger (Alert Threshold)
                         </h4>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          Amount of working duration calculated backwards before tender closing when the Red Zone warning activates and email alerts are sent.
+                          Working time counted backwards from tender closing when the Red Zone warning activates and alerts are sent. Hours convert at 24 per working day (72 hours = 3 working days, 36 hours = 1.5), measured in this calendar's working hours.
                         </p>
                       </div>
                       <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs self-start sm:self-auto font-mono">
@@ -1342,10 +1264,8 @@ export function WorkingCalendarPage() {
                             !canEditCalendar ? 'bg-muted/40 cursor-not-allowed' : ''
                           }`}
                         >
-                          <option value="HOURS">Hours (Working Hours)</option>
+                          <option value="HOURS">Hours (24 = 1 working day)</option>
                           <option value="DAYS">Days (Working Days)</option>
-                          <option value="MINUTES">Minutes (Working Minutes)</option>
-                          <option value="SECONDS">Seconds (Working Seconds)</option>
                         </select>
                       </div>
                     </div>
@@ -1389,15 +1309,6 @@ export function WorkingCalendarPage() {
                         >
                           3 Days
                         </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-6 text-[11px] px-2 border-dashed border-amber-500/50 text-amber-600 hover:bg-amber-500/10"
-                          onClick={() => setCalendar({ ...calendar, deadline_trigger_value: 48, deadline_trigger_unit: 'SECONDS' })}
-                        >
-                          ⚡ 48 Seconds (Live Testing)
-                        </Button>
                       </div>
                     )}
                   </div>
@@ -1414,16 +1325,17 @@ export function WorkingCalendarPage() {
                         </p>
                       </div>
                       <Badge variant="outline" className="border-primary/40 bg-primary/10 text-primary text-xs self-start sm:self-auto font-mono">
-                        Every {calendar?.scheduler_interval_value ?? 10} {calendar?.scheduler_interval_unit || 'MINUTES'}
+                        Every {calendar?.scheduler_interval_value ?? 10} min
                       </Badge>
                     </div>
 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div className="space-y-1.5">
-                        <label className="text-xs font-semibold text-muted-foreground">Interval Amount</label>
+                        <label className="text-xs font-semibold text-muted-foreground">Interval (minutes)</label>
                         <Input
                           type="number"
                           min="1"
+                          max="1440"
                           disabled={!canEditCalendar}
                           value={calendar?.scheduler_interval_value ?? 10}
                           onChange={(e) =>
@@ -1436,26 +1348,6 @@ export function WorkingCalendarPage() {
                           className={!canEditCalendar ? 'bg-muted/40 cursor-not-allowed' : ''}
                         />
                       </div>
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-semibold text-muted-foreground">Interval Unit</label>
-                        <select
-                          disabled={!canEditCalendar}
-                          value={calendar?.scheduler_interval_unit || 'MINUTES'}
-                          onChange={(e) =>
-                            setCalendar({
-                              ...calendar,
-                              scheduler_interval_unit: e.target.value,
-                            })
-                          }
-                          className={`w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${
-                            !canEditCalendar ? 'bg-muted/40 cursor-not-allowed' : ''
-                          }`}
-                        >
-                          <option value="MINUTES">Minutes</option>
-                          <option value="SECONDS">Seconds</option>
-                          <option value="HOURS">Hours</option>
-                        </select>
-                      </div>
                     </div>
 
                     {canEditCalendar && (
@@ -1466,7 +1358,7 @@ export function WorkingCalendarPage() {
                           variant="outline"
                           size="sm"
                           className="h-6 text-[11px] px-2"
-                          onClick={() => setCalendar({ ...calendar, scheduler_interval_value: 10, scheduler_interval_unit: 'MINUTES' })}
+                          onClick={() => setCalendar({ ...calendar, scheduler_interval_value: 10 })}
                         >
                           10 Minutes (Standard)
                         </Button>
@@ -1475,7 +1367,7 @@ export function WorkingCalendarPage() {
                           variant="outline"
                           size="sm"
                           className="h-6 text-[11px] px-2"
-                          onClick={() => setCalendar({ ...calendar, scheduler_interval_value: 5, scheduler_interval_unit: 'MINUTES' })}
+                          onClick={() => setCalendar({ ...calendar, scheduler_interval_value: 5 })}
                         >
                           5 Minutes
                         </Button>
@@ -1484,18 +1376,9 @@ export function WorkingCalendarPage() {
                           variant="outline"
                           size="sm"
                           className="h-6 text-[11px] px-2"
-                          onClick={() => setCalendar({ ...calendar, scheduler_interval_value: 1, scheduler_interval_unit: 'MINUTES' })}
+                          onClick={() => setCalendar({ ...calendar, scheduler_interval_value: 1 })}
                         >
                           1 Minute
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-6 text-[11px] px-2 border-dashed border-amber-500/50 text-amber-600 hover:bg-amber-500/10"
-                          onClick={() => setCalendar({ ...calendar, scheduler_interval_value: 30, scheduler_interval_unit: 'SECONDS' })}
-                        >
-                          ⚡ 30 Seconds (Live Testing)
                         </Button>
                       </div>
                     )}
@@ -1503,25 +1386,6 @@ export function WorkingCalendarPage() {
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold text-muted-foreground">
-                      Delay Escalation Threshold (Hours)
-                    </label>
-                    <Input
-                      type="number"
-                      min="1"
-                      max="168"
-                      disabled={!canEditCalendar}
-                      value={calendar?.escalation_delay_hours ?? 24}
-                      onChange={(e) =>
-                        setCalendar({ ...calendar, escalation_delay_hours: parseInt(e.target.value, 10) || 24 })
-                      }
-                      className={!canEditCalendar ? 'bg-muted/40 cursor-not-allowed' : ''}
-                    />
-                    <p className="text-[11px] text-muted-foreground">
-                      Hours past the calculated deadline after which incomplete tasks are marked DELAYED and escalated to the manager.
-                    </p>
-                  </div>
                   <div className="space-y-2">
                     <label className="text-xs font-semibold text-muted-foreground">System Timezone</label>
                     <Input value={calendar?.timezone || 'Asia/Kolkata'} disabled className="bg-muted/50 cursor-not-allowed" />
@@ -1661,7 +1525,7 @@ export function WorkingCalendarPage() {
                   }}
                   className="h-8 rounded-md border border-border bg-background px-2 text-xs font-medium text-foreground cursor-pointer focus:ring-1 focus:ring-primary"
                 >
-                  {[2024, 2025, 2026, 2027, 2028].map((y) => (
+                  {YEAR_OPTIONS.map((y) => (
                     <option key={y} value={y}>{y}</option>
                   ))}
                 </select>
@@ -2087,7 +1951,7 @@ export function WorkingCalendarPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   {/* Year selector */}
                   <div className="flex items-center gap-1 rounded-lg border border-border bg-background p-1 text-xs">
-                    {['ALL', 2024, 2025, 2026, 2027, 2028].map((y) => (
+                    {['ALL', ...YEAR_OPTIONS].map((y) => (
                       <button
                         key={y}
                         onClick={() => setSelectedYear(y)}
@@ -2440,17 +2304,17 @@ export function WorkingCalendarPage() {
                 <div className="rounded-lg border border-border/60 bg-muted/20 p-3 text-xs">
                   <span className="text-muted-foreground">Google Cloud API Key</span>
                   <div className="mt-1 flex items-center gap-1.5">
-                    {googleConfig?.api_key ? (
+                    {googleConfig?.api_key_set ? (
                       <>
                         <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-500 font-mono text-[10px]">
                           <Key className="mr-1 h-2.5 w-2.5" />
-                          {googleConfig.api_key.substring(0, 8)}...{googleConfig.api_key.substring(googleConfig.api_key.length - 5)}
+                          ••••{googleConfig.api_key_hint}
                         </Badge>
-                        <span className="text-[10px] text-emerald-500 font-semibold">Active</span>
+                        <span className="text-[10px] text-emerald-500 font-semibold">Stored</span>
                       </>
                     ) : (
                       <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-500 text-[10px]">
-                        Using Offline Fallback
+                        Server key (GOOGLE_CALENDAR_API_KEY) or none
                       </Badge>
                     )}
                   </div>
@@ -2559,13 +2423,14 @@ export function WorkingCalendarPage() {
                     </label>
                     <Input
                       type="text"
-                      placeholder="e.g. AIzaSy..."
+                      autoComplete="off"
+                      placeholder={googleConfig?.api_key_set ? `Stored key ending ${googleConfig.api_key_hint} — leave blank to keep` : 'e.g. AIzaSy...'}
                       value={googleForm.api_key}
                       onChange={(e) => setGoogleForm({ ...googleForm, api_key: e.target.value })}
                       className="font-mono text-xs"
                     />
                     <p className="text-[11px] text-muted-foreground">
-                      Must have Google Calendar API enabled in Google Cloud Console.
+                      Must have Google Calendar API enabled in Google Cloud Console. The server's GOOGLE_CALENDAR_API_KEY is used first when set.
                     </p>
                   </div>
 
@@ -2628,320 +2493,6 @@ export function WorkingCalendarPage() {
           )}
         </div>
       )}
-
-      {/* ── Tab: 72-Hour Simulator Sandbox (Commented out per request) ─────────
-      activeTab === 'simulator' && (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          <Card className="lg:col-span-1">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Calculator className="h-4 w-4 text-primary" />
-                72 Working-Hour Sandbox
-              </CardTitle>
-              <CardDescription>
-                Test how the engine calculates exact backward working intervals for any prospective tender closing date and time.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4 text-xs">
-              <div className="space-y-1.5">
-                <label className="font-semibold text-muted-foreground flex items-center justify-between">
-                  <span>Select Active Tender</span>
-                  <span className="text-[10px] text-primary font-normal">Optional</span>
-                </label>
-                <select
-                  value={selectedTenderId}
-                  onChange={(e) => handleSelectTender(e.target.value)}
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs text-foreground cursor-pointer focus:ring-1 focus:ring-primary"
-                >
-                  <option value="">-- Custom Simulation (Enter Date Manually) --</option>
-                  {activeTenders.map((t) => {
-                    const ref = t.gem_bid_no || t.bid_no || ''
-                    const end = t.closing_date || t.end_date || t.submission_deadline
-                    const dateSnippet = end ? ` (Ends: ${new Date(end).toLocaleDateString('en-IN')})` : ''
-                    return (
-                      <option key={t.id} value={t.id}>
-                        {ref ? `[${ref}] ` : ''}{t.title?.substring(0, 45)}...{dateSnippet}
-                      </option>
-                    )
-                  })}
-                </select>
-              </div>
-
-              {selectedTender && (
-                <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-primary">Selected Tender</span>
-                    <Badge variant="outline" className="text-[9px] bg-primary/10 border-primary/30 text-primary">
-                      {selectedTender.workflow_stage || 'ACTIVE'}
-                    </Badge>
-                  </div>
-                  <p className="font-semibold text-xs text-foreground line-clamp-2">{selectedTender.title}</p>
-                  {(selectedTender.gem_bid_no || selectedTender.bid_no) && (
-                    <p className="font-mono text-[10px] text-muted-foreground">
-                      Ref: {selectedTender.gem_bid_no || selectedTender.bid_no}
-                    </p>
-                  )}
-                  <div className="pt-2 text-[11px] text-muted-foreground border-t border-primary/10 flex items-center justify-between">
-                    <span className="font-medium text-foreground">Tender Official End Date:</span>
-                    <span className="font-bold text-primary">
-                      {selectedTender.closing_date || selectedTender.end_date || selectedTender.submission_deadline
-                        ? new Date(selectedTender.closing_date || selectedTender.end_date || selectedTender.submission_deadline).toLocaleString('en-IN', {
-                            dateStyle: 'medium',
-                            timeStyle: 'short',
-                          })
-                        : 'Not Specified'}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-1.5">
-                <label className="font-semibold text-muted-foreground">
-                  {selectedTender ? 'Tender Closing Date & Time (Auto-Filled)' : 'Tender Closing Date & Time'}
-                </label>
-                <Input
-                  type="datetime-local"
-                  value={sandboxClosingDate}
-                  onChange={(e) => {
-                    setSandboxClosingDate(e.target.value)
-                  }}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1.5">
-                  <label className="font-semibold text-muted-foreground">Target Value</label>
-                  <Input
-                    type="number"
-                    min="1"
-                    step="any"
-                    value={sandboxValue}
-                    onChange={(e) => setSandboxValue(parseFloat(e.target.value) || 1)}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="font-semibold text-muted-foreground">Unit</label>
-                  <select
-                    value={sandboxUnit}
-                    onChange={(e) => setSandboxUnit(e.target.value)}
-                    className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                  >
-                    <option value="HOURS">Hours</option>
-                    <option value="DAYS">Days</option>
-                    <option value="MINUTES">Minutes</option>
-                    <option value="SECONDS">Seconds</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                <span className="text-[10px] font-medium text-muted-foreground mr-0.5">Presets:</span>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-6 text-[10px] px-1.5"
-                  onClick={() => { setSandboxValue(72); setSandboxUnit('HOURS') }}
-                >
-                  72 Hours
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-6 text-[10px] px-1.5"
-                  onClick={() => { setSandboxValue(48); setSandboxUnit('HOURS') }}
-                >
-                  48 Hours
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-6 text-[10px] px-1.5"
-                  onClick={() => { setSandboxValue(3); setSandboxUnit('DAYS') }}
-                >
-                  3 Days
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-6 text-[10px] px-1.5"
-                  onClick={() => { setSandboxValue(10); setSandboxUnit('MINUTES') }}
-                >
-                  10 Min
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-6 text-[10px] px-1.5 border-dashed border-amber-500/50 text-amber-600 hover:bg-amber-500/10"
-                  onClick={() => { setSandboxValue(48); setSandboxUnit('SECONDS') }}
-                >
-                  ⚡ 48 Sec
-                </Button>
-              </div>
-
-              <Button
-                onClick={handleRunSandbox}
-                disabled={calculating}
-                className="w-full gap-2"
-              >
-                <Play className="h-3.5 w-3.5" />
-                {calculating ? 'Computing Intervals...' : `Simulate Calculation (${sandboxValue} ${sandboxUnit})`}
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card className="lg:col-span-2">
-            <CardHeader>
-              <CardTitle className="text-base">Calculation Results & Interval Audit</CardTitle>
-              <CardDescription>
-                Visual step-by-step breakdown of how calendar days were skipped and working intervals accumulated.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {sandboxResult ? (
-                <div className="space-y-6">
-                  <div className="rounded-xl border border-primary/30 bg-primary/5 p-5 space-y-4">
-                    // Tender Header if selected
-                    {sandboxResult.selected_tender ? (
-                      <div className="border-b border-primary/20 pb-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <Badge variant="outline" className="text-[10px] font-mono border-primary/30 bg-primary/10 text-primary">
-                            {sandboxResult.selected_tender.gem_bid_no || sandboxResult.selected_tender.bid_no || 'TENDER'}
-                          </Badge>
-                          <span className="text-[10px] text-muted-foreground font-semibold uppercase">
-                            Stage: {sandboxResult.selected_tender.workflow_stage || 'ACTIVE'}
-                          </span>
-                        </div>
-                        <h4 className="mt-1 text-sm font-bold text-foreground">
-                          {sandboxResult.selected_tender.title}
-                        </h4>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                          {(sandboxResult.selected_tender.department_name || sandboxResult.selected_tender.authority) && (
-                            <>
-                              <span>Dept: <strong className="text-foreground">{sandboxResult.selected_tender.department_name || sandboxResult.selected_tender.authority}</strong></span>
-                              <span>•</span>
-                            </>
-                          )}
-                          <span>Official Closing: <strong className="text-primary">{new Date(sandboxResult.closing_date).toLocaleString('en-IN', { dateStyle: 'full', timeStyle: 'short' })}</strong></span>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="border-b border-border/40 pb-2.5 flex items-center justify-between">
-                        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          Custom Date/Time Simulation
-                        </span>
-                        <span className="text-xs font-medium text-foreground">
-                          Closing: <strong className="text-primary">{new Date(sandboxResult.closing_date).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</strong>
-                        </span>
-                      </div>
-                    )}
-
-                    <div>
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                        Computed {sandboxResult.target_value ?? sandboxValue} {sandboxResult.target_unit ?? sandboxUnit} Preparation Deadline
-                      </p>
-                      <p className="mt-1 text-2xl font-bold tracking-tight text-primary">
-                        {new Date(sandboxResult.calculated_deadline).toLocaleString('en-IN', {
-                          dateStyle: 'full',
-                          timeStyle: 'medium',
-                        })}
-                      </p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        Document preparation threshold calculated backward by working intervals, skipping non-working Saturdays, Sundays & holidays.
-                      </p>
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 pt-2 border-t border-primary/20">
-                      <div className="rounded-lg bg-card/80 border border-border/80 p-2.5">
-                        <span className="text-[10px] text-muted-foreground uppercase font-medium block">Tender Official End Date</span>
-                        <span className="text-xs font-bold text-foreground block mt-0.5">
-                          {new Date(sandboxResult.closing_date).toLocaleString('en-IN', {
-                            dateStyle: 'medium',
-                            timeStyle: 'short',
-                          })}
-                        </span>
-                      </div>
-                      <div className="rounded-lg bg-card/80 border border-border/80 p-2.5">
-                        <span className="text-[10px] text-muted-foreground uppercase font-medium block">Working Days Left</span>
-                        <span className={`text-xs font-bold block mt-0.5 ${
-                          sandboxResult.remaining_working_hours <= 0
-                            ? 'text-rose-500'
-                            : sandboxResult.remaining_working_hours <= (sandboxUnit === 'HOURS' ? sandboxValue : 72)
-                            ? 'text-amber-500'
-                            : 'text-emerald-500'
-                        }`}>
-                          {(sandboxResult.remaining_working_days ?? (sandboxResult.remaining_working_hours / 24)).toFixed(1)} days
-                          <span className="ml-1 text-[10px] font-normal text-muted-foreground">({sandboxResult.remaining_working_hours.toFixed(1)} hrs)</span>
-                        </span>
-                      </div>
-                      <div className="rounded-lg bg-card/80 border border-border/80 p-2.5">
-                        <span className="text-[10px] text-muted-foreground uppercase font-medium block">Calendar Days Spanned</span>
-                        <span className="text-xs font-bold text-foreground block mt-0.5">
-                          {getDaysSpanned(sandboxResult)} days
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  // Summary Breakdown Metrics
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-xs">
-                    <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
-                      <span className="text-muted-foreground block text-[11px]">Total Elapsed Window</span>
-                      <p className="mt-1 font-bold text-foreground">
-                        {getDaysSpanned(sandboxResult)} Calendar Days
-                      </p>
-                    </div>
-                    <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
-                      <span className="text-muted-foreground block text-[11px]">Working Allocated Window</span>
-                      <p className="mt-1 font-bold text-emerald-500">
-                        {sandboxResult.target_value ?? sandboxValue} {sandboxResult.target_unit ?? sandboxUnit}
-                      </p>
-                    </div>
-                    <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
-                      <span className="text-muted-foreground block text-[11px]">Non-Working Dates Skipped</span>
-                      <p className="mt-1 font-bold text-rose-500">
-                        {sandboxResult.skipped_dates?.length || 0} Excluded Dates
-                      </p>
-                    </div>
-                  </div>
-
-                  // Skipped non-working dates list
-                  {sandboxResult.skipped_dates && sandboxResult.skipped_dates.length > 0 && (
-                    <div className="space-y-2">
-                      <h4 className="text-xs font-semibold text-foreground">
-                        Skipped Non-Working Dates During Calculation:
-                      </h4>
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                        {sandboxResult.skipped_dates.map((item, idx) => (
-                          <div
-                            key={idx}
-                            className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs"
-                          >
-                            <span className="font-mono font-medium text-foreground">{item.date}</span>
-                            <Badge variant="outline" className="border-rose-500/40 bg-rose-500/10 text-[10px] text-rose-500">
-                              {item.reason}
-                            </Badge>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="flex h-56 flex-col items-center justify-center text-center text-muted-foreground">
-                  <Calculator className="h-8 w-8 text-muted-foreground/40" />
-                  <p className="mt-2 text-xs">Select a tender closing time and click "Simulate Calculation" to see the engine in action.</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )
-      ── */}
 
       {/* ── Add / Edit Holiday Modal ────────────────────────────────────────── */}
       {holidayModalOpen && (

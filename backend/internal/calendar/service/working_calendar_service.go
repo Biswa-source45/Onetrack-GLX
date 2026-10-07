@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"html"
 	"log"
 	"math"
 	"strconv"
@@ -11,1383 +13,758 @@ import (
 
 	alertDomain "github.com/onetrack/backend/internal/alert/domain"
 	"github.com/onetrack/backend/internal/calendar/domain"
-	emailService "github.com/onetrack/backend/internal/platform/email"
 	systemlogDomain "github.com/onetrack/backend/internal/systemlog/domain"
 )
+
+const (
+	// maxScanDays bounds every day-by-day walk; hitting it is an error, never a guess.
+	maxScanDays = 1100
+	// maxNotificationsPerTick caps recipients alerted by one evaluation so a bug can never mass-mail.
+	maxNotificationsPerTick = 50
+)
+
+var errScanLimit = errors.New("working calendar has no working days within the supported range")
 
 type workingCalendarService struct {
 	repo      domain.WorkingCalendarRepository
 	alertSvc  alertDomain.AlertService
-	emailSvc  *emailService.EmailService
 	systemLog systemlogDomain.Recorder
+	now       func() time.Time
 }
 
 func NewWorkingCalendarService(
 	repo domain.WorkingCalendarRepository,
 	alertSvc alertDomain.AlertService,
-	emailSvc *emailService.EmailService,
 	systemLog systemlogDomain.Recorder,
 ) domain.WorkingCalendarService {
-	return &workingCalendarService{
-		repo:      repo,
-		alertSvc:  alertSvc,
-		emailSvc:  emailSvc,
-		systemLog: systemLog,
+	return &workingCalendarService{repo: repo, alertSvc: alertSvc, systemLog: systemLog, now: time.Now}
+}
+
+// ── Calendar rules (one DB load per calendar per evaluation) ─────────────────
+
+type calRules struct {
+	cal        *domain.WorkingCalendar
+	loc        *time.Location
+	holidays   map[string]domain.Holiday // active holidays by date; first row wins (repo orders by precedence)
+	exceptions map[string]string         // date -> exception type
+	dayHours   float64                   // working hours in one working day
+	startH     int
+	startM     int
+	endH       int
+	endM       int
+}
+
+func (s *workingCalendarService) loadRules(ctx context.Context, calendarID string) (*calRules, error) {
+	cal, err := s.getCalendar(ctx, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	hols, err := s.repo.ListHolidays(ctx, cal.ID, 0)
+	if err != nil {
+		return nil, err
+	}
+	excs, err := s.repo.ListExceptions(ctx, cal.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	r := &calRules{
+		cal:        cal,
+		loc:        calendarLocation(cal),
+		holidays:   make(map[string]domain.Holiday, len(hols)),
+		exceptions: make(map[string]string, len(excs)),
+	}
+	for _, h := range hols {
+		if _, seen := r.holidays[h.HolidayDate]; !seen && h.IsActive {
+			r.holidays[h.HolidayDate] = h
+		}
+	}
+	for _, e := range excs {
+		r.exceptions[e.ExceptionDate] = e.ExceptionType
+	}
+	r.startH, r.startM = parseTimeHM(cal.WorkingStartTime, 9, 0)
+	r.endH, r.endM = parseTimeHM(cal.WorkingEndTime, 18, 0)
+	r.dayHours = float64((r.endH*60+r.endM)-(r.startH*60+r.startM)) / 60
+	if r.dayHours <= 0 {
+		r.dayHours = 9
+	}
+	return r, nil
+}
+
+// window returns the working window of the given calendar day.
+func (r *calRules) window(d time.Time) (time.Time, time.Time) {
+	d = d.In(r.loc)
+	return time.Date(d.Year(), d.Month(), d.Day(), r.startH, r.startM, 0, 0, r.loc),
+		time.Date(d.Year(), d.Month(), d.Day(), r.endH, r.endM, 0, 0, r.loc)
+}
+
+// isWorking classifies one calendar day: exceptions beat holidays, which beat weekday rules.
+func (r *calRules) isWorking(date time.Time) (bool, string) {
+	d := date.In(r.loc)
+	key := d.Format("2006-01-02")
+
+	switch r.exceptions[key] {
+	case domain.ExceptionSpecialWorkingDay:
+		return true, "Special Working Day Override"
+	case domain.ExceptionSpecialNonWorkingDay:
+		return false, "Special Non-Working Day"
+	}
+	if h, ok := r.holidays[key]; ok {
+		if h.WorkingStatus == domain.WorkingStatusWorking {
+			return true, fmt.Sprintf("Holiday marked Working (%s)", h.HolidayName)
+		}
+		return false, fmt.Sprintf("Holiday: %s (%s)", h.HolidayName, h.HolidayType)
+	}
+
+	c := r.cal
+	switch d.Weekday() {
+	case time.Sunday:
+		if c.SundayWorking {
+			return true, "Sunday (Configured Working)"
+		}
+		return false, "Sunday Holiday"
+	case time.Saturday:
+		n := saturdayNumber(d)
+		working := [...]bool{c.Saturday1Working, c.Saturday2Working, c.Saturday3Working, c.Saturday4Working, c.Saturday5Working}[n-1]
+		if working {
+			return true, fmt.Sprintf("%s Saturday Working Day", ordinal(n))
+		}
+		return false, fmt.Sprintf("%s Saturday Holiday", ordinal(n))
+	case time.Monday:
+		return c.MondayWorking, dayDesc("Monday", c.MondayWorking)
+	case time.Tuesday:
+		return c.TuesdayWorking, dayDesc("Tuesday", c.TuesdayWorking)
+	case time.Wednesday:
+		return c.WednesdayWorking, dayDesc("Wednesday", c.WednesdayWorking)
+	case time.Thursday:
+		return c.ThursdayWorking, dayDesc("Thursday", c.ThursdayWorking)
+	default:
+		return c.FridayWorking, dayDesc("Friday", c.FridayWorking)
 	}
 }
 
-// ── Saturday Helper (Section 8) ──────────────────────────────────────────────
+// subtractHours walks back through working windows until `hours` of working time is consumed.
+func (r *calRules) subtractHours(from time.Time, hours float64) (time.Time, error) {
+	if hours <= 0 {
+		return from, nil
+	}
+	remaining := time.Duration(hours * float64(time.Hour))
+	curr := from.In(r.loc)
 
-// GetSaturdayNumber returns 1, 2, 3, 4, or 5 indicating which Saturday of the month it is.
+	for i := 0; i < maxScanDays; i++ {
+		if ok, _ := r.isWorking(curr); ok {
+			start, end := r.window(curr)
+			if curr.Before(end) {
+				end = curr
+			}
+			if end.After(start) {
+				avail := end.Sub(start)
+				if avail >= remaining {
+					return end.Add(-remaining), nil
+				}
+				remaining -= avail
+			}
+		}
+		prev := curr.AddDate(0, 0, -1)
+		curr = time.Date(prev.Year(), prev.Month(), prev.Day(), 23, 59, 59, 0, r.loc)
+	}
+	return time.Time{}, errScanLimit
+}
+
+// subtractDays steps back whole working days, keeping the time of day.
+func (r *calRules) subtractDays(from time.Time, days int) (time.Time, error) {
+	if days <= 0 {
+		return from, nil
+	}
+	curr := from.In(r.loc)
+	d := time.Date(curr.Year(), curr.Month(), curr.Day(), 12, 0, 0, 0, r.loc)
+
+	for counted, i := 0, 0; counted < days; i++ {
+		if i >= maxScanDays {
+			return time.Time{}, errScanLimit
+		}
+		d = d.AddDate(0, 0, -1)
+		if ok, _ := r.isWorking(d); ok {
+			counted++
+		}
+	}
+	return time.Date(d.Year(), d.Month(), d.Day(), curr.Hour(), curr.Minute(), curr.Second(), curr.Nanosecond(), r.loc), nil
+}
+
+// subtractTime is the single definition of the trigger: value/24 working days
+// back (HOURS) or value working days (DAYS), the fractional day in working
+// hours. Larger values therefore always give an earlier trigger.
+func (r *calRules) subtractTime(from time.Time, value float64, unit string) (time.Time, error) {
+	days := domain.TriggerDays(value, unit)
+	whole := math.Floor(days + 1e-9)
+	frac := days - whole
+	if frac < 1e-9 {
+		frac = 0
+	}
+	t, err := r.subtractDays(from, int(whole))
+	if err != nil || frac == 0 {
+		return t, err
+	}
+	return r.subtractHours(t, frac*r.dayHours)
+}
+
+// remainingHours sums working time between two instants.
+func (r *calRules) remainingHours(from, to time.Time) (float64, error) {
+	if !to.After(from) {
+		return 0, nil
+	}
+	if to.Sub(from) > maxScanDays*24*time.Hour {
+		return 0, errScanLimit
+	}
+	curr, end := from.In(r.loc), to.In(r.loc)
+
+	var total time.Duration
+	for day := time.Date(curr.Year(), curr.Month(), curr.Day(), 0, 0, 0, 0, r.loc); day.Before(end); day = day.AddDate(0, 0, 1) {
+		if ok, _ := r.isWorking(day); !ok {
+			continue
+		}
+		start, stop := r.window(day)
+		if curr.After(start) {
+			start = curr
+		}
+		if end.Before(stop) {
+			stop = end
+		}
+		if stop.After(start) {
+			total += stop.Sub(start)
+		}
+	}
+	return round2(total.Hours()), nil
+}
+
+func (r *calRules) remainingDays(hours float64) float64 { return round2(hours / r.dayHours) }
+
+// ── Public calendar maths ────────────────────────────────────────────────────
+
 func (s *workingCalendarService) GetSaturdayNumber(date time.Time) int {
 	if date.Weekday() != time.Saturday {
 		return 0
 	}
-	day := date.Day()
-	return (day-1)/7 + 1
+	return saturdayNumber(date)
 }
 
-// IsSaturdayHoliday checks Saturday rules dynamically based on calendar configuration.
-// By default: 1st, 3rd, 5th Saturday are WORKING; 2nd and 4th Saturday are NON_WORKING / HOLIDAY.
-func (s *workingCalendarService) IsSaturdayHoliday(calendar *domain.WorkingCalendar, date time.Time) bool {
-	if date.Weekday() != time.Saturday {
-		return false
-	}
-	satNum := s.GetSaturdayNumber(date)
-	switch satNum {
-	case 1:
-		return !calendar.Saturday1Working
-	case 2:
-		return !calendar.Saturday2Working // Default false -> is holiday
-	case 3:
-		return !calendar.Saturday3Working
-	case 4:
-		return !calendar.Saturday4Working // Default false -> is holiday
-	case 5:
-		return !calendar.Saturday5Working
-	default:
-		return false
-	}
-}
-
-// ── Exception Helpers (Section 9) ────────────────────────────────────────────
-
-func (s *workingCalendarService) IsSpecialWorkingDay(ctx context.Context, calendarID string, date time.Time) (bool, error) {
-	dateStr := date.Format("2006-01-02")
-	exc, err := s.repo.GetExceptionByDate(ctx, calendarID, dateStr)
-	if err != nil {
-		return false, err
-	}
-	if exc != nil && exc.ExceptionType == domain.ExceptionSpecialWorkingDay {
-		return true, nil
-	}
-	return false, nil
-}
-
-func (s *workingCalendarService) IsSpecialNonWorkingDay(ctx context.Context, calendarID string, date time.Time) (bool, error) {
-	dateStr := date.Format("2006-01-02")
-	exc, err := s.repo.GetExceptionByDate(ctx, calendarID, dateStr)
-	if err != nil {
-		return false, err
-	}
-	if exc != nil && exc.ExceptionType == domain.ExceptionSpecialNonWorkingDay {
-		return true, nil
-	}
-	return false, nil
-}
-
-// ── Holiday Helper (Section 5 & 6) ───────────────────────────────────────────
-
-func (s *workingCalendarService) IsHoliday(ctx context.Context, calendarID string, date time.Time) (bool, *domain.Holiday, error) {
-	dateStr := date.Format("2006-01-02")
-	h, err := s.repo.GetHolidayByDate(ctx, calendarID, dateStr)
-	if err != nil {
-		return false, nil, err
-	}
-	if h != nil && h.IsActive {
-		return true, h, nil
-	}
-	return false, nil, nil
-}
-
-// ── Working Day Determination (Sections 7, 8, 9, 10) ─────────────────────────
-
-// IsWorkingDay determines whether a specific date is working or non-working and returns the reason.
 func (s *workingCalendarService) IsWorkingDay(ctx context.Context, calendarID string, date time.Time) (bool, string, error) {
-	// 1. Date-specific exception overrides EVERYTHING
-	isSpecialWorking, err := s.IsSpecialWorkingDay(ctx, calendarID, date)
+	r, err := s.loadRules(ctx, calendarID)
 	if err != nil {
 		return false, "", err
 	}
-	if isSpecialWorking {
-		return true, "Special Working Day Override", nil
-	}
-
-	isSpecialNonWorking, err := s.IsSpecialNonWorkingDay(ctx, calendarID, date)
-	if err != nil {
-		return false, "", err
-	}
-	if isSpecialNonWorking {
-		return false, "Special Non-Working Day", nil
-	}
-
-	// 2. Check internal Holiday database
-	isHol, holiday, err := s.IsHoliday(ctx, calendarID, date)
-	if err != nil {
-		return false, "", err
-	}
-	if isHol && holiday != nil {
-		if holiday.WorkingStatus == domain.WorkingStatusWorking {
-			return true, fmt.Sprintf("Holiday marked Working (%s)", holiday.HolidayName), nil
-		}
-		return false, fmt.Sprintf("Holiday: %s (%s)", holiday.HolidayName, holiday.HolidayType), nil
-	}
-
-	// 3. Calendar Day-of-Week Rules
-	cal, err := s.getCalendar(ctx, calendarID)
-	if err != nil {
-		return false, "", err
-	}
-
-	switch date.Weekday() {
-	case time.Sunday:
-		if cal.SundayWorking {
-			return true, "Sunday (Configured Working)", nil
-		}
-		return false, "Sunday Holiday", nil
-
-	case time.Saturday:
-		satNum := s.GetSaturdayNumber(date)
-		if s.IsSaturdayHoliday(cal, date) {
-			return false, fmt.Sprintf("%s Saturday Holiday", ordinal(satNum)), nil
-		}
-		return true, fmt.Sprintf("%s Saturday Working Day", ordinal(satNum)), nil
-
-	case time.Monday:
-		return cal.MondayWorking, dayDesc("Monday", cal.MondayWorking), nil
-	case time.Tuesday:
-		return cal.TuesdayWorking, dayDesc("Tuesday", cal.TuesdayWorking), nil
-	case time.Wednesday:
-		return cal.WednesdayWorking, dayDesc("Wednesday", cal.WednesdayWorking), nil
-	case time.Thursday:
-		return cal.ThursdayWorking, dayDesc("Thursday", cal.ThursdayWorking), nil
-	case time.Friday:
-		return cal.FridayWorking, dayDesc("Friday", cal.FridayWorking), nil
-	default:
-		return false, "Unknown day", nil
-	}
+	ok, reason := r.isWorking(date)
+	return ok, reason, nil
 }
 
-// ── Working Intervals Helper ─────────────────────────────────────────────────
-
-func (s *workingCalendarService) GetWorkingIntervals(calendar *domain.WorkingCalendar, date time.Time) []domain.WorkingInterval {
-	loc := s.getCalendarLocation(calendar)
-	d := date.In(loc)
-
-	startHour, startMin := parseTimeHM(calendar.WorkingStartTime, 9, 0)
-	endHour, endMin := parseTimeHM(calendar.WorkingEndTime, 18, 0)
-
-	start := time.Date(d.Year(), d.Month(), d.Day(), startHour, startMin, 0, 0, loc)
-	end := time.Date(d.Year(), d.Month(), d.Day(), endHour, endMin, 0, 0, loc)
-
-	if end.Before(start) {
-		end = start
-	}
-
-	return []domain.WorkingInterval{
-		{Start: start, End: end},
-	}
-}
-
-// ── Working Hours Calculations Engine (Sections 10, 12, 13) ──────────────────
-
-// SubtractWorkingHours moves backward through working intervals, skipping non-working days
-// and non-working hours, until exactly `hours` working hours have been accumulated.
-func (s *workingCalendarService) SubtractWorkingHours(
-	ctx context.Context,
-	calendarID string,
-	fromTime time.Time,
-	hours float64,
-) (time.Time, error) {
-	if hours <= 0 {
-		return fromTime, nil
-	}
-
-	cal, err := s.getCalendar(ctx, calendarID)
+func (s *workingCalendarService) SubtractWorkingHours(ctx context.Context, calendarID string, from time.Time, hours float64) (time.Time, error) {
+	r, err := s.loadRules(ctx, calendarID)
 	if err != nil {
 		return time.Time{}, err
 	}
-	loc := s.getCalendarLocation(cal)
-	curr := fromTime.In(loc)
-
-	remainingSeconds := hours * 3600.0
-
-	// Limit search to 365 days back to prevent infinite loops
-	maxDays := 365
-
-	for dayOffset := 0; dayOffset < maxDays && remainingSeconds > 0; dayOffset++ {
-		isWork, _, err := s.IsWorkingDay(ctx, cal.ID, curr)
-		if err != nil {
-			return time.Time{}, err
-		}
-
-		if isWork {
-			intervals := s.GetWorkingIntervals(cal, curr)
-			for i := len(intervals) - 1; i >= 0 && remainingSeconds > 0; i-- {
-				interval := intervals[i]
-
-				// Effective end of working time on this day
-				effEnd := interval.End
-				if curr.Before(effEnd) {
-					effEnd = curr
-				}
-
-				effStart := interval.Start
-
-				if effEnd.After(effStart) {
-					availableSeconds := effEnd.Sub(effStart).Seconds()
-					if availableSeconds >= remainingSeconds {
-						// Found exact target timestamp
-						target := effEnd.Add(-time.Duration(remainingSeconds * float64(time.Second)))
-						return target, nil
-					}
-					remainingSeconds -= availableSeconds
-					curr = effStart
-				}
-			}
-		}
-
-		// Move curr to end of previous day in calendar's timezone
-		prevDay := curr.AddDate(0, 0, -1)
-		curr = time.Date(prevDay.Year(), prevDay.Month(), prevDay.Day(), 23, 59, 59, 0, loc)
-	}
-
-	return curr, nil
+	return r.subtractHours(from, hours)
 }
 
-// AddWorkingHours moves forward through working intervals, accumulating working hours.
-func (s *workingCalendarService) AddWorkingHours(
-	ctx context.Context,
-	calendarID string,
-	fromTime time.Time,
-	hours float64,
-) (time.Time, error) {
-	if hours <= 0 {
-		return fromTime, nil
-	}
-
-	cal, err := s.getCalendar(ctx, calendarID)
+func (s *workingCalendarService) SubtractWorkingDays(ctx context.Context, calendarID string, from time.Time, days int) (time.Time, error) {
+	r, err := s.loadRules(ctx, calendarID)
 	if err != nil {
 		return time.Time{}, err
 	}
-	loc := s.getCalendarLocation(cal)
-	curr := fromTime.In(loc)
-
-	remainingSeconds := hours * 3600.0
-	maxDays := 365
-
-	for dayOffset := 0; dayOffset < maxDays && remainingSeconds > 0; dayOffset++ {
-		isWork, _, err := s.IsWorkingDay(ctx, cal.ID, curr)
-		if err != nil {
-			return time.Time{}, err
-		}
-
-		if isWork {
-			intervals := s.GetWorkingIntervals(cal, curr)
-			for _, interval := range intervals {
-				effStart := interval.Start
-				if curr.After(effStart) {
-					effStart = curr
-				}
-
-				effEnd := interval.End
-
-				if effStart.Before(effEnd) {
-					availableSeconds := effEnd.Sub(effStart).Seconds()
-					if availableSeconds >= remainingSeconds {
-						target := effStart.Add(time.Duration(remainingSeconds * float64(time.Second)))
-						return target, nil
-					}
-					remainingSeconds -= availableSeconds
-					curr = effEnd
-				}
-			}
-		}
-
-		// Move to start of next day
-		nextDay := curr.AddDate(0, 0, 1)
-		curr = time.Date(nextDay.Year(), nextDay.Month(), nextDay.Day(), 0, 0, 0, 0, loc)
-	}
-
-	return curr, nil
+	return r.subtractDays(from, days)
 }
 
-// CalculateRemainingWorkingHours calculates total working hours between fromTime and toTime.
-func (s *workingCalendarService) CalculateRemainingWorkingHours(
-	ctx context.Context,
-	calendarID string,
-	fromTime, toTime time.Time,
-) (float64, error) {
-	if !toTime.After(fromTime) {
-		return 0, nil
-	}
-
-	cal, err := s.getCalendar(ctx, calendarID)
+func (s *workingCalendarService) CalculateRemainingWorkingHours(ctx context.Context, calendarID string, from, to time.Time) (float64, error) {
+	r, err := s.loadRules(ctx, calendarID)
 	if err != nil {
 		return 0, err
 	}
-	loc := s.getCalendarLocation(cal)
-
-	curr := fromTime.In(loc)
-	end := toTime.In(loc)
-
-	totalSeconds := 0.0
-	maxDays := 365
-
-	for dayOffset := 0; dayOffset < maxDays && curr.Before(end); dayOffset++ {
-		isWork, _, err := s.IsWorkingDay(ctx, cal.ID, curr)
-		if err != nil {
-			return 0, err
-		}
-
-		if isWork {
-			intervals := s.GetWorkingIntervals(cal, curr)
-			for _, interval := range intervals {
-				intStart := interval.Start
-				if curr.After(intStart) {
-					intStart = curr
-				}
-
-				intEnd := interval.End
-				if end.Before(intEnd) {
-					intEnd = end
-				}
-
-				if intStart.Before(intEnd) {
-					totalSeconds += intEnd.Sub(intStart).Seconds()
-				}
-			}
-		}
-
-		nextDay := curr.AddDate(0, 0, 1)
-		curr = time.Date(nextDay.Year(), nextDay.Month(), nextDay.Day(), 0, 0, 0, 0, loc)
-	}
-
-	return math.Round((totalSeconds/3600.0)*100) / 100, nil
+	return r.remainingHours(from, to)
 }
 
-// SubtractWorkingTime computes the prior deadline by stepping backwards through
-// working calendar days/hours based on the specified user value and unit.
-// Supported units: "HOURS", "DAYS", "MINUTES", "SECONDS".
-func (s *workingCalendarService) SubtractWorkingTime(
-	ctx context.Context,
-	calendarID string,
-	fromTime time.Time,
-	value float64,
-	unit string,
-) (time.Time, error) {
-	if value <= 0 {
-		return fromTime, nil
-	}
-
-	u := strings.ToUpper(strings.TrimSpace(unit))
-	if u == "" {
-		u = "HOURS"
-	}
-
-	switch u {
-	case "DAYS":
-		targetDays := int(math.Round(value))
-		if targetDays < 1 {
-			targetDays = 1
-		}
-		return s.SubtractWorkingDays(ctx, calendarID, fromTime, targetDays)
-
-	case "HOURS":
-		// When hours are a clean multiple of 24 and >= 24 (e.g. 72h = 3 working days, 48h = 2 working days),
-		// step backward across whole working days preserving the exact closing time.
-		if value >= 24 && math.Mod(value, 24) == 0 {
-			days := int(value / 24)
-			return s.SubtractWorkingDays(ctx, calendarID, fromTime, days)
-		}
-		return s.SubtractWorkingHours(ctx, calendarID, fromTime, value)
-
-	case "MINUTES":
-		hours := value / 60.0
-		return s.SubtractWorkingHours(ctx, calendarID, fromTime, hours)
-
-	case "SECONDS":
-		hours := value / 3600.0
-		return s.SubtractWorkingHours(ctx, calendarID, fromTime, hours)
-
-	default:
-		return s.SubtractWorkingHours(ctx, calendarID, fromTime, value)
-	}
-}
-
-// ── Working Days Calculations Engine ──────────────────────────────────────────
-
-// AddWorkingDays moves forward by working days, skipping non-working days
-// (2nd/4th Saturdays, Sundays, configured holidays, and calendar exceptions).
-func (s *workingCalendarService) AddWorkingDays(
-	ctx context.Context,
-	calendarID string,
-	fromTime time.Time,
-	days int,
-) (time.Time, error) {
-	if days <= 0 {
-		return fromTime, nil
-	}
-
-	cal, err := s.getCalendar(ctx, calendarID)
-	if err != nil {
-		return time.Time{}, err
-	}
-	loc := s.getCalendarLocation(cal)
-	curr := fromTime.In(loc)
-
-	hour, min, sec := curr.Hour(), curr.Minute(), curr.Second()
-	nsec := curr.Nanosecond()
-
-	daysCounted := 0
-	testDate := time.Date(curr.Year(), curr.Month(), curr.Day(), 12, 0, 0, 0, loc)
-
-	for i := 0; i < 365 && daysCounted < days; i++ {
-		testDate = testDate.AddDate(0, 0, 1)
-		isWork, _, err := s.IsWorkingDay(ctx, cal.ID, testDate)
-		if err != nil {
-			return time.Time{}, err
-		}
-		if isWork {
-			daysCounted++
-		}
-	}
-
-	target := time.Date(testDate.Year(), testDate.Month(), testDate.Day(), hour, min, sec, nsec, loc)
-	return target, nil
-}
-
-// SubtractWorkingDays moves backward by working days, skipping non-working days
-// (2nd/4th Saturdays, Sundays, configured holidays, and calendar exceptions).
-func (s *workingCalendarService) SubtractWorkingDays(
-	ctx context.Context,
-	calendarID string,
-	fromTime time.Time,
-	days int,
-) (time.Time, error) {
-	if days <= 0 {
-		return fromTime, nil
-	}
-
-	cal, err := s.getCalendar(ctx, calendarID)
-	if err != nil {
-		return time.Time{}, err
-	}
-	loc := s.getCalendarLocation(cal)
-	curr := fromTime.In(loc)
-
-	hour, min, sec := curr.Hour(), curr.Minute(), curr.Second()
-	nsec := curr.Nanosecond()
-
-	daysCounted := 0
-	testDate := time.Date(curr.Year(), curr.Month(), curr.Day(), 12, 0, 0, 0, loc)
-
-	for i := 0; i < 365 && daysCounted < days; i++ {
-		testDate = testDate.AddDate(0, 0, -1)
-		isWork, _, err := s.IsWorkingDay(ctx, cal.ID, testDate)
-		if err != nil {
-			return time.Time{}, err
-		}
-		if isWork {
-			daysCounted++
-		}
-	}
-
-	target := time.Date(testDate.Year(), testDate.Month(), testDate.Day(), hour, min, sec, nsec, loc)
-	return target, nil
-}
-
-// CalculateRemainingWorkingDays calculates total working days between fromTime and toTime.
-func (s *workingCalendarService) CalculateRemainingWorkingDays(
-	ctx context.Context,
-	calendarID string,
-	fromTime, toTime time.Time,
-) (float64, error) {
-	if !toTime.After(fromTime) {
-		return 0, nil
-	}
-
-	cal, err := s.getCalendar(ctx, calendarID)
+// CalculateRemainingWorkingDays is remaining working hours / working-day length.
+func (s *workingCalendarService) CalculateRemainingWorkingDays(ctx context.Context, calendarID string, from, to time.Time) (float64, error) {
+	r, err := s.loadRules(ctx, calendarID)
 	if err != nil {
 		return 0, err
 	}
-	loc := s.getCalendarLocation(cal)
-
-	curr := fromTime.In(loc)
-	end := toTime.In(loc)
-
-	totalDays := 0.0
-	maxDays := 365
-
-	startDay := time.Date(curr.Year(), curr.Month(), curr.Day(), 0, 0, 0, 0, loc)
-	endDay := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, loc)
-
-	for d := startDay; !d.After(endDay) && maxDays > 0; d = d.AddDate(0, 0, 1) {
-		maxDays--
-		isWork, _, err := s.IsWorkingDay(ctx, cal.ID, d)
-		if err != nil {
-			return 0, err
-		}
-		if !isWork {
-			continue
-		}
-
-		dayStart := d
-		dayEnd := d.AddDate(0, 0, 1)
-
-		overlapStart := curr
-		if overlapStart.Before(dayStart) {
-			overlapStart = dayStart
-		}
-
-		overlapEnd := end
-		if overlapEnd.After(dayEnd) {
-			overlapEnd = dayEnd
-		}
-
-		if overlapStart.Before(overlapEnd) {
-			totalDays += overlapEnd.Sub(overlapStart).Hours() / 24.0
-		}
+	h, err := r.remainingHours(from, to)
+	if err != nil {
+		return 0, err
 	}
-
-	return math.Round(totalDays*100) / 100, nil
+	return r.remainingDays(h), nil
 }
 
-// CalculateTender72HourDeadline computes the exact configured working deadline for a tender.
-func (s *workingCalendarService) CalculateTender72HourDeadline(
-	ctx context.Context,
-	tenderID string,
-) (*domain.CalculateDeadlineResult, error) {
-	// Look up tender details
-	candidate, err := s.findTenderCandidate(ctx, tenderID)
-	if err != nil {
-		return nil, err
-	}
-	if candidate == nil {
-		return nil, fmt.Errorf("tender %s not found or has no closing date", tenderID)
-	}
+// ── Deadline calculation ─────────────────────────────────────────────────────
 
-	calendarID := ""
-	if candidate.CalendarID != nil {
-		calendarID = *candidate.CalendarID
-	}
-
-	cal, err := s.getCalendar(ctx, calendarID)
-	if err != nil {
-		return nil, err
-	}
-
-	triggerVal := cal.DeadlineTriggerValue
-	if triggerVal <= 0 {
-		triggerVal = 72.0
-	}
-	triggerUnit := cal.DeadlineTriggerUnit
-	if triggerUnit == "" {
-		triggerUnit = "HOURS"
-	}
-
-	res, err := s.CalculateArbitraryDeadlineWithUnit(ctx, calendarID, candidate.ClosingDate, triggerVal, triggerUnit)
-	if err != nil {
-		return nil, err
-	}
-	res.TenderID = tenderID
-	res.TenderTitle = candidate.Title
-
-	// Identify next actionable task
-	nextTask, err := s.repo.GetNextPendingChecklist(ctx, tenderID)
-	if err == nil && nextTask != nil {
-		res.NextAction = nextTask
-	}
-
-	// Fetch all stakeholders involved in this tender
-	stakeholders, err := s.repo.GetTenderStakeholders(ctx, tenderID)
-	if err == nil {
-		res.Stakeholders = stakeholders
-	}
-
-	// Cache calculation in tender record
-	_ = s.repo.UpdateTenderDeadlineCache(ctx, tenderID, res.CalculatedDeadline, res.RemainingWorkingHours)
-
-	return res, nil
+type deadlineCalc struct {
+	deadline  time.Time
+	remHours  float64
+	remDays   float64
+	triggered bool // now is at/after the trigger and before closing
 }
 
-func (s *workingCalendarService) CalculateArbitraryDeadline(
-	ctx context.Context,
-	calendarID string,
-	closingDate time.Time,
-	targetHours float64,
-) (*domain.CalculateDeadlineResult, error) {
-	if targetHours <= 0 {
-		targetHours = 72.0
-	}
-	return s.CalculateArbitraryDeadlineWithUnit(ctx, calendarID, closingDate, targetHours, "HOURS")
-}
-
-func (s *workingCalendarService) CalculateArbitraryDeadlineWithUnit(
-	ctx context.Context,
-	calendarID string,
-	closingDate time.Time,
-	targetValue float64,
-	targetUnit string,
-) (*domain.CalculateDeadlineResult, error) {
-	cal, err := s.getCalendar(ctx, calendarID)
+func (s *workingCalendarService) compute(r *calRules, closing time.Time, value float64, unit string, now time.Time) (*deadlineCalc, error) {
+	deadline, err := r.subtractTime(closing, value, unit)
 	if err != nil {
 		return nil, err
 	}
-
-	if targetValue <= 0 {
-		targetValue = 72.0
-	}
-	unit := strings.ToUpper(strings.TrimSpace(targetUnit))
-	if unit == "" {
-		unit = "HOURS"
-	}
-
-	deadline, err := s.SubtractWorkingTime(ctx, cal.ID, closingDate, targetValue, unit)
+	rem, err := r.remainingHours(now, closing)
 	if err != nil {
 		return nil, err
 	}
-
-	now := time.Now().In(s.getCalendarLocation(cal))
-	remDays, err := s.CalculateRemainingWorkingDays(ctx, cal.ID, now, closingDate)
-	if err != nil {
-		return nil, err
-	}
-	remHours := remDays * 24.0
-
-	isReached := !now.Before(deadline) && now.Before(closingDate)
-
-	// Calculate calendar days spanned
-	daysSpanned := int(math.Ceil(closingDate.Sub(deadline).Hours() / 24.0))
-	if daysSpanned < 1 {
-		daysSpanned = 1
-	}
-
-	// Determine total working hours and days represented
-	var totalHours float64
-	switch unit {
-	case "DAYS":
-		totalHours = targetValue * 24.0
-	case "HOURS":
-		totalHours = targetValue
-	case "MINUTES":
-		totalHours = targetValue / 60.0
-	case "SECONDS":
-		totalHours = targetValue / 3600.0
-	default:
-		totalHours = targetValue
-	}
-	targetDays := int(math.Ceil(totalHours / 24.0))
-	if targetDays < 1 {
-		targetDays = 1
-	}
-
-	// Collect skipped non-working dates between deadline and closingDate
-	loc := s.getCalendarLocation(cal)
-	startDay := time.Date(deadline.Year(), deadline.Month(), deadline.Day(), 0, 0, 0, 0, loc)
-	endDay := time.Date(closingDate.Year(), closingDate.Month(), closingDate.Day(), 0, 0, 0, 0, loc)
-
-	var skippedDates []domain.SkippedDateInfo
-	for d := startDay; !d.After(endDay); d = d.AddDate(0, 0, 1) {
-		isWork, reason, _ := s.IsWorkingDay(ctx, cal.ID, d)
-		if !isWork {
-			skippedDates = append(skippedDates, domain.SkippedDateInfo{
-				Date:   d.Format("02-Jan-2006 (Mon)"),
-				Reason: reason,
-			})
-		}
-	}
-
-	return &domain.CalculateDeadlineResult{
-		ClosingDate:           closingDate,
-		TargetWorkingHours:    totalHours,
-		TargetWorkingDays:     targetDays,
-		TargetWorkingValue:    targetValue,
-		TargetWorkingUnit:     unit,
-		CalculatedDeadline:    deadline,
-		RemainingWorkingHours: remHours,
-		RemainingWorkingDays:  remDays,
-		CalendarDaysSpanned:   daysSpanned,
-		SkippedDates:          skippedDates,
-		IsThresholdReached:    isReached,
-		CalendarName:          cal.Name,
-		WorkingIntervals:      s.GetWorkingIntervals(cal, closingDate),
+	return &deadlineCalc{
+		deadline:  deadline,
+		remHours:  rem,
+		remDays:   r.remainingDays(rem),
+		triggered: !now.Before(deadline) && now.Before(closing),
 	}, nil
 }
 
-func (s *workingCalendarService) GetNextActionableTask(ctx context.Context, tenderID string) (*domain.NextActionableTask, error) {
-	return s.repo.GetNextPendingChecklist(ctx, tenderID)
+// trigger returns the calendar's configured trigger, falling back to 72 hours
+// when the stored value is missing or no longer valid (e.g. a retired unit).
+func trigger(cal *domain.WorkingCalendar) (float64, string) {
+	if u, err := domain.ValidateTrigger(cal.DeadlineTriggerValue, cal.DeadlineTriggerUnit); err == nil {
+		return cal.DeadlineTriggerValue, u
+	}
+	return 72, domain.TriggerUnitHours
+}
+
+// CalculateTender72HourDeadline computes the configured working deadline for a tender.
+func (s *workingCalendarService) CalculateTender72HourDeadline(ctx context.Context, tenderID string) (*domain.CalculateDeadlineResult, error) {
+	t, err := s.repo.GetTenderCandidate(ctx, tenderID)
+	if err != nil {
+		return nil, err
+	}
+	if t == nil {
+		return nil, domain.ErrTenderNotFound
+	}
+	r, err := s.loadRules(ctx, deref(t.CalendarID))
+	if err != nil {
+		return nil, err
+	}
+	v, u := trigger(r.cal)
+	res, err := s.deadlineResult(r, t.ClosingDate, v, u)
+	if err != nil {
+		return nil, err
+	}
+	res.TenderID, res.TenderTitle = tenderID, t.Title
+
+	if next, err := s.repo.GetNextPendingChecklist(ctx, tenderID); err == nil {
+		res.NextAction = next
+	}
+	if sh, err := s.repo.GetTenderStakeholders(ctx, tenderID); err == nil {
+		res.Stakeholders = sh
+	}
+	s.cacheDeadline(ctx, t, res.CalculatedDeadline, res.RemainingWorkingHours)
+	return res, nil
+}
+
+func (s *workingCalendarService) CalculateArbitraryDeadline(ctx context.Context, calendarID string, closingDate time.Time, targetHours float64) (*domain.CalculateDeadlineResult, error) {
+	return s.CalculateArbitraryDeadlineWithUnit(ctx, calendarID, closingDate, targetHours, domain.TriggerUnitHours)
+}
+
+func (s *workingCalendarService) CalculateArbitraryDeadlineWithUnit(ctx context.Context, calendarID string, closingDate time.Time, targetValue float64, targetUnit string) (*domain.CalculateDeadlineResult, error) {
+	r, err := s.loadRules(ctx, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	if targetValue <= 0 {
+		targetValue, targetUnit = 72, domain.TriggerUnitHours
+	}
+	return s.deadlineResult(r, closingDate, targetValue, targetUnit)
+}
+
+func (s *workingCalendarService) deadlineResult(r *calRules, closing time.Time, value float64, unit string) (*domain.CalculateDeadlineResult, error) {
+	unit, err := domain.ValidateTrigger(value, unit)
+	if err != nil {
+		return nil, err
+	}
+	now := s.now()
+	c, err := s.compute(r, closing, value, unit, now)
+	if err != nil {
+		return nil, err
+	}
+
+	targetDays := domain.TriggerDays(value, unit)
+	spanned := int(math.Ceil(closing.Sub(c.deadline).Hours() / 24))
+	if spanned < 1 {
+		spanned = 1
+	}
+
+	var skipped []domain.SkippedDateInfo
+	endDay := closing.In(r.loc)
+	endDay = time.Date(endDay.Year(), endDay.Month(), endDay.Day(), 0, 0, 0, 0, r.loc)
+	startDay := c.deadline.In(r.loc)
+	for d := time.Date(startDay.Year(), startDay.Month(), startDay.Day(), 0, 0, 0, 0, r.loc); !d.After(endDay); d = d.AddDate(0, 0, 1) {
+		if ok, reason := r.isWorking(d); !ok {
+			skipped = append(skipped, domain.SkippedDateInfo{Date: d.Format("02-Jan-2006 (Mon)"), Reason: reason})
+		}
+	}
+
+	start, end := r.window(closing)
+	return &domain.CalculateDeadlineResult{
+		ClosingDate:           closing,
+		TargetWorkingHours:    round2(targetDays * r.dayHours),
+		TargetWorkingDays:     int(math.Ceil(targetDays)),
+		TargetWorkingValue:    value,
+		TargetWorkingUnit:     unit,
+		CalculatedDeadline:    c.deadline,
+		RemainingWorkingHours: c.remHours,
+		RemainingWorkingDays:  c.remDays,
+		WorkingDayHours:       r.dayHours,
+		CalendarDaysSpanned:   spanned,
+		SkippedDates:          skipped,
+		IsThresholdReached:    c.triggered,
+		CalendarName:          r.cal.Name,
+		WorkingIntervals:      []domain.WorkingInterval{{Start: start, End: end}},
+	}, nil
 }
 
 func (s *workingCalendarService) GetTenderStakeholders(ctx context.Context, tenderID string) ([]domain.TenderStakeholder, error) {
 	return s.repo.GetTenderStakeholders(ctx, tenderID)
 }
 
-func (s *workingCalendarService) EvaluateActiveTenders(ctx context.Context) error {
-	tenders, err := s.repo.GetActiveTendersForDeadlineCheck(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to fetch active tenders for deadline check: %w", err)
+// cacheDeadline refreshes the tender's cached columns only when they changed.
+func (s *workingCalendarService) cacheDeadline(ctx context.Context, t *domain.TenderDeadlineCandidate, deadline time.Time, remHours float64) {
+	if t.CachedDeadline != nil && t.CachedRemainingHours != nil &&
+		t.CachedDeadline.Sub(deadline).Abs() < time.Second &&
+		math.Abs(*t.CachedRemainingHours-remHours) < 0.005 {
+		return
 	}
-
-	for _, t := range tenders {
-		calID := ""
-		if t.CalendarID != nil {
-			calID = *t.CalendarID
-		}
-
-		cal, err := s.getCalendar(ctx, calID)
-		if err != nil {
-			continue
-		}
-
-		now := time.Now().In(s.getCalendarLocation(cal))
-		remDays, err := s.CalculateRemainingWorkingDays(ctx, cal.ID, now, t.ClosingDate)
-		if err != nil {
-			continue
-		}
-		remHours := remDays * 24.0
-
-		// Determine user-configured trigger threshold
-		triggerVal := cal.DeadlineTriggerValue
-		if triggerVal <= 0 {
-			triggerVal = 72.0
-		}
-		triggerUnit := cal.DeadlineTriggerUnit
-		if triggerUnit == "" {
-			triggerUnit = "HOURS"
-		}
-
-		deadline, err := s.SubtractWorkingTime(ctx, cal.ID, t.ClosingDate, triggerVal, triggerUnit)
-		if err != nil {
-			continue
-		}
-
-		// Update cache so UI displays live remaining working days/hours and configured threshold
-		_ = s.repo.UpdateTenderDeadlineCache(ctx, t.ID, deadline, remHours)
-
-		// Check if threshold is reached (now is at or past deadline, and before closing date)
-		if !now.Before(deadline) && now.Before(t.ClosingDate) {
-			// 1. Red Zone – Tender Due Date Notification:
-			// Trigger an email notification to all respective stakeholders before tender due date.
-			// Pass the calculated deadline so extended/updated tender deadlines trigger afresh.
-			sent, _ := s.repo.HasRedZoneNotificationBeenSent(ctx, t.ID, deadline)
-			if !sent {
-				_, _ = s.sendRedZoneTenderDueDateNotification(ctx, t, deadline, remDays, remHours)
-			}
-
-			// 2. Delay & Escalation Detection for next actionable task
-			nextTask, err := s.repo.GetNextPendingChecklist(ctx, t.ID)
-			if err == nil && nextTask != nil {
-				delayThresholdHours := float64(cal.EscalationDelayHours)
-				if delayThresholdHours <= 0 {
-					delayThresholdHours = 4.0
-				}
-
-				delayTime := deadline.Add(time.Duration(delayThresholdHours * float64(time.Hour)))
-				if now.After(delayTime) && nextTask.Status != domain.TaskStatusCompleted {
-					_ = s.repo.MarkChecklistDelayed(ctx, nextTask.ChecklistID)
-
-					escSent, _ := s.repo.HasEscalationBeenSent(ctx, t.ID, &nextTask.ChecklistID)
-					if !escSent {
-						s.sendEscalationNotification(ctx, t, nextTask, delayThresholdHours)
-					}
-				}
-			}
-		}
+	if err := s.repo.UpdateTenderDeadlineCache(ctx, t.ID, deadline, remHours); err != nil {
+		log.Printf("[WorkingCalendar] failed to cache deadline for tender %s: %v", t.ID, err)
 	}
-
-	return nil
 }
 
-func (s *workingCalendarService) TriggerRedZoneNotificationForTender(
-	ctx context.Context,
-	tenderID string,
-	force bool,
-) (*domain.RedZoneNotificationResult, error) {
-	candidate, err := s.findTenderCandidate(ctx, tenderID)
+// ── Red Zone evaluation ──────────────────────────────────────────────────────
+
+// EvaluateActiveTenders is one engine pass. It is single-flight across
+// instances (advisory lock). The first pass ever only records tenders already in
+// the window as notified, so enabling the engine never floods stakeholders.
+func (s *workingCalendarService) EvaluateActiveTenders(ctx context.Context) (*domain.EvaluationSummary, error) {
+	release, ok, err := s.repo.TryLockEvaluation(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("evaluation lock: %w", err)
+	}
+	if !ok {
+		return &domain.EvaluationSummary{Skipped: true}, nil
+	}
+	defer release()
+
+	baselined, err := s.repo.IsEngineBaselined(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cals, err := s.repo.ListCalendars(ctx)
+	if err != nil {
+		return nil, err
+	}
+	maxDays := 0.0
+	for _, c := range cals {
+		v, u := trigger(&c)
+		maxDays = math.Max(maxDays, domain.TriggerDays(v, u))
+	}
+	// Closing within trigger working days x 7 (weekends) + 14 days of holiday slack.
+	now := s.now()
+	window := time.Duration(math.Ceil(maxDays)*7+14) * 24 * time.Hour
+
+	tenders, err := s.repo.GetActiveTendersForDeadlineCheck(ctx, now, now.Add(window))
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch active tenders for deadline check: %w", err)
+	}
+
+	sum := &domain.EvaluationSummary{Baselined: !baselined}
+	rules := map[string]*calRules{}
+	clean := true
+
+	for i := range tenders {
+		t := &tenders[i]
+		if ctx.Err() != nil {
+			clean = false
+			break
+		}
+		if sum.Notified >= maxNotificationsPerTick {
+			log.Printf("[WorkingCalendar] per-run notification cap (%d) reached; remaining tenders wait for the next run", maxNotificationsPerTick)
+			break
+		}
+
+		key := deref(t.CalendarID)
+		r := rules[key]
+		if r == nil {
+			if r, err = s.loadRules(ctx, key); err != nil {
+				log.Printf("[WorkingCalendar] calendar %q unavailable: %v", key, err)
+				clean = false
+				continue
+			}
+			rules[key] = r
+		}
+		v, u := trigger(r.cal)
+		c, err := s.compute(r, t.ClosingDate, v, u, now)
+		if err != nil {
+			log.Printf("[WorkingCalendar] tender %s: %v", t.ID, err)
+			continue
+		}
+		sum.Evaluated++
+		s.cacheDeadline(ctx, t, c.deadline, c.remHours)
+		if !c.triggered {
+			continue
+		}
+		sum.InRedZone++
+
+		sent, err := s.repo.HasRedZoneNotificationBeenSent(ctx, t.ID, c.deadline)
+		if err != nil {
+			log.Printf("[WorkingCalendar] tender %s dedup check failed: %v", t.ID, err)
+			clean = false
+			continue
+		}
+		if sent {
+			continue
+		}
+		out, err := s.notifyTender(ctx, t, r, c, v, u, false, !baselined)
+		if err != nil || out.errs > 0 {
+			log.Printf("[WorkingCalendar] tender %s notification incomplete: %v (%d claim errors)", t.ID, err, out.errs)
+			clean = false
+		}
+		sum.Notified += len(out.notified)
+	}
+
+	if !baselined && clean {
+		if err := s.repo.MarkEngineBaselined(ctx); err != nil {
+			return sum, err
+		}
+		log.Printf("[WorkingCalendar] engine baselined: %d in-window tenders recorded without notifying", sum.InRedZone)
+	}
+	return sum, nil
+}
+
+func (s *workingCalendarService) TriggerRedZoneNotificationForTender(ctx context.Context, tenderID string, force bool) (*domain.RedZoneNotificationResult, error) {
+	t, err := s.repo.GetTenderCandidate(ctx, tenderID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch tender: %w", err)
 	}
-	if candidate == nil {
-		return nil, fmt.Errorf("tender %s not found or has no closing date", tenderID)
+	if t == nil {
+		return nil, domain.ErrTenderNotFound
 	}
-
-	calID := ""
-	if candidate.CalendarID != nil {
-		calID = *candidate.CalendarID
-	}
-	cal, err := s.getCalendar(ctx, calID)
+	r, err := s.loadRules(ctx, deref(t.CalendarID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get calendar: %w", err)
 	}
-
-	now := time.Now().In(s.getCalendarLocation(cal))
-	remDays, err := s.CalculateRemainingWorkingDays(ctx, cal.ID, now, candidate.ClosingDate)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute remaining working days: %w", err)
-	}
-	remHours := remDays * 24.0
-
-	triggerVal := cal.DeadlineTriggerValue
-	if triggerVal <= 0 {
-		triggerVal = 72.0
-	}
-	triggerUnit := cal.DeadlineTriggerUnit
-	if triggerUnit == "" {
-		triggerUnit = "HOURS"
-	}
-
-	deadline, err := s.SubtractWorkingTime(ctx, cal.ID, candidate.ClosingDate, triggerVal, triggerUnit)
+	now := s.now()
+	v, u := trigger(r.cal)
+	c, err := s.compute(r, t.ClosingDate, v, u, now)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute tender deadline: %w", err)
 	}
+	s.cacheDeadline(ctx, t, c.deadline, c.remHours)
 
-	_ = s.repo.UpdateTenderDeadlineCache(ctx, candidate.ID, deadline, remHours)
-
-	if !force {
-		sent, _ := s.repo.HasRedZoneNotificationBeenSent(ctx, candidate.ID, deadline)
-		if sent {
-			stakeholders, _ := s.repo.GetTenderStakeholders(ctx, candidate.ID)
-			return &domain.RedZoneNotificationResult{
-				TenderID:              candidate.ID,
-				TenderTitle:           candidate.Title,
-				ClosingDate:           candidate.ClosingDate,
-				Calculated72hDeadline: deadline,
-				RemainingWorkingHours: remHours,
-				RemainingWorkingDays:  remDays,
-				StakeholdersNotified:  stakeholders,
-				DeliveryStatus:        "ALREADY_SENT",
-				TriggeredAt:           now,
-				Message:               "Red Zone notification was already sent to stakeholders previously for this deadline",
-			}, nil
-		}
-
-		// If not sent, verify that the tender is actually in the Red Zone
-		if now.Before(deadline) {
-			stakeholders, _ := s.repo.GetTenderStakeholders(ctx, candidate.ID)
-			return &domain.RedZoneNotificationResult{
-				TenderID:              candidate.ID,
-				TenderTitle:           candidate.Title,
-				ClosingDate:           candidate.ClosingDate,
-				Calculated72hDeadline: deadline,
-				RemainingWorkingHours: remHours,
-				RemainingWorkingDays:  remDays,
-				StakeholdersNotified:  stakeholders,
-				DeliveryStatus:        "NOT_IN_RED_ZONE",
-				TriggeredAt:           now,
-				Message:               fmt.Sprintf("Tender is not yet in the configured Red Zone (%v %s remaining threshold)", triggerVal, strings.ToLower(triggerUnit)),
-			}, nil
-		}
-	}
-
-	return s.sendRedZoneTenderDueDateNotification(ctx, *candidate, deadline, remDays, remHours)
-}
-
-func (s *workingCalendarService) formatThresholdDescription(cal *domain.WorkingCalendar) string {
-	if cal == nil || cal.DeadlineTriggerValue <= 0 {
-		return "3 Working Days (72h)"
-	}
-	u := strings.ToUpper(strings.TrimSpace(cal.DeadlineTriggerUnit))
-	val := cal.DeadlineTriggerValue
-	if u == "HOURS" && val == 72 {
-		return "3 Working Days (72h)"
-	} else if u == "HOURS" && val == 48 {
-		return "2 Working Days (48h)"
-	} else if u == "HOURS" {
-		if val == math.Trunc(val) {
-			return fmt.Sprintf("%.0f Working Hours", val)
-		}
-		return fmt.Sprintf("%.1f Working Hours", val)
-	} else if u == "DAYS" {
-		if val == math.Trunc(val) {
-			return fmt.Sprintf("%.0f Working Days", val)
-		}
-		return fmt.Sprintf("%.1f Working Days", val)
-	} else if u == "MINUTES" {
-		if val == math.Trunc(val) {
-			return fmt.Sprintf("%.0f Minutes", val)
-		}
-		return fmt.Sprintf("%.1f Minutes", val)
-	} else if u == "SECONDS" {
-		if val == math.Trunc(val) {
-			return fmt.Sprintf("%.0f Seconds", val)
-		}
-		return fmt.Sprintf("%.1f Seconds", val)
-	}
-	return fmt.Sprintf("%v %s", val, strings.ToLower(u))
-}
-
-func (s *workingCalendarService) sendRedZoneTenderDueDateNotification(
-	ctx context.Context,
-	t domain.TenderDeadlineCandidate,
-	deadline time.Time,
-	remDays float64,
-	remHours float64,
-) (*domain.RedZoneNotificationResult, error) {
-	// 1. Discover all relevant stakeholders involved in this particular tender
-	stakeholders, err := s.repo.GetTenderStakeholders(ctx, t.ID)
-	if err != nil {
-		log.Printf("[WorkingCalendar Service] Warning: Failed to query stakeholders for %s: %v", t.ID, err)
-	}
-
-	// Fallback to direct candidate fields if database relations returned empty
-	if len(stakeholders) == 0 {
-		if t.BidOwnerID != "" {
-			name := "Bid Owner"
-			if t.BidOwnerName != nil && *t.BidOwnerName != "" {
-				name = *t.BidOwnerName
-			}
-			email := ""
-			if t.BidOwnerEmail != nil {
-				email = *t.BidOwnerEmail
-			}
-			stakeholders = append(stakeholders, domain.TenderStakeholder{
-				UserID:   t.BidOwnerID,
-				FullName: name,
-				Email:    email,
-				Roles:    "Bid Owner",
-			})
-		}
-		if t.ReportingManagerID != nil && *t.ReportingManagerID != "" {
-			name := "Reporting Manager"
-			if t.ManagerName != nil && *t.ManagerName != "" {
-				name = *t.ManagerName
-			}
-			email := ""
-			if t.ManagerEmail != nil {
-				email = *t.ManagerEmail
-			}
-			if len(stakeholders) == 0 || stakeholders[0].UserID != *t.ReportingManagerID {
-				stakeholders = append(stakeholders, domain.TenderStakeholder{
-					UserID:   *t.ReportingManagerID,
-					FullName: name,
-					Email:    email,
-					Roles:    "Reporting Manager",
-				})
-			}
-		}
-	}
-
-	// Deduplicate and filter non-empty email addresses
-	var recipientEmails []string
-	seenEmails := make(map[string]bool)
-	for _, sh := range stakeholders {
-		email := strings.TrimSpace(sh.Email)
-		if email != "" && !seenEmails[email] {
-			seenEmails[email] = true
-			recipientEmails = append(recipientEmails, email)
-		}
-	}
-
-	refNo := t.Title
-	if t.GemBidNo != nil && *t.GemBidNo != "" {
-		refNo = *t.GemBidNo
-	} else if t.BidNo != nil && *t.BidNo != "" {
-		refNo = *t.BidNo
-	}
-
-	nextTask, _ := s.repo.GetNextPendingChecklist(ctx, t.ID)
-	nextTaskTitle := "Review tender documents and checklist requirements"
-	nextTaskPriority := "HIGH"
-	nextTaskResponsible := "Bid Executive"
-	if nextTask != nil {
-		nextTaskTitle = nextTask.Title
-		nextTaskPriority = nextTask.Priority
-		if nextTask.AssignedToName != nil && *nextTask.AssignedToName != "" {
-			nextTaskResponsible = *nextTask.AssignedToName
-		}
-	}
-
-	calID := ""
-	if t.CalendarID != nil {
-		calID = *t.CalendarID
-	}
-	cal, _ := s.getCalendar(ctx, calID)
-	thresholdDesc := s.formatThresholdDescription(cal)
-
-	subject := fmt.Sprintf("🚨 RED ZONE ALERT: %s Remaining – Tender Due Date Approaching (%s)", thresholdDesc, t.Title)
-
-	// Build stakeholder rows for email HTML table
-	var stakeholderRows strings.Builder
-	for _, sh := range stakeholders {
-		emailDisplay := sh.Email
-		if emailDisplay == "" {
-			emailDisplay = "—"
-		}
-		stakeholderRows.WriteString(fmt.Sprintf(`
-			<tr style="border-bottom: 1px solid #f1f5f9;">
-				<td style="padding: 8px 12px; font-weight: 600; color: #0f172a;">%s</td>
-				<td style="padding: 8px 12px; color: #2563eb; font-weight: 500;">%s</td>
-				<td style="padding: 8px 12px; color: #64748b; font-family: monospace; font-size: 12px;">%s</td>
-			</tr>
-		`, sh.FullName, sh.Roles, emailDisplay))
-	}
-
-	orgDisplay := "—"
-	if t.OrganizationName != nil && *t.OrganizationName != "" {
-		orgDisplay = *t.OrganizationName
-		if t.DepartmentName != nil && *t.DepartmentName != "" {
-			orgDisplay += fmt.Sprintf(" (%s)", *t.DepartmentName)
-		}
-	}
-
-	htmlBody := fmt.Sprintf(`
-		<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; max-width: 650px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
-			<div style="background: linear-gradient(135deg, #dc2626 0%%, #991b1b 100%%); color: #ffffff; padding: 12px 20px; border-radius: 8px; font-weight: 800; font-size: 13px; display: inline-flex; align-items: center; gap: 8px; margin-bottom: 20px; letter-spacing: 0.5px;">
-				<span>🚨</span> RED ZONE — TENDER DUE DATE NOTIFICATION (%s REMAINING)
-			</div>
-			
-			<h2 style="margin: 0 0 12px 0; color: #0f172a; font-size: 22px; font-weight: 700; line-height: 1.3;">
-				%s
-			</h2>
-			<p style="font-size: 14px; line-height: 1.6; color: #334155; margin-bottom: 20px;">
-				This automated <strong>Red Zone alert</strong> has been dispatched to all stakeholders involved in this tender. 
-				<strong>%s</strong> remain before the tender submission deadline. Immediate action is required to complete pending tasks and avoid last-minute submission bottlenecks.
-			</p>
-
-			<table style="width: 100%%; border-collapse: collapse; margin: 20px 0; font-size: 13px; background-color: #f8fafc; border-radius: 8px; overflow: hidden; border: 1px solid #e2e8f0;">
-				<tr style="border-bottom: 1px solid #e2e8f0;">
-					<td style="padding: 10px 16px; font-weight: 600; color: #64748b; width: 38%%;">Tender Title</td>
-					<td style="padding: 10px 16px; font-weight: 700; color: #0f172a;">%s</td>
-				</tr>
-				<tr style="border-bottom: 1px solid #e2e8f0;">
-					<td style="padding: 10px 16px; font-weight: 600; color: #64748b;">Reference / GeM Bid No</td>
-					<td style="padding: 10px 16px; font-weight: 600; color: #2563eb; font-family: monospace;">%s</td>
-				</tr>
-				<tr style="border-bottom: 1px solid #e2e8f0;">
-					<td style="padding: 10px 16px; font-weight: 600; color: #64748b;">Procuring Authority</td>
-					<td style="padding: 10px 16px; color: #334155;">%s</td>
-				</tr>
-				<tr style="border-bottom: 1px solid #e2e8f0;">
-					<td style="padding: 10px 16px; font-weight: 600; color: #64748b;">Current Stage</td>
-					<td style="padding: 10px 16px; color: #0f172a;">
-						<span style="background: #e0f2fe; color: #0369a1; padding: 3px 10px; border-radius: 4px; font-weight: 700; font-size: 11px; text-transform: uppercase;">%s</span>
-					</td>
-				</tr>
-				<tr style="border-bottom: 1px solid #e2e8f0;">
-					<td style="padding: 10px 16px; font-weight: 600; color: #64748b;">Tender Due Date / Time</td>
-					<td style="padding: 10px 16px; font-weight: 700; color: #b91c1c; font-size: 14px;">%s</td>
-				</tr>
-				<tr style="border-bottom: 1px solid #e2e8f0;">
-					<td style="padding: 10px 16px; font-weight: 600; color: #64748b;">Calculated Trigger Time (%s)</td>
-					<td style="padding: 10px 16px; font-weight: 600; color: #0f172a;">%s</td>
-				</tr>
-				<tr style="border-bottom: 1px solid #e2e8f0;">
-					<td style="padding: 10px 16px; font-weight: 600; color: #64748b;">Remaining Working Days</td>
-					<td style="padding: 10px 16px; font-weight: 800; color: #dc2626; font-size: 15px;">%.1f working days <span style="font-size: 12px; font-weight: 500; color: #64748b;">(%.1f hrs)</span></td>
-				</tr>
-				<tr>
-					<td style="padding: 10px 16px; font-weight: 600; color: #64748b;">Next Action / Task</td>
-					<td style="padding: 10px 16px; color: #0f172a;">
-						<strong>%s</strong> 
-						<span style="margin-left: 8px; background: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700;">%s PRIORITY</span>
-						<div style="font-size: 12px; color: #64748b; margin-top: 4px;">Assigned to: %s</div>
-					</td>
-				</tr>
-			</table>
-
-			<div style="background-color: #fef2f2; border-left: 4px solid #ef4444; border-radius: 4px; padding: 12px 16px; margin: 20px 0;">
-				<p style="margin: 0; font-size: 12px; line-height: 1.5; color: #991b1b;">
-					<strong>Working Calendar Exclusions:</strong> This trigger date/time was computed backward from the tender due date by <strong>%s</strong>, excluding:
-					<strong>2nd and 4th Saturdays</strong> of the month, <strong>Sundays</strong>, <strong>configured public holidays</strong>, and <strong>other non-working days</strong> defined in the corporate working calendar.
-				</p>
-			</div>
-
-			<div style="margin: 24px 0;">
-				<h4 style="margin: 0 0 10px 0; font-size: 13px; font-weight: 700; color: #334155; text-transform: uppercase; letter-spacing: 0.5px;">
-					Involved Stakeholders Notified (%d Team Members)
-				</h4>
-				<table style="width: 100%%; border-collapse: collapse; font-size: 12px; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;">
-					<thead>
-						<tr style="background-color: #f1f5f9; text-align: left; color: #475569; font-weight: 600; text-transform: uppercase; font-size: 11px;">
-							<th style="padding: 8px 12px;">Name</th>
-							<th style="padding: 8px 12px;">Role on Tender</th>
-							<th style="padding: 8px 12px;">Email</th>
-						</tr>
-					</thead>
-					<tbody>
-						%s
-					</tbody>
-				</table>
-			</div>
-
-			<div style="margin: 28px 0 16px 0; text-align: center;">
-				<div style="font-size: 12px; color: #64748b; margin-top: 8px;">
-					Please log in to OneTrack to complete all pending checklist items and finalize the bid submission.
-				</div>
-			</div>
-
-			<div style="font-size: 11px; color: #94a3b8; border-top: 1px solid #f1f5f9; padding-top: 16px; text-align: center;">
-				OneTrack Tender Operations Engine • GlobX Technologies Pvt Ltd • Automated Red Zone Notification
-			</div>
-		</div>
-	`,
-		thresholdDesc,
-		t.Title,
-		thresholdDesc,
-		t.Title,
-		refNo,
-		orgDisplay,
-		t.WorkflowStage,
-		t.ClosingDate.Format("02-Jan-2006 15:04 MST"),
-		thresholdDesc,
-		deadline.Format("02-Jan-2006 15:04 MST"),
-		remDays,
-		remHours,
-		nextTaskTitle,
-		nextTaskPriority,
-		nextTaskResponsible,
-		thresholdDesc,
-		len(stakeholders),
-		stakeholderRows.String(),
-	)
-
-	message := fmt.Sprintf(
-		"🚨 RED ZONE ALERT: Tender '%s' (Ref: %s) has entered the Red Zone.\n\n"+
-			"Tender Due Date: %s\n"+
-			"Notification Trigger Timestamp (%s): %s\n"+
-			"Remaining: %.1f working days (%.1f hrs)\n"+
-			"Current Workflow Stage: %s\n"+
-			"Next Actionable Checklist Task: %s [%s] (Responsible: %s)\n"+
-			"Involved Stakeholders: %d\n\n"+
-			"Calculation Exclusions: 2nd/4th Saturdays, Sundays, configured holidays, and non-working calendar days.\n"+
-			"Please log in to OneTrack to complete all pending checklist items and finalize the bid submission.",
-		t.Title,
-		refNo,
-		t.ClosingDate.Format("02-Jan-2006 15:04 MST"),
-		thresholdDesc,
-		deadline.Format("02-Jan-2006 15:04 MST"),
-		remDays,
-		remHours,
-		t.WorkflowStage,
-		nextTaskTitle,
-		nextTaskPriority,
-		nextTaskResponsible,
-		len(stakeholders),
-	)
-
-	// 2. Dispatch email to all stakeholder emails
-	deliveryStatus := "SENT"
-	var errStr *string
-
-	if s.emailSvc != nil && len(recipientEmails) > 0 {
-		err := s.emailSvc.SendEmail(recipientEmails, subject, htmlBody)
-		if err != nil {
-			deliveryStatus = "FAILED"
-			e := err.Error()
-			errStr = &e
-			log.Printf("[WorkingCalendar Service] Email dispatch failed for tender %s: %v", t.ID, err)
-		} else {
-			log.Printf("[WorkingCalendar Service] Red Zone email dispatched to %d stakeholders for tender %s", len(recipientEmails), t.Title)
-		}
-	}
-
-	now := time.Now().UTC()
-
-	// 3. Dispatch in-app alert to every stakeholder user ID
-	for _, sh := range stakeholders {
-		if sh.UserID != "" && s.alertSvc != nil {
-			_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
-				UserID:  &sh.UserID,
-				BidID:   &t.ID,
-				Type:    "TENDER",
-				Title:   fmt.Sprintf("🚨 RED ZONE: %s Remaining — %s", thresholdDesc, t.Title),
-				Message: fmt.Sprintf("Tender '%s' is in the Red Zone (%s before closing). Due date: %s. Remaining: %.1f working days (%.1f hrs). Please complete pending submissions immediately.", 
-					t.Title, thresholdDesc, t.ClosingDate.Format("02-Jan-2006 15:04 MST"), remDays, remHours),
-			})
-		}
-
-		// 4. Record notification audit trail for each stakeholder
-		if sh.UserID != "" {
-			roleCopy := sh.Roles
-			var checklistID *string
-			if nextTask != nil {
-				checklistID = &nextTask.ChecklistID
-			}
-
-			_ = s.repo.RecordNotification(ctx, &domain.TaskNotification{
-				TenderID:         t.ID,
-				ChecklistID:      checklistID,
-				RecipientUserID:  sh.UserID,
-				RecipientRole:    &roleCopy,
-				NotificationType: domain.NotificationTypeRedZoneDueDate,
-				ScheduledAt:      deadline,
-				TriggeredAt:      now,
-				SentAt:           &now,
-				DeliveryStatus:   deliveryStatus,
-				Subject:          subject,
-				Message:          message,
-				ErrorMessage:     errStr,
-			})
-
-			// Backward compatibility record
-			_ = s.repo.RecordNotification(ctx, &domain.TaskNotification{
-				TenderID:         t.ID,
-				ChecklistID:      checklistID,
-				RecipientUserID:  sh.UserID,
-				RecipientRole:    &roleCopy,
-				NotificationType: domain.NotificationType72HourReminder,
-				ScheduledAt:      deadline,
-				TriggeredAt:      now,
-				SentAt:           &now,
-				DeliveryStatus:   deliveryStatus,
-				Subject:          subject,
-				Message:          message,
-				ErrorMessage:     errStr,
-			})
-		}
-	}
-
-	// 5. System audit log
-	if s.systemLog != nil {
-		s.systemLog.Record(ctx, "TENDER", "TENDER_RED_ZONE_NOTIFIED", "", nil,
-			fmt.Sprintf("Red Zone (%s) notification sent to %d stakeholders for tender %s", thresholdDesc, len(stakeholders), t.Title),
-			map[string]interface{}{
-				"tender_id":       t.ID,
-				"tender_title":    t.Title,
-				"threshold":       thresholdDesc,
-				"stakeholders":    len(stakeholders),
-				"remaining_days":  remDays,
-				"remaining_hours": remHours,
-				"deadline":        deadline.Format(time.RFC3339),
-			},
-		)
-	}
-
-	return &domain.RedZoneNotificationResult{
+	res := &domain.RedZoneNotificationResult{
 		TenderID:              t.ID,
 		TenderTitle:           t.Title,
 		ClosingDate:           t.ClosingDate,
-		Calculated72hDeadline: deadline,
-		RemainingWorkingHours: remHours,
-		RemainingWorkingDays:  remDays,
-		StakeholdersNotified:  stakeholders,
-		DeliveryStatus:        deliveryStatus,
+		Calculated72hDeadline: c.deadline,
+		RemainingWorkingHours: c.remHours,
+		RemainingWorkingDays:  c.remDays,
 		TriggeredAt:           now,
-		Message:               fmt.Sprintf("Red Zone notification successfully dispatched to %d stakeholders (%d emails)", len(stakeholders), len(recipientEmails)),
-	}, nil
+	}
+	if !c.triggered {
+		res.DeliveryStatus = "NOT_IN_RED_ZONE"
+		res.Message = fmt.Sprintf("Tender is not in the red zone (trigger: %s before closing)", thresholdLabel(v, u))
+		return res, nil
+	}
+	if !force {
+		sent, err := s.repo.HasRedZoneNotificationBeenSent(ctx, t.ID, c.deadline)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check previous notifications: %w", err)
+		}
+		if sent {
+			res.DeliveryStatus = "ALREADY_SENT"
+			res.Message = "Red Zone notification was already sent to stakeholders for this deadline"
+			return res, nil
+		}
+	}
+
+	out, err := s.notifyTender(ctx, t, r, c, v, u, force, false)
+	if err != nil {
+		return nil, err
+	}
+	res.StakeholdersNotified = out.notified
+	switch {
+	case len(out.notified) > 0:
+		res.DeliveryStatus = "SENT"
+		res.Message = fmt.Sprintf("Red Zone notification sent to %d stakeholders", len(out.notified))
+	case out.failed > 0 || out.errs > 0:
+		res.DeliveryStatus = "FAILED"
+		res.Message = "Red Zone notification could not be delivered; see server logs"
+	default:
+		res.DeliveryStatus = "ALREADY_SENT"
+		res.Message = "Red Zone notification was already sent to stakeholders for this deadline"
+	}
+	return res, nil
 }
 
-func (s *workingCalendarService) send72HourPriorityNotification(
-	ctx context.Context,
-	t domain.TenderDeadlineCandidate,
-	task *domain.NextActionableTask,
-	deadline time.Time,
-	remHours float64,
-) {
-	_, _ = s.sendRedZoneTenderDueDateNotification(ctx, t, deadline, remHours/24.0, remHours)
+type notifyOutcome struct {
+	notified []domain.TenderStakeholder
+	failed   int // claimed but the alert could not be created
+	errs     int // claim itself failed; nothing was sent for that recipient
 }
 
-func (s *workingCalendarService) sendEscalationNotification(
+// notifyTender alerts every stakeholder once through the alert service
+// (in-app + email). Each recipient is claimed in the dedup table first and
+// only alerted if the claim succeeded; in baseline mode it claims and never sends.
+func (s *workingCalendarService) notifyTender(
 	ctx context.Context,
-	t domain.TenderDeadlineCandidate,
-	task *domain.NextActionableTask,
-	delayHours float64,
-) {
-	if t.ReportingManagerID == nil || *t.ReportingManagerID == "" {
-		return
-	}
-	managerID := *t.ReportingManagerID
-	managerEmail := ""
-	managerName := "Reporting Manager"
-
-	if t.ManagerEmail != nil {
-		managerEmail = *t.ManagerEmail
-	}
-	if t.ManagerName != nil {
-		managerName = *t.ManagerName
+	t *domain.TenderDeadlineCandidate,
+	r *calRules,
+	c *deadlineCalc,
+	value float64,
+	unit string,
+	force, baseline bool,
+) (notifyOutcome, error) {
+	var out notifyOutcome
+	stakeholders, err := s.repo.GetTenderStakeholders(ctx, t.ID)
+	if err != nil {
+		return out, fmt.Errorf("stakeholders: %w", err)
 	}
 
-	calID := ""
-	if t.CalendarID != nil {
-		calID = *t.CalendarID
+	next, err := s.repo.GetNextPendingChecklist(ctx, t.ID)
+	if err != nil {
+		log.Printf("[WorkingCalendar] next checklist lookup failed for %s: %v", t.ID, err)
 	}
-	cal, _ := s.getCalendar(ctx, calID)
-	thresholdDesc := s.formatThresholdDescription(cal)
+	label := thresholdLabel(value, unit)
+	title, message := redZoneAlert(t, r, c, label, next)
+	subject, body := title, message
+	if baseline {
+		subject = "Baseline: tender was already in its red zone when the deadline engine was enabled"
+		body = subject
+	}
 
-	reason := fmt.Sprintf("Task '%s' [Priority: %s] has remained incomplete past the %s working deadline (Delayed by >%.1f hrs)",
-		task.Title, task.Priority, thresholdDesc, delayHours)
+	for _, sh := range stakeholders {
+		role := sh.Roles
+		id, err := s.repo.ClaimNotification(ctx, &domain.TaskNotification{
+			TenderID:         t.ID,
+			RecipientUserID:  sh.UserID,
+			RecipientRole:    &role,
+			NotificationType: domain.NotificationTypeRedZoneDueDate,
+			ScheduledAt:      c.deadline,
+			Subject:          subject,
+			Message:          body,
+		}, force)
+		if err != nil {
+			log.Printf("[WorkingCalendar] claim failed for tender %s user %s: %v", t.ID, sh.UserID, err)
+			out.errs++
+			continue
+		}
+		if id == "" || baseline {
+			continue
+		}
 
-	// Send in-app escalation alert to manager
-	if s.alertSvc != nil {
-		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
-			UserID:  &managerID,
-			BidID:   &t.ID,
+		userID, tenderID := sh.UserID, t.ID
+		if err := s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+			UserID:  &userID,
+			BidID:   &tenderID,
 			Type:    "TENDER",
-			Title:   fmt.Sprintf("🚨 ESCALATION: Delayed Task on Tender '%s' (%s Threshold)", t.Title, thresholdDesc),
-			Message: reason,
-		})
+			Title:   title,
+			Message: message,
+			Link:    alertDomain.TenderLink(t.ID),
+		}); err != nil {
+			log.Printf("[WorkingCalendar] alert failed for tender %s user %s: %v", t.ID, sh.UserID, err)
+			if ferr := s.repo.FailNotification(ctx, id, err.Error()); ferr != nil {
+				log.Printf("[WorkingCalendar] could not flag notification %s failed: %v", id, ferr)
+			}
+			out.failed++
+			continue
+		}
+		out.notified = append(out.notified, sh)
 	}
 
-	// Send email to manager
-	if s.emailSvc != nil && managerEmail != "" {
-		subject := fmt.Sprintf("🚨 ESCALATION: Delayed Task on Tender '%s' (%s Threshold) – Immediate Manager Action Required", t.Title, thresholdDesc)
-		htmlBody := fmt.Sprintf(`
-			<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1e293b; max-width: 600px; padding: 24px; border: 2px solid #ef4444; border-radius: 8px;">
-				<div style="background-color: #991b1b; color: white; padding: 8px 16px; border-radius: 6px; font-weight: bold; font-size: 14px; display: inline-block; margin-bottom: 16px;">
-					⚠️ TASK ESCALATION TO REPORTING MANAGER
-				</div>
-				<h2 style="margin: 0 0 16px 0; color: #0f172a;">Delay Escalation: %s (%s Threshold)</h2>
-				<p style="font-size: 14px; line-height: 1.6; color: #334155;">
-					The critical task <strong>%s</strong> on tender <strong>%s</strong> remains pending past the allowed deadline.
-				</p>
-				<p style="font-size: 14px; line-height: 1.6; color: #b91c1c; font-weight: 600;">
-					%s
-				</p>
-				<p style="font-size: 13px; color: #64748b; margin-top: 24px;">Please review this tender in OneTrack to resolve the bottleneck.</p>
-			</div>
-		`, t.Title, thresholdDesc, task.Title, t.Title, reason)
-
-		_ = s.emailSvc.SendEmail([]string{managerEmail}, subject, htmlBody)
-	}
-
-	// Record escalation in DB (Section 18)
-	_ = s.repo.RecordEscalation(ctx, &domain.TaskEscalation{
-		TenderID:         t.ID,
-		ChecklistID:      &task.ChecklistID,
-		ManagerUserID:    managerID,
-		EscalationReason: reason,
-		EscalatedAt:      time.Now().UTC(),
-		Status:           "ESCALATED",
-	})
-
-	// Audit log (Section 28)
-	if s.systemLog != nil {
-		s.systemLog.Record(ctx, "TENDER", "TENDER_TASK_ESCALATED", "", &managerID,
-			fmt.Sprintf("Task escalation (%s threshold) triggered for tender %s", thresholdDesc, t.Title),
+	if len(out.notified) > 0 && s.systemLog != nil {
+		s.systemLog.Record(ctx, "TENDER", "TENDER_RED_ZONE_NOTIFIED", "", nil,
+			fmt.Sprintf("Red Zone (%s) notification sent to %d stakeholders for tender %s", label, len(out.notified), t.Title),
 			map[string]interface{}{
+				"tender_id":       t.ID,
 				"tender_title":    t.Title,
-				"checklist_id":    task.ChecklistID,
-				"checklist_title": task.Title,
-				"manager_id":      managerID,
-				"manager_name":    managerName,
-				"threshold":       thresholdDesc,
-				"reason":          reason,
+				"threshold":       label,
+				"stakeholders":    len(out.notified),
+				"remaining_days":  c.remDays,
+				"remaining_hours": c.remHours,
+				"deadline":        c.deadline.Format(time.RFC3339),
 			},
 		)
 	}
+	return out, nil
 }
 
-// ── Private Helpers ──────────────────────────────────────────────────────────
+// redZoneAlert builds the alert title and its HTML body (alerts render HTML);
+// every interpolated value is escaped.
+func redZoneAlert(t *domain.TenderDeadlineCandidate, r *calRules, c *deadlineCalc, label string, next *domain.NextActionableTask) (string, string) {
+	ref := t.Title
+	if t.GemBidNo != nil && *t.GemBidNo != "" {
+		ref = *t.GemBidNo
+	} else if t.BidNo != nil && *t.BidNo != "" {
+		ref = *t.BidNo
+	}
+	authority := deref(t.OrganizationName)
+	if d := deref(t.DepartmentName); d != "" {
+		authority += " (" + d + ")"
+	}
+	if authority == "" {
+		authority = "—"
+	}
+	nextTask := "Review tender documents and checklist requirements"
+	if next != nil {
+		who := "unassigned"
+		if next.AssignedToName != nil && *next.AssignedToName != "" {
+			who = *next.AssignedToName
+		}
+		nextTask = fmt.Sprintf("%s [%s priority] — %s", next.Title, next.Priority, who)
+	}
+	e := html.EscapeString
+	const stamp = "02-Jan-2006 15:04 MST"
+
+	title := fmt.Sprintf("🚨 RED ZONE: %s left — %s", label, t.Title)
+	message := fmt.Sprintf(
+		`<p>Tender <strong>%s</strong> (Ref: %s) is inside its red zone: %s of working time remain before the closing date. Immediate action is required on the pending checklist items.</p>`+
+			`<p>Closing: <strong>%s</strong><br/>Trigger time: %s<br/>Remaining: <strong>%.1f working days</strong> (%.1f working hours)<br/>Stage: %s<br/>Procuring authority: %s<br/>Next task: %s</p>`+
+			`<p style="color:#64748b;font-size:12px;">Working time excludes non-working Saturdays, Sundays, holidays and special non-working days of the %s calendar.</p>`,
+		e(t.Title), e(ref), e(label),
+		e(t.ClosingDate.In(r.loc).Format(stamp)), e(c.deadline.In(r.loc).Format(stamp)),
+		c.remDays, c.remHours, e(t.WorkflowStage), e(authority), e(nextTask), e(r.cal.Name),
+	)
+	return title, message
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+// thresholdLabel describes a trigger from its value and unit, e.g. "3 working days (72h)".
+func thresholdLabel(value float64, unit string) string {
+	days := domain.TriggerDays(value, unit)
+	word := "working days"
+	if days == 1 {
+		word = "working day"
+	}
+	if unit == domain.TriggerUnitHours {
+		return fmt.Sprintf("%s %s (%sh)", fmtNum(days), word, fmtNum(value))
+	}
+	return fmt.Sprintf("%s %s", fmtNum(days), word)
+}
+
+func fmtNum(v float64) string { return strconv.FormatFloat(math.Round(v*10)/10, 'f', -1, 64) }
+
+func round2(v float64) float64 { return math.Round(v*100) / 100 }
+
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
 
 func (s *workingCalendarService) getCalendar(ctx context.Context, calendarID string) (*domain.WorkingCalendar, error) {
 	if calendarID != "" {
-		cal, err := s.repo.GetCalendarByID(ctx, calendarID)
-		if err == nil && cal != nil {
+		if cal, err := s.repo.GetCalendarByID(ctx, calendarID); err == nil && cal != nil {
 			return cal, nil
 		}
 	}
-	// Fall back to default
 	cal, err := s.repo.GetDefaultCalendar(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve default calendar: %w", err)
@@ -1398,29 +775,16 @@ func (s *workingCalendarService) getCalendar(ctx context.Context, calendarID str
 	return cal, nil
 }
 
-func (s *workingCalendarService) getCalendarLocation(cal *domain.WorkingCalendar) *time.Location {
+func calendarLocation(cal *domain.WorkingCalendar) *time.Location {
 	tz := "Asia/Kolkata"
 	if cal != nil && cal.Timezone != "" {
 		tz = cal.Timezone
 	}
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
-		return time.FixedZone("IST", 5*3600+1800) // UTC+05:30 fallback
+		return time.FixedZone("IST", 5*3600+1800)
 	}
 	return loc
-}
-
-func (s *workingCalendarService) findTenderCandidate(ctx context.Context, tenderID string) (*domain.TenderDeadlineCandidate, error) {
-	candidates, err := s.repo.GetActiveTendersForDeadlineCheck(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, c := range candidates {
-		if c.ID == tenderID {
-			return &c, nil
-		}
-	}
-	return nil, nil
 }
 
 func parseTimeHM(str string, defH, defM int) (int, int) {
@@ -1439,6 +803,9 @@ func parseTimeHM(str string, defH, defM int) (int, int) {
 	return h, m
 }
 
+// saturdayNumber is the 1-based position of a Saturday within its month.
+func saturdayNumber(d time.Time) int { return (d.Day()-1)/7 + 1 }
+
 func ordinal(n int) string {
 	switch n {
 	case 1:
@@ -1447,10 +814,6 @@ func ordinal(n int) string {
 		return "2nd"
 	case 3:
 		return "3rd"
-	case 4:
-		return "4th"
-	case 5:
-		return "5th"
 	default:
 		return fmt.Sprintf("%dth", n)
 	}

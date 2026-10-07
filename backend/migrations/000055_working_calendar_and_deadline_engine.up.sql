@@ -24,8 +24,6 @@ CREATE TABLE IF NOT EXISTS calendar.working_calendars (
     wednesday_working       BOOLEAN NOT NULL DEFAULT true,
     thursday_working        BOOLEAN NOT NULL DEFAULT true,
     friday_working          BOOLEAN NOT NULL DEFAULT true,
-    -- Delay escalation threshold (hours after 72h trigger)
-    escalation_delay_hours  INT NOT NULL DEFAULT 4,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -149,7 +147,7 @@ CREATE TABLE IF NOT EXISTS calendar.task_notifications (
     tender_id           UUID NOT NULL REFERENCES bid.bid_workspaces(id) ON DELETE CASCADE,
     checklist_id        UUID REFERENCES bid.bid_checklists(id) ON DELETE SET NULL,
     recipient_user_id   UUID NOT NULL REFERENCES auth.users(id),
-    notification_type   VARCHAR(50) NOT NULL, -- 72_HOUR_REMINDER, TASK_DELAY, ESCALATION, EMD_ALERT
+    notification_type   VARCHAR(50) NOT NULL, -- RED_ZONE_72H
     scheduled_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     triggered_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     sent_at             TIMESTAMPTZ,
@@ -163,18 +161,6 @@ CREATE TABLE IF NOT EXISTS calendar.task_notifications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_notifications_tender ON calendar.task_notifications(tender_id, notification_type);
-
--- 9. Task Escalations tracking
-CREATE TABLE IF NOT EXISTS calendar.task_escalations (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tender_id           UUID NOT NULL REFERENCES bid.bid_workspaces(id) ON DELETE CASCADE,
-    checklist_id        UUID REFERENCES bid.bid_checklists(id) ON DELETE SET NULL,
-    manager_user_id     UUID NOT NULL REFERENCES auth.users(id),
-    escalation_reason   TEXT NOT NULL,
-    escalated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    status              VARCHAR(20) NOT NULL DEFAULT 'ESCALATED', -- ESCALATED, RESOLVED, ACKNOWLEDGED
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
 
 -- 10. Seed Core 2026/2027 Indian Public Holidays into Default Calendar
 DO $$

@@ -737,8 +737,14 @@ export function EditTenderDialog({
         });
 
         toast.success("Tender updated successfully");
-        // Immediately check if the tender has entered the Red Zone with the updated date
-        triggerRedZoneNotification(bid.id, false).catch(() => {});
+        // A moved closing date may put the tender inside its red zone; only then
+        // is a check worth making (an edit sent for approval returned above).
+        const loadedClosing = safeDateTimeStr(
+          bid.closing_date || bid.end_date || bid.submission_deadline || bid.target_month_date,
+        );
+        if (form.closing_date && form.closing_date !== loadedClosing) {
+          triggerRedZoneNotification(bid.id, false).catch(() => {});
+        }
         onUpdated(res.data);
         onClose();
       } else {

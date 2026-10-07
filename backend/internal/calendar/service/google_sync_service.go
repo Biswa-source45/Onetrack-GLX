@@ -3,11 +3,11 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
+	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -15,22 +15,29 @@ import (
 	systemlogDomain "github.com/onetrack/backend/internal/systemlog/domain"
 )
 
+const googleAPIBase = "https://www.googleapis.com/calendar/v3"
+
 type googleSyncService struct {
 	repo       domain.WorkingCalendarRepository
 	systemLog  systemlogDomain.Recorder
 	httpClient *http.Client
+	baseURL    string
+	envAPIKey  string // GOOGLE_CALENDAR_API_KEY; wins over a key stored in the DB
+	now        func() time.Time
 }
 
 func NewGoogleSyncService(
 	repo domain.WorkingCalendarRepository,
 	systemLog systemlogDomain.Recorder,
+	envAPIKey string,
 ) domain.GoogleSyncService {
 	return &googleSyncService{
-		repo:      repo,
-		systemLog: systemLog,
-		httpClient: &http.Client{
-			Timeout: 15 * time.Second,
-		},
+		repo:       repo,
+		systemLog:  systemLog,
+		httpClient: &http.Client{Timeout: 15 * time.Second},
+		baseURL:    googleAPIBase,
+		envAPIKey:  envAPIKey,
+		now:        time.Now,
 	}
 }
 
@@ -44,84 +51,60 @@ type googleEventsResponse struct {
 			Date     string `json:"date"`     // YYYY-MM-DD
 			DateTime string `json:"dateTime"` // RFC3339
 		} `json:"start"`
-		End struct {
-			Date string `json:"date"`
-		} `json:"end"`
 	} `json:"items"`
 }
 
 func (s *googleSyncService) SyncHolidays(ctx context.Context, calendarID string, actorID *string) (*domain.SyncResult, error) {
-	// 1. Get Integration settings
 	integration, err := s.repo.GetGoogleIntegration(ctx, calendarID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve google calendar integration config: %w", err)
 	}
-	envKey := os.Getenv("GOOGLE_CALENDAR_API_KEY")
 	if integration == nil {
-		// Initialize default integration if none found
-		var apiKeyPtr *string
-		if envKey != "" {
-			apiKeyPtr = &envKey
-		}
-		integration = &domain.GoogleCalendarIntegration{
+		integration, err = s.repo.SaveGoogleIntegration(ctx, &domain.GoogleCalendarIntegration{
 			CalendarID:         calendarID,
 			GoogleCalendarID:   "en.indian#holiday@group.v.calendar.google.com",
 			GoogleCalendarName: "Indian National Holidays",
-			APIKey:             apiKeyPtr,
 			SyncEnabled:        true,
 			SyncIntervalHours:  24,
 			SyncStatus:         "IDLE",
-		}
-		integration, err = s.repo.SaveGoogleIntegration(ctx, integration)
+		})
 		if err != nil {
 			return nil, err
 		}
-	} else if (integration.APIKey == nil || *integration.APIKey == "") && envKey != "" {
-		integration.APIKey = &envKey
-		_, _ = s.repo.SaveGoogleIntegration(ctx, integration)
 	}
 
-	// Set status to SYNCING
 	integration.SyncStatus = "SYNCING"
-	_, _ = s.repo.SaveGoogleIntegration(ctx, integration)
+	if _, err := s.repo.SaveGoogleIntegration(ctx, integration); err != nil {
+		log.Printf("[GoogleSync] could not mark sync started: %v", err)
+	}
 
-	// Date range: from beginning of last year to end of next year
-	now := time.Now().UTC()
-	startYear := now.Year() - 1
-	endYear := now.Year() + 2
-	timeMin := time.Date(startYear, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)
-	timeMax := time.Date(endYear, 12, 31, 23, 59, 59, 0, time.UTC).Format(time.RFC3339)
+	// From the start of last year to the end of year+2.
+	year := s.now().UTC().Year()
+	timeMin := time.Date(year-1, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	timeMax := time.Date(year+2, 12, 31, 23, 59, 59, 0, time.UTC).Format(time.RFC3339)
 
-	var holidays []domain.Holiday
-	var fetchErr error
-
-	// 2. Attempt fetching from Google Calendar API
-	holidays, fetchErr = s.fetchFromGoogleAPI(integration, timeMin, timeMax)
-
+	holidays, fetchErr := s.fetchHolidays(ctx, integration, timeMin, timeMax)
 	if fetchErr != nil {
-		// If Google Calendar API fails or is offline (Section 24: OneTrack must continue working!)
+		// Existing holidays stay authoritative; nothing is invented on failure.
 		errStr := fetchErr.Error()
+		log.Printf("[GoogleSync] calendar %s failed: %v", calendarID, fetchErr)
 		integration.SyncStatus = "FAILED"
 		integration.LastError = &errStr
 		_, _ = s.repo.SaveGoogleIntegration(ctx, integration)
-
-		// Record failed sync log
 		_ = s.repo.CreateSyncLog(ctx, &domain.GoogleCalendarSyncLog{
 			IntegrationID: integration.ID,
 			Status:        "FAILED",
+			FailedCount:   1,
 			ErrorDetails:  &errStr,
 			SyncedBy:      actorID,
 		})
-
-		// Return clean error with details
 		return &domain.SyncResult{
 			Status:      "FAILED",
-			Message:     fmt.Sprintf("Google Calendar sync failed: %v. Existing OneTrack holidays remain authoritative.", fetchErr),
+			Message:     fmt.Sprintf("Google Calendar sync failed: %v. Existing OneTrack holidays are unchanged.", fetchErr),
 			FailedCount: 1,
 		}, nil
 	}
 
-	// 3. Upsert into OneTrack Holiday database (respecting is_admin_override!)
 	res, err := s.repo.UpsertGoogleHolidays(ctx, calendarID, holidays)
 	if err != nil {
 		errStr := err.Error()
@@ -131,14 +114,12 @@ func (s *googleSyncService) SyncHolidays(ctx context.Context, calendarID string,
 		return nil, err
 	}
 
-	// 4. Update integration state to SUCCESS
-	nowSynced := time.Now().UTC()
+	synced := s.now().UTC()
 	integration.SyncStatus = "SUCCESS"
-	integration.LastSyncAt = &nowSynced
+	integration.LastSyncAt = &synced
 	integration.LastError = nil
 	_, _ = s.repo.SaveGoogleIntegration(ctx, integration)
 
-	// 5. Record sync log
 	_ = s.repo.CreateSyncLog(ctx, &domain.GoogleCalendarSyncLog{
 		IntegrationID: integration.ID,
 		Status:        "SUCCESS",
@@ -149,7 +130,6 @@ func (s *googleSyncService) SyncHolidays(ctx context.Context, calendarID string,
 		SyncedBy:      actorID,
 	})
 
-	// 6. Audit log
 	if s.systemLog != nil {
 		actID := ""
 		if actorID != nil {
@@ -167,40 +147,37 @@ func (s *googleSyncService) SyncHolidays(ctx context.Context, calendarID string,
 		)
 	}
 
-	res.Message = fmt.Sprintf("Successfully synced %d holidays from Google Calendar (%d imported, %d updated, %d admin overrides preserved).",
+	res.Message = fmt.Sprintf("Successfully synced %d holidays from Google Calendar (%d imported, %d updated, %d admin-managed dates preserved).",
 		res.ImportedCount+res.UpdatedCount, res.ImportedCount, res.UpdatedCount, res.SkippedCount)
-
 	return res, nil
 }
 
-func (s *googleSyncService) fetchFromGoogleAPI(
+// fetchHolidays returns the feed's holidays or an error; it never substitutes
+// data of its own. The key comes from GOOGLE_CALENDAR_API_KEY, falling back to
+// a key stored on the integration.
+func (s *googleSyncService) fetchHolidays(
+	ctx context.Context,
 	integration *domain.GoogleCalendarIntegration,
 	timeMin, timeMax string,
 ) ([]domain.Holiday, error) {
+	apiKey := s.envAPIKey
+	if apiKey == "" && integration.APIKey != nil {
+		apiKey = *integration.APIKey
+	}
+	if apiKey == "" {
+		return nil, errors.New("no Google Calendar API key configured (set GOOGLE_CALENDAR_API_KEY)")
+	}
+
 	calID := integration.GoogleCalendarID
 	if calID == "" {
 		calID = "en.indian#holiday@group.v.calendar.google.com"
 	}
-
-	// Build Google Calendar API URL
-	encodedCalID := url.PathEscape(calID)
 	apiURL := fmt.Sprintf(
-		"https://www.googleapis.com/calendar/v3/calendars/%s/events?timeMin=%s&timeMax=%s&singleEvents=true&orderBy=startTime",
-		encodedCalID, url.QueryEscape(timeMin), url.QueryEscape(timeMax),
+		"%s/calendars/%s/events?timeMin=%s&timeMax=%s&singleEvents=true&orderBy=startTime&maxResults=2500&key=%s",
+		s.baseURL, url.PathEscape(calID), url.QueryEscape(timeMin), url.QueryEscape(timeMax), url.QueryEscape(apiKey),
 	)
 
-	apiKey := ""
-	if integration.APIKey != nil && *integration.APIKey != "" {
-		apiKey = *integration.APIKey
-	} else if envKey := os.Getenv("GOOGLE_CALENDAR_API_KEY"); envKey != "" {
-		apiKey = envKey
-	}
-
-	if apiKey != "" {
-		apiURL += "&key=" + url.QueryEscape(apiKey)
-	}
-
-	req, err := http.NewRequest("GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -208,19 +185,12 @@ func (s *googleSyncService) fetchFromGoogleAPI(
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		// Network failure or offline: generate curated standard Indian public holidays
-		return s.generateStandardIndianHolidays(integration.CalendarID), nil
+		// The URL carries the key; report only the failure kind.
+		return nil, errors.New("could not reach the Google Calendar API")
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		// If Google API key is missing or quota exceeded, fall back gracefully to the curated holiday list
-		// rather than failing (Section 24: Google Calendar is an external enhancement, not a blocking dependency!)
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound {
-			return s.generateStandardIndianHolidays(integration.CalendarID), nil
-		}
-		return nil, fmt.Errorf("google calendar API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("google calendar API returned status %d", resp.StatusCode)
 	}
 
 	var data googleEventsResponse
@@ -229,86 +199,49 @@ func (s *googleSyncService) fetchFromGoogleAPI(
 	}
 
 	var holidays []domain.Holiday
+	seen := map[string]bool{} // one holiday per date; the feed's first event wins
 	for _, item := range data.Items {
-		dateStr := item.Start.Date
-		if dateStr == "" && len(item.Start.DateTime) >= 10 {
-			dateStr = item.Start.DateTime[:10]
+		date := item.Start.Date
+		if date == "" && len(item.Start.DateTime) >= 10 {
+			date = item.Start.DateTime[:10]
 		}
-		if dateStr == "" {
+		name := strings.TrimSpace(item.Summary)
+		if date == "" || name == "" || seen[date] {
 			continue
 		}
 
-		cleanName := strings.TrimSpace(item.Summary)
-		if cleanName == "" {
+		// Google marks each event "Public holiday" or "Observance". Observances
+		// (e.g. Valentine's Day) are not days off, so they are skipped. Marked
+		// public holidays are GOVERNMENT/HIGH; any other event is imported as a
+		// lower-priority REGIONAL holiday.
+		desc := strings.ToLower(item.Description)
+		if strings.Contains(desc, "observance") {
 			continue
 		}
+		hType, prio := domain.HolidayTypeRegional, domain.PriorityMedium
+		if strings.Contains(desc, "public holiday") {
+			hType, prio = domain.HolidayTypeGovernment, domain.PriorityHigh
+		}
 
-		h := domain.Holiday{
+		seen[date] = true
+		id, description, srcCal := item.ID, item.Description, integration.GoogleCalendarID
+		holidays = append(holidays, domain.Holiday{
 			CalendarID:       integration.CalendarID,
-			HolidayDate:      dateStr,
-			HolidayName:      cleanName,
-			HolidayType:      domain.HolidayTypeGovernment,
+			HolidayDate:      date,
+			HolidayName:      name,
+			HolidayType:      hType,
 			WorkingStatus:    domain.WorkingStatusNonWorking,
-			Priority:         domain.PriorityHigh,
+			Priority:         prio,
 			Source:           domain.SourceGoogleCalendar,
-			SourceEventID:    &item.ID,
-			SourceCalendarID: &integration.GoogleCalendarID,
-			IsAdminOverride:  false,
+			SourceEventID:    &id,
+			SourceCalendarID: &srcCal,
 			IsActive:         true,
-			Description:      &item.Description,
-		}
-		holidays = append(holidays, h)
+			Description:      &description,
+		})
 	}
 
 	if len(holidays) == 0 {
-		return s.generateStandardIndianHolidays(integration.CalendarID), nil
+		return nil, errors.New("google calendar returned no public holidays for the sync range")
 	}
-
 	return holidays, nil
-}
-
-// generateStandardIndianHolidays provides fallback holiday data when Google Calendar API key is absent or unreachable
-func (s *googleSyncService) generateStandardIndianHolidays(calendarID string) []domain.Holiday {
-	now := time.Now()
-	years := []int{now.Year() - 1, now.Year(), now.Year() + 1, now.Year() + 2}
-
-	type stdHol struct {
-		month int
-		day   int
-		name  string
-		hType string
-	}
-
-	fixedHolidays := []stdHol{
-		{1, 26, "Republic Day", domain.HolidayTypeGovernment},
-		{5, 1, "Maharashtra Day / Labour Day", domain.HolidayTypeCompany},
-		{8, 15, "Independence Day", domain.HolidayTypeGovernment},
-		{10, 2, "Mahatma Gandhi Jayanti", domain.HolidayTypeGovernment},
-		{12, 25, "Christmas Day", domain.HolidayTypeGovernment},
-	}
-
-	var holidays []domain.Holiday
-	for _, y := range years {
-		for _, f := range fixedHolidays {
-			dateStr := fmt.Sprintf("%04d-%02d-%02d", y, f.month, f.day)
-			evtID := fmt.Sprintf("std-hol-%s", dateStr)
-			desc := fmt.Sprintf("National Holiday — %s", f.name)
-			holidays = append(holidays, domain.Holiday{
-				CalendarID:       calendarID,
-				HolidayDate:      dateStr,
-				HolidayName:      f.name,
-				HolidayType:      f.hType,
-				WorkingStatus:    domain.WorkingStatusNonWorking,
-				Priority:         domain.PriorityHigh,
-				Source:           domain.SourceGoogleCalendar,
-				SourceEventID:    &evtID,
-				SourceCalendarID: nil,
-				IsAdminOverride:  false,
-				IsActive:         true,
-				Description:      &desc,
-			})
-		}
-	}
-
-	return holidays
 }

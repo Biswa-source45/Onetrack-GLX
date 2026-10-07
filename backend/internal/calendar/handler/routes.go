@@ -10,10 +10,13 @@ func RegisterCalendarRoutes(
 	h *CalendarHandler,
 	auth *middleware.AuthMiddleware,
 ) {
-	// All calendar endpoints require authentication
+	bidView := auth.RequirePermission("bid.view")
+	bidEdit := auth.RequirePermission("bid.edit")
+	adminOnly := auth.RequireAnyRole("SUPER_ADMIN", "ADMIN")
+
 	cal := r.Group("/calendars", auth.Authenticate())
 	{
-		// Viewing calendars & holidays
+		// Calendar rules are readable by any signed-in user (the tender form and banner use them).
 		cal.GET("", h.ListCalendars)
 		cal.GET("/default", h.GetDefaultCalendar)
 		cal.GET("/:id", h.GetCalendarByID)
@@ -21,10 +24,9 @@ func RegisterCalendarRoutes(
 		cal.GET("/:id/exceptions", h.ListExceptions)
 		cal.GET("/:id/google-sync", h.GetGoogleIntegration)
 		cal.GET("/:id/google-sync/logs", h.ListSyncLogs)
-		cal.POST("/:id/calculate", h.CalculateArbitraryDeadline)
+		cal.POST("/:id/calculate", bidView, h.CalculateArbitraryDeadline)
 
-		// Administration & modifications (strictly SUPER_ADMIN and ADMIN only)
-		adminOnly := auth.RequireAnyRole("SUPER_ADMIN", "ADMIN")
+		// Administration (SUPER_ADMIN and ADMIN only)
 		cal.PUT("/:id", adminOnly, h.UpdateCalendar)
 		cal.POST("/:id/holidays", adminOnly, h.CreateHoliday)
 		cal.PUT("/:id/holidays/:holidayId", adminOnly, h.UpdateHoliday)
@@ -36,20 +38,17 @@ func RegisterCalendarRoutes(
 		cal.POST("/evaluate-deadlines", adminOnly, h.EvaluateDeadlines)
 	}
 
-	// Tender-scoped working calendar and deadline endpoints (support both /bids and /tenders)
+	// Tender-scoped deadline endpoints (both /bids and /tenders prefixes).
 	for _, prefix := range []string{"/bids", "/tenders"} {
 		grp := r.Group(prefix, auth.Authenticate())
 		{
-			grp.GET("/:id/working-deadline", h.GetTenderWorkingDeadline)
-			grp.GET("/:id/deadline-notifications", h.ListTenderNotifications)
-			grp.GET("/:id/stakeholders", h.GetTenderStakeholders)
-			grp.POST("/:id/trigger-red-zone-notification", h.TriggerTenderRedZoneNotification)
+			grp.GET("/:id/working-deadline", bidView, h.GetTenderWorkingDeadline)
+			grp.GET("/:id/deadline-notifications", bidView, h.ListTenderNotifications)
+			grp.GET("/:id/stakeholders", bidView, h.GetTenderStakeholders)
+			// force=true (re-send) is further restricted to admins in the handler.
+			grp.POST("/:id/trigger-red-zone-notification", bidEdit, h.TriggerTenderRedZoneNotification)
 		}
 	}
 
-	// Checklist priority update
-	checklists := r.Group("/checklists", auth.Authenticate())
-	{
-		checklists.PUT("/:cid/priority", h.UpdateChecklistPriority)
-	}
+	r.Group("/checklists", auth.Authenticate()).PUT("/:cid/priority", bidEdit, h.UpdateChecklistPriority)
 }
