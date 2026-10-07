@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { Switch } from '@/components/ui/switch'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import {
   Dialog,
@@ -308,7 +309,7 @@ export function checkStageState(bid, stageKey) {
   const currentStage = bid?.workflow_stage || 'DISCOVERED'
   const currentIdx = WORKFLOW_STAGES_ORDERED.indexOf(currentStage)
   const stageIdx = WORKFLOW_STAGES_ORDERED.indexOf(stageKey)
-  const isTerminal = ['WON', 'LOST', 'CANCELLED', 'ARCHIVED'].includes(bid?.bid_status)
+  const isTerminal = ['WON', 'LOST', 'CANCELLED', 'CLOSED', 'ARCHIVED'].includes(bid?.bid_status)
 
   const completions = bid?.stage_completions || {}
   const remarks = bid?.stage_remarks || {}
@@ -620,7 +621,7 @@ function NoGoModal({ bid, onClose, onDone }) {
           <Ban className="size-5" />
           <h3 className="text-base font-semibold font-heading text-foreground">No-Go — Cancel Tender</h3>
         </div>
-        <p className="text-xs text-muted-foreground">This cancels the tender. This cannot be undone from here — a cancelled tender can only be revived by an Admin.</p>
+        <p className="text-xs text-muted-foreground">This cancels the tender and takes its value out of the pipeline. It can be reopened later from the tender page.</p>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
             <Label className="text-xs font-medium">Reason for No-Go *</Label>
@@ -647,10 +648,13 @@ function EmdDecisionModal({ bid, onClose, onDone }) {
   const hasDD = !!bid.emd_beneficiary
   const rawExemptionTypes = Array.isArray(bid.emd_exemption_types) ? bid.emd_exemption_types : []
   const hasExemption = rawExemptionTypes.length > 0
+  // Exempted is listed (and so defaults) first: when the tender document
+  // offers an exemption (Startup / MSME) it normally applies, and paying EMD
+  // through Finance is the exception to be chosen deliberately.
   const availableModes = [
+    ...(hasExemption ? ['EXEMPTED'] : []),
     ...(hasOnline ? ['ONLINE'] : []),
     ...(hasDD ? ['DD'] : []),
-    ...(hasExemption ? ['EXEMPTED'] : []),
     'NOT_APPLICABLE',
   ]
   const exemptionChoices = hasExemption ? rawExemptionTypes : ['MSME', 'STARTUP', 'OTHER']
@@ -661,7 +665,8 @@ function EmdDecisionModal({ bid, onClose, onDone }) {
     if (bid.emd_type && availableModes.includes(bid.emd_type)) return bid.emd_type
     return availableModes[0] || 'NOT_APPLICABLE'
   })
-  const [exemptionType, setExemptionType] = useState(bid.emd_exemption_type || '')
+  // A single listed criterion is the only possible basis, so preselect it.
+  const [exemptionType, setExemptionType] = useState(bid.emd_exemption_type || (rawExemptionTypes.length === 1 ? rawExemptionTypes[0] : ''))
   const [exemptionReason, setExemptionReason] = useState(bid.emd_exemption_reason || '')
   const [bankName, setBankName] = useState(bid.emd_bank_name || '')
   const [accountNumber, setAccountNumber] = useState(bid.emd_account_number || '')
@@ -983,6 +988,9 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bid.primary_review, bid.requested_products])
   const amOemComplete = products.length === 0 || products.every((p, i) => !!(primaryReview.amOemSelections || {})[i])
+  // Without a recorded EMD decision the tender would slide into EMD Processing
+  // as "required / Online" and wait on Finance — even if it's actually exempt.
+  const emdDecided = !!(bid.emd_type || bid.emd_exempted || bid.emd_not_applicable)
 
   const handleSaveAmOems = async () => {
     const map = {}
@@ -1026,12 +1034,14 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
           onCompleteClick={() => setShowCompleteModal(true)}
           onRefresh={onRefresh}
           completeLabel="Mark Primary Review Complete"
-          disabled={!canManageAM || !amOemComplete}
-          disabledTooltip={!canManageAM 
-            ? (requireAmPresales 
-                ? 'Only the assigned Account Manager (or an Admin) can complete Primary Review.' 
-                : 'Only the Bid Owner, Reporting Manager, or an Admin can complete Primary Review.') 
-            : 'Finalize the OEM for every product before completing Primary Review.'}
+          disabled={!canManageAM || !amOemComplete || !emdDecided}
+          disabledTooltip={!canManageAM
+            ? (requireAmPresales
+                ? 'Only the assigned Account Manager (or an Admin) can complete Primary Review.'
+                : 'Only the Bid Owner, Reporting Manager, or an Admin can complete Primary Review.')
+            : !amOemComplete
+              ? 'Finalize the OEM for every product before completing Primary Review.'
+              : 'Set the EMD decision (Online / DD / Exempted / Not Applicable) before completing Primary Review — it decides whether Finance has to process EMD.'}
         />
       </div>
 
@@ -2235,7 +2245,7 @@ export function Stage3Workspace({ bid, onRefresh }) {
 // it's a fallback for pricing sheets that were never sent through approval).
 // Calculation sequence: Base Purchase Price -> Margin % (applied to Base) ->
 // GlobX Unit Price Excl GST -> GST -> GlobX Unit Price w/GST -> GlobX Total.
-function computeL1PricingSummary(pricingData, fallbackMarginPct = 2.45) {
+export function computeL1PricingSummary(pricingData, fallbackMarginPct = 2.45) {
   const marginPct = pricingData?.marginPct ?? fallbackMarginPct
   const allQuotes = pricingData?.quotes || []
   const l1Quote = allQuotes.length > 0 ? allQuotes.reduce((best, q) => {
@@ -2288,13 +2298,31 @@ function computeL1PricingSummary(pricingData, fallbackMarginPct = 2.45) {
 
   const effectiveMarginPct = grandBaseCost > 0 ? (grandTotalProfit / grandBaseCost) * 100 : marginPct
 
+  // Buyback (old equipment the customer hands back against this order) is a
+  // deduction from the final offered value only — per-item prices, margins and
+  // profit above stay as quoted. grandGlobxTotal is the NET figure because it
+  // is what every downstream consumer (approval snapshot, Bid Submission's
+  // quoted price, print sheet) treats as the final bid value.
+  const buyback = pricingData?.buyback
+  const buybackValue = buyback?.enabled ? Math.max(Number(buyback.value) || 0, 0) : 0
+
   return {
     l1Quote,
     l1Calculations: {
       items, grandBaseCost, grandSellingExclGst, grandGstAmount,
-      grandGlobxTotal, grandTotalProfit, effectiveMarginPct,
+      grandTotalBeforeBuyback: grandGlobxTotal,
+      buybackValue,
+      buybackItem: buybackValue > 0 ? (buyback.item || '').trim() : '',
+      grandGlobxTotal: grandGlobxTotal - buybackValue,
+      grandTotalProfit, effectiveMarginPct,
     },
   }
+}
+
+// Pricing sheet text is injected into alert/email HTML, so user-typed text
+// (the buyback description) must be escaped before it goes in.
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 // Highlighted callouts shared by the pricing approval request, reminder, and
@@ -2328,6 +2356,8 @@ const PRICING_DEFAULTS = {
   approvedAt: '',
   reminders: [], // [{ sentAt, sentBy }]
   marginPct: 2.45,
+  // Tenders that take old equipment back: value is deducted from the total.
+  buyback: { enabled: false, item: '', value: '' },
 }
 
 // ── Stage 4: Pricing Request ────────────────────────────────────────────────
@@ -2564,52 +2594,42 @@ export function Stage4Workspace({ bid, onRefresh }) {
     if (typeof onRefresh === 'function') await onRefresh()
   }
 
-  const buildPricingTableHtml = (l1Q, margin) => {
-    if (!l1Q || !l1Q.items) return ''
+  // Renders the alert/email copy of the pricing sheet straight from
+  // computeL1PricingSummary's rows — the same numbers the on-screen table
+  // shows. This used to redo the maths with a caller-supplied fallback margin,
+  // and the "Pricing Approved" alert passed the *blended* margin as that
+  // fallback, so any item without its own margin was shown (and totalled) at
+  // the blended rate instead of the one actually applied.
+  const buildPricingTableHtml = (l1Q, calc) => {
+    if (!l1Q || !calc) return ''
 
-    let grandBasePurchase = 0
-    let grandSellingExclGst = 0
-    let grandTotalGst = 0
-    let grandGlobxTotal = 0
-    let grandTotalProfit = 0
-
-    const rowsHtml = l1Q.items.map((it, i) => {
-      const basic = Number(it.basicPrice) || 0
-      const qty = Number(it.qty) || 1
-      const itMargin = it.marginPct != null && it.marginPct !== '' ? Number(it.marginPct) : margin
-      const itGstPct = it.gstPct != null && it.gstPct !== '' ? Number(it.gstPct) : 18
-
-      const profitPerUnit = basic * (itMargin / 100)
-      const unitPriceExclGst = basic + profitPerUnit
-      const unitGst = unitPriceExclGst * (itGstPct / 100)
-      const globxUnit = unitPriceExclGst + unitGst
-      const totalBase = basic * qty
-      const globxTotal = globxUnit * qty
-      const profitTotal = profitPerUnit * qty
-      const totalGst = unitGst * qty
-
-      grandBasePurchase += totalBase
-      grandSellingExclGst += unitPriceExclGst * qty
-      grandTotalGst += totalGst
-      grandGlobxTotal += globxTotal
-      grandTotalProfit += profitTotal
-
-      return `
+    const rowsHtml = calc.items.map((row) => `
         <tr style="border-bottom: 1px solid #e2e8f0;">
-          <td style="padding: 8px 10px; text-align: center; font-weight: bold; color: #64748b; font-family: monospace;">${i + 1}</td>
-          <td style="padding: 8px 10px; font-weight: 600; color: #1e293b;">${it.desc}</td>
-          <td style="padding: 8px 10px; text-align: center; color: #334155; font-weight: 500;">${qty}</td>
-          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #475569;">${fmtMoneyFull(basic)}</td>
-          <td style="padding: 8px 10px; text-align: center; color: #4338ca; font-weight: 700;">${itMargin}%</td>
-          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #334155;">${fmtMoneyFull(unitPriceExclGst)}</td>
-          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #64748b;">${fmtMoneyFull(unitGst)} <span style="font-size:10px;color:#94a3b8;">(${itGstPct}%)</span></td>
-          <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #4f46e5;">${fmtMoneyFull(globxUnit)}</td>
-          <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #4f46e5; background-color: #f5f3ff;">${fmtMoneyFull(globxTotal)}</td>
+          <td style="padding: 8px 10px; text-align: center; font-weight: bold; color: #64748b; font-family: monospace;">${row.sNo}</td>
+          <td style="padding: 8px 10px; font-weight: 600; color: #1e293b;">${row.desc}</td>
+          <td style="padding: 8px 10px; text-align: center; color: #334155; font-weight: 500;">${row.qty}</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #475569;">${fmtMoneyFull(row.basicPrice)}</td>
+          <td style="padding: 8px 10px; text-align: center; color: #4338ca; font-weight: 700;">${row.itemMargin.toFixed(2)}%</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #334155;">${fmtMoneyFull(row.unitPriceExclGst)}</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #64748b;">${fmtMoneyFull(row.unitGst)} <span style="font-size:10px;color:#94a3b8;">(${row.itemGstRate}%)</span></td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #4f46e5;">${fmtMoneyFull(row.globxUnit)}</td>
+          <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #4f46e5; background-color: #f5f3ff;">${fmtMoneyFull(row.globxTotal)}</td>
         </tr>
-      `
-    }).join('')
+      `).join('')
 
-    const effectiveMargin = grandBasePurchase > 0 ? ((grandTotalProfit / grandBasePurchase) * 100).toFixed(2) : margin
+    const grandBasePurchase = calc.grandBaseCost
+    const grandGlobxTotal = calc.grandGlobxTotal
+    const effectiveMargin = calc.effectiveMarginPct.toFixed(2)
+    const hasBuyback = calc.buybackValue > 0
+    const buybackRowsHtml = hasBuyback ? `
+              <tr style="background-color: #ffffff; border-top: 2px solid #cbd5e1;">
+                <td colspan="8" style="padding: 8px 10px; text-align: right; color: #475569; font-size: 12px; border-right: 1px solid #e2e8f0;">Total before buyback (incl. GST)</td>
+                <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #334155;">${fmtMoneyFull(calc.grandTotalBeforeBuyback)}</td>
+              </tr>
+              <tr style="background-color: #ffffff;">
+                <td colspan="8" style="padding: 8px 10px; text-align: right; color: #475569; font-size: 12px; border-right: 1px solid #e2e8f0;">Less: Buyback${calc.buybackItem ? ` — ${escHtml(calc.buybackItem)}` : ''}</td>
+                <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #be123c;">− ${fmtMoneyFull(calc.buybackValue)}</td>
+              </tr>` : ''
 
     return `
       <div style="margin-top: 14px; margin-bottom: 14px; border: 1px solid #c7d2fe; border-radius: 10px; overflow: hidden; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
@@ -2635,11 +2655,11 @@ export function Stage4Workspace({ bid, onRefresh }) {
             <tbody>
               ${rowsHtml}
             </tbody>
-            <tfoot>
+            <tfoot>${buybackRowsHtml}
               <tr style="background-color: #f8fafc; font-weight: bold; border-top: 2px solid #cbd5e1;">
                 <td colspan="4" style="padding: 12px 10px; text-align: right; color: #334155; font-size: 12px; border-right: 1px solid #e2e8f0;">Grand Total Summary (Base Cost: ${fmtMoneyFull(grandBasePurchase)}):</td>
                 <td style="padding: 12px 10px; text-align: center; color: #4338ca; font-size: 12px; border-right: 1px solid #e2e8f0;">${effectiveMargin}%</td>
-                <td colspan="3" style="padding: 12px 10px; text-align: right; color: #64748b; font-size: 11px; border-right: 1px solid #e2e8f0;">TOTAL OFFERED VALUE (INCL. GST)</td>
+                <td colspan="3" style="padding: 12px 10px; text-align: right; color: #64748b; font-size: 11px; border-right: 1px solid #e2e8f0;">${hasBuyback ? 'TOTAL OFFERED VALUE AFTER BUYBACK (INCL. GST)' : 'TOTAL OFFERED VALUE (INCL. GST)'}</td>
                 <td style="padding: 12px 10px; text-align: right; font-family: monospace; font-size: 13px; font-weight: 800; color: #4338ca; background-color: #ede9fe;">${fmtMoneyFull(grandGlobxTotal)}</td>
               </tr>
             </tfoot>
@@ -2652,6 +2672,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
   const handleSendApproval = () => {
     if (!approverSelId) { toast.error('Select the person to send this pricing sheet for approval'); return }
     if (!approvalRemarks.trim()) { toast.error('Add a remark for the approver before sending'); return }
+    if (buybackExceedsTotal) { toast.error('Buyback is larger than the total before buyback — fix the buyback value or margins first'); return }
     const approver = users.find(u => u.id === approverSelId)
     const remarks = approvalRemarks.trim()
     // The blended per-item margin — not the flat `marginPct` default, which
@@ -2659,7 +2680,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
     // margins — is what "before" and "after" must both be measured against
     // at approval time, or an edit here would never register as a change.
     const marginAtRequest = l1Calculations?.effectiveMarginPct ?? marginPct
-    const tableHtml = buildPricingTableHtml(l1Quote, marginPct)
+    const tableHtml = buildPricingTableHtml(l1Quote, l1Calculations)
     const remarksHtml = buildRemarkCalloutHtml(currentUser?.full_name || currentUser?.username || 'requester', remarks)
     const nowISO = new Date().toISOString()
     import('../../services/alerts').then(({ createAlert }) => {
@@ -2697,7 +2718,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
 
   const handleSendReminder = () => {
     if (!pricingData.approverId) return
-    const tableHtml = buildPricingTableHtml(l1Quote, marginPct)
+    const tableHtml = buildPricingTableHtml(l1Quote, l1Calculations)
     const remarksHtml = buildRemarkCalloutHtml(pricingData.requestedByName || 'requester', pricingData.approvalRemarks)
     const reminderHeaderHtml = `<div style="margin:0 0 12px 0;padding:10px 14px;border-radius:8px;background:#fff7ed;border:1px solid #fed7aa;border-left:4px solid #fb923c;color:#9a3412;font-size:12px;font-weight:700;">🔔 Reminder — Bid #${bid.gem_bid_no || bid.id}: this commercial pricing calculation is still awaiting your approval.</div>`
     const nowISO = new Date().toISOString()
@@ -2731,6 +2752,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
   )
 
   const handleApprovePricing = async () => {
+    if (buybackExceedsTotal) { toast.error('Buyback is larger than the total before buyback — fix the buyback value or margins first'); return }
     const nowISO = new Date().toISOString()
     const finalMargin = l1Calculations?.effectiveMarginPct ?? marginPct
     const finalTotal = l1Calculations?.grandGlobxTotal ?? null
@@ -2752,7 +2774,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
     // Notify the tender owner (and the original requester, if different) that
     // pricing has been approved — this was previously silent; only the
     // "request sent" email existed before.
-    const tableHtml = buildPricingTableHtml(l1Quote, finalMargin)
+    const tableHtml = buildPricingTableHtml(l1Quote, l1Calculations)
     const changeBannerHtml = valuesChanged
       ? buildValuesAdjustedBannerHtml(reqMarginDisplay, finalMargin, reqTotal, finalTotal)
       : ''
@@ -2845,6 +2867,66 @@ export function Stage4Workspace({ bid, onRefresh }) {
     })
     setShowMarginDlg(false)
     toast.success('Margins saved')
+  }
+
+  // ── Buyback ────────────────────────────────────────────────────────────
+  // Same edit rights as margin: the approver may adjust it before signing off
+  // even when otherwise read-only.
+  const canEditBuyback = !isReadOnly || canApprovePricing
+  const savedBuyback = pricingData.buyback || PRICING_DEFAULTS.buyback
+  const [buybackOn, setBuybackOn] = useState(!!savedBuyback.enabled)
+  const [buybackItem, setBuybackItem] = useState(savedBuyback.item || '')
+  const [buybackValue, setBuybackValue] = useState(savedBuyback.value === '' || savedBuyback.value == null ? '' : String(savedBuyback.value))
+  // Resync the draft when the saved sheet changes (refresh / another session).
+  useEffect(() => {
+    setBuybackOn(!!savedBuyback.enabled)
+    setBuybackItem(savedBuyback.item || '')
+    setBuybackValue(savedBuyback.value === '' || savedBuyback.value == null ? '' : String(savedBuyback.value))
+  }, [savedBuyback.enabled, savedBuyback.item, savedBuyback.value])
+
+  // Net total can't go negative: a buyback larger than what we're offering
+  // means a margin was lowered (or the value mistyped) after it was saved.
+  const buybackExceedsTotal = !!l1Calculations && l1Calculations.buybackValue > l1Calculations.grandTotalBeforeBuyback
+
+  const persistBuyback = async (buyback, logReason) => {
+    const patch = { buyback }
+    // Same re-snapshot as handleSaveMargins: Bid Submission quotes the
+    // approved total, which must follow any post-approval change.
+    if (pricingData.approvalStatus === 'APPROVED') {
+      const { l1Calculations: recalculated } = computeL1PricingSummary({ ...pricingData, buyback })
+      if (recalculated) patch.approvedGrandTotal = recalculated.grandGlobxTotal
+    }
+    await save(patch)
+    logStageMicroEvent(bid.id, {
+      fromStage: 'PRICING_REQUEST',
+      toStage: 'PRICING_REQUEST',
+      eventType: 'PRICING',
+      transitionReason: logReason,
+      details: { buyback },
+    })
+  }
+
+  const handleSaveBuyback = async () => {
+    const item = buybackItem.trim()
+    const value = Number(buybackValue)
+    if (!item) { toast.error('Describe what is being taken back (e.g. "Old laptops — 50 units")'); return }
+    if (!Number.isFinite(value) || value <= 0) { toast.error('Enter a buyback value greater than 0'); return }
+    if (l1Calculations && value > l1Calculations.grandTotalBeforeBuyback) {
+      toast.error(`Buyback can't exceed the total before buyback (${fmtMoneyFull(l1Calculations.grandTotalBeforeBuyback)})`)
+      return
+    }
+    await persistBuyback({ enabled: true, item, value }, `Buyback set: ${item} — ${fmtMoneyFull(value)} deducted from the offered total`)
+    toast.success('Buyback saved')
+  }
+
+  const handleToggleBuyback = async (on) => {
+    setBuybackOn(on)
+    // Turning it off removes it from the total straight away; the typed
+    // details stay on the sheet so turning it back on restores them.
+    if (!on && savedBuyback.enabled) {
+      await persistBuyback({ ...savedBuyback, enabled: false }, 'Buyback removed from the pricing sheet')
+      toast.success('Buyback removed')
+    }
   }
 
   return (
@@ -3065,6 +3147,45 @@ export function Stage4Workspace({ bid, onRefresh }) {
         </div>
       )}
 
+      {pricingData.phase !== 'INIT' && (
+        <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="space-y-0.5">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Buyback</h4>
+              <p className="text-[11px] text-muted-foreground">Customer hands back old equipment against this tender? Its value is deducted from the offered total.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Label htmlFor="buyback-toggle" className="text-xs font-medium cursor-pointer">{buybackOn ? 'Buyback applies' : 'No buyback'}</Label>
+              <Switch id="buyback-toggle" checked={buybackOn} onCheckedChange={handleToggleBuyback} disabled={!canEditBuyback} />
+            </div>
+          </div>
+
+          {buybackOn && (
+            <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr_auto] gap-3 items-end pt-1">
+              <div className="space-y-1.5">
+                <Label className="text-xs">What is being taken back? *</Label>
+                <Input value={buybackItem} onChange={e => setBuybackItem(e.target.value)} disabled={!canEditBuyback}
+                  placeholder="e.g. Old laptops — 50 units" className="text-xs h-8" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Buyback Value (₹) *</Label>
+                <Input type="number" min="0" step="any" value={buybackValue} onChange={e => setBuybackValue(e.target.value)} disabled={!canEditBuyback}
+                  placeholder="Total value" className="text-xs h-8" />
+              </div>
+              <Button size="sm" onClick={handleSaveBuyback} disabled={!canEditBuyback} className="h-8 text-xs bg-violet-600 hover:bg-violet-700 text-white">
+                {savedBuyback.enabled ? 'Update Buyback' : 'Save Buyback'}
+              </Button>
+            </div>
+          )}
+
+          {buybackExceedsTotal && (
+            <p className="text-[11px] font-medium text-rose-600 dark:text-rose-400 flex items-center gap-1.5">
+              <AlertTriangle className="size-3.5" /> Buyback ({fmtMoneyFull(l1Calculations.buybackValue)}) is larger than the total before buyback ({fmtMoneyFull(l1Calculations.grandTotalBeforeBuyback)}). Reduce it or revisit the margins — approval is blocked until fixed.
+            </p>
+          )}
+        </div>
+      )}
+
       {l1Quote && l1Calculations && (
         <div className="rounded-xl border border-indigo-200 dark:border-indigo-900 bg-card p-5 space-y-4 shadow-sm">
           {/* Header & Margin Selector */}
@@ -3130,11 +3251,25 @@ export function Stage4Workspace({ bid, onRefresh }) {
                 ))}
               </tbody>
               <tfoot>
+                {l1Calculations.buybackValue > 0 && (
+                  <>
+                    <tr className="text-xs border-t-2 border-border">
+                      <td colSpan={9} className="border border-border p-2 text-right text-muted-foreground uppercase tracking-wider">Total Before Buyback (Incl. GST):</td>
+                      <td className="border border-border p-2 text-right font-mono font-bold text-foreground">{fmtMoneyFull(l1Calculations.grandTotalBeforeBuyback)}</td>
+                    </tr>
+                    <tr className="text-xs">
+                      <td colSpan={9} className="border border-border p-2 text-right text-muted-foreground uppercase tracking-wider">
+                        Less: Buyback{l1Calculations.buybackItem ? <span className="normal-case tracking-normal"> — {l1Calculations.buybackItem}</span> : null}
+                      </td>
+                      <td className="border border-border p-2 text-right font-mono font-bold text-rose-600 dark:text-rose-400">− {fmtMoneyFull(l1Calculations.buybackValue)}</td>
+                    </tr>
+                  </>
+                )}
                 <tr className="bg-muted/40 font-bold border-t-2 border-border text-xs">
                   <td colSpan={4} className="border border-border p-2.5 text-right text-muted-foreground uppercase tracking-wider">Grand Total Summary:</td>
                   <td className="border border-border p-2.5 text-right font-mono font-bold text-foreground">{fmtMoneyFull(l1Calculations.grandBaseCost)}</td>
                   <td className="border border-border p-2.5 text-center font-bold text-indigo-700 dark:text-indigo-300">{l1Calculations.effectiveMarginPct.toFixed(2)}%</td>
-                  <td colSpan={3} className="border border-border p-2.5 text-right text-muted-foreground uppercase tracking-wider">Total Offered Value (Incl. GST):</td>
+                  <td colSpan={3} className="border border-border p-2.5 text-right text-muted-foreground uppercase tracking-wider">{l1Calculations.buybackValue > 0 ? 'Total Offered Value After Buyback (Incl. GST):' : 'Total Offered Value (Incl. GST):'}</td>
                   <td className="border border-border p-2.5 text-right font-mono text-sm font-extrabold text-indigo-700 dark:text-indigo-300 bg-indigo-50/80 dark:bg-indigo-950/40">{fmtMoneyFull(l1Calculations.grandGlobxTotal)}</td>
                 </tr>
               </tfoot>
@@ -3161,7 +3296,9 @@ export function Stage4Workspace({ bid, onRefresh }) {
             <div className="p-3 rounded-lg border border-indigo-300 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/30">
               <div className="text-[10px] font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">GlobX Total (incl. GST)</div>
               <div className="text-base font-extrabold font-mono text-indigo-700 dark:text-indigo-300 mt-0.5">{fmtMoneyFull(l1Calculations.grandGlobxTotal)}</div>
-              <div className="text-[10px] font-semibold text-indigo-600/80 dark:text-indigo-400 mt-0.5">Final Quoted Bid Value</div>
+              <div className="text-[10px] font-semibold text-indigo-600/80 dark:text-indigo-400 mt-0.5">
+                {l1Calculations.buybackValue > 0 ? `After buyback of ${fmtMoneyFull(l1Calculations.buybackValue)} — Final Quoted Bid Value` : 'Final Quoted Bid Value'}
+              </div>
             </div>
             <div className="p-3 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/30">
               <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider">Net Profit</div>
@@ -3508,6 +3645,7 @@ export function Stage6Workspace({ bid, onRefresh }) {
   const [showAlertDlg, setShowAlertDlg] = useState(false)
   const [alertRemarks, setAlertRemarks] = useState('')
   const [handoffRemarks, setHandoffRemarks] = useState('')
+  const [showEmdDecision, setShowEmdDecision] = useState(false)
   const { hasRole, isAdmin } = usePermissions()
   const isFinance = hasRole('FINANCE')
   // EMD alerts must be triggered by someone other than Finance — Bid Executive,
@@ -3738,10 +3876,21 @@ export function Stage6Workspace({ bid, onRefresh }) {
       )}
 
       <div className="p-4 rounded-xl border border-border bg-card space-y-2 text-xs max-w-md">
-        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">EMD Requirements</h4>
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">EMD Requirements</h4>
+          {/* Recovery path: a tender can reach this stage with the wrong EMD
+              decision (e.g. Online confirmed although the tender lists a
+              Startup/MSME exemption). Re-deciding as Exempted/Not Applicable
+              makes the backend skip this stage straight to Internal Approval. */}
+          {canTriggerEmdAlert && !bid.emd_ready && (
+            <Button size="sm" variant="outline" onClick={() => setShowEmdDecision(true)} className="h-6 px-2 text-[11px] gap-1">
+              <Coins className="size-3" /> Change EMD Decision
+            </Button>
+          )}
+        </div>
         <div className="flex justify-between"><span className="text-muted-foreground">Status:</span><span className="font-semibold">{bid.emd_exempted ? 'EXEMPTED' : 'REQUIRED'}</span></div>
         <div className="flex justify-between"><span className="text-muted-foreground">EMD Amount:</span><span className="font-bold font-mono">{fmtMoney(bid.emd_amount)}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">Payment Mode:</span><span className="font-medium">{bid.emd_exempted ? 'EXEMPTED' : (bid.emd_type || 'ONLINE')}</span></div>
+        <div className="flex justify-between"><span className="text-muted-foreground">Payment Mode:</span><span className="font-medium">{bid.emd_exempted ? 'EXEMPTED' : (bid.emd_type || 'NOT DECIDED')}</span></div>
 
         {!bid.emd_exempted && bid.emd_type === 'ONLINE' && (
           <div className="mt-3 pt-3 border-t border-border/60 space-y-1.5">
@@ -3761,6 +3910,10 @@ export function Stage6Workspace({ bid, onRefresh }) {
           </div>
         )}
       </div>
+
+      {showEmdDecision && (
+        <EmdDecisionModal bid={bid} onClose={() => setShowEmdDecision(false)} onDone={() => { setShowEmdDecision(false); onRefresh() }} />
+      )}
 
       {showAlertDlg && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
@@ -4155,10 +4308,14 @@ export function Stage9Workspace({ bid, onRefresh }) {
   // is just the fallback when the sheet can't be recalculated.
   let finalPriceNum = pricingWorkspace?.approvedGrandTotal ?? null
   let priceSource = finalPriceNum != null ? 'approved' : 'none'
+  let buybackNote = ''
   if (pricingWorkspace) {
     const { l1Calculations } = computeL1PricingSummary(pricingWorkspace)
     if (l1Calculations) {
       finalPriceNum = l1Calculations.grandGlobxTotal
+      if (l1Calculations.buybackValue > 0) {
+        buybackNote = `Net of buyback: ${fmtMoneyFull(l1Calculations.grandTotalBeforeBuyback)} − ${fmtMoneyFull(l1Calculations.buybackValue)}${l1Calculations.buybackItem ? ` (${l1Calculations.buybackItem})` : ''}`
+      }
       priceSource = pricingWorkspace.approvalStatus === 'APPROVED' ? 'approved' : 'live'
     }
   }
@@ -4244,6 +4401,7 @@ export function Stage9Workspace({ bid, onRefresh }) {
             <div className="h-9 px-3 border border-input rounded-md bg-muted/30 flex items-center text-sm font-mono font-bold text-foreground">
               {finalPriceNum != null ? fmtMoney(finalPriceNum) : 'Not set — complete Stage 4 (Pricing Request) first'}
             </div>
+            {buybackNote && <p className="text-[10px] font-medium text-violet-700 dark:text-violet-300">{buybackNote}</p>}
             <p className="text-[10px] text-muted-foreground">This value comes from the Pricing Request stage's GlobX Total (incl. GST) — it is not editable here. It will be saved as your official quoted price for all further comparisons.</p>
           </div>
         </CompleteStageModal>
@@ -5130,8 +5288,12 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
             <div className="space-y-1">
               <h3 className="text-base font-bold text-foreground">EMD Exempted</h3>
               <p className="text-xs text-muted-foreground leading-relaxed max-w-md mx-auto">
-                This tender is exempted from EMD — there is nothing to process at this stage.
+                This tender is exempted from EMD — no Finance approval is needed. Carry on with Internal Approval.
               </p>
+              <div className="inline-flex flex-col gap-1 text-xs text-left rounded-lg border border-border bg-card px-4 py-2.5 min-w-[16rem]">
+                <div className="flex justify-between gap-6"><span className="text-muted-foreground">EMD Amount (waived):</span><span className="font-mono font-bold">{fmtMoney(bid.emd_amount)}</span></div>
+                <div className="flex justify-between gap-6"><span className="text-muted-foreground">Exemption Basis:</span><span className="font-medium">{bid.emd_exemption_type === 'OTHER' && bid.emd_exemption_reason ? `Other — ${bid.emd_exemption_reason}` : (bid.emd_exemption_type || '—')}</span></div>
+              </div>
             </div>
           </div>
         )
