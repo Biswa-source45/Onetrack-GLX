@@ -24,6 +24,7 @@ func (h *Handler) List(c *gin.Context) {
 		Limit:    limit,
 		Cursor:   c.Query("cursor"),
 		Category: c.Query("category"),
+		ActorID:  c.Query("user_id"),
 	}
 	page, err := h.svc.List(c.Request.Context(), q)
 	if err != nil {

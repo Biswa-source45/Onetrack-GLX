@@ -48,7 +48,12 @@ export function isActiveStage(b) {
 // estimate when it's known — estimated_value can be set at discovery and
 // never updated, while final_bid_value/quoted_price reflect what was
 // actually submitted or awarded.
+//
+// A cancelled tender is worth nothing to the pipeline, at whatever stage it
+// was cancelled — zeroed here, once, so no rollup (submitted value, monthly
+// trend, org/owner totals) has to remember to exclude it.
 export function tenderValue(b) {
+  if (getEffectiveStage(b) === 'CANCELLED') return 0
   return Number(b.final_bid_value || b.quoted_price || b.estimated_value || 0)
 }
 
@@ -108,7 +113,7 @@ export function computePipelineSummary(bids, asOfMs) {
         bucket.bids.push(b)
       }
     }
-    if (submitted) {
+    if (submitted && stage !== 'CANCELLED') {
       submittedPipelineValue += val
       submittedBidsList.push(b)
     }

@@ -7,8 +7,10 @@ import {
   XCircle, Edit2, Save, X, MoreHorizontal, Calendar,
   FileText, Activity, History, UserPlus, Target, ChevronDown,
   RotateCcw, Trash2, Trophy, Search, ShieldCheck, Share2, Coins, Eye,
-  Send, Upload, Hourglass, Ban, ArrowRight, Layers, Lock, Check, Sparkles, AlertTriangle, UserCheck, RefreshCw
+  Send, Upload, Hourglass, Ban, ArrowRight, Layers, Lock, Check, Sparkles, AlertTriangle, UserCheck, RefreshCw, ExternalLink, Printer
 } from 'lucide-react'
+import { isHttpUrl } from '../../lib/tenderSpec'
+import { TenderPrintSheet } from './TenderPrintSheet'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,8 +27,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import {
   getBid, getBidStageHistory, transitionBidStage,
-  removeBidMember, recordBidOutcome, archiveBid, updateBid,
-  softDeleteBid, restoreBid, permanentDeleteBid, getPendingEdit,
+  removeBidMember, recordBidOutcome, archiveBid,
+  softDeleteBid, restoreBid, reopenBid, permanentDeleteBid, getPendingEdit,
   approvePendingEdit, rejectPendingEdit,
   STAGE_LABELS, STAGE_COLORS, STATUS_COLORS, statusStyle, STAGE_TRANSITIONS,
   WORKFLOW_STAGES_ORDERED,
@@ -978,7 +980,7 @@ function MembersTab({ bid, onRefresh }) {
                 <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{m.role}</span>
               </div>
             </div>
-            {hasPermission('bid.edit') && !['ARCHIVED', 'CANCELLED', 'WON', 'LOST'].includes(bid.bid_status) && (
+            {hasPermission('bid.edit') && !['ARCHIVED', 'CANCELLED', 'CLOSED', 'WON', 'LOST'].includes(bid.bid_status) && (
               ['OWNER', 'ACCOUNT_MANAGER'].includes(m.role) ? (
                 <span className="text-[10px] text-muted-foreground/70 italic px-1">Reassign via Edit Tender</span>
               ) : (
@@ -998,7 +1000,7 @@ function MembersTab({ bid, onRefresh }) {
 // ── Stage Sections Tab (Interactive Stage Lifecycle Grid & Workspace) ────────
 function StageSectionsTab({ bid, onRefresh, onAdvance, searchParams, setSearchParams }) {
   const currentIdx = WORKFLOW_STAGES_ORDERED.indexOf(bid.workflow_stage)
-  const isTerminal = ['WON', 'LOST', 'CANCELLED', 'ARCHIVED'].includes(bid.bid_status)
+  const isTerminal = ['WON', 'LOST', 'CANCELLED', 'CLOSED', 'ARCHIVED'].includes(bid.bid_status)
 
   // Selected stage backed by the URL (?stage=), defaulting to the tender's
   // current workflow stage — so a refresh or a shared link lands back on
@@ -1573,7 +1575,8 @@ function StageActionPanel({ bid, onSelectStage }) {
 
 // ── Outcome Panel (Read-only display of recorded outcome) ────────────────────
 function OutcomePanel({ bid }) {
-  if (!bid.bid_outcome) return null
+  // Cancelled/Closed is explained by ExitedBanner at the top of the page.
+  if (!['WON', 'LOST'].includes(bid.bid_outcome)) return null
 
   // Calculate price difference percentage dynamically from quoted_price and l1_price
   let priceDiffPct = null
@@ -1730,10 +1733,72 @@ function ArchiveConfirmDialog({ bid, onClose, onDone }) {
   )
 }
 
+// ── Closed / Cancelled banner ────────────────────────────────────────────────
+// The first thing on a tender that has left the pipeline: which of the two it
+// is, why, and the way back.
+function ExitedBanner({ bid, canReopen, onReopened }) {
+  const [reopening, setReopening] = useState(false)
+  const cancelled = bid.derived_status === 'CANCELLED'
+  // Tenders cancelled before outcome_reason was shown here kept their reason
+  // as a "[CANCELLED] ..." prefix in remarks.
+  const reason = bid.outcome_reason || (bid.remarks?.startsWith('[CANCELLED] ') ? bid.remarks.slice(12) : '')
+
+  const reopen = async () => {
+    setReopening(true)
+    try {
+      const res = await reopenBid(bid.id)
+      if (res.ok) {
+        toast.success('Tender reopened — back in the pipeline')
+        onReopened()
+      } else {
+        toast.error(res.error?.message || 'Failed to reopen tender')
+      }
+    } catch {
+      toast.error('Network error')
+    } finally {
+      setReopening(false)
+    }
+  }
+
+  return (
+    <div role="status" className={`rounded-xl border-2 p-4 flex items-start justify-between gap-4 shadow-sm ${cancelled
+      ? 'border-red-300 bg-red-50 text-red-900 dark:bg-red-950/30 dark:border-red-900 dark:text-red-200'
+      : 'border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:border-amber-900 dark:text-amber-200'}`}>
+      <div className="flex items-start gap-3 min-w-0">
+        <Ban className="size-5 shrink-0 mt-0.5" />
+        <div className="space-y-1 min-w-0">
+          <p className="font-semibold text-sm">
+            {cancelled ? 'This tender was cancelled' : 'This tender was closed'}
+            <span className="font-normal"> — it is out of the pipeline and read-only.</span>
+          </p>
+          <p className="text-[10px] font-semibold uppercase tracking-wider opacity-70">{cancelled ? 'Reason for cancellation' : 'Reason for closing'}</p>
+          <p className="text-sm whitespace-pre-wrap break-words">{reason || 'No reason was recorded.'}</p>
+        </div>
+      </div>
+      {canReopen && (
+        <Button size="sm" variant="outline" className="gap-1.5 shrink-0 bg-card" onClick={reopen} disabled={reopening}>
+          {reopening ? <Loader2 className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />}
+          Reopen Tender
+        </Button>
+      )}
+    </div>
+  )
+}
+
 // ── Outcome Input/Form Dialog ────────────────────────────────────────────────
-function OutcomeDialog({ bid, defaultOutcome = 'WON', lockedOutcome = null, onClose, onDone }) {
+// `options` is the set of outcomes offered: the default records a result;
+// EXIT_OPTIONS turns it into the "Close or Cancel" dialog (reason only).
+const EXIT_OPTIONS = ['CLOSED', 'CANCELLED']
+const OUTCOME_LABELS = { WON: '🏆 Won', LOST: '❌ Lost', CANCELLED: '🛑 Cancel Tender', CLOSED: '📁 Close Tender' }
+const EXIT_HINTS = {
+  CLOSED: 'We are dropping this tender ourselves — a missing document, no OEM authorization, not viable, and so on.',
+  CANCELLED: 'The tender itself is off — withdrawn or cancelled by the buyer. Its value is removed from the pipeline.',
+}
+
+function OutcomeDialog({ bid, options = ['WON', 'LOST', 'CANCELLED'], onClose, onDone }) {
+  const isExitDialog = options === EXIT_OPTIONS
   const [form, setForm] = useState({
-    bid_outcome: lockedOutcome || defaultOutcome,
+    bid_outcome: options[0],
     final_bid_value: bid.final_bid_value || '',
     l1_price: bid.l1_price || '',
     quoted_price: bid.quoted_price || '',
@@ -1743,11 +1808,12 @@ function OutcomeDialog({ bid, defaultOutcome = 'WON', lockedOutcome = null, onCl
   })
   const [newCompetitor, setNewCompetitor] = useState({ name: '', quoted_price: '', rank: '' })
   const [loading, setLoading] = useState(false)
+  const isExit = EXIT_OPTIONS.includes(form.bid_outcome)
 
   async function submit(e) {
     e.preventDefault()
-    if (form.bid_outcome === 'CANCELLED' && !form.outcome_reason.trim()) {
-      toast.error('Please provide a reason for cancellation')
+    if (isExit && !form.outcome_reason.trim()) {
+      toast.error('Please provide a reason')
       return
     }
     setLoading(true)
@@ -1756,7 +1822,7 @@ function OutcomeDialog({ bid, defaultOutcome = 'WON', lockedOutcome = null, onCl
         bid_outcome: form.bid_outcome,
         outcome_reason: form.outcome_reason ? form.outcome_reason.trim() : undefined,
       }
-      if (form.bid_outcome !== 'CANCELLED') {
+      if (!isExit) {
         payload.final_bid_value = form.final_bid_value ? Number(form.final_bid_value) : undefined
         payload.l1_price = form.l1_price ? Number(form.l1_price) : undefined
         payload.quoted_price = form.quoted_price ? Number(form.quoted_price) : undefined
@@ -1772,15 +1838,7 @@ function OutcomeDialog({ bid, defaultOutcome = 'WON', lockedOutcome = null, onCl
         toast.success(`Submitted to ${res.data.reporting_manager_name || 'your Reporting Manager'} for approval`)
         onDone()
       } else if (res.ok) {
-        // For cancellations, also persist the reason in the bid's remarks field without touching bid_status or workflow_stage
-        if (form.bid_outcome === 'CANCELLED' && form.outcome_reason?.trim()) {
-          try {
-            await updateBid(bid.id, {
-              remarks: `[CANCELLED] ${form.outcome_reason.trim()}`,
-            })
-          } catch { /* non-fatal: outcome recorded, remarks update best-effort */ }
-        }
-        toast.success('Bid outcome recorded successfully')
+        toast.success(form.bid_outcome === 'CLOSED' ? 'Tender closed' : form.bid_outcome === 'CANCELLED' ? 'Tender cancelled' : 'Bid outcome recorded successfully')
         onDone()
       } else {
         toast.error(res.error?.message ?? 'Failed to record outcome')
@@ -1830,7 +1888,7 @@ function OutcomeDialog({ bid, defaultOutcome = 'WON', lockedOutcome = null, onCl
       >
         <div className="flex items-center justify-between">
           <h3 className="font-heading font-semibold text-foreground">
-            {lockedOutcome === 'CANCELLED' ? 'Cancel Tender' : 'Record Outcome'}
+            {isExitDialog ? 'Close or Cancel Tender' : 'Record Outcome'}
           </h3>
           <button onClick={onClose} className="p-1 rounded-md hover:bg-muted text-muted-foreground">
             <X className="size-4" />
@@ -1838,14 +1896,16 @@ function OutcomeDialog({ bid, defaultOutcome = 'WON', lockedOutcome = null, onCl
         </div>
 
         <form onSubmit={submit} className="space-y-4">
-          {!lockedOutcome && (
+          {(
             <div className="space-y-1.5">
-              <Label className="text-xs">Outcome Status</Label>
-              <div className="flex rounded-lg bg-muted p-1 gap-1">
-                {['WON', 'LOST', 'CANCELLED'].map((o) => (
+              <Label className="text-xs">{isExitDialog ? 'What are you doing with this tender?' : 'Outcome Status'}</Label>
+              <div className="flex rounded-lg bg-muted p-1 gap-1" role="radiogroup">
+                {options.map((o) => (
                   <button
                     key={o}
                     type="button"
+                    role="radio"
+                    aria-checked={form.bid_outcome === o}
                     onClick={() => setForm(f => ({ ...f, bid_outcome: o }))}
                     className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
                       form.bid_outcome === o
@@ -1853,21 +1913,22 @@ function OutcomeDialog({ bid, defaultOutcome = 'WON', lockedOutcome = null, onCl
                         : 'text-muted-foreground hover:text-foreground'
                     }`}
                   >
-                    {o === 'WON' ? '🏆 Won' : o === 'LOST' ? '❌ Lost' : '🛑 Cancelled'}
+                    {isExitDialog || o !== 'CANCELLED' ? OUTCOME_LABELS[o] : '🛑 Cancelled'}
                   </button>
                 ))}
               </div>
+              {isExit && <p className="text-xs text-muted-foreground">{EXIT_HINTS[form.bid_outcome]}</p>}
             </div>
           )}
 
-          {form.bid_outcome === 'CANCELLED' ? (
+          {isExit ? (
             <div className="space-y-1.5">
-              <Label className="text-xs">Reason for Cancellation *</Label>
+              <Label className="text-xs">{form.bid_outcome === 'CLOSED' ? 'Reason for Closing *' : 'Reason for Cancellation *'}</Label>
               <Textarea
                 required
                 value={form.outcome_reason}
                 onChange={e => setForm(f => ({ ...f, outcome_reason: e.target.value }))}
-                placeholder="Describe the reason for cancellation..."
+                placeholder={form.bid_outcome === 'CLOSED' ? 'Why are we closing this tender? (e.g. a required document is missing)' : 'Describe the reason for cancellation...'}
                 className="text-sm min-h-[100px]"
               />
             </div>
@@ -2002,11 +2063,11 @@ function OutcomeDialog({ bid, defaultOutcome = 'WON', lockedOutcome = null, onCl
 
           <div className="flex gap-2 pt-2">
             <Button type="button" variant="outline" size="sm" className="flex-1" onClick={onClose} disabled={loading}>
-              Cancel
+              {isExitDialog ? 'Keep Tender Open' : 'Cancel'}
             </Button>
             <Button type="submit" size="sm" className="flex-1" disabled={loading}>
               {loading && <Loader2 className="size-3.5 animate-spin mr-1" />}
-              {form.bid_outcome === 'CANCELLED' ? 'Confirm Cancellation' : 'Save Outcome'}
+              {form.bid_outcome === 'CLOSED' ? 'Close Tender' : form.bid_outcome === 'CANCELLED' ? 'Confirm Cancellation' : 'Save Outcome'}
             </Button>
           </div>
         </form>
@@ -2045,6 +2106,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
   }
   const [showTransition, setShowTransition] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
+  const [printing, setPrinting] = useState(false)
   const [showOutcome, setShowOutcome] = useState(false)
   const [showCancel, setShowCancel] = useState(false)
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false)
@@ -2100,6 +2162,9 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
   )
   if (!bid) return null
 
+  // Cancelled or Closed — out of the pipeline, read-only until reopened.
+  const exited = ['CANCELLED', 'CLOSED'].includes(bid.derived_status)
+
   const canTransition = hasPermission('bid.edit') && (STAGE_TRANSITIONS[bid.workflow_stage]?.length ?? 0) > 0
 
   // ?approval=1 (alert / Approvals-box deep link) opens a pending EDIT's
@@ -2137,7 +2202,9 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
         const isApprover = user?.id === pendingEdit.reporting_manager_id || isAdmin || hasRole('MANAGER') || hasRole('BID_MANAGER')
         const requesterName = pendingEdit.requested_by?.full_name || 'A Bid Executive'
         const actionType = pendingEdit.action_type || 'EDIT'
-        const actionLabel = actionType === 'CANCEL' ? 'cancellation' : actionType === 'DELETE' ? 'deletion' : 'edit'
+        const actionLabel = actionType === 'CANCEL'
+          ? (pendingEdit.payload?.outcome === 'CLOSED' ? 'closure' : 'cancellation')
+          : actionType === 'DELETE' ? 'deletion' : 'edit'
         const approveNow = async () => {
           const res = await approvePendingEdit(pendingEdit.id, {}, '')
           if (res.ok) {
@@ -2163,6 +2230,9 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                     ? `${pendingEdit.diff?.length ?? 0} field${(pendingEdit.diff?.length ?? 0) === 1 ? '' : 's'} changed — nothing has been applied yet.`
                     : 'Nothing has been applied yet.'}
                 </p>
+                {actionType === 'CANCEL' && pendingEdit.payload?.outcome_reason && (
+                  <p className="text-xs text-amber-800 dark:text-amber-300"><span className="font-semibold">Reason:</span> {pendingEdit.payload.outcome_reason}</p>
+                )}
               </div>
             </div>
             {isApprover && (actionType === 'EDIT' ? (
@@ -2208,6 +2278,10 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
           </>
         )
       })()}
+
+      {exited && !bid.deleted_at && (
+        <ExitedBanner bid={bid} canReopen={hasPermission('bid.edit')} onReopened={loadBid} />
+      )}
 
       {/* Archive / Bin Warning Banner */}
       {bid.deleted_at ? (
@@ -2306,38 +2380,31 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
               {bid.portal_source && (
                 <span className="text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-800">{bid.portal_source}</span>
               )}
+              {isHttpUrl(bid.tender_link) && (
+                <a href={bid.tender_link} target="_blank" rel="noopener noreferrer" title={bid.tender_link}
+                  className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline dark:text-blue-400">
+                  <ExternalLink className="size-3" />Tender Link
+                </a>
+              )}
               {bid.is_imported && <ImportedPill />}
               {bid.derived_status === 'ACTIVE' && <InProgressPill />}
             </div>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {!bid.deleted_at && hasPermission('bid.edit') && !['ARCHIVED', 'CANCELLED', 'WON', 'LOST'].includes(bid.bid_status) && (
+            <Button size="sm" variant="outline" className="gap-1.5" disabled={printing} onClick={()=>setPrinting(true)}>
+              {printing ? <Loader2 className="size-3.5 animate-spin"/> : <Printer className="size-3.5 text-primary"/>}Print / PDF
+            </Button>
+            {printing && <TenderPrintSheet bid={bid} onDone={()=>setPrinting(false)} />}
+            {!bid.deleted_at && hasPermission('bid.edit') && !exited && !['ARCHIVED', 'WON', 'LOST'].includes(bid.bid_status) && (
               <Button size="sm" variant="outline" className="gap-1.5 border-primary/20 hover:border-primary/50 text-foreground" onClick={()=>setShowEdit(true)}>
                 <Edit2 className="size-3.5 text-primary"/>Edit Tender
               </Button>
             )}
 
-            {!bid.deleted_at && hasPermission('bid.edit') && !['CANCELLED', 'WON', 'LOST'].includes(bid.bid_status) && !['CANCELLED', 'WON', 'LOST'].includes(bid.workflow_stage) && (
+            {!bid.deleted_at && hasPermission('bid.edit') && !exited && !['WON', 'LOST'].includes(bid.bid_status) && !['WON', 'LOST'].includes(bid.workflow_stage) && (
               <Button size="sm" variant="outline" className="gap-1.5 border-red-200 hover:border-red-500 text-red-600 hover:bg-red-50/50 dark:border-red-900/50 dark:hover:bg-red-950/20" onClick={()=>setShowCancel(true)}>
-                <XCircle className="size-3.5"/>Cancel Tender
-              </Button>
-            )}
-            {!bid.deleted_at && hasPermission('bid.edit') && (bid.bid_status === 'CANCELLED' || bid.workflow_stage === 'CANCELLED' || bid.bid_outcome === 'CANCELLED') && (
-              <Button size="sm" variant="outline" className="gap-1.5 border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300" onClick={async ()=>{
-                try {
-                  const res = await transitionBidStage(bid.id, 'DISCOVERED', 'Revoked tender cancellation')
-                  if (res.ok) {
-                    toast.success('Tender cancellation revoked successfully')
-                    loadBid()
-                  } else {
-                    toast.error(res.error?.message || 'Failed to revoke cancellation')
-                  }
-                } catch {
-                  toast.error('Network error')
-                }
-              }}>
-                <RotateCcw className="size-3.5"/>Revoke Cancellation
+                <XCircle className="size-3.5"/>Close / Cancel
               </Button>
             )}
             {!bid.deleted_at && ['SUBMITTED', 'RA_ACTIVE', 'AWAITING_RESULT'].includes(bid.workflow_stage) && bid.bid_status === 'ACTIVE' && hasPermission('bid.edit') && (
@@ -2411,6 +2478,14 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                       ['Location', bid.location || 'Not Specified'],
                       ['Category / Scope', bid.category || 'Not Specified'],
                       ['Portal Source', bid.portal_source || 'GeM'],
+                      ['Tender Link', isHttpUrl(bid.tender_link) ? (
+                        <a href={bid.tender_link} target="_blank" rel="noopener noreferrer" title={bid.tender_link}
+                          className="inline-flex items-center gap-1 max-w-[16rem] text-blue-600 hover:underline dark:text-blue-400">
+                          <span className="truncate">{bid.tender_link}</span>
+                          <ExternalLink className="size-3 shrink-0" />
+                        </a>
+                      ) : 'Not Specified'],
+                      ['Scope Type', bid.scope_type || 'Not Specified'],
                       ['Bid Scope Type', bid.bid_type || 'CUSTOM_BID'],
                     ].map(([l,v])=>(
                       <div key={l} className="flex justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0 last:pb-0">
@@ -2519,10 +2594,10 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
         )}
       </AnimatePresence>
 
-      {/* Cancel Dialog */}
+      {/* Close / Cancel Dialog */}
       <AnimatePresence>
         {showCancel && (
-          <OutcomeDialog bid={bid} lockedOutcome="CANCELLED" onClose={()=>setShowCancel(false)} onDone={()=>{setShowCancel(false);loadBid()}} />
+          <OutcomeDialog bid={bid} options={EXIT_OPTIONS} onClose={()=>setShowCancel(false)} onDone={()=>{setShowCancel(false);loadBid()}} />
         )}
       </AnimatePresence>
 

@@ -216,6 +216,7 @@ type BidWorkspace struct {
 
 	// V2 Core Fields
 	HighLevelScope *string    `json:"high_level_scope,omitempty"`
+	TenderLink     *string    `json:"tender_link,omitempty"`
 	StartDate      *time.Time `json:"start_date,omitempty"`
 	EndDate        *time.Time `json:"end_date,omitempty"`
 	DurationMonths *int       `json:"duration_months,omitempty"`
@@ -489,6 +490,7 @@ type CreateBidRequest struct {
 	EMDBeneficiary            *string  `json:"emd_beneficiary"`
 	EMDPayableAt              *string  `json:"emd_payable_at"`
 	HighLevelScope            *string  `json:"high_level_scope"`
+	TenderLink                *string  `json:"tender_link"`
 	BGRequired                *bool    `json:"bg_required"`
 	StartDate                 *string  `json:"start_date"`
 	EndDate                   *string  `json:"end_date"`
@@ -549,6 +551,7 @@ type UpdateBidRequest struct {
 	EMDBeneficiary   *string  `json:"emd_beneficiary"`
 	EMDPayableAt     *string  `json:"emd_payable_at"`
 	HighLevelScope   *string  `json:"high_level_scope"`
+	TenderLink       *string  `json:"tender_link"`
 	BGRequired       *bool    `json:"bg_required"`
 	BGRate           *float64 `json:"bg_rate"`
 	StartDate        *string  `json:"start_date"`
@@ -635,7 +638,7 @@ type AddMemberRequest struct {
 }
 
 type RecordOutcomeRequest struct {
-	BidOutcome    string           `json:"bid_outcome" binding:"required,oneof=WON LOST CANCELLED"`
+	BidOutcome    string           `json:"bid_outcome" binding:"required,oneof=WON LOST CANCELLED CLOSED"`
 	FinalBidValue *float64         `json:"final_bid_value"`
 	L1Price       *float64         `json:"l1_price"`
 	QuotedPrice   *float64         `json:"quoted_price"`
@@ -729,6 +732,7 @@ type BidResponse struct {
 	DurationMonths            *int               `json:"duration_months"`
 	Authority                 *string            `json:"authority"`
 	HighLevelScope            *string            `json:"high_level_scope"`
+	TenderLink                *string            `json:"tender_link"`
 	BGRequired                bool               `json:"bg_required"`
 	BGRate                    *float64           `json:"bg_rate"`
 	Category                  *string            `json:"category"`
@@ -826,6 +830,7 @@ type BidListItem struct {
 	StartDate                 *time.Time   `json:"start_date,omitempty"`
 	EndDate                   *time.Time   `json:"end_date,omitempty"`
 	HighLevelScope            *string      `json:"high_level_scope,omitempty"`
+	TenderLink                *string      `json:"tender_link,omitempty"`
 	OEMRequired               bool         `json:"oem_required"`
 	BidOwner                  UserSummary  `json:"bid_owner"`
 	ReportingManager          *UserSummary `json:"reporting_manager,omitempty"`
@@ -936,6 +941,7 @@ type CreateBidParams struct {
 	BGRequired                bool
 	BGRate                    *float64
 	HighLevelScope            *string
+	TenderLink                *string
 	StartDate                 *time.Time
 	EndDate                   *time.Time
 	DurationMonths            *int

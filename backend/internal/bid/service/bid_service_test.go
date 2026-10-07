@@ -36,6 +36,8 @@ type fakeBidRepo struct {
 	nextPendingID int
 
 	lastOutcome      *domain.RecordOutcomeRequest
+	lastStage        string
+	lastStatus       string
 	softDeleted      bool
 	permanentDeleted bool
 
@@ -65,6 +67,7 @@ func (f *fakeBidRepo) Update(ctx context.Context, id string, req *domain.UpdateB
 	return nil
 }
 func (f *fakeBidRepo) UpdateStage(ctx context.Context, id string, stage string, status string) error {
+	f.lastStage, f.lastStatus = stage, status
 	return nil
 }
 func (f *fakeBidRepo) UpdateOutcome(ctx context.Context, id string, req *domain.RecordOutcomeRequest) error {
@@ -1394,6 +1397,61 @@ func TestCancelDeleteApproval(t *testing.T) {
 		}
 	})
 
+	t.Run("RecordOutcome CLOSED shares the gate and is applied as CLOSED on approval", func(t *testing.T) {
+		repo := &fakeBidRepo{bid: newBid()}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+
+		req := &domain.RecordOutcomeRequest{BidOutcome: "CLOSED", OutcomeReason: strPtr("OEM authorization missing")}
+		err := svc.RecordOutcome(context.Background(), "bid-1", req, execID, []string{"BID_EXECUTIVE"})
+		var pae *domain.PendingApprovalError
+		if !errors.As(err, &pae) {
+			t.Fatalf("expected a PendingApprovalError, got: %v", err)
+		}
+		if err := svc.ApprovePendingEdit(context.Background(), pae.EditID, &domain.UpdateBidRequest{}, "", rmID, []string{"MANAGER"}); err != nil {
+			t.Fatalf("ApprovePendingEdit: %v", err)
+		}
+		if repo.lastOutcome == nil || repo.lastOutcome.BidOutcome != "CLOSED" || *repo.lastOutcome.OutcomeReason != "OEM authorization missing" {
+			t.Fatalf("expected the approved closure to reach repo.UpdateOutcome as CLOSED, got: %+v", repo.lastOutcome)
+		}
+	})
+
+	t.Run("closing or cancelling without a reason is rejected", func(t *testing.T) {
+		for _, outcome := range []string{"CLOSED", "CANCELLED"} {
+			repo := &fakeBidRepo{bid: newBid()}
+			svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+			req := &domain.RecordOutcomeRequest{BidOutcome: outcome, OutcomeReason: strPtr("   ")}
+			err := svc.RecordOutcome(context.Background(), "bid-1", req, "admin-1", []string{"SUPER_ADMIN"})
+			if !errors.Is(err, domain.ErrValidation) || repo.lastOutcome != nil {
+				t.Fatalf("%s: expected ErrValidation and no write, got err=%v outcome=%+v", outcome, err, repo.lastOutcome)
+			}
+		}
+	})
+
+	t.Run("ReopenBid restores the reached stage as ACTIVE, and refuses a live tender", func(t *testing.T) {
+		bid := newBid()
+		bid.WorkflowStage = domain.StagePricingRequest
+		bid.DerivedStatus = domain.BidStatusClosed
+		repo := &fakeBidRepo{bid: bid}
+		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
+		if err := svc.ReopenBid(context.Background(), "bid-1", execID); err != nil {
+			t.Fatalf("ReopenBid: %v", err)
+		}
+		if repo.lastStage != domain.StagePricingRequest || repo.lastStatus != domain.BidStatusActive {
+			t.Fatalf("expected reopen at PRICING_REQUEST/ACTIVE, got %s/%s", repo.lastStage, repo.lastStatus)
+		}
+
+		// Legacy: cancelled through a stage transition, so the stage is gone.
+		bid.WorkflowStage, bid.DerivedStatus = domain.StageCancelled, domain.BidStatusCancelled
+		if err := svc.ReopenBid(context.Background(), "bid-1", execID); err != nil || repo.lastStage != domain.StageDiscovered {
+			t.Fatalf("expected a legacy cancelled tender to reopen at DISCOVERED, got stage=%s err=%v", repo.lastStage, err)
+		}
+
+		bid.WorkflowStage, bid.DerivedStatus = domain.StageDiscovered, domain.BidStatusActive
+		if err := svc.ReopenBid(context.Background(), "bid-1", execID); !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("expected ErrValidation reopening a live tender, got: %v", err)
+		}
+	})
+
 	t.Run("exempt roles bypass the gate for Cancel and Delete", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newBid()}
 		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
@@ -1516,4 +1574,19 @@ func TestGetPricingSuggestion(t *testing.T) {
 
 func (f *fakeBidRepo) ListPendingApprovalsFor(ctx context.Context, userID string) ([]domain.PendingApproval, error) {
 	return nil, nil
+}
+
+func TestValidateTenderLink(t *testing.T) {
+	for link, ok := range map[string]bool{
+		"": true, "  ": true, "https://gem.gov.in/bid/123": true, "http://eprocure.gov.in/x?a=1": true,
+		"javascript:alert(1)": false, "ftp://host/file": false, "gem.gov.in/bid": false, "https://": false,
+	} {
+		l := link
+		if err := validateTenderLink(&l); (err == nil) != ok {
+			t.Errorf("validateTenderLink(%q) err=%v, want ok=%v", link, err, ok)
+		}
+	}
+	if err := validateTenderLink(nil); err != nil {
+		t.Errorf("nil link should be valid, got %v", err)
+	}
 }

@@ -127,6 +127,9 @@ type BidService interface {
 	RecordOutcome(ctx context.Context, id string, req *RecordOutcomeRequest, actorID string, actorRoles []string) error
 	ArchiveBid(ctx context.Context, id string, actorID string, actorRoles []string) error
 	RestoreBid(ctx context.Context, id string, actorID string) error
+	// ReopenBid returns a Cancelled or Closed tender to the live pipeline at
+	// the stage it had reached.
+	ReopenBid(ctx context.Context, id string, actorID string) error
 	PermanentDeleteBid(ctx context.Context, id string, actorID string, actorRoles []string) error
 
 	// Bid-scoped checklists

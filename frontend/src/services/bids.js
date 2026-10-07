@@ -196,6 +196,13 @@ export async function recordBidOutcome(id, payload) {
   return { ok: res.ok, status: res.status, ...data }
 }
 
+// ── Reopen a Cancelled / Closed Bid ─────────────────────────────────────────
+export async function reopenBid(id) {
+  const res = await apiFetch(`${BASE}/bids/${id}/reopen`, { method: 'POST' })
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, ...data }
+}
+
 // ── Archive / Soft Delete Bid ───────────────────────────────────────────────
 export async function archiveBid(id) {
   const res = await apiFetch(`${BASE}/bids/${id}`, { method: 'DELETE' })

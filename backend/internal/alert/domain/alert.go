@@ -20,6 +20,10 @@ type Alert struct {
 	Link       string    `json:"link,omitempty"`
 	IsRead     bool      `json:"is_read"`
 	CreatedAt  time.Time `json:"created_at"`
+	// BidState is CANCELLED or CLOSED when the alert's tender has since left
+	// the pipeline (read-only, set by GetUserAlerts) — the alert body is a
+	// snapshot from when it was sent, so the inbox flags it as no longer live.
+	BidState string `json:"bid_state,omitempty"`
 }
 
 // TenderLink, StageLink and ApprovalLink build the deep links alerts carry —

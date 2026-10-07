@@ -18,6 +18,13 @@ const (
 	CategoryAccessControl = "ACCESS_CONTROL"
 	CategorySecurity      = "SECURITY"
 	CategoryConfiguration = "CONFIGURATION"
+
+	// Not written to auth.system_events — the System Logs feed reads these
+	// straight from the tables that already record them (see the
+	// repository's logSources).
+	CategoryTender   = "TENDER"
+	CategoryFeedback = "FEEDBACK"
+	CategoryLead     = "LEAD"
 )
 
 // Recorder lets other modules (user, bid) write a System Log entry without
@@ -58,6 +65,10 @@ type EventItem struct {
 	Summary    string          `json:"summary"`
 	Details    json.RawMessage `json:"details,omitempty"`
 	CreatedAt  time.Time       `json:"created_at"`
+	// Set on TENDER rows: the tender the action was performed on. BidID is
+	// nil once that tender has been permanently deleted.
+	BidID    *string `json:"bid_id,omitempty"`
+	BidTitle string  `json:"bid_title,omitempty"`
 }
 
 // ListQuery drives keyset ("cursor") pagination over the log, optionally
@@ -66,6 +77,7 @@ type ListQuery struct {
 	Limit    int
 	Cursor   string
 	Category string
+	ActorID  string
 }
 
 type Page struct {

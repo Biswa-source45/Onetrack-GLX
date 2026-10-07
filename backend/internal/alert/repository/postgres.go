@@ -35,10 +35,16 @@ func (r *postgresAlertRepo) CreateAlert(ctx context.Context, alert *domain.Alert
 
 func (r *postgresAlertRepo) GetUserAlerts(ctx context.Context, userID string, userRole string) ([]domain.Alert, error) {
 	query := `
-		SELECT id, user_id, target_role, bid_id, type, title, message, COALESCE(link, ''), is_read, created_at
-		FROM public.alerts
-		WHERE user_id = $1 OR target_role = $2 OR target_role = 'ALL'
-		ORDER BY created_at DESC
+		SELECT a.id, a.user_id, a.target_role, a.bid_id, a.type, a.title, a.message, COALESCE(a.link, ''), a.is_read, a.created_at,
+		       CASE
+		           WHEN b.bid_status = 'CANCELLED' OR b.workflow_stage = 'CANCELLED' OR b.bid_outcome = 'CANCELLED' THEN 'CANCELLED'
+		           WHEN b.bid_status = 'CLOSED' THEN 'CLOSED'
+		           ELSE ''
+		       END
+		FROM public.alerts a
+		LEFT JOIN bid.bid_workspaces b ON b.id = a.bid_id
+		WHERE a.user_id = $1 OR a.target_role = $2 OR a.target_role = 'ALL'
+		ORDER BY a.created_at DESC
 		LIMIT 100
 	`
 	rows, err := r.pool.Query(ctx, query, userID, userRole)
@@ -50,7 +56,7 @@ func (r *postgresAlertRepo) GetUserAlerts(ctx context.Context, userID string, us
 	var alerts []domain.Alert
 	for rows.Next() {
 		var a domain.Alert
-		if err := rows.Scan(&a.ID, &a.UserID, &a.TargetRole, &a.BidID, &a.Type, &a.Title, &a.Message, &a.Link, &a.IsRead, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.UserID, &a.TargetRole, &a.BidID, &a.Type, &a.Title, &a.Message, &a.Link, &a.IsRead, &a.CreatedAt, &a.BidState); err != nil {
 			return nil, fmt.Errorf("failed to scan alert: %w", err)
 		}
 		alerts = append(alerts, a)

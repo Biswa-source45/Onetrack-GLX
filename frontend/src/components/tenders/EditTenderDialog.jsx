@@ -24,6 +24,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FieldMemoryInput } from "@/components/ui/field-memory-input";
@@ -54,6 +55,14 @@ import {
 import { listUsers } from "../../services/users";
 import { usePermissions } from "../../hooks/usePermissions";
 import { RejectReasonDialog } from "./RejectReasonDialog";
+import {
+  BID_TYPES,
+  SCOPE_TYPES,
+  STANDARD_CATEGORY_OPTIONS,
+  STANDARD_PORTAL_SOURCES,
+  TENDER_LINK_ERROR,
+  isHttpUrl,
+} from "../../lib/tenderSpec";
 
 function useMacOSDialog(open, originX, originY) {
   const centerX = typeof window !== "undefined" ? window.innerWidth / 2 : 0;
@@ -69,20 +78,6 @@ function useMacOSDialog(open, originX, originY) {
     transition: { type: "spring", stiffness: 380, damping: 30, mass: 0.8 },
   };
 }
-
-const STANDARD_PORTAL_SOURCES = ["GeM", "Private", "RTC", "CPPP", "eProcure"];
-const BID_TYPES = ["BID", "BID_TO_RA"];
-const SCOPE_TYPES = ["Supply", "Implementation", "Support", "N/A"];
-const STANDARD_CATEGORY_OPTIONS = [
-  "End computing",
-  "IT infra",
-  "Non-IT infra",
-  "Security",
-  "Cloud",
-  "Surveillance",
-  "Software",
-  "Manpower-augmentation",
-];
 
 function safeDateStr(dt) {
   if (!dt) return "";
@@ -166,6 +161,7 @@ const FIELD_DIFF_LABELS = {
   bid_no: "RFP No.",
   gem_bid_no: "GeM Bid No.",
   portal_source: "Portal Source",
+  tender_link: "Tender Link",
   high_level_scope: "High-Level Scope",
   bg_rate: "BG Rate",
   duration_months: "Duration (months)",
@@ -234,6 +230,7 @@ export function EditTenderDialog({
     department_name: "",
     location: "",
     portal_source: "GeM",
+    tender_link: "",
     bid_type: "BID",
     category: "",
     scope_type: "Supply",
@@ -350,6 +347,7 @@ export function EditTenderDialog({
             department_name: b.department_name || "",
             location: b.location || "",
             portal_source: b.portal_source || "GeM",
+            tender_link: b.tender_link || "",
             bid_type: b.bid_type || "BID",
             category: b.category || "",
             scope_type: b.scope_type || "Supply",
@@ -431,6 +429,7 @@ export function EditTenderDialog({
         department_name: bid.department_name || "",
         location: bid.location || "",
         portal_source: bid.portal_source || "GeM",
+        tender_link: bid.tender_link || "",
         bid_type: bid.bid_type || "BID",
         category: bid.category || "",
         scope_type: bid.scope_type || "Supply",
@@ -595,6 +594,8 @@ export function EditTenderDialog({
     const e = {};
     if (!form.title.trim()) e.title = "Tender title is required";
     if (!form.bid_owner_id) e.bid_owner_id = "Bid owner is required";
+    if (form.tender_link.trim() && !isHttpUrl(form.tender_link.trim()))
+      e.tender_link = TENDER_LINK_ERROR;
     // Account Manager is non-mandatory in Edit Tender
     // EMD is raw data off the tender document (mirrors AddTenderPage): Online,
     // DD, and exemption criteria are independent — tick whichever the
@@ -645,6 +646,7 @@ export function EditTenderDialog({
 
       const payload = {
         ...form,
+        tender_link: form.tender_link.trim(),
         quantity: form.quantity ? Number(form.quantity) : null,
         estimated_value: form.estimated_value
           ? Number(form.estimated_value)
@@ -887,6 +889,15 @@ export function EditTenderDialog({
                               onChange={(v) => set("portal_source", v)}
                               placeholder="GeM, Private, RTC, CPPP, eProcure, or type your own"
                               className={inputCls()}
+                            />
+                          </Field>
+                          <Field label="Tender Link" error={errors.tender_link}>
+                            <Input
+                              type="url"
+                              value={form.tender_link}
+                              onChange={(e) => set("tender_link", e.target.value)}
+                              placeholder="https://bidplus.gem.gov.in/..."
+                              className={inputCls(errors.tender_link)}
                             />
                           </Field>
                           <Field label="Bid Type">
@@ -1135,21 +1146,7 @@ export function EditTenderDialog({
                           </Field>
 
                           <label className="flex items-center gap-2 cursor-pointer pt-1">
-                            <div
-                              onClick={() =>
-                                set(
-                                  "emd_not_applicable",
-                                  !form.emd_not_applicable,
-                                )
-                              }
-                              className={`w-8 h-4 rounded-full transition-colors relative cursor-pointer
-                          ${form.emd_not_applicable ? "bg-primary" : "bg-muted-foreground/30"}`}
-                            >
-                              <span
-                                className={`absolute top-0.5 size-3 rounded-full bg-white shadow transition-transform
-                          ${form.emd_not_applicable ? "translate-x-4" : "translate-x-0.5"}`}
-                              />
-                            </div>
+                            <Switch checked={form.emd_not_applicable} onCheckedChange={(v) => set("emd_not_applicable", v)} />
                             <span className="text-xs text-muted-foreground">
                               No EMD
                             </span>
@@ -1162,18 +1159,7 @@ export function EditTenderDialog({
                             </Label>
                             <div className="flex items-center gap-3 h-8">
                               <label className="flex items-center gap-2 cursor-pointer select-none">
-                                <div
-                                  onClick={() =>
-                                    set("bg_required", !form.bg_required)
-                                  }
-                                  className={`w-8 h-4 rounded-full transition-colors relative cursor-pointer
-                              ${form.bg_required ? "bg-primary" : "bg-muted-foreground/30"}`}
-                                >
-                                  <span
-                                    className={`absolute top-0.5 size-3 rounded-full bg-white shadow transition-transform
-                              ${form.bg_required ? "translate-x-4" : "translate-x-0.5"}`}
-                                  />
-                                </div>
+                                <Switch checked={form.bg_required} onCheckedChange={(v) => set("bg_required", v)} />
                                 <span className="text-xs text-muted-foreground">
                                   BG Required
                                 </span>

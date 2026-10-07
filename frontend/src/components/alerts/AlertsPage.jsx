@@ -151,7 +151,7 @@ export function AlertsPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.03 }}
               onClick={() => handleAlertClick(alert)}
-              className={`rounded-xl border p-4 transition-all ${alert.bid_id ? 'cursor-pointer hover:border-primary/40' : ''} ${
+              className={`rounded-xl border p-4 transition-all ${alert.bid_id || alert.link ? 'cursor-pointer hover:border-primary/40' : ''} ${
                 !alert.is_read
                   ? 'bg-card border-primary/30 shadow-xs ring-1 ring-primary/10'
                   : 'bg-card/50 border-border opacity-80'
@@ -172,6 +172,14 @@ export function AlertsPage() {
                         <span className="size-2 rounded-full bg-primary" title="Unread notification" />
                       )}
                     </div>
+                    {/* The body below is a snapshot from when the alert was
+                        sent — say so once its tender has left the pipeline,
+                        or stale pricing/margin figures read as current. */}
+                    {alert.bid_state && (
+                      <p className="text-xs font-semibold text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-md px-2.5 py-1.5">
+                        This tender has since been {alert.bid_state === 'CLOSED' ? 'closed' : 'cancelled'} — the figures below are from when this alert was sent and are no longer live.
+                      </p>
+                    )}
                     {alert.message?.includes('<') ? (
                       <div 
                         className="text-sm text-foreground leading-relaxed overflow-x-auto my-1" 

@@ -31,7 +31,7 @@ import { getTenderPerformanceMatrix, listAllBids } from '../../services/bids'
 import { tokenStorage } from '../../services/auth'
 import { usePermissions } from '../../hooks/usePermissions'
 import { formatCurrency } from '../../lib/tenderFormat'
-import { getEffectiveStage, isParticipated, computePipelineSummary } from '../../lib/pipelineMetrics'
+import { getEffectiveStage, isParticipated, computePipelineSummary, tenderValue } from '../../lib/pipelineMetrics'
 import { openMasterSheetDrill } from '../../lib/masterSheetDrill'
 import { dimOtherSlices } from '../../lib/chartUtils'
 import { PipelineKpiBand } from './PipelineKpiBand'
@@ -308,7 +308,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
       // and never updated, while final_bid_value/quoted_price reflect what
       // was actually submitted or awarded, so leading with the estimate
       // (as this previously did) skewed every valuation total.
-      const val = Number(b.final_bid_value || b.quoted_price || b.estimated_value || 0)
+      const val = tenderValue(b)
       totalVal += val
       if (b.workflow_stage === 'LOST' || b.bid_status === 'LOST' || b.bid_outcome === 'LOST') lostVal += val
 
@@ -436,7 +436,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
         client: b.organization_name || 'Unspecified Org',
         category: b.category || '—',
         scope: b.title || '—',
-        value: Number(b.final_bid_value || b.quoted_price || b.estimated_value || 0),
+        value: tenderValue(b),
         stageKey: b.workflow_stage || 'DISCOVERED',
         submission: b.submission_status || (b.submission_done ? 'Submitted' : 'Not Submitted'),
         techEval: evalLabel(b.technical_result, 'TECHNICAL_EVALUATION', b.workflow_stage),
@@ -462,7 +462,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
   // Single User Analytics Derived Details
   const userDetailedStats = useMemo(() => {
     if (!selectedUser) return null
-    const bidValue = (b) => Number(b.final_bid_value || b.quoted_price || b.estimated_value || 0)
+    const bidValue = tenderValue
     const userTotalVal = userOwnedBids.reduce((acc, b) => acc + bidValue(b), 0)
     const userWonVal = userOwnedBids
       .filter(b => b.workflow_stage === 'WON' || b.bid_status === 'WON' || b.bid_outcome === 'WON')
@@ -726,7 +726,7 @@ export function AnalyticsPage({ defaultTab = 'tender-analytics' }) {
                 label="Submitted Pipeline ₹"
                 value={formatCurrency(pipelineSummary.submittedPipelineValue)}
                 tone="brightBlue"
-                explain="Cumulative value of every tender we actually filed a bid for, regardless of the outcome — so it can exceed Total Pipeline (it includes bids later lost or cancelled). Click to see the tenders."
+                explain="Cumulative value of every tender we actually filed a bid for, regardless of the outcome — so it can exceed Total Pipeline (it includes bids later lost; cancelled tenders are excluded). Click to see the tenders."
                 onClick={() => openMasterSheetDrill(navigate, { title: 'Submitted Pipeline', subtitle: 'Every tender we actually filed a bid for', bids: pipelineSummary.submittedBidsList })}
               />
               <PipelineKpiBand

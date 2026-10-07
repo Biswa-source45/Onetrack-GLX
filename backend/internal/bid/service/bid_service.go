@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"math"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -328,7 +330,24 @@ func (s *bidService) ensureIdentifierFree(ctx context.Context, identifier *strin
 	return nil
 }
 
+// validateTenderLink accepts empty (no link / clearing it) or an absolute
+// http(s) URL — the link is rendered as a clickable href, so javascript: and
+// other schemes must never get through.
+func validateTenderLink(link *string) error {
+	if link == nil || strings.TrimSpace(*link) == "" {
+		return nil
+	}
+	u, err := url.Parse(strings.TrimSpace(*link))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("%w: tender_link must be a valid http(s) URL", domain.ErrValidation)
+	}
+	return nil
+}
+
 func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest, createdBy string) (*domain.BidResponse, error) {
+	if err := validateTenderLink(req.TenderLink); err != nil {
+		return nil, err
+	}
 	emdExempted := req.EMDExempted != nil && *req.EMDExempted
 	emdNotApplicable := req.EMDNotApplicable != nil && *req.EMDNotApplicable
 	if err := validateEMDMutualExclusivity(emdExempted, emdNotApplicable); err != nil {
@@ -434,6 +453,7 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 	if req.HighLevelScope != nil {
 		params.HighLevelScope = req.HighLevelScope
 	}
+	params.TenderLink = req.TenderLink
 	if req.Authority != nil {
 		params.Authority = req.Authority
 	}
@@ -834,6 +854,9 @@ func needsRMApproval(bid *domain.BidWorkspace, actorID string, actorRoles []stri
 // (stage-workspace saves, non-executive edits, tenders with no Reporting
 // Manager to route to) goes straight through, unchanged from before.
 func (s *bidService) UpdateBid(ctx context.Context, id string, req *domain.UpdateBidRequest, actorID string, actorRoles []string) error {
+	if err := validateTenderLink(req.TenderLink); err != nil {
+		return err
+	}
 	if req.FullEditSubmission && hasAnyRole(actorRoles, "BID_EXECUTIVE") && !hasAnyRole(actorRoles, exemptFromEditApproval...) {
 		bid, err := s.repo.GetByID(ctx, id)
 		if err != nil {
@@ -1375,7 +1398,7 @@ var fieldLabels = map[string]string{
 	"emd_amount": "EMD Amount", "quantity": "Quantity", "bid_owner_id": "Bid Owner",
 	"account_manager_id": "Account Manager", "reporting_manager_id": "Reporting Manager",
 	"presales_id": "Pre-Sales", "bid_no": "RFP No.", "gem_bid_no": "GeM Bid No.",
-	"portal_source": "Portal Source", "high_level_scope": "High-Level Scope", "bg_rate": "BG Rate",
+	"portal_source": "Portal Source", "high_level_scope": "High-Level Scope", "tender_link": "Tender Link", "bg_rate": "BG Rate",
 	"duration_months": "Duration (months)", "start_date": "Start Date", "end_date": "End Date",
 }
 
@@ -1425,6 +1448,7 @@ func diffRequestFields(orig, final *domain.UpdateBidRequest) []domain.FieldDiff 
 	diffField(&diffs, "gem_bid_no", derefStr(orig.GemBidNo), final.GemBidNo, fmtStrDiff)
 	diffField(&diffs, "portal_source", derefStr(orig.PortalSource), final.PortalSource, fmtStrDiff)
 	diffField(&diffs, "high_level_scope", derefStr(orig.HighLevelScope), final.HighLevelScope, fmtStrDiff)
+	diffField(&diffs, "tender_link", derefStr(orig.TenderLink), final.TenderLink, fmtStrDiff)
 	diffField(&diffs, "bg_rate", derefFloat(orig.BGRate), final.BGRate, fmtFloatDiff)
 	diffField(&diffs, "duration_months", derefInt(orig.DurationMonths), final.DurationMonths, fmtIntDiff)
 	diffField(&diffs, "start_date", derefStr(orig.StartDate), final.StartDate, fmtStrDiff)
@@ -1510,8 +1534,11 @@ func (s *bidService) submitPendingEdit(ctx context.Context, bid *domain.BidWorks
 // submitPendingCancel holds a Bid Executive's tender cancellation for this
 // tender's Reporting Manager instead of applying it immediately. Called
 // from RecordOutcome and TransitionStage once the gate applies.
-func (s *bidService) submitPendingCancel(ctx context.Context, bid *domain.BidWorkspace, reason string, actorID string) error {
-	payload, err := json.Marshal(map[string]string{"outcome_reason": reason})
+//
+// outcome is CANCELLED or CLOSED — closing rides the same CANCEL action type
+// and gate, with the outcome carried in the payload.
+func (s *bidService) submitPendingCancel(ctx context.Context, bid *domain.BidWorkspace, outcome string, reason string, actorID string) error {
+	payload, err := json.Marshal(map[string]string{"outcome": outcome, "outcome_reason": reason})
 	if err != nil {
 		return fmt.Errorf("marshal cancel payload: %w", err)
 	}
@@ -1520,15 +1547,40 @@ func (s *bidService) submitPendingCancel(ctx context.Context, bid *domain.BidWor
 	if requester != nil && requester.FullName != "" {
 		requesterName = requester.FullName
 	}
-	message := fmt.Sprintf("<p>%s wants to cancel tender '%s'.</p>", requesterName, bid.Title)
+	verb, noun := closeOrCancelWords(outcome)
+	message := fmt.Sprintf("<p>%s wants to %s tender '%s'.</p>", requesterName, verb, bid.Title)
 	if strings.TrimSpace(reason) != "" {
-		message += fmt.Sprintf(`<p style="margin-top:12px;color:#475569;">Reason: %s</p>`, reason)
+		message += fmt.Sprintf(`<p style="margin-top:12px;color:#475569;">Reason: %s</p>`, html.EscapeString(reason))
 	}
 	return s.submitPendingAction(ctx, bid, actorID, domain.ActionTypeCancel, payload, nil,
 		"TENDER_CANCEL_PENDING_APPROVAL",
-		fmt.Sprintf("Cancellation awaiting your approval: %s", bid.Title),
+		fmt.Sprintf("%s awaiting your approval: %s", noun, bid.Title),
 		message,
 	)
+}
+
+// closeOrCancelWords picks the wording for a pending CANCEL action's alerts.
+func closeOrCancelWords(outcome string) (verb, noun string) {
+	if outcome == domain.BidStatusClosed {
+		return "close", "Closure"
+	}
+	return "cancel", "Cancellation"
+}
+
+// cancelPayload is a pending CANCEL action's stored payload. Outcome is empty
+// on rows written before closing existed — those were all cancellations.
+type cancelPayload struct {
+	Outcome       string `json:"outcome"`
+	OutcomeReason string `json:"outcome_reason"`
+}
+
+func parseCancelPayload(raw []byte) cancelPayload {
+	var p cancelPayload
+	_ = json.Unmarshal(raw, &p)
+	if p.Outcome != domain.BidStatusClosed {
+		p.Outcome = domain.BidStatusCancelled
+	}
+	return p
 }
 
 // submitPendingDelete holds a Bid Executive's tender deletion — soft ("move
@@ -1655,17 +1707,14 @@ func (s *bidService) ApprovePendingEdit(ctx context.Context, editID string, fina
 // records the CANCELLED outcome with the executive's original reason,
 // attributed to the requester — and notifies them.
 func (s *bidService) approvePendingCancel(ctx context.Context, edit *domain.TenderEditApproval, comment string, actorID string) error {
-	var payload struct {
-		OutcomeReason string `json:"outcome_reason"`
-	}
-	_ = json.Unmarshal(edit.Payload, &payload)
+	payload := parseCancelPayload(edit.Payload)
 
 	if err := s.repo.UpdateOutcome(ctx, edit.BidID, &domain.RecordOutcomeRequest{
-		BidOutcome: domain.BidStatusCancelled, OutcomeReason: &payload.OutcomeReason,
+		BidOutcome: payload.Outcome, OutcomeReason: &payload.OutcomeReason,
 	}); err != nil {
 		return err
 	}
-	s.logAction(ctx, edit.BidID, edit.BidTitle, "OUTCOME_RECORDED", edit.RequestedBy.ID, "Outcome recorded: CANCELLED")
+	s.logAction(ctx, edit.BidID, edit.BidTitle, "OUTCOME_RECORDED", edit.RequestedBy.ID, outcomeLogText(payload.Outcome, &payload.OutcomeReason))
 
 	if err := s.repo.DecidePendingEdit(ctx, edit.ID, domain.EditApprovalApproved, edit.Payload, nil, comment, actorID); err != nil {
 		return err
@@ -1673,14 +1722,15 @@ func (s *bidService) approvePendingCancel(ctx context.Context, edit *domain.Tend
 
 	if s.alertSvc != nil {
 		approverName := approverDisplayName(s, ctx, actorID)
-		message := fmt.Sprintf("<p>%s approved cancelling tender '%s'.</p>", approverName, edit.BidTitle)
+		verb, noun := closeOrCancelWords(payload.Outcome)
+		message := fmt.Sprintf("<p>%s approved the request to %s tender '%s'.</p>", approverName, verb, edit.BidTitle)
 		if strings.TrimSpace(comment) != "" {
 			message += fmt.Sprintf(`<p style="margin-top:12px;color:#475569;">Comment: %s</p>`, comment)
 		}
 		requesterID := edit.RequestedBy.ID
 		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
 			UserID: &requesterID, BidID: &edit.BidID, CreatedBy: &actorID,
-			Type: "TENDER_CANCEL_APPROVED", Title: fmt.Sprintf("Cancellation approved: %s", edit.BidTitle), Message: message,
+			Type: "TENDER_CANCEL_APPROVED", Title: fmt.Sprintf("%s approved: %s", noun, edit.BidTitle), Message: message,
 		})
 	}
 	return nil
@@ -1766,8 +1816,9 @@ func (s *bidService) RejectPendingEdit(ctx context.Context, editID string, comme
 		var message, title string
 		switch edit.ActionType {
 		case domain.ActionTypeCancel:
-			message = fmt.Sprintf("<p>%s did not approve cancelling tender '%s'.</p>", approverName, edit.BidTitle)
-			title = fmt.Sprintf("Cancellation not approved: %s", edit.BidTitle)
+			verb, noun := closeOrCancelWords(parseCancelPayload(edit.Payload).Outcome)
+			message = fmt.Sprintf("<p>%s did not approve the request to %s tender '%s'.</p>", approverName, verb, edit.BidTitle)
+			title = fmt.Sprintf("%s not approved: %s", noun, edit.BidTitle)
 		case domain.ActionTypeDelete:
 			message = fmt.Sprintf("<p>%s did not approve deleting tender '%s'.</p>", approverName, edit.BidTitle)
 			title = fmt.Sprintf("Deletion not approved: %s", edit.BidTitle)
@@ -1855,7 +1906,7 @@ func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain
 		if req.Reason != nil {
 			reason = *req.Reason
 		}
-		return nil, s.submitPendingCancel(ctx, bid, reason, actorID)
+		return nil, s.submitPendingCancel(ctx, bid, domain.BidStatusCancelled, reason, actorID)
 	}
 
 	// Determine bid_status update
@@ -2066,17 +2117,66 @@ func (s *bidService) RecordOutcome(ctx context.Context, id string, req *domain.R
 	// Cancelling is Edit's equal in severity — hold it for the same
 	// Reporting Manager gate instead of letting a Bid Executive route around
 	// Edit approval just by using a different button.
-	if req.BidOutcome == domain.BidStatusCancelled && needsRMApproval(bid, actorID, actorRoles) {
+	// Closing takes a tender out of the pipeline just the same, so it shares
+	// the gate — and both need a reason, since the reason is what the tender
+	// page shows for why it left the pipeline.
+	if req.BidOutcome == domain.BidStatusCancelled || req.BidOutcome == domain.BidStatusClosed {
 		reason := ""
 		if req.OutcomeReason != nil {
-			reason = *req.OutcomeReason
+			reason = strings.TrimSpace(*req.OutcomeReason)
 		}
-		return s.submitPendingCancel(ctx, bid, reason, actorID)
+		if reason == "" {
+			return fmt.Errorf("%w: a reason is required to close or cancel a tender", domain.ErrValidation)
+		}
+		req.OutcomeReason = &reason
+		if needsRMApproval(bid, actorID, actorRoles) {
+			return s.submitPendingCancel(ctx, bid, req.BidOutcome, reason, actorID)
+		}
 	}
 	if err := s.repo.UpdateOutcome(ctx, id, req); err != nil {
 		return err
 	}
-	s.logAction(ctx, id, bid.Title, "OUTCOME_RECORDED", actorID, "Outcome recorded: "+req.BidOutcome)
+	s.logAction(ctx, id, bid.Title, "OUTCOME_RECORDED", actorID, outcomeLogText(req.BidOutcome, req.OutcomeReason))
+	return nil
+}
+
+// outcomeLogText is the Action Ledger line for a recorded outcome — carries
+// the reason, so "why was this closed" survives a later reopen (which clears
+// the tender's own outcome_reason).
+func outcomeLogText(outcome string, reason *string) string {
+	text := "Outcome recorded: " + outcome
+	if reason != nil && strings.TrimSpace(*reason) != "" {
+		text += " — " + strings.TrimSpace(*reason)
+	}
+	return text
+}
+
+// ReopenBid undoes a Cancel or Close: the tender goes back to ACTIVE at the
+// stage it had reached, and its outcome/reason are cleared (UpdateStage does
+// both for an ACTIVE status).
+func (s *bidService) ReopenBid(ctx context.Context, id string, actorID string) error {
+	bid, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if bid.DerivedStatus != domain.BidStatusCancelled && bid.DerivedStatus != domain.BidStatusClosed {
+		return fmt.Errorf("%w: only a cancelled or closed tender can be reopened", domain.ErrValidation)
+	}
+	stage := bid.WorkflowStage
+	// ponytail: tenders cancelled through the old stage-transition path had
+	// their stage overwritten with CANCELLED, so the stage they reached is
+	// gone — they restart at DISCOVERED. Read bid_stage_history's from_stage
+	// if that ever matters.
+	if stage == domain.StageCancelled || stage == "" {
+		stage = domain.StageDiscovered
+	}
+	if err := s.checkStageAccess(ctx, actorID, stage); err != nil {
+		return err
+	}
+	if err := s.repo.UpdateStage(ctx, id, stage, domain.BidStatusActive); err != nil {
+		return err
+	}
+	s.logAction(ctx, id, bid.Title, "TENDER_REOPENED", actorID, "Reopened — was "+bid.DerivedStatus)
 	return nil
 }
 
@@ -2219,6 +2319,7 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, repor
 		DurationMonths:            bid.DurationMonths,
 		Authority:                 bid.Authority,
 		HighLevelScope:            bid.HighLevelScope,
+		TenderLink:                bid.TenderLink,
 		BGRequired:                bid.BGRequired,
 		BGRate:                    bid.BGRate,
 		Category:                  bid.Category,
@@ -2352,6 +2453,7 @@ func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary, accou
 		StartDate:                 bid.StartDate,
 		EndDate:                   bid.EndDate,
 		HighLevelScope:            bid.HighLevelScope,
+		TenderLink:                bid.TenderLink,
 		OEMRequired:               bid.OEMRequired,
 		BidOwner:                  *owner,
 		AccountManager:            accountManager,
@@ -2516,6 +2618,7 @@ func diffBidFields(bid *domain.BidWorkspace, req *domain.UpdateBidRequest) []dom
 	diffField(&diffs, "gem_bid_no", derefStr(bid.GemBidNo), req.GemBidNo, fmtStrDiff)
 	diffField(&diffs, "portal_source", bid.PortalSource, req.PortalSource, fmtStrDiff)
 	diffField(&diffs, "high_level_scope", derefStr(bid.HighLevelScope), req.HighLevelScope, fmtStrDiff)
+	diffField(&diffs, "tender_link", derefStr(bid.TenderLink), req.TenderLink, fmtStrDiff)
 	diffField(&diffs, "bg_rate", derefFloat(bid.BGRate), req.BGRate, fmtFloatDiff)
 	diffField(&diffs, "duration_months", derefInt(bid.DurationMonths), req.DurationMonths, fmtIntDiff)
 	// ponytail: dates need their own compare (bid stores time.Time, the

@@ -445,10 +445,31 @@ func (h *BidHandler) RecordOutcome(c *gin.Context) {
 			response.Forbidden(c, err.Error())
 			return
 		}
+		if errors.Is(err, domain.ErrValidation) {
+			response.BadRequest(c, err.Error(), nil)
+			return
+		}
 		response.NotFound(c, "Bid not found")
 		return
 	}
 	response.Success(c, http.StatusOK, "Bid outcome recorded", nil)
+}
+
+// ReopenBid returns a Cancelled or Closed tender to the live pipeline.
+func (h *BidHandler) ReopenBid(c *gin.Context) {
+	if err := h.svc.ReopenBid(c.Request.Context(), c.Param("id"), c.GetString("user_id")); err != nil {
+		if errors.Is(err, domain.ErrForbidden) {
+			response.Forbidden(c, err.Error())
+			return
+		}
+		if errors.Is(err, domain.ErrValidation) {
+			response.BadRequest(c, err.Error(), nil)
+			return
+		}
+		response.NotFound(c, "Bid not found")
+		return
+	}
+	response.Success(c, http.StatusOK, "Tender reopened", nil)
 }
 
 func (h *BidHandler) ArchiveBid(c *gin.Context) {

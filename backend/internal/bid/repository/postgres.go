@@ -53,7 +53,7 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 			bid_result, ai_source_document_id, ai_extraction_confidence, stage_completions,
 			emd_not_applicable,
 			account_manager_id, presales_id, location, bg_duration_months, requested_products,
-			emd_exemption_types, alert_note
+			emd_exemption_types, alert_note, tender_link
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9,
@@ -70,7 +70,7 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 			$42, $43, $44, $45, $46, $47, $48, '{"DISCOVERED": true}'::jsonb,
 			$49,
 			$52, $53, $54, $55, $56,
-			$57, $58
+			$57, $58, $59
 		) RETURNING id
 	`
 	var id string
@@ -92,7 +92,7 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 		params.EMDNotApplicable,
 		params.Quantity, params.OurRank,
 		params.AccountManagerID, params.PresalesID, params.Location, params.BGDurationMonths, params.RequestedProducts,
-		params.EMDExemptionTypes, params.AlertNote,
+		params.EMDExemptionTypes, params.AlertNote, params.TenderLink,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("failed to create bid: %w", err)
@@ -161,7 +161,7 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 		       emd_ready_date, delivery_complete, delivery_complete_date,
 		       emd_not_applicable,
 		       account_manager_id, presales_id, location, bg_duration_months,
-		       requested_products, primary_review, alert_note,
+		       requested_products, primary_review, alert_note, tender_link,
 		       ` + derivedStatusExpr + ` AS derived_status
 		FROM bid.bid_workspaces b
 		WHERE b.id = $1
@@ -387,7 +387,7 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		       b.emd_ready_date, b.delivery_complete, b.delivery_complete_date,
 		       b.emd_not_applicable,
 		       b.account_manager_id, b.presales_id, b.location, b.bg_duration_months,
-		       b.requested_products, b.primary_review, b.alert_note,
+		       b.requested_products, b.primary_review, b.alert_note, b.tender_link,
 		       ` + derivedStatusExpr + ` AS derived_status
 		FROM bid.bid_workspaces b
 		LEFT JOIN auth.users u ON b.bid_owner_id = u.id
@@ -532,6 +532,9 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	}
 	if req.HighLevelScope != nil {
 		addSet("high_level_scope", *req.HighLevelScope)
+	}
+	if req.TenderLink != nil {
+		addSet("tender_link", *req.TenderLink)
 	}
 	if req.Authority != nil {
 		addSet("authority", *req.Authority)
@@ -789,7 +792,7 @@ func (r *postgresBidRepo) UpdateStage(ctx context.Context, id string, stage stri
 	var err error
 	if status == "ACTIVE" {
 		_, err = r.pool.Exec(ctx,
-			"UPDATE bid.bid_workspaces SET workflow_stage = $1, bid_status = $2, bid_outcome = NULL, updated_at = NOW() WHERE id = $3",
+			"UPDATE bid.bid_workspaces SET workflow_stage = $1, bid_status = $2, bid_outcome = NULL, outcome_reason = NULL, updated_at = NOW() WHERE id = $3",
 			stage, status, id,
 		)
 	} else {
@@ -1295,7 +1298,7 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 		&b.EMDReadyDate, &b.DeliveryComplete, &b.DeliveryCompleteDate,
 		&b.EMDNotApplicable,
 		&b.AccountManagerID, &b.PresalesID, &b.Location, &b.BGDurationMonths,
-		&b.RequestedProducts, &b.PrimaryReview, &b.AlertNote,
+		&b.RequestedProducts, &b.PrimaryReview, &b.AlertNote, &b.TenderLink,
 		&b.DerivedStatus,
 	)
 	if err != nil {
@@ -1393,6 +1396,9 @@ func (r *postgresBidRepo) GetTenderPerformanceMatrix(ctx context.Context, ownerI
 					OR b.workflow_stage IN ('GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER')
 					OR b.submission_status = 'SUBMITTED'
 					OR b.bid_status = 'SUBMITTED')
+					-- A cancelled tender is out of the pipeline, submitted or not.
+					AND b.bid_status <> 'CANCELLED'
+					AND COALESCE(b.bid_outcome, '') <> 'CANCELLED'
 			)                                                AS submitted,
 			COUNT(*) FILTER (
 				WHERE b.workflow_stage = 'TECHNICAL_EVALUATION'
@@ -1671,6 +1677,7 @@ func (r *postgresBidRepo) ListPendingApprovalsFor(ctx context.Context, userID st
 		SELECT b.id::text, b.title, b.gem_bid_no, 'PRICING', COALESCE(b.pricing_workspace->>'requestedByName', ''), b.updated_at
 		FROM bid.bid_workspaces b
 		WHERE b.archived_at IS NULL
+		  AND b.bid_status NOT IN ('WON', 'LOST', 'CANCELLED', 'CLOSED', 'ARCHIVED')
 		  AND b.pricing_workspace->>'approvalStatus' = 'PENDING'
 		  AND b.pricing_workspace->>'approverId' = $1
 		UNION ALL
@@ -1678,7 +1685,7 @@ func (r *postgresBidRepo) ListPendingApprovalsFor(ctx context.Context, userID st
 		FROM bid.bid_workspaces b
 		WHERE b.archived_at IS NULL
 		  AND b.workflow_stage = 'INTERNAL_APPROVAL'
-		  AND b.bid_status NOT IN ('WON', 'LOST', 'CANCELLED', 'ARCHIVED')
+		  AND b.bid_status NOT IN ('WON', 'LOST', 'CANCELLED', 'CLOSED', 'ARCHIVED')
 		  AND COALESCE(b.stage_completions->>'INTERNAL_APPROVAL', 'false') <> 'true'
 		  AND (b.account_manager_id::text = $1 OR b.reporting_manager_id::text = $1)
 		  AND NOT EXISTS (
