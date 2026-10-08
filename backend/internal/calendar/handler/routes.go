@@ -33,6 +33,7 @@ func RegisterCalendarRoutes(
 		cal.POST("/:id/google-sync", adminOnly, h.ConfigureGoogleIntegration)
 		cal.POST("/:id/google-sync/trigger", adminOnly, h.TriggerGoogleSync)
 		cal.POST("/evaluate-deadlines", adminOnly, h.EvaluateDeadlines)
+		cal.GET("/engine-status", adminOnly, h.GetEngineStatus)
 	}
 
 	// Tender-scoped deadline endpoints (both /bids and /tenders prefixes).

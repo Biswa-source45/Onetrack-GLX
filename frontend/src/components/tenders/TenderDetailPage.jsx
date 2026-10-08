@@ -2479,13 +2479,16 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
             : 72
           const targetUnit = (bid.deadline_target_unit || 'HOURS').toUpperCase()
 
-          // HOURS count 24 per working day (72h = 3 working days); DAYS are working days.
-          const fmtNum = (n) => String(Math.round(n * 10) / 10)
-          const targetDays = targetUnit === 'DAYS' ? targetVal : targetVal / 24
-          const thresholdLabel = `${fmtNum(targetDays)} working ${targetDays === 1 ? 'day' : 'days'}${targetUnit === 'HOURS' ? ` (${fmtNum(targetVal)}h)` : ''}`
-
           // A working day is as long as the calendar says (default 09:00-18:00), not 24h.
           const dayHours = Number(bid.deadline_working_day_hours) || 9
+          // HOURS count 24 per working day (72h = 3 working days); DAYS are working days;
+          // SECONDS/MINUTES are real working time inside the working window.
+          const fmtNum = (n) => String(Math.round(n * 10) / 10)
+          const targetDays = { DAYS: targetVal, HOURS: targetVal / 24, MINUTES: targetVal / 60 / dayHours, SECONDS: targetVal / 3600 / dayHours }[targetUnit] ?? targetVal / 24
+          const plural = (n, w) => `${fmtNum(n)} working ${w}${n === 1 ? '' : 's'}`
+          const thresholdLabel = targetUnit === 'SECONDS' ? plural(targetVal, 'second')
+            : targetUnit === 'MINUTES' ? plural(targetVal, 'minute')
+              : `${plural(targetDays, 'day')}${targetUnit === 'HOURS' ? ` (${fmtNum(targetVal)}h)` : ''}`
           const remDays = bid.deadline_remaining_working_days !== undefined && bid.deadline_remaining_working_days !== null
             ? Number(bid.deadline_remaining_working_days)
             : (remHours !== null ? remHours / dayHours : null)
@@ -2610,13 +2613,15 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                           }`}>
                             {isClosed
                               ? '0.0 days'
-                              : remHours < 1.0
-                                ? `${Math.max(0, Math.round(remHours * 60))} min`
-                                : `${remDays.toFixed(1)} days`}
+                              : remHours * 60 < 1.0
+                                ? `${Math.max(0, Math.round(remHours * 3600))} sec`
+                                : remHours < 1.0
+                                  ? `${Math.max(0, Math.round(remHours * 60))} min`
+                                  : `${remDays.toFixed(1)} days`}
                           </span>
                           {!isClosed && (
                             <span className="text-[11px] font-medium text-muted-foreground">
-                              {remHours < 1.0 ? `(${Math.max(0, Math.round(remHours * 3600))}s)` : `(${remHours.toFixed(1)}h)`}
+                              {remHours * 60 < 1.0 ? '' : remHours < 1.0 ? `(${Math.max(0, Math.round(remHours * 3600))}s)` : `(${remHours.toFixed(1)}h)`}
                             </span>
                           )}
                         </div>

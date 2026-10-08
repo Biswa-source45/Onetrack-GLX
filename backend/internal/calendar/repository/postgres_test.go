@@ -20,3 +20,28 @@ func TestCandidateSelectExcludesSubmittedAndResolvedTenders(t *testing.T) {
 		assert.True(t, strings.Contains(candidateSelect, want), "candidateSelect must contain %s", want)
 	}
 }
+
+// Coverage must classify tenders with the very same rule the engine selects by,
+// so its in_window bucket is always exactly the candidate count.
+func TestCoverageUsesTheEngineEligibilityRule(t *testing.T) {
+	assert.Contains(t, candidateSelect, eligibleCond)
+	assert.Contains(t, coverageSelect, eligibleCond)
+
+	for _, want := range []string{
+		"FROM bid.bid_workspaces b",
+		"b.bid_status = 'ACTIVE' AND b.archived_at IS NULL",
+		"COALESCE(b.closing_date, b.end_date)",
+		"COUNT(*) FILTER (WHERE closes IS NULL)",    // no_closing_date
+		"COUNT(*) FILTER (WHERE closes <= $1)",      // already_closed
+		"closes > $1 AND NOT eligible",              // submitted_or_resolved
+		"closes > $2 AND eligible",                  // beyond_window
+		"closes > $1 AND closes <= $2 AND eligible", // in_window, same (from, to] bounds as the candidate query
+		"COALESCE(", // a NULL column counts as ineligible instead of dropping out of every bucket
+	} {
+		assert.Contains(t, coverageSelect, want)
+	}
+}
+
+func TestCandidateSelectJoinsOnlyAnActiveReportingManager(t *testing.T) {
+	assert.Contains(t, candidateSelect, "LEFT JOIN auth.users m ON m.id = b.reporting_manager_id AND m.is_active = true")
+}

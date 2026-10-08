@@ -25,7 +25,8 @@ func NewPostgresCalendarRepository(db *pgxpool.Pool) domain.WorkingCalendarRepos
 const calendarCols = `id, name, description, is_default, timezone, working_start_time, working_end_time,
 	saturday_1_working, saturday_2_working, saturday_3_working, saturday_4_working, saturday_5_working,
 	sunday_working, monday_working, tuesday_working, wednesday_working, thursday_working, friday_working,
-	deadline_trigger_value, deadline_trigger_unit, scheduler_interval_value, created_at, updated_at`
+	deadline_trigger_value, deadline_trigger_unit, scheduler_interval_value, scheduler_interval_unit,
+	escalation_delay_hours, created_at, updated_at`
 
 func (r *postgresCalendarRepo) GetDefaultCalendar(ctx context.Context) (*domain.WorkingCalendar, error) {
 	return r.scanCalendar(r.db.QueryRow(ctx, `SELECT `+calendarCols+` FROM calendar.working_calendars WHERE is_default = true LIMIT 1`))
@@ -68,12 +69,15 @@ func (r *postgresCalendarRepo) UpdateCalendar(ctx context.Context, id string, re
 		    deadline_trigger_value = COALESCE($17, deadline_trigger_value),
 		    deadline_trigger_unit = COALESCE($18, deadline_trigger_unit),
 		    scheduler_interval_value = COALESCE($19, scheduler_interval_value),
+		    scheduler_interval_unit = COALESCE($20, scheduler_interval_unit),
+		    escalation_delay_hours = COALESCE($21, escalation_delay_hours),
 		    updated_at = NOW()
 		WHERE id = $1
 	`, id, req.Name, req.Description, req.WorkingStartTime, req.WorkingEndTime,
 		req.Saturday1Working, req.Saturday2Working, req.Saturday3Working, req.Saturday4Working, req.Saturday5Working,
 		req.SundayWorking, req.MondayWorking, req.TuesdayWorking, req.WednesdayWorking, req.ThursdayWorking, req.FridayWorking,
-		req.DeadlineTriggerValue, req.DeadlineTriggerUnit, req.SchedulerIntervalValue)
+		req.DeadlineTriggerValue, req.DeadlineTriggerUnit, req.SchedulerIntervalValue,
+		req.SchedulerIntervalUnit, req.EscalationDelayHours)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update working calendar: %w", err)
 	}
@@ -88,8 +92,8 @@ func (r *postgresCalendarRepo) scanCalendar(row pgx.Row) (*domain.WorkingCalenda
 		&c.ID, &c.Name, &desc, &c.IsDefault, &c.Timezone, &c.WorkingStartTime, &c.WorkingEndTime,
 		&c.Saturday1Working, &c.Saturday2Working, &c.Saturday3Working, &c.Saturday4Working, &c.Saturday5Working,
 		&c.SundayWorking, &c.MondayWorking, &c.TuesdayWorking, &c.WednesdayWorking, &c.ThursdayWorking, &c.FridayWorking,
-		&c.DeadlineTriggerValue, &c.DeadlineTriggerUnit, &c.SchedulerIntervalValue,
-		&c.CreatedAt, &c.UpdatedAt,
+		&c.DeadlineTriggerValue, &c.DeadlineTriggerUnit, &c.SchedulerIntervalValue, &c.SchedulerIntervalUnit,
+		&c.EscalationDelayHours, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -591,6 +595,32 @@ func (r *postgresCalendarRepo) UpdateChecklistPriorityAndAssignment(ctx context.
 	return err
 }
 
+func (r *postgresCalendarRepo) MarkChecklistDelayed(ctx context.Context, checklistID string) error {
+	_, err := r.db.Exec(ctx, `UPDATE bid.bid_checklists SET status = 'DELAYED' WHERE id = $1 AND status = 'PENDING' AND is_done = false`, checklistID)
+	return err
+}
+
+// ClaimEscalation inserts the dedup row before anything is sent; a (tender,
+// checklist) that was already escalated conflicts and returns "".
+func (r *postgresCalendarRepo) ClaimEscalation(ctx context.Context, tenderID, checklistID, managerID, reason string) (string, error) {
+	var id string
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO calendar.task_escalations (tender_id, checklist_id, manager_user_id, escalation_reason)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT DO NOTHING
+		RETURNING id
+	`, tenderID, checklistID, managerID, reason).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+func (r *postgresCalendarRepo) ReleaseEscalation(ctx context.Context, id string) error {
+	_, err := r.db.Exec(ctx, `DELETE FROM calendar.task_escalations WHERE id = $1`, id)
+	return err
+}
+
 func (r *postgresCalendarRepo) UpdateTenderDeadlineCache(ctx context.Context, tenderID string, deadline time.Time, remainingHours float64) error {
 	_, err := r.db.Exec(ctx, `
 		UPDATE bid.bid_workspaces
@@ -605,20 +635,47 @@ func (r *postgresCalendarRepo) UpdateTenderDeadlineCache(ctx context.Context, te
 // candidateSelect is the eligibility rule for deadline tracking. A tender that
 // the app already counts as submitted (derivedStatusExpr in the bid repository:
 // submission stages, submission_done, submission_status) or resolved is excluded.
-const candidateSelect = `
-	SELECT b.id, b.title, b.bid_no, b.gem_bid_no, b.workflow_stage,
-	       COALESCE(b.closing_date, b.end_date) AS closing_date, b.calendar_id,
-	       b.organization_name, b.department_name,
-	       b.calculated_72h_deadline, b.deadline_remaining_working_hours
-	FROM bid.bid_workspaces b
-	WHERE b.bid_status = 'ACTIVE'
-	  AND b.archived_at IS NULL
-	  AND b.bid_outcome IS NULL
-	  AND COALESCE(b.closing_date, b.end_date) IS NOT NULL
+const eligibleCond = `b.bid_outcome IS NULL
 	  AND b.workflow_stage NOT IN ('WON', 'LOST', 'CANCELLED', 'GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER')
 	  AND b.submission_done = false
 	  AND COALESCE(b.submission_status, '') <> 'SUBMITTED'
 	  AND COALESCE(b.technical_result, '') <> 'DISQUALIFIED'`
+
+const candidateSelect = `
+	SELECT b.id, b.title, b.bid_no, b.gem_bid_no, b.workflow_stage,
+	       COALESCE(b.closing_date, b.end_date) AS closing_date, b.calendar_id,
+	       b.organization_name, b.department_name,
+	       b.calculated_72h_deadline, b.deadline_remaining_working_hours,
+	       m.id, COALESCE(NULLIF(TRIM(m.full_name), ''), m.username)
+	FROM bid.bid_workspaces b
+	LEFT JOIN auth.users m ON m.id = b.reporting_manager_id AND m.is_active = true
+	WHERE b.bid_status = 'ACTIVE'
+	  AND b.archived_at IS NULL
+	  AND COALESCE(b.closing_date, b.end_date) IS NOT NULL
+	  AND ` + eligibleCond
+
+// coverageSelect buckets every active tender by the same eligibility rule the
+// engine uses; the five buckets after the total partition it.
+const coverageSelect = `
+	SELECT COUNT(*),
+	       COUNT(*) FILTER (WHERE closes IS NULL),
+	       COUNT(*) FILTER (WHERE closes <= $1),
+	       COUNT(*) FILTER (WHERE closes > $1 AND NOT eligible),
+	       COUNT(*) FILTER (WHERE closes > $2 AND eligible),
+	       COUNT(*) FILTER (WHERE closes > $1 AND closes <= $2 AND eligible)
+	FROM (
+	    SELECT COALESCE(b.closing_date, b.end_date) AS closes,
+	           COALESCE(` + eligibleCond + `, false) AS eligible
+	    FROM bid.bid_workspaces b
+	    WHERE b.bid_status = 'ACTIVE' AND b.archived_at IS NULL
+	) t`
+
+func (r *postgresCalendarRepo) CountDeadlineCoverage(ctx context.Context, from, to time.Time) (domain.DeadlineCoverage, error) {
+	var c domain.DeadlineCoverage
+	err := r.db.QueryRow(ctx, coverageSelect, from, to).Scan(
+		&c.TotalActive, &c.NoClosingDate, &c.AlreadyClosed, &c.SubmittedOrResolved, &c.BeyondWindow, &c.InWindow)
+	return c, err
+}
 
 func (r *postgresCalendarRepo) GetActiveTendersForDeadlineCheck(ctx context.Context, from, to time.Time) ([]domain.TenderDeadlineCandidate, error) {
 	rows, err := r.db.Query(ctx, candidateSelect+`
@@ -650,12 +707,18 @@ func (r *postgresCalendarRepo) GetTenderCandidate(ctx context.Context, tenderID 
 
 func scanCandidate(row pgx.Row) (*domain.TenderDeadlineCandidate, error) {
 	var c domain.TenderDeadlineCandidate
-	var bidNo, gemBidNo, calID, orgName, deptName sql.NullString
+	var bidNo, gemBidNo, calID, orgName, deptName, mgrID, mgrName sql.NullString
 	var cachedDeadline sql.NullTime
 	var cachedHours sql.NullFloat64
 	if err := row.Scan(&c.ID, &c.Title, &bidNo, &gemBidNo, &c.WorkflowStage, &c.ClosingDate, &calID,
-		&orgName, &deptName, &cachedDeadline, &cachedHours); err != nil {
+		&orgName, &deptName, &cachedDeadline, &cachedHours, &mgrID, &mgrName); err != nil {
 		return nil, err
+	}
+	if mgrID.Valid {
+		c.ReportingManagerID = &mgrID.String
+	}
+	if mgrName.Valid {
+		c.ReportingManagerName = &mgrName.String
 	}
 	if bidNo.Valid {
 		c.BidNo = &bidNo.String

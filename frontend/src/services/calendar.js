@@ -59,5 +59,6 @@ export const updateChecklistPriority = (checklistId, payload) =>
   call(`/checklists/${checklistId}/priority`, 'Failed to update checklist priority', 'PUT', payload)
 export const evaluateDeadlines = () =>
   call('/calendars/evaluate-deadlines', 'Failed to trigger deadline evaluation', 'POST')
+export const getEngineStatus = () => call('/calendars/engine-status', 'Failed to fetch deadline engine status')
 export const triggerRedZoneNotification = (tenderId, force = false) =>
   call(`/bids/${tenderId}/trigger-red-zone-notification${force ? '?force=true' : ''}`, 'Failed to trigger Red Zone notification', 'POST')

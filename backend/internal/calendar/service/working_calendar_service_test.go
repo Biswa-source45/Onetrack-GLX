@@ -1,6 +1,7 @@
 package service
 
 import (
+	"sync/atomic"
 	"context"
 	"errors"
 	"fmt"
@@ -35,6 +36,12 @@ type mockCalendarRepo struct {
 	claimErr     error
 	cacheWrites  int
 	failedClaims []string
+
+	coverage        *domain.DeadlineCoverage
+	escalations     map[string]string // tender|checklist -> claim id
+	releasedEscs    []string
+	delayed         []string
+	escalationClaim []string // manager ids of claims, in order
 }
 
 func newMockCalendarRepo() *mockCalendarRepo {
@@ -65,6 +72,7 @@ func newMockCalendarRepo() *mockCalendarRepo {
 		holidays:      map[string]*domain.Holiday{},
 		exceptions:    map[string]*domain.CalendarException{},
 		notifications: map[string]*domain.TaskNotification{},
+		escalations:   map[string]string{},
 		stakeholders: []domain.TenderStakeholder{
 			{UserID: "usr-owner", FullName: "Rajesh Kumar", Email: "rajesh@globx.co.in", Roles: "Bid Owner"},
 			{UserID: "usr-mgr", FullName: "Priya Sharma", Email: "priya@globx.co.in", Roles: "Reporting Manager"},
@@ -224,6 +232,40 @@ func (m *mockCalendarRepo) UpdateTenderDeadlineCache(ctx context.Context, tender
 		}
 	}
 	return nil
+}
+func (m *mockCalendarRepo) MarkChecklistDelayed(ctx context.Context, checklistID string) error {
+	m.delayed = append(m.delayed, checklistID)
+	return nil
+}
+
+// ClaimEscalation mirrors the unique (tender, checklist) index.
+func (m *mockCalendarRepo) ClaimEscalation(ctx context.Context, tenderID, checklistID, managerID, reason string) (string, error) {
+	if m.claimErr != nil {
+		return "", m.claimErr
+	}
+	key := tenderID + "|" + checklistID
+	if _, ok := m.escalations[key]; ok {
+		return "", nil
+	}
+	id := "esc-" + key
+	m.escalations[key] = id
+	m.escalationClaim = append(m.escalationClaim, managerID)
+	return id, nil
+}
+func (m *mockCalendarRepo) ReleaseEscalation(ctx context.Context, id string) error {
+	m.releasedEscs = append(m.releasedEscs, id)
+	for k, v := range m.escalations {
+		if v == id {
+			delete(m.escalations, k)
+		}
+	}
+	return nil
+}
+func (m *mockCalendarRepo) CountDeadlineCoverage(ctx context.Context, from, to time.Time) (domain.DeadlineCoverage, error) {
+	if m.coverage != nil {
+		return *m.coverage, nil
+	}
+	return domain.DeadlineCoverage{TotalActive: len(m.candidates), InWindow: len(m.candidates)}, nil
 }
 func (m *mockCalendarRepo) GetActiveTendersForDeadlineCheck(ctx context.Context, from, to time.Time) ([]domain.TenderDeadlineCandidate, error) {
 	return m.candidates, nil
@@ -502,7 +544,7 @@ func TestFirstRunBaselinesWithoutSending(t *testing.T) {
 	svc := newSvc(repo, alerts, testNow)
 	ctx := context.Background()
 
-	sum, err := svc.EvaluateActiveTenders(ctx)
+	sum, err := svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
 	require.NoError(t, err)
 	assert.True(t, sum.Baselined)
 	assert.Equal(t, 1, sum.InRedZone)
@@ -511,7 +553,7 @@ func TestFirstRunBaselinesWithoutSending(t *testing.T) {
 	assert.True(t, repo.baselined)
 
 	// The next run finds the tender already recorded and still sends nothing.
-	sum, err = svc.EvaluateActiveTenders(ctx)
+	sum, err = svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
 	require.NoError(t, err)
 	assert.False(t, sum.Baselined)
 	assert.Empty(t, alerts.created)
@@ -528,7 +570,7 @@ func TestNewTenderAfterBaselineIsAlertedOnce(t *testing.T) {
 	svc := newSvc(repo, alerts, testNow)
 	ctx := context.Background()
 
-	sum, err := svc.EvaluateActiveTenders(ctx)
+	sum, err := svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
 	require.NoError(t, err)
 	assert.Equal(t, 4, sum.Notified)
 	require.Len(t, alerts.created, 4, "one alert (in-app + email) per stakeholder, no separate combined email")
@@ -543,7 +585,7 @@ func TestNewTenderAfterBaselineIsAlertedOnce(t *testing.T) {
 	assert.Contains(t, a.Message, "23.5 working hours")
 
 	// Second tick: dedup holds, nothing more is sent.
-	_, err = svc.EvaluateActiveTenders(ctx)
+	_, err = svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
 	require.NoError(t, err)
 	assert.Len(t, alerts.created, 4)
 	assert.Equal(t, 1, repo.cacheWrites, "unchanged deadline values are not rewritten")
@@ -581,7 +623,7 @@ func TestClaimFailureNeverSends(t *testing.T) {
 	repo.candidates = []domain.TenderDeadlineCandidate{inWindowTender("t1")}
 	alerts := &mockAlertSvc{}
 
-	_, err := newSvc(repo, alerts, testNow).EvaluateActiveTenders(context.Background())
+	_, err := newSvc(repo, alerts, testNow).EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
 	require.NoError(t, err)
 	assert.Empty(t, alerts.created, "no claim, no send")
 }
@@ -591,7 +633,7 @@ func TestBaselineEndsEvenWhenClaimsFail(t *testing.T) {
 	repo.claimErr = errors.New("db down")
 	repo.candidates = []domain.TenderDeadlineCandidate{inWindowTender("t1")}
 
-	_, err := newSvc(repo, &mockAlertSvc{}, testNow).EvaluateActiveTenders(context.Background())
+	_, err := newSvc(repo, &mockAlertSvc{}, testNow).EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
 	require.NoError(t, err)
 	assert.True(t, repo.baselined, "staying in baseline mode would silently swallow every later alert")
 }
@@ -604,13 +646,13 @@ func TestAlertFailureReleasesClaimForRetry(t *testing.T) {
 	svc := newSvc(repo, alerts, testNow)
 	ctx := context.Background()
 
-	_, err := svc.EvaluateActiveTenders(ctx)
+	_, err := svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
 	require.NoError(t, err)
 	assert.Len(t, repo.failedClaims, 4)
 	assert.Empty(t, repo.notifications, "failed claims are released, not left looking sent")
 
 	alerts.err = nil
-	_, err = svc.EvaluateActiveTenders(ctx)
+	_, err = svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
 	require.NoError(t, err)
 	assert.Len(t, alerts.created, 4, "the next run retries recipients whose alert failed")
 }
@@ -623,7 +665,7 @@ func TestPerRunCap(t *testing.T) {
 	}
 	alerts := &mockAlertSvc{}
 
-	sum, err := newSvc(repo, alerts, testNow).EvaluateActiveTenders(context.Background())
+	sum, err := newSvc(repo, alerts, testNow).EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
 	require.NoError(t, err)
 	// The cap is checked between tenders: 13 tenders x 4 recipients = 52 >= 50 stops the run.
 	assert.Equal(t, 52, sum.Notified)
@@ -638,7 +680,7 @@ func TestSkippedWhenAnotherInstanceHoldsTheLock(t *testing.T) {
 	repo.candidates = []domain.TenderDeadlineCandidate{inWindowTender("t1")}
 	alerts := &mockAlertSvc{}
 
-	sum, err := newSvc(repo, alerts, testNow).EvaluateActiveTenders(context.Background())
+	sum, err := newSvc(repo, alerts, testNow).EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
 	require.NoError(t, err)
 	assert.True(t, sum.Skipped)
 	assert.Empty(t, alerts.created)
@@ -653,7 +695,7 @@ func TestTenderOutsideWindowIsNotAlerted(t *testing.T) {
 	repo.candidates = []domain.TenderDeadlineCandidate{far}
 	alerts := &mockAlertSvc{}
 
-	sum, err := newSvc(repo, alerts, testNow).EvaluateActiveTenders(context.Background())
+	sum, err := newSvc(repo, alerts, testNow).EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
 	require.NoError(t, err)
 	assert.Equal(t, 1, sum.Evaluated)
 	assert.Zero(t, sum.InRedZone)
@@ -695,7 +737,7 @@ func TestManualTrigger(t *testing.T) {
 }
 
 func TestBadStoredTriggerFallsBackTo72Hours(t *testing.T) {
-	cal := &domain.WorkingCalendar{DeadlineTriggerValue: 48, DeadlineTriggerUnit: "SECONDS"}
+	cal := &domain.WorkingCalendar{DeadlineTriggerValue: 48, DeadlineTriggerUnit: "FORTNIGHTS"}
 	v, u := trigger(cal)
 	assert.Equal(t, 72.0, v)
 	assert.Equal(t, "HOURS", u)
@@ -712,4 +754,387 @@ func rules(t *testing.T, svc *workingCalendarService, calendarID string) *calRul
 func isWorkingDay(t *testing.T, svc *workingCalendarService, calendarID string, date time.Time) (bool, string) {
 	t.Helper()
 	return rules(t, svc, calendarID).isWorking(date)
+}
+
+// ── Trigger units ────────────────────────────────────────────────────────────
+
+func TestSubtractTimeAllUnits(t *testing.T) {
+	svc := newSvc(newMockCalendarRepo(), nil, testNow)
+	r := rules(t, svc, "cal-default")
+	fri := time.Date(2026, 10, 16, 15, 30, 0, 0, ist)
+
+	for _, tc := range []struct {
+		name  string
+		from  time.Time
+		value float64
+		unit  string
+		want  time.Time
+	}{
+		{"48 seconds", fri, 48, "SECONDS", time.Date(2026, 10, 16, 15, 29, 12, 0, ist)},
+		{"30 minutes", fri, 30, "MINUTES", time.Date(2026, 10, 16, 15, 0, 0, 0, ist)},
+		{"24 hours is one working day", fri, 24, "HOURS", time.Date(2026, 10, 15, 15, 30, 0, 0, ist)},
+		{"3 days", fri, 3, "DAYS", time.Date(2026, 10, 13, 15, 30, 0, 0, ist)},
+		// Closing at the start of a working day: the time comes off the previous working day (2nd Saturday and Sunday skipped).
+		{"48 seconds across a weekend", time.Date(2026, 10, 12, 9, 0, 0, 0, ist), 48, "SECONDS", time.Date(2026, 10, 9, 17, 59, 12, 0, ist)},
+		// A closing time after hours clamps to the end of the working day first.
+		{"30 minutes after hours", time.Date(2026, 10, 16, 21, 0, 0, 0, ist), 30, "MINUTES", time.Date(2026, 10, 16, 17, 30, 0, 0, ist)},
+		// 90 minutes from 10:00 spills into the previous working day's last half hour.
+		{"90 minutes over a day boundary", time.Date(2026, 10, 15, 10, 0, 0, 0, ist), 90, "MINUTES", time.Date(2026, 10, 14, 17, 30, 0, 0, ist)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := r.subtractTime(tc.from, tc.value, tc.unit)
+			require.NoError(t, err)
+			assert.True(t, got.Equal(tc.want), "got %v want %v", got, tc.want)
+			assert.True(t, got.Before(tc.from), "a trigger is always before closing")
+		})
+	}
+}
+
+func TestThresholdLabelsForEveryUnit(t *testing.T) {
+	assert.Equal(t, "48 working seconds", thresholdLabel(48, "SECONDS"))
+	assert.Equal(t, "1 working second", thresholdLabel(1, "SECONDS"))
+	assert.Equal(t, "30 working minutes", thresholdLabel(30, "MINUTES"))
+	assert.Equal(t, "1 working minute", thresholdLabel(1, "MINUTES"))
+	assert.Equal(t, "1 working day (24h)", thresholdLabel(24, "HOURS"))
+	assert.Equal(t, "3 working days (72h)", thresholdLabel(72, "HOURS"))
+	assert.Equal(t, "3 working days", thresholdLabel(3, "DAYS"))
+}
+
+func TestSubSecondWindowTriggerWorksEndToEnd(t *testing.T) {
+	repo := newMockCalendarRepo()
+	repo.calendar.DeadlineTriggerValue, repo.calendar.DeadlineTriggerUnit = 48, "SECONDS"
+	tender := inWindowTender("t1")
+	tender.ClosingDate = time.Date(2026, 10, 14, 10, 0, 48, 0, ist)
+	repo.candidates = []domain.TenderDeadlineCandidate{tender}
+
+	// 48 working seconds before closing is exactly 10:00:00.
+	res, err := newSvc(repo, nil, time.Date(2026, 10, 14, 9, 59, 59, 0, ist)).CalculateTender72HourDeadline(context.Background(), "t1")
+	require.NoError(t, err)
+	assert.False(t, res.IsThresholdReached)
+	assert.True(t, res.CalculatedDeadline.Equal(time.Date(2026, 10, 14, 10, 0, 0, 0, ist)), res.CalculatedDeadline)
+	assert.Equal(t, "SECONDS", res.TargetWorkingUnit)
+
+	res, err = newSvc(repo, nil, time.Date(2026, 10, 14, 10, 0, 1, 0, ist)).CalculateTender72HourDeadline(context.Background(), "t1")
+	require.NoError(t, err)
+	assert.True(t, res.IsThresholdReached)
+	assert.Equal(t, 0.01, res.RemainingWorkingHours, "47 working seconds rounds to 0.01h")
+}
+
+func TestPrefilterWindowStaysAtLeastTwoWeeks(t *testing.T) {
+	for _, tc := range []struct {
+		value float64
+		unit  string
+		min   int
+	}{{48, "SECONDS", 14}, {30, "MINUTES", 14}, {3, "DAYS", 35}, {72, "HOURS", 35}, {43200, "MINUTES", 14}} {
+		repo := newMockCalendarRepo()
+		repo.calendar.DeadlineTriggerValue, repo.calendar.DeadlineTriggerUnit = tc.value, tc.unit
+		sum, err := newSvc(repo, nil, testNow).EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, sum.WindowDays, tc.min, "%v %s", tc.value, tc.unit)
+	}
+}
+
+// ── Escalation ───────────────────────────────────────────────────────────────
+
+// escalationRepo is a baselined engine with a tender whose 72h trigger (Tue 13-Oct 15:30)
+// is more than the 4h escalation delay behind testNow, a reporting manager, and a pending task.
+func escalationRepo() *mockCalendarRepo {
+	repo := newMockCalendarRepo()
+	repo.baselined = true
+	repo.calendar.EscalationDelayHours = 4
+	mgr, mgrName := "usr-boss", "Boss <b>"
+	tender := inWindowTender("t1")
+	tender.ReportingManagerID, tender.ReportingManagerName = &mgr, &mgrName
+	repo.candidates = []domain.TenderDeadlineCandidate{tender}
+	repo.nextTask = &domain.NextActionableTask{ChecklistID: "c1", Title: "Upload <i>OEM</i> certificate", Priority: "HIGH", Status: "PENDING"}
+	return repo
+}
+
+func escalationAlerts(a *mockAlertSvc) []alertDomain.Alert {
+	var out []alertDomain.Alert
+	for _, al := range a.created {
+		if al.UserID != nil && *al.UserID == "usr-boss" {
+			out = append(out, al)
+		}
+	}
+	return out
+}
+
+func TestEscalationHappensOncePerChecklist(t *testing.T) {
+	repo := escalationRepo()
+	alerts := &mockAlertSvc{}
+	svc := newSvc(repo, alerts, testNow)
+	ctx := context.Background()
+
+	sum, err := svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Equal(t, 1, sum.Escalated)
+	assert.Equal(t, []string{"c1"}, repo.delayed, "the pending task is flagged DELAYED")
+	esc := escalationAlerts(alerts)
+	require.Len(t, esc, 1)
+	assert.Equal(t, "/dashboard/tenders/t1", esc[0].Link)
+	assert.Equal(t, "TENDER", esc[0].Type)
+	assert.NotContains(t, esc[0].Message, "<i>", "task title must be HTML-escaped")
+	assert.Contains(t, esc[0].Message, "&lt;i&gt;OEM&lt;/i&gt;")
+	assert.Contains(t, esc[0].Message, "3 working days (72h)")
+
+	// Later ticks never escalate or flag the same task again.
+	for i := 0; i < 3; i++ {
+		sum, err = svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+		require.NoError(t, err)
+		assert.Zero(t, sum.Escalated)
+	}
+	assert.Len(t, escalationAlerts(alerts), 1)
+	assert.Equal(t, []string{"c1"}, repo.delayed)
+	assert.Equal(t, []string{"usr-boss"}, repo.escalationClaim)
+
+	// A different task of the same tender escalates separately.
+	repo.nextTask = &domain.NextActionableTask{ChecklistID: "c2", Title: "Second", Priority: "LOW", Status: "PENDING"}
+	sum, err = svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Equal(t, 1, sum.Escalated)
+}
+
+func TestNoEscalationBeforeTheDelayElapses(t *testing.T) {
+	repo := escalationRepo()
+	alerts := &mockAlertSvc{}
+	// Trigger was Tue 13-Oct 15:30; 4 hours later is 19:30.
+	sum, err := newSvc(repo, alerts, time.Date(2026, 10, 13, 19, 0, 0, 0, ist)).EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Equal(t, 1, sum.InRedZone)
+	assert.Zero(t, sum.Escalated)
+	assert.Empty(t, repo.delayed)
+	assert.Empty(t, escalationAlerts(alerts))
+
+	sum, err = newSvc(repo, alerts, time.Date(2026, 10, 13, 19, 31, 0, 0, ist)).EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Equal(t, 1, sum.Escalated)
+}
+
+func TestBaselineRecordsEscalationsSilently(t *testing.T) {
+	repo := escalationRepo()
+	repo.baselined = false
+	alerts := &mockAlertSvc{}
+	svc := newSvc(repo, alerts, testNow)
+	ctx := context.Background()
+
+	sum, err := svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.True(t, sum.Baselined)
+	assert.Zero(t, sum.Escalated)
+	assert.Empty(t, alerts.created, "baseline sends nothing, not even to the manager")
+	assert.Empty(t, repo.delayed, "baseline does not flag tasks")
+	assert.Len(t, repo.escalations, 1, "the claim is recorded so the manager is never flooded later")
+
+	sum, err = svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Zero(t, sum.Escalated)
+	assert.Empty(t, alerts.created)
+}
+
+func TestDelayedOnlyMarksPendingTasks(t *testing.T) {
+	repo := escalationRepo()
+	repo.nextTask.Status = "DELAYED" // already flagged earlier (e.g. by hand)
+	sum, err := newSvc(repo, &mockAlertSvc{}, testNow).EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Equal(t, 1, sum.Escalated, "the manager is still told once")
+	assert.Empty(t, repo.delayed, "a task that is not PENDING is never re-marked")
+
+	repo = escalationRepo()
+	repo.nextTask.Status = "COMPLETED"
+	sum, err = newSvc(repo, &mockAlertSvc{}, testNow).EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Zero(t, sum.Escalated)
+	assert.Empty(t, repo.delayed)
+
+	repo = escalationRepo()
+	repo.nextTask = nil // nothing left to do
+	sum, err = newSvc(repo, &mockAlertSvc{}, testNow).EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Zero(t, sum.Escalated)
+}
+
+func TestEscalationWithoutManagerDoesNotCrash(t *testing.T) {
+	repo := escalationRepo()
+	repo.candidates[0].ReportingManagerID = nil
+	alerts := &mockAlertSvc{}
+	sum, err := newSvc(repo, alerts, testNow).EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Zero(t, sum.Escalated)
+	assert.Empty(t, repo.escalations)
+	assert.Equal(t, []string{"c1"}, repo.delayed, "the overdue task is still flagged")
+}
+
+func TestEscalationAlertFailureReleasesClaim(t *testing.T) {
+	repo := escalationRepo()
+	alerts := &mockAlertSvc{err: errors.New("alert store down")}
+	svc := newSvc(repo, alerts, testNow)
+	ctx := context.Background()
+
+	sum, err := svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Zero(t, sum.Escalated)
+	assert.Equal(t, []string{"esc-t1|c1"}, repo.releasedEscs)
+	assert.Empty(t, repo.escalations, "a failed alert must not look escalated")
+
+	alerts.err = nil
+	sum, err = svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Equal(t, 1, sum.Escalated, "the next run retries")
+}
+
+func TestEscalationsCountTowardThePerRunCap(t *testing.T) {
+	repo := escalationRepo()
+	mgr := "usr-boss"
+	repo.candidates = nil
+	for i := 0; i < 60; i++ {
+		tender := inWindowTender(fmt.Sprintf("t%02d", i))
+		tender.ReportingManagerID = &mgr
+		repo.candidates = append(repo.candidates, tender)
+	}
+	sum, err := newSvc(repo, &mockAlertSvc{}, testNow).EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
+	require.NoError(t, err)
+	// 4 stakeholders + 1 escalation = 5 alerts per tender; the cap stops the run at 50.
+	assert.Equal(t, 50, sum.Notified+sum.Escalated)
+	assert.Equal(t, 10, sum.Escalated)
+}
+
+// ── Summary diagnostics and engine status ────────────────────────────────────
+
+func TestSummaryCarriesCoverageAndRedZoneOutcomes(t *testing.T) {
+	repo := newMockCalendarRepo()
+	repo.candidates = []domain.TenderDeadlineCandidate{inWindowTender("t1")}
+	cov := domain.DeadlineCoverage{TotalActive: 9, NoClosingDate: 1, AlreadyClosed: 2, SubmittedOrResolved: 3, BeyondWindow: 2, InWindow: 1}
+	repo.coverage = &cov
+	svc := newSvc(repo, &mockAlertSvc{}, testNow)
+	ctx := context.Background()
+
+	sum, err := svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual) // first run: baseline
+	require.NoError(t, err)
+	assert.Equal(t, cov, sum.Coverage)
+	assert.Equal(t, 35, sum.WindowDays)
+	require.Len(t, sum.RedZone, 1)
+	e := sum.RedZone[0]
+	assert.Equal(t, "t1", e.TenderID)
+	assert.Equal(t, "Supply of IT Infrastructure", e.Title)
+	assert.True(t, e.Deadline.Equal(time.Date(2026, 10, 13, 15, 30, 0, 0, ist)), e.Deadline)
+	assert.True(t, e.ClosingDate.Equal(time.Date(2026, 10, 16, 15, 30, 0, 0, ist)), e.ClosingDate)
+	assert.Equal(t, "BASELINED", e.Outcome)
+
+	sum, _ = svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	assert.Equal(t, "ALREADY_NOTIFIED", sum.RedZone[0].Outcome)
+
+	repo.notifications = map[string]*domain.TaskNotification{}
+	sum, _ = svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	assert.Equal(t, "NOTIFIED", sum.RedZone[0].Outcome)
+
+	repo.notifications = map[string]*domain.TaskNotification{}
+	repo.claimErr = errors.New("db down")
+	sum, _ = svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	assert.Equal(t, "FAILED", sum.RedZone[0].Outcome)
+}
+
+func TestRedZoneDetailIsCapped(t *testing.T) {
+	repo := newMockCalendarRepo() // not baselined: nothing is sent, so the notification cap never stops the loop
+	for i := 0; i < 60; i++ {
+		repo.candidates = append(repo.candidates, inWindowTender(fmt.Sprintf("t%02d", i)))
+	}
+	sum, err := newSvc(repo, &mockAlertSvc{}, testNow).EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Equal(t, 60, sum.InRedZone)
+	assert.Len(t, sum.RedZone, domain.MaxRedZoneEntries)
+
+	skipped := newMockCalendarRepo()
+	skipped.lockBusy = true
+	sum, _ = newSvc(skipped, nil, testNow).EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
+	assert.NotNil(t, sum.RedZone, "red_zone serialises as [] even when skipped")
+}
+
+type failingBaselineRepo struct{ *mockCalendarRepo }
+
+func (failingBaselineRepo) IsEngineBaselined(context.Context) (bool, error) {
+	return false, errors.New("baseline unreadable")
+}
+
+func TestEngineRuntimeRecordsEveryRun(t *testing.T) {
+	repo := newMockCalendarRepo()
+	svc := newSvc(repo, nil, testNow)
+	assert.Nil(t, svc.EngineRuntime().LastRun)
+	assert.Nil(t, svc.EngineRuntime().NextRunAt)
+
+	sum, err := svc.EvaluateActiveTenders(context.Background(), domain.RunTriggerScheduler)
+	require.NoError(t, err)
+	last := svc.EngineRuntime().LastRun
+	require.NotNil(t, last)
+	assert.Equal(t, "SCHEDULER", last.Trigger)
+	assert.Empty(t, last.Error)
+	assert.Same(t, sum, last.Summary)
+	assert.True(t, last.At.Equal(testNow))
+
+	_, _ = svc.EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
+	assert.Equal(t, "MANUAL", svc.EngineRuntime().LastRun.Trigger)
+
+	next := testNow.Add(10 * time.Minute)
+	svc.SetNextRun(next)
+	require.NotNil(t, svc.EngineRuntime().NextRunAt)
+	assert.True(t, svc.EngineRuntime().NextRunAt.Equal(next))
+	svc.SetNextRun(time.Time{})
+	assert.Nil(t, svc.EngineRuntime().NextRunAt)
+
+	bad := NewWorkingCalendarService(failingBaselineRepo{repo}, nil, nil).(*workingCalendarService)
+	_, err = bad.EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
+	require.Error(t, err)
+	assert.Contains(t, bad.EngineRuntime().LastRun.Error, "baseline unreadable")
+}
+
+// ── Scheduler cadence ────────────────────────────────────────────────────────
+
+func TestSchedulerIntervalUsesUnit(t *testing.T) {
+	repo := newMockCalendarRepo()
+	s := NewBackgroundScheduler(nil, repo)
+	for _, tc := range []struct {
+		value int
+		unit  string
+		want  time.Duration
+	}{
+		{30, "SECONDS", 30 * time.Second},
+		{5, "MINUTES", 5 * time.Minute},
+		{3, "", 3 * time.Minute}, // rows from before the unit existed
+		{0, "MINUTES", 10 * time.Minute},
+		{2, "SECONDS", 10 * time.Minute}, // below the 5s floor falls back
+		{5, "HOURS", 10 * time.Minute},
+	} {
+		repo.calendar.SchedulerIntervalValue, repo.calendar.SchedulerIntervalUnit = tc.value, tc.unit
+		assert.Equal(t, tc.want, s.interval(), "%d %q", tc.value, tc.unit)
+	}
+}
+
+// countingSvc is a WorkingCalendarService that only counts engine passes.
+type countingSvc struct {
+	domain.WorkingCalendarService
+	runs atomic.Int32
+}
+
+func (c *countingSvc) EvaluateActiveTenders(ctx context.Context, trigger string) (*domain.EvaluationSummary, error) {
+	c.runs.Add(1)
+	return &domain.EvaluationSummary{}, nil
+}
+func (c *countingSvc) SetNextRun(time.Time) {}
+
+// Regression: the scheduler used to arm one timer from the cadence it saw at startup, so an
+// admin changing 10 minutes to 5 seconds saw no alerts until the old timer expired.
+func TestSchedulerPicksUpCadenceChange(t *testing.T) {
+	repo := newMockCalendarRepo()
+	repo.calendar.SchedulerIntervalValue, repo.calendar.SchedulerIntervalUnit = 10, "MINUTES"
+	svc := &countingSvc{}
+	s := NewBackgroundScheduler(svc, repo)
+	s.Start()
+	defer s.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+	assert.Equal(t, int32(1), svc.runs.Load(), "one immediate run at start, then idle on a 10 minute cadence")
+
+	repo.calendar.SchedulerIntervalValue, repo.calendar.SchedulerIntervalUnit = 5, "SECONDS"
+	assert.Eventually(t, func() bool { return svc.runs.Load() >= 2 }, maxIdle+8*time.Second, 200*time.Millisecond,
+		"a cadence change must take effect within maxIdle, not after the old 10 minute timer")
 }

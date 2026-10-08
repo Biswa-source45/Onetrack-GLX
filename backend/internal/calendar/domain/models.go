@@ -51,13 +51,43 @@ const NotificationTypeRedZoneDueDate = "RED_ZONE_72H"
 
 // Deadline trigger units. A HOURS value is hours / 24 working days (72h = 3,
 // 48h = 2, 36h = 1.5); the fractional part is measured in that calendar's
-// working hours. DAYS is that many working days.
+// working hours. DAYS is that many working days. SECONDS and MINUTES are real
+// working time taken off the closing time through the working-hours engine.
 const (
-	TriggerUnitHours = "HOURS"
-	TriggerUnitDays  = "DAYS"
+	TriggerUnitSeconds = "SECONDS"
+	TriggerUnitMinutes = "MINUTES"
+	TriggerUnitHours   = "HOURS"
+	TriggerUnitDays    = "DAYS"
 	// MaxTriggerDays bounds the trigger so the SQL pre-filter window and day scans stay finite.
 	MaxTriggerDays = 60
+
+	maxTriggerSeconds = 86400
+	maxTriggerMinutes = 43200
 )
+
+// Scheduler cadence units and the cadence used when none (or an invalid one) is stored.
+const (
+	SchedulerUnitSeconds     = "SECONDS"
+	SchedulerUnitMinutes     = "MINUTES"
+	DefaultSchedulerInterval = 10 * time.Minute
+)
+
+// Who started an evaluation.
+const (
+	RunTriggerScheduler = "SCHEDULER"
+	RunTriggerManual    = "MANUAL"
+)
+
+// Red-zone outcomes reported per tender by an evaluation.
+const (
+	OutcomeNotified        = "NOTIFIED"
+	OutcomeAlreadyNotified = "ALREADY_NOTIFIED"
+	OutcomeBaselined       = "BASELINED"
+	OutcomeFailed          = "FAILED"
+)
+
+// MaxRedZoneEntries caps the per-tender detail returned by one evaluation.
+const MaxRedZoneEntries = 25
 
 type WorkingCalendar struct {
 	ID                   string  `json:"id"`
@@ -79,11 +109,47 @@ type WorkingCalendar struct {
 	ThursdayWorking      bool    `json:"thursday_working"`
 	FridayWorking        bool    `json:"friday_working"`
 	DeadlineTriggerValue float64 `json:"deadline_trigger_value"`
-	DeadlineTriggerUnit  string  `json:"deadline_trigger_unit"` // HOURS or DAYS
-	// SchedulerIntervalValue is the evaluation cadence in minutes.
-	SchedulerIntervalValue int       `json:"scheduler_interval_value"`
-	CreatedAt              time.Time `json:"created_at"`
-	UpdatedAt              time.Time `json:"updated_at"`
+	DeadlineTriggerUnit  string  `json:"deadline_trigger_unit"` // SECONDS, MINUTES, HOURS or DAYS
+	// SchedulerIntervalValue is the evaluation cadence, in SchedulerIntervalUnit (SECONDS or MINUTES).
+	SchedulerIntervalValue int    `json:"scheduler_interval_value"`
+	SchedulerIntervalUnit  string `json:"scheduler_interval_unit"`
+	// EscalationDelayHours is how many wall-clock hours past the trigger a pending task waits before escalating.
+	EscalationDelayHours int       `json:"escalation_delay_hours"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
+// SchedulerInterval is the evaluation cadence; an invalid stored pair falls back to the default.
+func (c *WorkingCalendar) SchedulerInterval() time.Duration {
+	u, err := ValidateInterval(c.SchedulerIntervalValue, c.SchedulerIntervalUnit)
+	if err != nil {
+		return DefaultSchedulerInterval
+	}
+	if u == SchedulerUnitSeconds {
+		return time.Duration(c.SchedulerIntervalValue) * time.Second
+	}
+	return time.Duration(c.SchedulerIntervalValue) * time.Minute
+}
+
+// ValidateInterval checks a scheduler cadence and returns the normalised unit.
+func ValidateInterval(value int, unit string) (string, error) {
+	u := strings.ToUpper(strings.TrimSpace(unit))
+	switch {
+	case u == "":
+		u = SchedulerUnitMinutes
+		fallthrough
+	case u == SchedulerUnitMinutes:
+		if value < 1 || value > 1440 {
+			return "", fmt.Errorf("scheduler interval must be between 1 and 1440 minutes")
+		}
+	case u == SchedulerUnitSeconds:
+		if value < 5 || value > 3600 {
+			return "", fmt.Errorf("scheduler interval must be between 5 and 3600 seconds")
+		}
+	default:
+		return "", fmt.Errorf("scheduler interval unit must be SECONDS or MINUTES")
+	}
+	return u, nil
 }
 
 type Holiday struct {
@@ -199,8 +265,46 @@ type EvaluationSummary struct {
 	Baselined bool `json:"baselined"` // first run: in-window tenders were recorded as already notified, nothing sent
 	Evaluated int  `json:"evaluated"`
 	InRedZone int  `json:"in_red_zone"`
-	Notified  int  `json:"notified"` // recipients alerted (capped per run)
-	Skipped   bool `json:"skipped"`  // another instance holds the evaluation lock
+	Notified  int  `json:"notified"`  // recipients alerted (capped per run)
+	Skipped   bool `json:"skipped"`   // another instance holds the evaluation lock
+	Escalated int  `json:"escalated"` // delayed tasks escalated to a reporting manager (counts toward the per-run cap)
+	// WindowDays is how far ahead of now the engine looked for closing dates.
+	WindowDays int              `json:"window_days"`
+	Coverage   DeadlineCoverage `json:"coverage"`
+	RedZone    []RedZoneEntry   `json:"red_zone"` // capped at MaxRedZoneEntries
+}
+
+// DeadlineCoverage explains where every active tender sits, so "0 evaluated" is
+// never a mystery. The five buckets after TotalActive partition it.
+type DeadlineCoverage struct {
+	TotalActive         int `json:"total_active"`
+	NoClosingDate       int `json:"no_closing_date"`
+	AlreadyClosed       int `json:"already_closed"`
+	SubmittedOrResolved int `json:"submitted_or_resolved"` // still open, but excluded by the engine's eligibility rule
+	BeyondWindow        int `json:"beyond_window"`
+	InWindow            int `json:"in_window"`
+}
+
+type RedZoneEntry struct {
+	TenderID    string    `json:"tender_id"`
+	Title       string    `json:"title"`
+	Deadline    time.Time `json:"deadline"`
+	ClosingDate time.Time `json:"closing_date"`
+	Outcome     string    `json:"outcome"` // NOTIFIED, ALREADY_NOTIFIED, BASELINED, FAILED
+}
+
+// LastRun is the most recent evaluation by any caller, kept in memory only.
+type LastRun struct {
+	At      time.Time          `json:"at"`
+	Trigger string             `json:"trigger"` // SCHEDULER or MANUAL
+	Error   string             `json:"error"`
+	Summary *EvaluationSummary `json:"summary"`
+}
+
+// EngineRuntime is what the service knows about the engine's recent activity.
+type EngineRuntime struct {
+	NextRunAt *time.Time
+	LastRun   *LastRun
 }
 
 type CalculateDeadlineResult struct {
@@ -247,7 +351,9 @@ type UpdateCalendarRequest struct {
 	FridayWorking          *bool    `json:"friday_working"`
 	DeadlineTriggerValue   *float64 `json:"deadline_trigger_value"`
 	DeadlineTriggerUnit    *string  `json:"deadline_trigger_unit"`
-	SchedulerIntervalValue *int     `json:"scheduler_interval_value"` // minutes
+	SchedulerIntervalValue *int     `json:"scheduler_interval_value"`
+	SchedulerIntervalUnit  *string  `json:"scheduler_interval_unit"` // SECONDS or MINUTES
+	EscalationDelayHours   *int     `json:"escalation_delay_hours"`
 }
 
 var hmPattern = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
@@ -258,16 +364,27 @@ func ValidateTrigger(value float64, unit string) (string, error) {
 	if u == "" {
 		u = TriggerUnitHours
 	}
-	if u != TriggerUnitHours && u != TriggerUnitDays {
-		return "", fmt.Errorf("trigger unit must be HOURS or DAYS")
-	}
-	if value <= 0 || TriggerDays(value, u) > MaxTriggerDays {
-		return "", fmt.Errorf("trigger value must be greater than 0 and at most %d working days", MaxTriggerDays)
+	switch u {
+	case TriggerUnitSeconds:
+		if value < 1 || value > maxTriggerSeconds {
+			return "", fmt.Errorf("trigger must be between 1 and %d seconds", maxTriggerSeconds)
+		}
+	case TriggerUnitMinutes:
+		if value < 1 || value > maxTriggerMinutes {
+			return "", fmt.Errorf("trigger must be between 1 and %d minutes", maxTriggerMinutes)
+		}
+	case TriggerUnitHours, TriggerUnitDays:
+		if value <= 0 || TriggerDays(value, u) > MaxTriggerDays {
+			return "", fmt.Errorf("trigger value must be greater than 0 and at most %d working days", MaxTriggerDays)
+		}
+	default:
+		return "", fmt.Errorf("trigger unit must be SECONDS, MINUTES, HOURS or DAYS")
 	}
 	return u, nil
 }
 
-// TriggerDays converts a trigger value to working days.
+// TriggerDays converts a HOURS or DAYS trigger value to working days; SECONDS and
+// MINUTES are working time, not days, and are handled by the service.
 func TriggerDays(value float64, unit string) float64 {
 	if unit == TriggerUnitHours {
 		return value / 24
@@ -314,8 +431,24 @@ func (r *UpdateCalendarRequest) Validate(cur *WorkingCalendar) error {
 			r.DeadlineTriggerUnit = &u
 		}
 	}
-	if r.SchedulerIntervalValue != nil && (*r.SchedulerIntervalValue < 1 || *r.SchedulerIntervalValue > 1440) {
-		return fmt.Errorf("scheduler interval must be between 1 and 1440 minutes")
+	if r.SchedulerIntervalValue != nil || r.SchedulerIntervalUnit != nil {
+		val, unit := cur.SchedulerIntervalValue, cur.SchedulerIntervalUnit
+		if r.SchedulerIntervalValue != nil {
+			val = *r.SchedulerIntervalValue
+		}
+		if r.SchedulerIntervalUnit != nil {
+			unit = *r.SchedulerIntervalUnit
+		}
+		u, err := ValidateInterval(val, unit)
+		if err != nil {
+			return err
+		}
+		if r.SchedulerIntervalUnit != nil {
+			r.SchedulerIntervalUnit = &u
+		}
+	}
+	if r.EscalationDelayHours != nil && (*r.EscalationDelayHours < 1 || *r.EscalationDelayHours > 720) {
+		return fmt.Errorf("escalation delay must be between 1 and 720 hours")
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	alertDomain "github.com/onetrack/backend/internal/alert/domain"
@@ -30,6 +31,10 @@ type workingCalendarService struct {
 	alertSvc  alertDomain.AlertService
 	systemLog systemlogDomain.Recorder
 	now       func() time.Time
+
+	mu      sync.Mutex // guards the in-memory engine status below
+	lastRun *domain.LastRun
+	nextRun *time.Time
 }
 
 func NewWorkingCalendarService(
@@ -84,11 +89,30 @@ func (s *workingCalendarService) loadRules(ctx context.Context, calendarID strin
 	}
 	r.startH, r.startM = parseTimeHM(cal.WorkingStartTime, 9, 0)
 	r.endH, r.endM = parseTimeHM(cal.WorkingEndTime, 18, 0)
-	r.dayHours = float64((r.endH*60+r.endM)-(r.startH*60+r.startM)) / 60
-	if r.dayHours <= 0 {
-		r.dayHours = 9
-	}
+	r.dayHours = dayHoursOf(cal)
 	return r, nil
+}
+
+// dayHoursOf is the length of one working day of the calendar in hours.
+func dayHoursOf(cal *domain.WorkingCalendar) float64 {
+	sh, sm := parseTimeHM(cal.WorkingStartTime, 9, 0)
+	eh, em := parseTimeHM(cal.WorkingEndTime, 18, 0)
+	if h := float64((eh*60+em)-(sh*60+sm)) / 60; h > 0 {
+		return h
+	}
+	return 9
+}
+
+// triggerWorkingDays is how many working days a trigger spans, so the SQL
+// pre-filter window is wide enough for every unit.
+func triggerWorkingDays(cal *domain.WorkingCalendar, value float64, unit string) float64 {
+	switch unit {
+	case domain.TriggerUnitSeconds:
+		return value / 3600 / dayHoursOf(cal)
+	case domain.TriggerUnitMinutes:
+		return value / 60 / dayHoursOf(cal)
+	}
+	return domain.TriggerDays(value, unit)
 }
 
 // window returns the working window of the given calendar day.
@@ -145,10 +169,14 @@ func (r *calRules) isWorking(date time.Time) (bool, string) {
 
 // subtractHours walks back through working windows until `hours` of working time is consumed.
 func (r *calRules) subtractHours(from time.Time, hours float64) (time.Time, error) {
-	if hours <= 0 {
+	return r.subtractWorking(from, time.Duration(hours*float64(time.Hour)))
+}
+
+// subtractWorking is subtractHours on an exact duration, so sub-minute triggers keep their precision.
+func (r *calRules) subtractWorking(from time.Time, remaining time.Duration) (time.Time, error) {
+	if remaining <= 0 {
 		return from, nil
 	}
-	remaining := time.Duration(hours * float64(time.Hour))
 	curr := from.In(r.loc)
 
 	for i := 0; i < maxScanDays; i++ {
@@ -193,8 +221,15 @@ func (r *calRules) subtractDays(from time.Time, days int) (time.Time, error) {
 
 // subtractTime is the single definition of the trigger: value/24 working days
 // back (HOURS) or value working days (DAYS), the fractional day in working
-// hours. Larger values therefore always give an earlier trigger.
+// hours; SECONDS and MINUTES are that much working time. Larger values
+// therefore always give an earlier trigger.
 func (r *calRules) subtractTime(from time.Time, value float64, unit string) (time.Time, error) {
+	switch unit {
+	case domain.TriggerUnitSeconds:
+		return r.subtractWorking(from, time.Duration(value*float64(time.Second)))
+	case domain.TriggerUnitMinutes:
+		return r.subtractWorking(from, time.Duration(value*float64(time.Minute)))
+	}
 	days := domain.TriggerDays(value, unit)
 	whole := math.Floor(days + 1e-9)
 	frac := days - whole
@@ -321,13 +356,39 @@ func (s *workingCalendarService) cacheDeadline(ctx context.Context, t *domain.Te
 // EvaluateActiveTenders is one engine pass. It is single-flight across
 // instances (advisory lock). The first pass ever only records tenders already in
 // the window as notified, so enabling the engine never floods stakeholders.
-func (s *workingCalendarService) EvaluateActiveTenders(ctx context.Context) (*domain.EvaluationSummary, error) {
+func (s *workingCalendarService) EvaluateActiveTenders(ctx context.Context, by string) (*domain.EvaluationSummary, error) {
+	sum, err := s.evaluate(ctx)
+	run := &domain.LastRun{At: s.now(), Trigger: by, Summary: sum}
+	if err != nil {
+		run.Error = err.Error()
+	}
+	s.mu.Lock()
+	s.lastRun = run
+	s.mu.Unlock()
+	return sum, err
+}
+
+func (s *workingCalendarService) EngineRuntime() domain.EngineRuntime {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return domain.EngineRuntime{NextRunAt: s.nextRun, LastRun: s.lastRun}
+}
+
+func (s *workingCalendarService) SetNextRun(t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.nextRun = nil; !t.IsZero() {
+		s.nextRun = &t
+	}
+}
+
+func (s *workingCalendarService) evaluate(ctx context.Context) (*domain.EvaluationSummary, error) {
 	release, ok, err := s.repo.TryLockEvaluation(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("evaluation lock: %w", err)
 	}
 	if !ok {
-		return &domain.EvaluationSummary{Skipped: true}, nil
+		return &domain.EvaluationSummary{Skipped: true, RedZone: []domain.RedZoneEntry{}}, nil
 	}
 	defer release()
 
@@ -342,25 +403,32 @@ func (s *workingCalendarService) EvaluateActiveTenders(ctx context.Context) (*do
 	maxDays := 0.0
 	for _, c := range cals {
 		v, u := trigger(&c)
-		maxDays = math.Max(maxDays, domain.TriggerDays(v, u))
+		maxDays = math.Max(maxDays, triggerWorkingDays(&c, v, u))
 	}
-	// Closing within trigger working days x 7 (weekends) + 14 days of holiday slack.
+	// Closing within trigger working days x 7 (weekends) + 14 days of holiday slack
+	// (so never under 14 days, even for a sub-minute trigger).
 	now := s.now()
 	window := time.Duration(math.Ceil(maxDays)*7+14) * 24 * time.Hour
+	if window > maxScanDays*24*time.Hour {
+		window = maxScanDays * 24 * time.Hour
+	}
 
+	sum := &domain.EvaluationSummary{Baselined: !baselined, WindowDays: int(window / (24 * time.Hour)), RedZone: []domain.RedZoneEntry{}}
+	if sum.Coverage, err = s.repo.CountDeadlineCoverage(ctx, now, now.Add(window)); err != nil {
+		log.Printf("[WorkingCalendar] coverage count failed: %v", err) // diagnostics only
+	}
 	tenders, err := s.repo.GetActiveTendersForDeadlineCheck(ctx, now, now.Add(window))
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch active tenders for deadline check: %w", err)
 	}
 
-	sum := &domain.EvaluationSummary{Baselined: !baselined}
 	rules := map[string]*calRules{}
 	for i := range tenders {
 		t := &tenders[i]
 		if ctx.Err() != nil {
 			break
 		}
-		if sum.Notified >= maxNotificationsPerTick {
+		if sum.Notified+sum.Escalated >= maxNotificationsPerTick {
 			log.Printf("[WorkingCalendar] per-run notification cap (%d) reached; remaining tenders wait for the next run", maxNotificationsPerTick)
 			break
 		}
@@ -387,19 +455,28 @@ func (s *workingCalendarService) EvaluateActiveTenders(ctx context.Context) (*do
 		}
 		sum.InRedZone++
 
+		entry := domain.RedZoneEntry{TenderID: t.ID, Title: t.Title, Deadline: c.deadline, ClosingDate: t.ClosingDate}
 		sent, err := s.repo.HasRedZoneNotificationBeenSent(ctx, t.ID, c.deadline)
-		if err != nil {
+		switch {
+		case err != nil:
 			log.Printf("[WorkingCalendar] tender %s dedup check failed: %v", t.ID, err)
-			continue
+			entry.Outcome = domain.OutcomeFailed
+		case sent:
+			entry.Outcome = domain.OutcomeAlreadyNotified
+		default:
+			out, err := s.notifyTender(ctx, t, r, c, v, u, false, !baselined)
+			if err != nil || out.errs > 0 {
+				log.Printf("[WorkingCalendar] tender %s notification incomplete: %v (%d claim errors)", t.ID, err, out.errs)
+			}
+			sum.Notified += len(out.notified)
+			entry.Outcome = outcomeOf(out, err, !baselined)
 		}
-		if sent {
-			continue
+		if len(sum.RedZone) < domain.MaxRedZoneEntries {
+			sum.RedZone = append(sum.RedZone, entry)
 		}
-		out, err := s.notifyTender(ctx, t, r, c, v, u, false, !baselined)
-		if err != nil || out.errs > 0 {
-			log.Printf("[WorkingCalendar] tender %s notification incomplete: %v (%d claim errors)", t.ID, err, out.errs)
+		if s.escalate(ctx, t, r, c, now, !baselined) {
+			sum.Escalated++
 		}
-		sum.Notified += len(out.notified)
 	}
 
 	// The first pass ends baseline mode even when a tender errored: staying in it
@@ -412,6 +489,104 @@ func (s *workingCalendarService) EvaluateActiveTenders(ctx context.Context) (*do
 		log.Printf("[WorkingCalendar] engine baselined: %d in-window tenders recorded without notifying", sum.InRedZone)
 	}
 	return sum, nil
+}
+
+func outcomeOf(out notifyOutcome, err error, baseline bool) string {
+	switch {
+	case err != nil || (len(out.notified) == 0 && out.failed+out.errs > 0):
+		return domain.OutcomeFailed
+	case baseline:
+		return domain.OutcomeBaselined
+	case len(out.notified) > 0:
+		return domain.OutcomeNotified
+	default:
+		return domain.OutcomeAlreadyNotified
+	}
+}
+
+// escalate handles a task that is still open EscalationDelayHours (wall clock)
+// after the tender's red-zone trigger: it flags the next pending checklist item
+// DELAYED and alerts the reporting manager, once per (tender, checklist). The
+// claim is taken first and released if the alert fails, so a retry is possible
+// but a duplicate never is. While baselining only the claim is recorded.
+// It reports whether the manager was alerted.
+func (s *workingCalendarService) escalate(ctx context.Context, t *domain.TenderDeadlineCandidate, r *calRules, c *deadlineCalc, now time.Time, baseline bool) bool {
+	delay := r.cal.EscalationDelayHours
+	if delay <= 0 {
+		delay = 4
+	}
+	if !now.After(c.deadline.Add(time.Duration(delay) * time.Hour)) {
+		return false
+	}
+	next, err := s.repo.GetNextPendingChecklist(ctx, t.ID)
+	if err != nil {
+		log.Printf("[WorkingCalendar] escalation lookup failed for %s: %v", t.ID, err)
+		return false
+	}
+	if next == nil || next.Status == "COMPLETED" {
+		return false
+	}
+	markDelayed := func() {
+		if next.Status != "PENDING" {
+			return
+		}
+		if err := s.repo.MarkChecklistDelayed(ctx, next.ChecklistID); err != nil {
+			log.Printf("[WorkingCalendar] could not mark checklist %s delayed: %v", next.ChecklistID, err)
+		}
+	}
+
+	mgr := deref(t.ReportingManagerID)
+	if mgr == "" { // nobody to escalate to; the task is still flagged
+		if !baseline {
+			markDelayed()
+		}
+		return false
+	}
+	v, u := trigger(r.cal)
+	label := thresholdLabel(v, u)
+	reason := fmt.Sprintf("Task '%s' [%s priority] is still pending %d hours after the %s red-zone trigger on tender '%s'",
+		next.Title, next.Priority, delay, label, t.Title)
+	id, err := s.repo.ClaimEscalation(ctx, t.ID, next.ChecklistID, mgr, reason)
+	if err != nil {
+		log.Printf("[WorkingCalendar] escalation claim failed for tender %s: %v", t.ID, err)
+		return false
+	}
+	if id == "" || baseline {
+		return false
+	}
+
+	markDelayed()
+	e := html.EscapeString
+	if err := s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+		UserID:  &mgr,
+		BidID:   &t.ID,
+		Type:    "TENDER",
+		Title:   e(fmt.Sprintf("🚨 ESCALATION: delayed task on tender %s (%s trigger)", t.Title, label)),
+		Message: fmt.Sprintf("<p>%s. Please review the tender and unblock the task.</p>", e(reason)),
+		Link:    alertDomain.TenderLink(t.ID),
+	}); err != nil {
+		log.Printf("[WorkingCalendar] escalation alert failed for tender %s: %v", t.ID, err)
+		if ferr := s.repo.ReleaseEscalation(ctx, id); ferr != nil {
+			log.Printf("[WorkingCalendar] could not release escalation claim %s: %v", id, ferr)
+		}
+		return false
+	}
+	if s.systemLog != nil {
+		s.systemLog.Record(ctx, "TENDER", "TENDER_TASK_ESCALATED", "", &mgr,
+			fmt.Sprintf("Task escalation (%s trigger) for tender %s", label, t.Title),
+			map[string]interface{}{
+				"tender_id":       t.ID,
+				"tender_title":    t.Title,
+				"checklist_id":    next.ChecklistID,
+				"checklist_title": next.Title,
+				"manager_id":      mgr,
+				"manager_name":    deref(t.ReportingManagerName),
+				"threshold":       label,
+				"reason":          reason,
+			},
+		)
+	}
+	return true
 }
 
 func (s *workingCalendarService) TriggerRedZoneNotificationForTender(ctx context.Context, tenderID string, force bool) (*domain.RedZoneNotificationResult, error) {
@@ -612,17 +787,27 @@ func redZoneAlert(t *domain.TenderDeadlineCandidate, r *calRules, c *deadlineCal
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-// thresholdLabel describes a trigger from its value and unit, e.g. "3 working days (72h)".
+// thresholdLabel describes a trigger from its value and unit, e.g.
+// "3 working days (72h)", "30 working minutes" or "48 working seconds".
 func thresholdLabel(value float64, unit string) string {
+	switch unit {
+	case domain.TriggerUnitSeconds:
+		return workingQty(value, "second")
+	case domain.TriggerUnitMinutes:
+		return workingQty(value, "minute")
+	}
 	days := domain.TriggerDays(value, unit)
-	word := "working days"
-	if days == 1 {
-		word = "working day"
-	}
 	if unit == domain.TriggerUnitHours {
-		return fmt.Sprintf("%s %s (%sh)", fmtNum(days), word, fmtNum(value))
+		return fmt.Sprintf("%s (%sh)", workingQty(days, "day"), fmtNum(value))
 	}
-	return fmt.Sprintf("%s %s", fmtNum(days), word)
+	return workingQty(days, "day")
+}
+
+func workingQty(n float64, noun string) string {
+	if n != 1 {
+		noun += "s"
+	}
+	return fmt.Sprintf("%s working %s", fmtNum(n), noun)
 }
 
 func fmtNum(v float64) string { return strconv.FormatFloat(math.Round(v*10)/10, 'f', -1, 64) }

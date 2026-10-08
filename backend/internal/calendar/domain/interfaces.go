@@ -50,6 +50,17 @@ type WorkingCalendarRepository interface {
 	GetNextPendingChecklist(ctx context.Context, tenderID string) (*NextActionableTask, error)
 	UpdateChecklistPriorityAndAssignment(ctx context.Context, checklistID string, req *UpdateChecklistPriorityRequest) error
 	UpdateTenderDeadlineCache(ctx context.Context, tenderID string, deadline time.Time, remainingHours float64) error
+	// MarkChecklistDelayed flags a still-pending item DELAYED; any other status is left alone.
+	MarkChecklistDelayed(ctx context.Context, checklistID string) error
+
+	// Escalations. ClaimEscalation inserts the dedup row before anything is sent and
+	// returns its id, or "" when this (tender, checklist) was already escalated.
+	// ReleaseEscalation drops a claim whose alert failed so the next run retries it.
+	ClaimEscalation(ctx context.Context, tenderID, checklistID, managerID, reason string) (string, error)
+	ReleaseEscalation(ctx context.Context, id string) error
+
+	// CountDeadlineCoverage buckets every active tender by why the engine does or does not look at it.
+	CountDeadlineCoverage(ctx context.Context, from, to time.Time) (DeadlineCoverage, error)
 
 	// GetActiveTendersForDeadlineCheck returns open, unsubmitted tenders closing in (from, to].
 	GetActiveTendersForDeadlineCheck(ctx context.Context, from, to time.Time) ([]TenderDeadlineCandidate, error)
@@ -70,13 +81,21 @@ type TenderDeadlineCandidate struct {
 	// Values currently cached on the tender row, so unchanged results are not rewritten.
 	CachedDeadline       *time.Time
 	CachedRemainingHours *float64
+	// Escalation target; nil when the tender has no reporting manager.
+	ReportingManagerID   *string
+	ReportingManagerName *string
 }
 
 type WorkingCalendarService interface {
 	CalculateTender72HourDeadline(ctx context.Context, tenderID string) (*CalculateDeadlineResult, error)
 
-	// EvaluateActiveTenders runs one engine pass (see EvaluationSummary).
-	EvaluateActiveTenders(ctx context.Context) (*EvaluationSummary, error)
+	// EvaluateActiveTenders runs one engine pass (see EvaluationSummary) and
+	// remembers it as the last run. trigger is RunTriggerScheduler or RunTriggerManual.
+	EvaluateActiveTenders(ctx context.Context, trigger string) (*EvaluationSummary, error)
+	// EngineRuntime reports the last run and when the scheduler fires next.
+	EngineRuntime() EngineRuntime
+	// SetNextRun records when the scheduler will next fire; the zero time clears it.
+	SetNextRun(t time.Time)
 	TriggerRedZoneNotificationForTender(ctx context.Context, tenderID string, force bool) (*RedZoneNotificationResult, error)
 }
 

@@ -385,12 +385,45 @@ func (h *CalendarHandler) UpdateChecklistPriority(c *gin.Context) {
 }
 
 func (h *CalendarHandler) EvaluateDeadlines(c *gin.Context) {
-	sum, err := h.calSvc.EvaluateActiveTenders(c.Request.Context())
+	sum, err := h.calSvc.EvaluateActiveTenders(c.Request.Context(), domain.RunTriggerManual)
 	if err != nil {
 		fail(c, err, "Failed to evaluate tender deadlines")
 		return
 	}
 	response.Success(c, http.StatusOK, "Deadline evaluation completed", sum)
+}
+
+// GetEngineStatus explains whether and how the deadline engine is running.
+func (h *CalendarHandler) GetEngineStatus(c *gin.Context) {
+	ctx := c.Request.Context()
+	cal, err := h.repo.GetDefaultCalendar(ctx)
+	if err != nil {
+		fail(c, err, "Failed to retrieve default calendar")
+		return
+	}
+	if cal == nil {
+		response.NotFound(c, "Default working calendar not found")
+		return
+	}
+	baselined, err := h.repo.IsEngineBaselined(ctx)
+	if err != nil {
+		fail(c, err, "Failed to read engine status")
+		return
+	}
+	unit := cal.SchedulerIntervalUnit
+	if unit == "" {
+		unit = domain.SchedulerUnitMinutes
+	}
+	rt := h.calSvc.EngineRuntime()
+	response.Success(c, http.StatusOK, "Engine status retrieved", gin.H{
+		"scheduler_enabled": h.engineEnabled,
+		"interval_value":    cal.SchedulerIntervalValue,
+		"interval_unit":     unit,
+		"cadence_seconds":   int(cal.SchedulerInterval().Seconds()),
+		"baselined":         baselined,
+		"next_run_at":       rt.NextRunAt,
+		"last_run":          rt.LastRun,
+	})
 }
 
 func (h *CalendarHandler) TriggerTenderRedZoneNotification(c *gin.Context) {

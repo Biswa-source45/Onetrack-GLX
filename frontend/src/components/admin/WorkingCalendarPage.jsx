@@ -49,6 +49,7 @@ import {
   triggerGoogleSync,
   getSyncLogs,
   evaluateDeadlines,
+  getEngineStatus,
 } from '../../services/calendar'
 
 const CURRENT_YEAR = new Date().getFullYear()
@@ -85,18 +86,170 @@ const LEGEND = [
   ['bg-rose-400 ring-2 ring-rose-400/20', 'Weekday Off'],
 ]
 
+const DEADLINE_UNITS = [
+  ['SECONDS', 'Seconds (Working Seconds)'],
+  ['MINUTES', 'Minutes (Working Minutes)'],
+  ['HOURS', 'Hours (Working Hours)'],
+  ['DAYS', 'Days (Working Days)'],
+]
+
 const DEADLINE_PRESETS = [
   ['72 Hours (Default)', { deadline_trigger_value: 72, deadline_trigger_unit: 'HOURS' }],
   ['48 Hours', { deadline_trigger_value: 48, deadline_trigger_unit: 'HOURS' }],
   ['24 Hours', { deadline_trigger_value: 24, deadline_trigger_unit: 'HOURS' }],
   ['3 Days', { deadline_trigger_value: 3, deadline_trigger_unit: 'DAYS' }],
+  ['⚡ 48 Seconds (Live Testing)', { deadline_trigger_value: 48, deadline_trigger_unit: 'SECONDS' }],
 ]
 
 const INTERVAL_PRESETS = [
-  ['10 Minutes (Standard)', { scheduler_interval_value: 10 }],
-  ['5 Minutes', { scheduler_interval_value: 5 }],
-  ['1 Minute', { scheduler_interval_value: 1 }],
+  ['10 Minutes (Standard)', { scheduler_interval_value: 10, scheduler_interval_unit: 'MINUTES' }],
+  ['5 Minutes', { scheduler_interval_value: 5, scheduler_interval_unit: 'MINUTES' }],
+  ['1 Minute', { scheduler_interval_value: 1, scheduler_interval_unit: 'MINUTES' }],
+  ['⚡ 30 Seconds (Live Testing)', { scheduler_interval_value: 30, scheduler_interval_unit: 'SECONDS' }],
 ]
+
+const INTERVAL_LIMITS = { SECONDS: [5, 3600], MINUTES: [1, 1440] }
+
+// Client-side guard mirroring the server rules; the server's message is still shown on failure.
+const scheduleError = (c) => {
+  const unit = c.scheduler_interval_unit || 'MINUTES'
+  const [lo, hi] = INTERVAL_LIMITS[unit] || []
+  const v = c.scheduler_interval_value
+  if (v !== undefined && lo !== undefined && !(v >= lo && v <= hi)) return `Evaluation interval must be ${lo}-${hi} ${unit.toLowerCase()}`
+  const t = c.deadline_trigger_value
+  if (t !== undefined && !(t > 0)) return 'Threshold value must be greater than 0'
+  const e = c.escalation_delay_hours
+  if (e !== undefined && !(e >= 1 && e <= 720)) return 'Delay escalation threshold must be 1-720 hours'
+  return null
+}
+
+const COVERAGE_COLS = [
+  ['total_active', 'Active tenders'],
+  ['no_closing_date', 'No closing date'],
+  ['already_closed', 'Already closed'],
+  ['submitted_or_resolved', 'Submitted/resolved'],
+  ['beyond_window', 'Beyond window'],
+  ['in_window', 'In window'],
+]
+
+const NOT_IN_WINDOW_REASONS = [
+  ['no_closing_date', 'without a closing date'],
+  ['already_closed', 'already past their closing date'],
+  ['submitted_or_resolved', 'submitted/resolved'],
+  ['beyond_window', 'not yet inside the window'],
+]
+
+// One explanation of an evaluation run, shared by the toast and the Engine Status card.
+const describeRun = (s = {}) => {
+  if (s.skipped) return ['info', 'Another evaluation is already running']
+  if (s.baselined) return ['success', `First run: ${s.in_red_zone ?? 0} tender(s) already in the red zone were recorded as notified. No alerts were sent.`]
+  if (!s.evaluated) {
+    const c = s.coverage || {}
+    const why = NOT_IN_WINDOW_REASONS.filter(([k]) => c[k]).map(([k, t]) => `${c[k]} ${t}`)
+    return ['info', `No tender is inside its red-zone window.${c.total_active ? ` Of ${c.total_active} active tenders${why.length ? `: ${why.join(', ')}` : ''}.` : ' There are no active tenders.'}`]
+  }
+  return ['success', `Checked ${s.evaluated} tenders: ${s.in_red_zone ?? 0} in red zone, ${s.notified ?? 0} alert(s) sent, ${s.escalated ?? 0} escalated.`]
+}
+
+const fmtTime = (v) => (v ? new Date(v).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' }) : '—')
+
+const OUTCOME_STYLE = {
+  NOTIFIED: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  ALREADY_NOTIFIED: 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400',
+  BASELINED: 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  FAILED: 'border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-400',
+}
+
+function EngineStatusCard({ engine }) {
+  if (!engine) return <p className="text-xs text-muted-foreground">Loading deadline engine status…</p>
+  const { scheduler_enabled: on, interval_value: n, interval_unit: u, baselined, next_run_at: next, last_run: last } = engine
+  const s = last?.summary
+  const cadence = n ? `Every ${n} ${String(u || '').toLowerCase().replace(/s$/, n === 1 ? '' : 's')}` : '—'
+  const facts = [
+    ['Cadence', cadence],
+    ['Baseline', baselined ? 'Baseline recorded' : 'Not baselined yet — the first run will record tenders already in the red zone without alerting'],
+    ['Next run', on ? fmtTime(next) : '—'],
+  ]
+  return (
+    <Card className={on ? 'border-emerald-500/30' : 'border-amber-500/40'}>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+          <Zap className={`h-4 w-4 ${on ? 'text-emerald-500' : 'text-amber-500'}`} />
+          Deadline Engine Status
+          <Badge variant="outline" className={on ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600' : 'border-amber-500/40 bg-amber-500/10 text-amber-600'}>
+            Scheduler {on ? 'ON' : 'OFF'}
+          </Badge>
+        </CardTitle>
+        {!on && (
+          <CardDescription className="text-amber-700 dark:text-amber-400">
+            Background alerts are off on this server. Set CALENDAR_SCHEDULER_ENABLED=true in the backend environment and restart.
+          </CardDescription>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {facts.map(([label, value]) => (
+            <div key={label}>
+              <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
+              <p className="text-xs font-semibold text-foreground">{value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-semibold text-foreground">Last run</span>
+            {last ? (
+              <>
+                <span className="text-muted-foreground">{fmtTime(last.at)}</span>
+                <Badge variant="outline" className="text-[10px]">{last.trigger === 'MANUAL' ? 'Manual' : 'Scheduler'}</Badge>
+              </>
+            ) : (
+              <span className="text-muted-foreground">No run recorded yet.</span>
+            )}
+          </div>
+          {last?.error && <p className="text-xs text-rose-600">Error: {last.error}</p>}
+          {s && (
+            <>
+              <p className="text-xs text-foreground">{describeRun(s)[1]}</p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-center text-xs">
+                  <caption className="pb-1 text-left text-[11px] font-medium text-muted-foreground">Coverage</caption>
+                  <thead>
+                    <tr className="text-[11px] text-muted-foreground">
+                      {COVERAGE_COLS.map(([k, label]) => <th key={k} className="px-2 py-1 font-medium">{label}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="font-semibold text-foreground">
+                      {COVERAGE_COLS.map(([k]) => <td key={k} className="px-2 py-1">{s.coverage?.[k] ?? 0}</td>)}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              {(s.red_zone?.length > 0 || s.escalated > 0) && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-medium text-muted-foreground">
+                    Red zone ({s.red_zone?.length ?? 0}) · Escalated: {s.escalated ?? 0}
+                  </p>
+                  {s.red_zone?.map((t) => (
+                    <div key={t.tender_id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <span className="font-medium text-foreground">{t.title}</span>
+                      <span className="flex items-center gap-2">
+                        <span className="text-muted-foreground">{fmtTime(t.deadline)}</span>
+                        <Badge variant="outline" className={`text-[10px] ${OUTCOME_STYLE[t.outcome] || ''}`}>{t.outcome}</Badge>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 export function WorkingCalendarPage() {
   const { user, roles, isAdmin, hasRole } = usePermissions()
@@ -127,6 +280,16 @@ export function WorkingCalendarPage() {
   const [calendar, setCalendar] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+
+  // Deadline engine status: admin-only, polled while the page is open.
+  const [engine, setEngine] = useState(null)
+  const loadEngine = () => getEngineStatus().then((r) => r.ok && setEngine(r.data))
+  useEffect(() => {
+    if (!canEditCalendar) return undefined
+    loadEngine()
+    const timer = setInterval(loadEngine, 10000)
+    return () => clearInterval(timer)
+  }, [canEditCalendar])
 
   // Holidays state
   const [holidays, setHolidays] = useState([])
@@ -231,12 +394,18 @@ export function WorkingCalendarPage() {
       toast.error('Permission denied: Only Super Admin and Admin can update the working calendar')
       return
     }
+    const invalid = scheduleError(changes)
+    if (invalid) {
+      toast.error(invalid)
+      return
+    }
     setSaving(true)
     try {
       // The API applies only the fields sent, so a partial change never touches the rest.
       const res = await updateCalendar(calendar.id, changes)
       if (res.ok) {
         setCalendar(res.data)
+        loadEngine()
         toast.success('Working calendar updated successfully. Monthly Calendar synchronized.')
       } else {
         toast.error(res.error?.message || 'Failed to update calendar')
@@ -400,10 +569,9 @@ export function WorkingCalendarPage() {
     try {
       const res = await evaluateDeadlines()
       if (res.ok) {
-        const s = res.data || {}
-        if (s.skipped) toast.info('Another evaluation is already running')
-        else if (s.baselined) toast.success(`First run: ${s.in_red_zone ?? 0} tender(s) already in the red zone were recorded as notified. No alerts were sent.`)
-        else toast.success(`Evaluated ${s.evaluated ?? 0} tenders: ${s.in_red_zone ?? 0} in the red zone, ${s.notified ?? 0} alert(s) sent.`)
+        const [level, message] = describeRun(res.data || {})
+        toast[level](message)
+        loadEngine()
       } else {
         toast.error(res.error?.message || 'Failed to trigger deadline evaluation')
       }
@@ -826,7 +994,7 @@ export function WorkingCalendarPage() {
       box: 'rounded-lg bg-emerald-500/10 p-2.5 text-emerald-500',
       label: 'Deadline Trigger',
       value: `${calendar?.deadline_trigger_value ?? 72} ${calendar?.deadline_trigger_unit || 'HOURS'}`,
-      sub: `Cadence: every ${calendar?.scheduler_interval_value ?? 10} min`,
+      sub: `Cadence: every ${calendar?.scheduler_interval_value ?? 10} ${(calendar?.scheduler_interval_unit || 'MINUTES').toLowerCase()}`,
       subClass: 'text-xs text-muted-foreground',
     },
   ]
@@ -841,7 +1009,7 @@ export function WorkingCalendarPage() {
             type="button"
             variant="outline"
             size="sm"
-            className="h-6 text-[11px] px-2"
+            className={`h-6 text-[11px] px-2 ${label.includes('Live Testing') ? 'border-dashed border-amber-500/50 text-amber-600 hover:bg-amber-500/10' : ''}`}
             onClick={() => setCalendar({ ...calendar, ...patch })}
           >
             {label}
@@ -915,6 +1083,8 @@ export function WorkingCalendarPage() {
           </div>
         )}
       </div>
+
+      {canEditCalendar && <EngineStatusCard engine={engine} />}
 
       {/* Overview Stat Badges - Visible only for Super Admin and Admin */}
       {canEditCalendar && (
@@ -1240,11 +1410,13 @@ export function WorkingCalendarPage() {
                             !canEditCalendar ? 'bg-muted/40 cursor-not-allowed' : ''
                           }`}
                         >
-                          <option value="HOURS">Hours (24 = 1 working day)</option>
-                          <option value="DAYS">Days (Working Days)</option>
+                          {DEADLINE_UNITS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                         </select>
                       </div>
                     </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Hours and Days convert to working days (24 h = 1 working day). Seconds and Minutes count real working time inside the {calendar?.working_start_time || '09:00'}-{calendar?.working_end_time || '18:00'} window.
+                    </p>
 
                     {renderPresets(DEADLINE_PRESETS, 'border-emerald-500/15')}
                   </div>
@@ -1261,17 +1433,17 @@ export function WorkingCalendarPage() {
                         </p>
                       </div>
                       <Badge variant="outline" className="border-primary/40 bg-primary/10 text-primary text-xs self-start sm:self-auto font-mono">
-                        Every {calendar?.scheduler_interval_value ?? 10} min
+                        Every {calendar?.scheduler_interval_value ?? 10} {calendar?.scheduler_interval_unit || 'MINUTES'}
                       </Badge>
                     </div>
 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div className="space-y-1.5">
-                        <label className="text-xs font-semibold text-muted-foreground">Interval (minutes)</label>
+                        <label className="text-xs font-semibold text-muted-foreground">Interval Amount</label>
                         <Input
                           type="number"
-                          min="1"
-                          max="1440"
+                          min={INTERVAL_LIMITS[calendar?.scheduler_interval_unit || 'MINUTES']?.[0]}
+                          max={INTERVAL_LIMITS[calendar?.scheduler_interval_unit || 'MINUTES']?.[1]}
                           disabled={!canEditCalendar}
                           value={calendar?.scheduler_interval_value ?? 10}
                           onChange={(e) =>
@@ -1284,13 +1456,47 @@ export function WorkingCalendarPage() {
                           className={!canEditCalendar ? 'bg-muted/40 cursor-not-allowed' : ''}
                         />
                       </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-muted-foreground">Interval Unit</label>
+                        <select
+                          disabled={!canEditCalendar}
+                          value={calendar?.scheduler_interval_unit || 'MINUTES'}
+                          onChange={(e) => setCalendar({ ...calendar, scheduler_interval_unit: e.target.value })}
+                          className={`w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${
+                            !canEditCalendar ? 'bg-muted/40 cursor-not-allowed' : ''
+                          }`}
+                        >
+                          <option value="SECONDS">Seconds</option>
+                          <option value="MINUTES">Minutes</option>
+                        </select>
+                      </div>
                     </div>
+                    <p className="text-[11px] text-muted-foreground">Allowed: 5-3600 seconds or 1-1440 minutes.</p>
 
                     {renderPresets(INTERVAL_PRESETS, 'border-primary/15')}
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-muted-foreground">
+                      Delay Escalation Threshold (Hours)
+                    </label>
+                    <Input
+                      type="number"
+                      min="1"
+                      max="720"
+                      disabled={!canEditCalendar}
+                      value={calendar?.escalation_delay_hours ?? 4}
+                      onChange={(e) =>
+                        setCalendar({ ...calendar, escalation_delay_hours: parseInt(e.target.value, 10) || 4 })
+                      }
+                      className={!canEditCalendar ? 'bg-muted/40 cursor-not-allowed' : ''}
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Hours past the calculated deadline after which incomplete tasks are marked DELAYED and escalated to the manager.
+                    </p>
+                  </div>
                   <div className="space-y-2">
                     <label className="text-xs font-semibold text-muted-foreground">System Timezone</label>
                     <Input value={calendar?.timezone || 'Asia/Kolkata'} disabled className="bg-muted/50 cursor-not-allowed" />
