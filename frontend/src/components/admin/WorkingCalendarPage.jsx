@@ -54,6 +54,50 @@ import {
 const CURRENT_YEAR = new Date().getFullYear()
 const YEAR_OPTIONS = Array.from({ length: 5 }, (_, i) => CURRENT_YEAR - 2 + i)
 
+const EMPTY_HOLIDAY_FORM = {
+  holiday_date: '',
+  holiday_name: '',
+  holiday_type: 'COMPANY',
+  working_status: 'NON_WORKING',
+  priority: 'HIGH',
+  description: '',
+}
+
+// API list payloads arrive either as { <key>: [...] } or as a bare array.
+const listFrom = (data, key) => data?.[key] || (Array.isArray(data) ? data : [])
+
+const SATURDAYS = [
+  { num: 1, key: 'saturday_1_working', title: '1st Saturday', defaultWorking: true, days: 'Days 1 – 7 of month' },
+  { num: 2, key: 'saturday_2_working', title: '2nd Saturday', defaultWorking: false, days: 'Days 8 – 14 of month' },
+  { num: 3, key: 'saturday_3_working', title: '3rd Saturday', defaultWorking: true, days: 'Days 15 – 21 of month' },
+  { num: 4, key: 'saturday_4_working', title: '4th Saturday', defaultWorking: false, days: 'Days 22 – 28 of month' },
+  { num: 5, key: 'saturday_5_working', title: '5th Saturday', defaultWorking: true, days: 'Days 29 – 31 of month' },
+]
+
+const LEGEND = [
+  ['bg-emerald-500 ring-2 ring-emerald-500/20', 'Working Day'],
+  ['bg-amber-500 ring-2 ring-amber-500/20', '2nd/4th Saturday Off'],
+  ['bg-slate-400 ring-2 ring-slate-400/20', 'Sunday Weekly Off'],
+  ['bg-rose-500 ring-2 ring-rose-500/20', '🏛️ Gazetted / Gov Holiday'],
+  ['bg-purple-500 ring-2 ring-purple-500/20', '🏢 Company Holiday'],
+  ['bg-sky-500 ring-2 ring-sky-500/20', '🌐 Regional / Optional'],
+  ['bg-emerald-600 ring-2 ring-emerald-600/30', '✨ Special Working Override'],
+  ['bg-rose-400 ring-2 ring-rose-400/20', 'Weekday Off'],
+]
+
+const DEADLINE_PRESETS = [
+  ['72 Hours (Default)', { deadline_trigger_value: 72, deadline_trigger_unit: 'HOURS' }],
+  ['48 Hours', { deadline_trigger_value: 48, deadline_trigger_unit: 'HOURS' }],
+  ['24 Hours', { deadline_trigger_value: 24, deadline_trigger_unit: 'HOURS' }],
+  ['3 Days', { deadline_trigger_value: 3, deadline_trigger_unit: 'DAYS' }],
+]
+
+const INTERVAL_PRESETS = [
+  ['10 Minutes (Standard)', { scheduler_interval_value: 10 }],
+  ['5 Minutes', { scheduler_interval_value: 5 }],
+  ['1 Minute', { scheduler_interval_value: 1 }],
+]
+
 export function WorkingCalendarPage() {
   const { user, roles, isAdmin, hasRole } = usePermissions()
 
@@ -91,14 +135,7 @@ export function WorkingCalendarPage() {
   const [holidayTypeFilter, setHolidayTypeFilter] = useState('ALL')
   const [holidayModalOpen, setHolidayModalOpen] = useState(false)
   const [editingHoliday, setEditingHoliday] = useState(null)
-  const [holidayForm, setHolidayForm] = useState({
-    holiday_date: '',
-    holiday_name: '',
-    holiday_type: 'COMPANY',
-    working_status: 'NON_WORKING',
-    priority: 'HIGH',
-    description: '',
-  })
+  const [holidayForm, setHolidayForm] = useState({ ...EMPTY_HOLIDAY_FORM })
 
   // Exceptions state
   const [exceptions, setExceptions] = useState([])
@@ -142,8 +179,8 @@ export function WorkingCalendarPage() {
 
         const failed = [holsRes, excRes, gRes, logsRes].find((r) => !r.ok)
         if (failed) toast.error(failed.error?.message || 'Some working calendar data could not be loaded')
-        if (holsRes.ok) setHolidays(holsRes.data?.holidays || (Array.isArray(holsRes.data) ? holsRes.data : []))
-        if (excRes.ok) setExceptions(excRes.data?.exceptions || (Array.isArray(excRes.data) ? excRes.data : []))
+        if (holsRes.ok) setHolidays(listFrom(holsRes.data, 'holidays'))
+        if (excRes.ok) setExceptions(listFrom(excRes.data, 'exceptions'))
         if (gRes.ok) {
           const cfg = gRes.data?.integration || gRes.data
           setGoogleConfig(cfg)
@@ -155,7 +192,7 @@ export function WorkingCalendarPage() {
             sync_enabled: cfg?.sync_enabled ?? true,
           })
         }
-        if (logsRes.ok) setSyncLogs(logsRes.data?.logs || (Array.isArray(logsRes.data) ? logsRes.data : []))
+        if (logsRes.ok) setSyncLogs(listFrom(logsRes.data, 'logs'))
       } else {
         toast.error('Could not load default working calendar')
       }
@@ -171,6 +208,22 @@ export function WorkingCalendarPage() {
   }, [])
 
   // ── Handlers ───────────────────────────────────────────────────────────────
+
+  const reloadHolidays = async () => {
+    const refreshed = await getHolidays(calendar.id)
+    if (refreshed.ok) setHolidays(listFrom(refreshed.data, 'holidays'))
+  }
+
+  // A created exception replaces any existing one on the same date.
+  const upsertException = (res) => {
+    const newExc = res.data?.exception || res.data
+    setExceptions((prev) => [
+      ...prev.filter(
+        (item) => item.id !== newExc.id && toIsoDateString(item.exception_date) !== toIsoDateString(newExc.exception_date)
+      ),
+      newExc,
+    ])
+  }
 
   const handleUpdateCalendar = async (changes) => {
     if (!calendar?.id) return
@@ -221,8 +274,7 @@ export function WorkingCalendarPage() {
           toast.success(`Holiday "${holidayForm.holiday_name}" updated. Monthly Calendar synchronized.`)
           setHolidayModalOpen(false)
           setEditingHoliday(null)
-          const refreshed = await getHolidays(calendar.id)
-          if (refreshed.ok) setHolidays(refreshed.data?.holidays || (Array.isArray(refreshed.data) ? refreshed.data : []))
+          await reloadHolidays()
         } else {
           toast.error(res.error?.message || 'Failed to update holiday')
         }
@@ -231,16 +283,8 @@ export function WorkingCalendarPage() {
         if (res.ok) {
           toast.success(`Holiday "${holidayForm.holiday_name}" added. Monthly Calendar synchronized.`)
           setHolidayModalOpen(false)
-          setHolidayForm({
-            holiday_date: '',
-            holiday_name: '',
-            holiday_type: 'COMPANY',
-            working_status: 'NON_WORKING',
-            priority: 'HIGH',
-            description: '',
-          })
-          const refreshed = await getHolidays(calendar.id)
-          if (refreshed.ok) setHolidays(refreshed.data?.holidays || (Array.isArray(refreshed.data) ? refreshed.data : []))
+          setHolidayForm({ ...EMPTY_HOLIDAY_FORM })
+          await reloadHolidays()
         } else {
           toast.error(res.error?.message || 'Failed to create holiday')
         }
@@ -284,13 +328,7 @@ export function WorkingCalendarPage() {
       const res = await createException(calendar.id, exceptionForm)
       if (res.ok) {
         toast.success('Special date exception created. Monthly Calendar updated.')
-        const newExc = res.data?.exception || res.data
-        setExceptions((prev) => [
-          ...prev.filter(
-            (item) => item.id !== newExc.id && toIsoDateString(item.exception_date) !== toIsoDateString(newExc.exception_date)
-          ),
-          newExc,
-        ])
+        upsertException(res)
         setExceptionForm({
           exception_date: '',
           exception_type: 'SPECIAL_WORKING_DAY',
@@ -343,8 +381,8 @@ export function WorkingCalendarPage() {
           getHolidays(calendar.id),
           getSyncLogs(calendar.id, 10),
         ])
-        if (holsRes.ok) setHolidays(holsRes.data?.holidays || (Array.isArray(holsRes.data) ? holsRes.data : []))
-        if (logsRes.ok) setSyncLogs(logsRes.data?.logs || (Array.isArray(logsRes.data) ? logsRes.data : []))
+        if (holsRes.ok) setHolidays(listFrom(holsRes.data, 'holidays'))
+        if (logsRes.ok) setSyncLogs(listFrom(logsRes.data, 'logs'))
       } else {
         toast.error(res.error?.message || 'Sync failed')
       }
@@ -564,16 +602,13 @@ export function WorkingCalendarPage() {
     }
 
     return {
-      dateObj,
       dateStr,
       dayNum,
       isCurrentMonth,
       isToday,
-      dayOfWeek,
       isWorkingDay,
       dayHolidays,
       dayExceptions,
-      satIndex,
       isSunday,
       ruleExplanation,
       dayStatus: {
@@ -661,8 +696,7 @@ export function WorkingCalendarPage() {
         toast.success(`Holiday "${quickHolidayName.trim()}" added. Monthly Calendar updated.`)
         setQuickHolidayName('')
         setQuickHolidayDesc('')
-        const refreshed = await getHolidays(calendar.id)
-        if (refreshed.ok) setHolidays(refreshed.data?.holidays || (Array.isArray(refreshed.data) ? refreshed.data : []))
+        await reloadHolidays()
       } else {
         toast.error(res.error?.message || 'Failed to add holiday')
       }
@@ -692,13 +726,7 @@ export function WorkingCalendarPage() {
       })
       if (res.ok) {
         toast.success('Special date override created. Monthly Calendar updated.')
-        const newExc = res.data?.exception || res.data
-        setExceptions((prev) => [
-          ...prev.filter(
-            (item) => item.id !== newExc.id && toIsoDateString(item.exception_date) !== toIsoDateString(newExc.exception_date)
-          ),
-          newExc,
-        ])
+        upsertException(res)
         setQuickExceptionReason('')
       } else {
         toast.error(res.error?.message || 'Failed to save override')
@@ -725,13 +753,7 @@ export function WorkingCalendarPage() {
       })
       if (res.ok) {
         toast.success('Converted to Special Working Day! Monthly Calendar updated.')
-        const newExc = res.data?.exception || res.data
-        setExceptions((prev) => [
-          ...prev.filter(
-            (item) => item.id !== newExc.id && toIsoDateString(item.exception_date) !== toIsoDateString(newExc.exception_date)
-          ),
-          newExc,
-        ])
+        upsertException(res)
       } else {
         toast.error(res.error?.message || 'Failed to convert day')
       }
@@ -765,6 +787,69 @@ export function WorkingCalendarPage() {
     )
   }
 
+  const tabs = [
+    { id: 'overview', label: 'Working Schedule', Icon: Clock, adminOnly: true },
+    { id: 'calendar', label: 'Monthly Calendar', Icon: CalendarIcon },
+    { id: 'saturdays', label: 'Saturday Rules', Icon: CalendarDays, adminOnly: true },
+    { id: 'holidays', label: `Holiday Ledger (${holidays.length})`, Icon: ShieldCheck },
+    { id: 'exceptions', label: `Special Exceptions (${exceptions.length})`, Icon: AlertTriangle },
+    { id: 'google-sync', label: 'Google Sync', Icon: RefreshCw, adminOnly: true },
+  ].filter((t) => !t.adminOnly || canEditCalendar)
+
+  const statCards = [
+    {
+      Icon: Clock,
+      box: 'rounded-lg bg-blue-500/10 p-2.5 text-blue-500',
+      label: 'Working Hours',
+      value: `${calendar?.working_start_time || '09:00'} – ${calendar?.working_end_time || '18:00'}`,
+      sub: '9.0 hrs / working day',
+      subClass: 'text-xs text-muted-foreground',
+    },
+    {
+      Icon: CalendarIcon,
+      box: 'rounded-lg bg-amber-500/10 p-2.5 text-amber-500',
+      label: 'Saturday Rules',
+      value: '2nd & 4th Off',
+      sub: '1st, 3rd, 5th Working',
+      subClass: 'text-xs text-muted-foreground',
+    },
+    {
+      Icon: ShieldCheck,
+      box: 'rounded-lg bg-purple-500/10 p-2.5 text-purple-500',
+      label: `Active Holidays (${selectedYear})`,
+      value: `${holidays.length} Records`,
+      sub: `${holidays.filter((h) => h.is_admin_override).length} Admin Overrides`,
+      subClass: 'text-xs text-emerald-500 font-medium',
+    },
+    {
+      Icon: Zap,
+      box: 'rounded-lg bg-emerald-500/10 p-2.5 text-emerald-500',
+      label: 'Deadline Trigger',
+      value: `${calendar?.deadline_trigger_value ?? 72} ${calendar?.deadline_trigger_unit || 'HOURS'}`,
+      sub: `Cadence: every ${calendar?.scheduler_interval_value ?? 10} min`,
+      subClass: 'text-xs text-muted-foreground',
+    },
+  ]
+
+  const renderPresets = (presets, borderClass) =>
+    canEditCalendar && (
+      <div className={`flex flex-wrap items-center gap-1.5 pt-1 border-t ${borderClass}`}>
+        <span className="text-[11px] font-medium text-muted-foreground mr-1">Quick Presets:</span>
+        {presets.map(([label, patch]) => (
+          <Button
+            key={label}
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-6 text-[11px] px-2"
+            onClick={() => setCalendar({ ...calendar, ...patch })}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
+    )
+
   return (
     <div className="space-y-6 p-6">
       {/* Page Title & Badges */}
@@ -772,7 +857,7 @@ export function WorkingCalendarPage() {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold tracking-tight text-foreground">
-              {canEditCalendar ? 'Working Calendar' : 'Working Calendar'}
+              Working Calendar
             </h1>
             {canEditCalendar && (
               <>
@@ -820,14 +905,7 @@ export function WorkingCalendarPage() {
               size="sm"
               onClick={() => {
                 setEditingHoliday(null)
-                setHolidayForm({
-                  holiday_date: '',
-                  holiday_name: '',
-                  holiday_type: 'COMPANY',
-                  working_status: 'NON_WORKING',
-                  priority: 'HIGH',
-                  description: '',
-                })
+                setHolidayForm({ ...EMPTY_HOLIDAY_FORM })
                 setHolidayModalOpen(true)
               }}
             >
@@ -841,140 +919,38 @@ export function WorkingCalendarPage() {
       {/* Overview Stat Badges - Visible only for Super Admin and Admin */}
       {canEditCalendar && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card className="border-border/60 bg-card/60 backdrop-blur-sm">
-            <CardContent className="flex items-center gap-4 p-4">
-              <div className="rounded-lg bg-blue-500/10 p-2.5 text-blue-500">
-                <Clock className="h-5 w-5" />
-              </div>
-              <div>
-                <p className="text-xs font-medium text-muted-foreground">Working Hours</p>
-                <p className="text-lg font-semibold tracking-tight text-foreground">
-                  {calendar?.working_start_time || '09:00'} – {calendar?.working_end_time || '18:00'}
-                </p>
-                <p className="text-xs text-muted-foreground">9.0 hrs / working day</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border/60 bg-card/60 backdrop-blur-sm">
-            <CardContent className="flex items-center gap-4 p-4">
-              <div className="rounded-lg bg-amber-500/10 p-2.5 text-amber-500">
-                <CalendarIcon className="h-5 w-5" />
-              </div>
-              <div>
-                <p className="text-xs font-medium text-muted-foreground">Saturday Rules</p>
-                <p className="text-lg font-semibold tracking-tight text-foreground">
-                  2nd & 4th Off
-                </p>
-                <p className="text-xs text-muted-foreground">1st, 3rd, 5th Working</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border/60 bg-card/60 backdrop-blur-sm">
-            <CardContent className="flex items-center gap-4 p-4">
-              <div className="rounded-lg bg-purple-500/10 p-2.5 text-purple-500">
-                <ShieldCheck className="h-5 w-5" />
-              </div>
-              <div>
-                <p className="text-xs font-medium text-muted-foreground">Active Holidays ({selectedYear})</p>
-                <p className="text-lg font-semibold tracking-tight text-foreground">
-                  {holidays.length} Records
-                </p>
-                <p className="text-xs text-emerald-500 font-medium">
-                  {holidays.filter((h) => h.is_admin_override).length} Admin Overrides
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border/60 bg-card/60 backdrop-blur-sm">
-            <CardContent className="flex items-center gap-4 p-4">
-              <div className="rounded-lg bg-emerald-500/10 p-2.5 text-emerald-500">
-                <Zap className="h-5 w-5" />
-              </div>
-              <div>
-                <p className="text-xs font-medium text-muted-foreground">Deadline Trigger</p>
-                <p className="text-lg font-semibold tracking-tight text-foreground">
-                  {calendar?.deadline_trigger_value ?? 72} {calendar?.deadline_trigger_unit || 'HOURS'}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Cadence: every {calendar?.scheduler_interval_value ?? 10} min
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+          {statCards.map(({ Icon, box, label, value, sub, subClass }) => (
+            <Card key={label} className="border-border/60 bg-card/60 backdrop-blur-sm">
+              <CardContent className="flex items-center gap-4 p-4">
+                <div className={box}>
+                  <Icon className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">{label}</p>
+                  <p className="text-lg font-semibold tracking-tight text-foreground">{value}</p>
+                  <p className={subClass}>{sub}</p>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
         </div>
       )}
 
       {/* Tab Navigation - Available across all portals with role-appropriate tabs */}
       <div className="flex border-b border-border">
-        {canEditCalendar && (
+        {tabs.map(({ id, label, Icon }) => (
           <button
-            onClick={() => setActiveTab('overview')}
-            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === 'overview'
+            key={id}
+            onClick={() => setActiveTab(id)}
+            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === id
               ? 'border-primary text-primary'
               : 'border-transparent text-muted-foreground hover:text-foreground'
               }`}
           >
-            <Clock className="h-4 w-4" />
-            Working Schedule
+            <Icon className="h-4 w-4" />
+            {label}
           </button>
-        )}
-        <button
-          onClick={() => setActiveTab('calendar')}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === 'calendar'
-            ? 'border-primary text-primary'
-            : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-        >
-          <CalendarIcon className="h-4 w-4" />
-          Monthly Calendar
-        </button>
-        {canEditCalendar && (
-          <button
-            onClick={() => setActiveTab('saturdays')}
-            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === 'saturdays'
-              ? 'border-primary text-primary'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
-          >
-            <CalendarDays className="h-4 w-4" />
-            Saturday Rules
-          </button>
-        )}
-        <button
-          onClick={() => setActiveTab('holidays')}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === 'holidays'
-            ? 'border-primary text-primary'
-            : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-        >
-          <ShieldCheck className="h-4 w-4" />
-          Holiday Ledger ({holidays.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('exceptions')}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === 'exceptions'
-            ? 'border-primary text-primary'
-            : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-        >
-          <AlertTriangle className="h-4 w-4" />
-          Special Exceptions ({exceptions.length})
-        </button>
-        {canEditCalendar && (
-          <button
-            onClick={() => setActiveTab('google-sync')}
-            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === 'google-sync'
-              ? 'border-primary text-primary'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
-          >
-            <RefreshCw className="h-4 w-4" />
-            Google Sync
-          </button>
-        )}
+        ))}
       </div>
 
       {/* ── Tab: Overview & Working Schedule ─────────────────────────────────── */}
@@ -1270,47 +1246,7 @@ export function WorkingCalendarPage() {
                       </div>
                     </div>
 
-                    {canEditCalendar && (
-                      <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-emerald-500/15">
-                        <span className="text-[11px] font-medium text-muted-foreground mr-1">Quick Presets:</span>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-6 text-[11px] px-2"
-                          onClick={() => setCalendar({ ...calendar, deadline_trigger_value: 72, deadline_trigger_unit: 'HOURS' })}
-                        >
-                          72 Hours (Default)
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-6 text-[11px] px-2"
-                          onClick={() => setCalendar({ ...calendar, deadline_trigger_value: 48, deadline_trigger_unit: 'HOURS' })}
-                        >
-                          48 Hours
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-6 text-[11px] px-2"
-                          onClick={() => setCalendar({ ...calendar, deadline_trigger_value: 24, deadline_trigger_unit: 'HOURS' })}
-                        >
-                          24 Hours
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-6 text-[11px] px-2"
-                          onClick={() => setCalendar({ ...calendar, deadline_trigger_value: 3, deadline_trigger_unit: 'DAYS' })}
-                        >
-                          3 Days
-                        </Button>
-                      </div>
-                    )}
+                    {renderPresets(DEADLINE_PRESETS, 'border-emerald-500/15')}
                   </div>
 
                   <div className="rounded-xl border border-primary/30 bg-primary/5 p-4 space-y-3">
@@ -1350,38 +1286,7 @@ export function WorkingCalendarPage() {
                       </div>
                     </div>
 
-                    {canEditCalendar && (
-                      <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-primary/15">
-                        <span className="text-[11px] font-medium text-muted-foreground mr-1">Quick Presets:</span>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-6 text-[11px] px-2"
-                          onClick={() => setCalendar({ ...calendar, scheduler_interval_value: 10 })}
-                        >
-                          10 Minutes (Standard)
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-6 text-[11px] px-2"
-                          onClick={() => setCalendar({ ...calendar, scheduler_interval_value: 5 })}
-                        >
-                          5 Minutes
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-6 text-[11px] px-2"
-                          onClick={() => setCalendar({ ...calendar, scheduler_interval_value: 1 })}
-                        >
-                          1 Minute
-                        </Button>
-                      </div>
-                    )}
+                    {renderPresets(INTERVAL_PRESETS, 'border-primary/15')}
                   </div>
                 </div>
 
@@ -1537,12 +1442,8 @@ export function WorkingCalendarPage() {
                     onClick={() => {
                       setEditingHoliday(null)
                       setHolidayForm({
+                        ...EMPTY_HOLIDAY_FORM,
                         holiday_date: `${calYear}-${String(calMonth + 1).padStart(2, '0')}-01`,
-                        holiday_name: '',
-                        holiday_type: 'COMPANY',
-                        working_status: 'NON_WORKING',
-                        priority: 'HIGH',
-                        description: '',
                       })
                       setHolidayModalOpen(true)
                     }}
@@ -1555,49 +1456,15 @@ export function WorkingCalendarPage() {
             </CardHeader>
 
             <CardContent className="space-y-4 pt-4">
-              {/* Synchronization Active Banner */}
-              {/* <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary">
-                <Sparkles className="h-4 w-4 shrink-0 text-primary" />
-                <span>
-                  <strong>Direct 2-Way Synchronization Active:</strong> Changes made in <em>Working Schedule</em>, <em>Saturday Rules</em>, <em>Holiday Ledger</em>, or <em>Special Exceptions</em> automatically update this calendar in real time without needing to re-enter anything manually!
-                </span>
-              </div> */}
-
               {/* Color-Coded Legend Bar */}
               <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border/60 bg-muted/20 p-2.5 text-xs text-muted-foreground">
                 <span className="font-semibold text-foreground text-[11px] uppercase tracking-wider">Color Legend:</span>
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-500/20" />
-                  <span>Working Day</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-amber-500/20" />
-                  <span>2nd/4th Saturday Off</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-slate-400 ring-2 ring-slate-400/20" />
-                  <span>Sunday Weekly Off</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-rose-500/20" />
-                  <span>🏛️ Gazetted / Gov Holiday</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-purple-500 ring-2 ring-purple-500/20" />
-                  <span>🏢 Company Holiday</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-sky-500 ring-2 ring-sky-500/20" />
-                  <span>🌐 Regional / Optional</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-600 ring-2 ring-emerald-600/30" />
-                  <span>✨ Special Working Override</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-rose-400 ring-2 ring-rose-400/20" />
-                  <span>Weekday Off</span>
-                </div>
+                {LEGEND.map(([dot, label]) => (
+                  <div key={label} className="flex items-center gap-1.5">
+                    <span className={`h-2.5 w-2.5 rounded-full ${dot}`} />
+                    <span>{label}</span>
+                  </div>
+                ))}
               </div>
 
               {/* Monthly Calendar Grid */}
@@ -1664,17 +1531,13 @@ export function WorkingCalendarPage() {
                               <span
                                 className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${dayStatus.isSpecialWork
                                   ? 'bg-emerald-500/15 text-emerald-600 border border-emerald-500/30'
-                                  : dayStatus.isHoliday
-                                    ? 'bg-rose-500/15 text-rose-600 border border-rose-500/30'
-                                    : dayStatus.isSaturdayOff
-                                      ? 'bg-amber-500/15 text-amber-600 border border-amber-500/30'
-                                      : dayStatus.isSundayOff
-                                        ? 'bg-slate-500/15 text-slate-500 border border-slate-500/20'
-                                        : dayStatus.isWeekdayOff
-                                          ? 'bg-rose-500/15 text-rose-600 border border-rose-500/30'
-                                          : !isWorkingDay
-                                            ? 'bg-rose-500/15 text-rose-600 border border-rose-500/30'
-                                            : 'bg-emerald-500/10 text-emerald-600'
+                                  : dayStatus.isSaturdayOff
+                                    ? 'bg-amber-500/15 text-amber-600 border border-amber-500/30'
+                                    : dayStatus.isSundayOff
+                                      ? 'bg-slate-500/15 text-slate-500 border border-slate-500/20'
+                                      : dayStatus.isWeekdayOff || !isWorkingDay
+                                        ? 'bg-rose-500/15 text-rose-600 border border-rose-500/30'
+                                        : 'bg-emerald-500/10 text-emerald-600'
                                   }`}
                               >
                                 {dayStatus.badgeText}
@@ -1798,43 +1661,8 @@ export function WorkingCalendarPage() {
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-                {[
-                  {
-                    num: 1,
-                    key: 'saturday_1_working',
-                    title: '1st Saturday',
-                    isWorking: calendar?.saturday_1_working ?? true,
-                    days: 'Days 1 – 7 of month',
-                  },
-                  {
-                    num: 2,
-                    key: 'saturday_2_working',
-                    title: '2nd Saturday',
-                    isWorking: calendar?.saturday_2_working ?? false,
-                    days: 'Days 8 – 14 of month',
-                  },
-                  {
-                    num: 3,
-                    key: 'saturday_3_working',
-                    title: '3rd Saturday',
-                    isWorking: calendar?.saturday_3_working ?? true,
-                    days: 'Days 15 – 21 of month',
-                  },
-                  {
-                    num: 4,
-                    key: 'saturday_4_working',
-                    title: '4th Saturday',
-                    isWorking: calendar?.saturday_4_working ?? false,
-                    days: 'Days 22 – 28 of month',
-                  },
-                  {
-                    num: 5,
-                    key: 'saturday_5_working',
-                    title: '5th Saturday',
-                    isWorking: calendar?.saturday_5_working ?? true,
-                    days: 'Days 29 – 31 of month',
-                  },
-                ].map((sat) => {
+                {SATURDAYS.map((s) => {
+                  const sat = { ...s, isWorking: calendar?.[s.key] ?? s.defaultWorking }
                   return canEditCalendar ? (
                     <div
                       key={sat.num}
@@ -1924,12 +1752,6 @@ export function WorkingCalendarPage() {
                   <>ℹ️ Saturday rules are set by company policy. Only Super Admin and Admin can modify alternate Saturday working rules.</>
                 )}
               </p>
-
-              {/* <div className="rounded-lg border border-border/60 bg-muted/20 p-4 text-xs leading-relaxed text-muted-foreground">
-                <span className="font-semibold text-foreground">Dynamic Formula Implementation: </span>
-                Every Saturday date <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-primary">D</code> calculates its sequence number as{' '}
-                <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-primary">(D.Day() - 1) / 7 + 1</code>. Days 1–7 are 1st Saturday, 8–14 are 2nd Saturday, 15–21 are 3rd, 22–28 are 4th, and 29–31 are 5th.
-              </div> */}
             </CardContent>
           </Card>
         </div>
@@ -1943,9 +1765,6 @@ export function WorkingCalendarPage() {
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
                   <CardTitle className="text-base">Internal OneTrack Holiday </CardTitle>
-                  {/* <CardDescription>
-                    The internal business source of truth. Google Calendar imports synchronize here, but Admin overrides remain authoritative.
-                  </CardDescription> */}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">

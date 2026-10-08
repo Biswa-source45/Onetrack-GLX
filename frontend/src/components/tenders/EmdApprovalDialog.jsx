@@ -5,12 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
-import { approveEmd, rejectEmd } from '../../services/emd'
-
-function fmtMoney(v) {
-  if (!v && v !== 0) return '—'
-  return `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
-}
+import { approveEmd, rejectEmd, fmtMoney } from '../../services/emd'
 
 export function EmdApprovalDialog({ open, onClose, bid, emd, mode = 'approve', onSuccess }) {
   const [remarks, setRemarks] = useState('')

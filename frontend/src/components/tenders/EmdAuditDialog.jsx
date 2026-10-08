@@ -5,28 +5,20 @@ import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { getEmdAuditLogs } from '../../services/emd'
 
-const ACTION_ICONS = {
-  'UPDATED': FileText,
-  'CLOSED': FileText,
-  'SUBMITTED_MD_APPROVAL': Clock,
-  'MD_APPROVED': CheckCircle2,
-  'MD_REJECTED': XCircle,
-  'PAYMENT_RECORDED': DollarSign,
-  'VERIFIED': ShieldCheck,
-  'VERIFICATION_REJECTED': XCircle,
-  'REFUND_UPDATED': ArrowRight,
-}
+const SLATE = 'bg-slate-100 text-slate-700 dark:bg-slate-900/40 dark:text-slate-300 border-slate-200'
+const ROSE = 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border-rose-200'
 
-const ACTION_COLORS = {
-  'UPDATED': 'bg-slate-100 text-slate-700 dark:bg-slate-900/40 dark:text-slate-300 border-slate-200',
-  'CLOSED': 'bg-slate-100 text-slate-700 dark:bg-slate-900/40 dark:text-slate-300 border-slate-200',
-  'SUBMITTED_MD_APPROVAL': 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300 border-orange-200',
-  'MD_APPROVED': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-200',
-  'MD_REJECTED': 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border-rose-200',
-  'PAYMENT_RECORDED': 'bg-teal-100 text-teal-700 dark:bg-teal-950/40 dark:text-teal-300 border-teal-200',
-  'VERIFIED': 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 border-indigo-200',
-  'VERIFICATION_REJECTED': 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border-rose-200',
-  'REFUND_UPDATED': 'bg-sky-100 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300 border-sky-200',
+// action -> [icon, badge colour]
+const ACTION_STYLE = {
+  'UPDATED': [FileText, SLATE],
+  'CLOSED': [FileText, SLATE],
+  'SUBMITTED_MD_APPROVAL': [Clock, 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300 border-orange-200'],
+  'MD_APPROVED': [CheckCircle2, 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-200'],
+  'MD_REJECTED': [XCircle, ROSE],
+  'PAYMENT_RECORDED': [DollarSign, 'bg-teal-100 text-teal-700 dark:bg-teal-950/40 dark:text-teal-300 border-teal-200'],
+  'VERIFIED': [ShieldCheck, 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 border-indigo-200'],
+  'VERIFICATION_REJECTED': [XCircle, ROSE],
+  'REFUND_UPDATED': [ArrowRight, 'bg-sky-100 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300 border-sky-200'],
 }
 
 function fmtDate(dt) {
@@ -112,8 +104,7 @@ export function EmdAuditDialog({ open, onClose, bidId, bidTitle }) {
           ) : (
             <div className="relative pl-6 space-y-6 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-border">
               {logs.map((log) => {
-                const Icon = ACTION_ICONS[log.action] || History
-                const badgeColor = ACTION_COLORS[log.action] || 'bg-muted text-muted-foreground'
+                const [Icon, badgeColor] = ACTION_STYLE[log.action] || [History, 'bg-muted text-muted-foreground']
 
                 return (
                   <div key={log.id} className="relative group">

@@ -11,24 +11,13 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import {
-  getEmdDetails, submitEmdForMdApproval, fetchReceiptBlob, safeReceiptUrl, EMD_STATUS_CONFIG, REFUND_STATUS_CONFIG
+  getEmdDetails, submitEmdForMdApproval, fetchReceiptBlob, safeReceiptUrl, EMD_STATUS_CONFIG, REFUND_STATUS_CONFIG, fmtMoney
 } from '../../services/emd'
+import { formatDate as fmtDate } from '../../lib/tenderFormat'
 import { usePermissions } from '../../hooks/usePermissions'
 import { EmdDetailsDialog } from './EmdDetailsDialog'
 import { EmdApprovalDialog } from './EmdApprovalDialog'
 import { EmdAuditDialog } from './EmdAuditDialog'
-
-function fmtDate(dt) {
-  if (!dt) return '—'
-  const d = new Date(dt)
-  if (isNaN(d.getTime()) || d.getFullYear() <= 1970) return '—'
-  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-}
-
-function fmtMoney(v) {
-  if (!v && v !== 0) return '—'
-  return `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
-}
 
 // ── Interactive In-App Receipt / Proof Viewer Modal ─────────────────────────
 function ReceiptPreviewModal({ open, onClose, url, title }) {
@@ -189,6 +178,71 @@ function parsePaymentDetails(raw) {
   }
 }
 
+// Small presentational helpers: value classes, a labelled info cell, and the
+// bordered section / proof-card shells used by the card below.
+const V = {
+  sb: 'font-semibold text-foreground',
+  md: 'font-medium text-foreground',
+  mono: 'font-mono font-semibold text-foreground',
+  monoMd: 'font-mono font-medium text-foreground',
+  monoB: 'font-mono font-bold text-foreground',
+}
+const BADGE = 'badge'
+
+function Info({ label, value, cls, extra }) {
+  const { wrap, ...rest } = extra || {}
+  return (
+    <div className={wrap}>
+      <span className="text-muted-foreground block text-[11px]">{`${label}:`}</span>
+      {cls === BADGE ? (
+        <Badge variant="outline" className="text-[10px] font-semibold bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+          {value}
+        </Badge>
+      ) : (
+        <span className={cls} {...rest}>{value}</span>
+      )}
+    </div>
+  )
+}
+
+// rows: [label, value, value class (or BADGE), optional { wrap, ...spanProps }]
+function InfoGrid({ rows, gap = 'gap-3' }) {
+  return (
+    <div className={`grid grid-cols-2 sm:grid-cols-4 ${gap} text-xs`}>
+      {rows.map(([label, value, cls, extra]) => (
+        <Info key={label} label={label} value={value} cls={cls} extra={extra} />
+      ))}
+    </div>
+  )
+}
+
+function Section({ box, h, title, right, children }) {
+  return (
+    <div className={`p-4 rounded-xl border ${box} space-y-3`}>
+      <div className="flex items-center justify-between">
+        <h4 className={`text-[11px] font-bold uppercase tracking-wider ${h} flex items-center gap-1.5`}>{title}</h4>
+        {right}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function ProofCard({ iconBox, icon, title, sub, action }) {
+  return (
+    <div className="p-3 rounded-lg border border-border bg-card flex items-center justify-between gap-3 shadow-2xs">
+      <div className="flex items-center gap-2.5 min-w-0">
+        <div className={`size-9 rounded-lg ${iconBox} flex items-center justify-center shrink-0`}>{icon}</div>
+        <div className="min-w-0">
+          <span className="font-semibold text-foreground text-xs block truncate">{title}</span>
+          <span className="text-[10px] text-muted-foreground block truncate">{sub}</span>
+        </div>
+      </div>
+      {action}
+    </div>
+  )
+}
+
 export function EmdLifecycleCard({ bid, onRefresh }) {
   const { hasRole, user } = usePermissions()
   const isFinance = hasRole('FINANCE')
@@ -287,6 +341,41 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
 
   const paymentModeName = emd?.payment_mode || bid?.emd_type || 'Online'
 
+  // [show?, rows] per payment mode, in render order (not mutually exclusive).
+  const pd = paymentDetails
+  const modeBlocks = [
+    [paymentModeName.toLowerCase() === 'cheque' || (bid?.emd_type || '').toLowerCase() === 'dd', [
+      ['Bank Name', pd.bank_name || bid?.emd_bank_name || '—', V.sb],
+      ['Cheque / DD Number', pd.cheque_number || emd?.payment_reference || '—', V.mono],
+      ['Cheque Date', fmtDate(pd.cheque_date), V.md],
+      ['Submission Date', fmtDate(pd.submission_date || emd?.payment_date), V.md],
+      ['Branch Name', pd.branch_name || bid?.emd_branch || '—', V.md],
+      ['Account Holder Name', pd.account_holder_name || bid?.emd_beneficiary || '—', V.md],
+      ['Cheque Status', pd.cheque_status || emd?.payment_status || 'Submitted', BADGE],
+      ['Cheque Amount', fmtMoney(pd.amount || emd?.payment_amount || emd?.emd_amount), V.monoB],
+    ]],
+    [paymentModeName.toLowerCase() === 'online', [
+      ['Bank Name', pd.bank_name || bid?.emd_bank_name || '—', V.sb],
+      ['Transaction ID / UTR', pd.transaction_id || emd?.payment_reference || '—', V.mono],
+      ['Payment Gateway', pd.payment_gateway || '—', V.md],
+      ['Transaction Date/Time', pd.transaction_datetime ? fmtDate(pd.transaction_datetime) : fmtDate(emd?.payment_date), V.md],
+      ['Account Number', pd.account_number || bid?.emd_account_number || '—', V.monoMd],
+      ['IFSC Code', pd.ifsc_code || bid?.emd_ifsc_code || '—', V.monoMd],
+      ['Payment Status', pd.payment_status || emd?.payment_status || 'Successful', BADGE],
+      ['Paid Amount', fmtMoney(pd.payment_amount || emd?.payment_amount || emd?.emd_amount), V.monoB],
+    ]],
+    [paymentModeName.toLowerCase() === 'challan', [
+      ['Bank Name', pd.bank_name || '—', V.sb],
+      ['Challan Number', pd.challan_number || emd?.payment_reference || '—', V.mono],
+      ['Challan Date', fmtDate(pd.challan_date || emd?.payment_date), V.md],
+      ['Branch Name', pd.branch_name || '—', V.md],
+      ['Challan Type / Purpose', pd.challan_type || '—', V.md],
+      ['Challan Status', pd.challan_status || emd?.payment_status || 'Submitted', BADGE],
+      ['Challan Amount', fmtMoney(pd.amount || emd?.payment_amount || emd?.emd_amount), V.monoB],
+      ['Payment Reference', emd?.payment_reference || '—', V.monoMd],
+    ]],
+  ]
+
   if (notRequired) {
     return (
       <div className="rounded-2xl border border-border bg-muted/20 px-5 py-4 flex items-center gap-2.5 text-xs">
@@ -356,275 +445,59 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
       <div className="p-5 sm:p-6 space-y-6">
         {/* Section 1: EMD & Payment Facts */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3 text-xs">
-          <div className="flex justify-between items-center py-1.5 border-b border-border/50">
-            <span className="text-muted-foreground">EMD Amount</span>
-            <span className="font-bold text-foreground font-mono text-sm">
-              {fmtMoney(emd?.emd_amount ?? bid?.emd_amount)}
-            </span>
-          </div>
-
-          {canEdit && (
-            <div className="flex justify-between items-center py-1.5 border-b border-border/50">
-              <span className="text-muted-foreground">Payment Status</span>
-              <span className="font-semibold text-foreground">
-                {emd?.payment_status || (emd?.is_paid ? 'Paid' : 'Unpaid')}
-              </span>
+          {[
+            // [label, value, value class, finance/admin only]
+            ['EMD Amount', fmtMoney(emd?.emd_amount ?? bid?.emd_amount), 'font-bold text-foreground font-mono text-sm'],
+            ['Payment Status', emd?.payment_status || (emd?.is_paid ? 'Paid' : 'Unpaid'), V.sb, true],
+            ['EMD Status', emd?.status || 'Pending', V.sb],
+            ['Payment Mode', emd?.payment_mode || (bid?.emd_type || 'Online'), V.md, true],
+            ['Due / Submission Date', fmtDate(emd?.due_date ?? bid?.closing_date), V.md],
+            ['Payment Reference', emd?.payment_reference || '—', V.monoMd, true],
+            ['EMD Reference Number', emd?.reference_number || bid?.gem_bid_no || bid?.bid_no || '—', V.monoMd],
+            ['Payment Date', fmtDate(emd?.payment_date), V.md, true],
+          ].map(([label, value, cls, adminOnly]) => (!adminOnly || canEdit) && (
+            <div key={label} className="flex justify-between items-center py-1.5 border-b border-border/50">
+              <span className="text-muted-foreground">{label}</span>
+              <span className={cls}>{value}</span>
             </div>
-          )}
-
-          <div className="flex justify-between items-center py-1.5 border-b border-border/50">
-            <span className="text-muted-foreground">EMD Status</span>
-            <span className="font-semibold text-foreground">
-              {emd?.status || 'Pending'}
-            </span>
-          </div>
-
-          {canEdit && (
-            <div className="flex justify-between items-center py-1.5 border-b border-border/50">
-              <span className="text-muted-foreground">Payment Mode</span>
-              <span className="font-medium text-foreground">
-                {emd?.payment_mode || (bid?.emd_type || 'Online')}
-              </span>
-            </div>
-          )}
-
-          <div className="flex justify-between items-center py-1.5 border-b border-border/50">
-            <span className="text-muted-foreground">Due / Submission Date</span>
-            <span className="font-medium text-foreground">
-              {fmtDate(emd?.due_date ?? bid?.closing_date)}
-            </span>
-          </div>
-
-          {canEdit && (
-            <div className="flex justify-between items-center py-1.5 border-b border-border/50">
-              <span className="text-muted-foreground">Payment Reference</span>
-              <span className="font-mono font-medium text-foreground">
-                {emd?.payment_reference || '—'}
-              </span>
-            </div>
-          )}
-
-          <div className="flex justify-between items-center py-1.5 border-b border-border/50">
-            <span className="text-muted-foreground">EMD Reference Number</span>
-            <span className="font-mono font-medium text-foreground">
-              {emd?.reference_number || bid?.gem_bid_no || bid?.bid_no || '—'}
-            </span>
-          </div>
-
-          {canEdit && (
-            <div className="flex justify-between items-center py-1.5 border-b border-border/50">
-              <span className="text-muted-foreground">Payment Date</span>
-              <span className="font-medium text-foreground">
-                {fmtDate(emd?.payment_date)}
-              </span>
-            </div>
-          )}
+          ))}
         </div>
 
         {canEdit && (<>
         {/* Section 2: Mode-Specific Payment Details (All Payment Mode Details) */}
-        <div className="p-4 rounded-xl border border-blue-200/80 bg-blue-50/20 dark:bg-blue-950/10 space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-[11px] font-bold uppercase tracking-wider text-blue-900 dark:text-blue-300 flex items-center gap-1.5">
-              <CreditCard className="size-3.5 text-blue-600 dark:text-blue-400" />
-              {paymentModeName} Payment Details
-            </h4>
+        <Section
+          box="border-blue-200/80 bg-blue-50/20 dark:bg-blue-950/10"
+          h="text-blue-900 dark:text-blue-300"
+          title={<>
+            <CreditCard className="size-3.5 text-blue-600 dark:text-blue-400" />
+            {paymentModeName} Payment Details
+          </>}
+          right={
             <Badge variant="outline" className="text-[10px] font-semibold bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800">
               Mode: {paymentModeName}
             </Badge>
-          </div>
-
-          {/* If Mode is Cheque */}
-          {(paymentModeName.toLowerCase() === 'cheque' || (bid?.emd_type || '').toLowerCase() === 'dd') && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Bank Name:</span>
-                <span className="font-semibold text-foreground">
-                  {paymentDetails.bank_name || bid?.emd_bank_name || '—'}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Cheque / DD Number:</span>
-                <span className="font-mono font-semibold text-foreground">
-                  {paymentDetails.cheque_number || emd?.payment_reference || '—'}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Cheque Date:</span>
-                <span className="font-medium text-foreground">
-                  {fmtDate(paymentDetails.cheque_date)}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Submission Date:</span>
-                <span className="font-medium text-foreground">
-                  {fmtDate(paymentDetails.submission_date || emd?.payment_date)}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Branch Name:</span>
-                <span className="font-medium text-foreground">
-                  {paymentDetails.branch_name || bid?.emd_branch || '—'}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Account Holder Name:</span>
-                <span className="font-medium text-foreground">
-                  {paymentDetails.account_holder_name || bid?.emd_beneficiary || '—'}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Cheque Status:</span>
-                <Badge variant="outline" className="text-[10px] font-semibold bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
-                  {paymentDetails.cheque_status || emd?.payment_status || 'Submitted'}
-                </Badge>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Cheque Amount:</span>
-                <span className="font-mono font-bold text-foreground">
-                  {fmtMoney(paymentDetails.amount || emd?.payment_amount || emd?.emd_amount)}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* If Mode is Online */}
-          {paymentModeName.toLowerCase() === 'online' && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Bank Name:</span>
-                <span className="font-semibold text-foreground">
-                  {paymentDetails.bank_name || bid?.emd_bank_name || '—'}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Transaction ID / UTR:</span>
-                <span className="font-mono font-semibold text-foreground">
-                  {paymentDetails.transaction_id || emd?.payment_reference || '—'}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Payment Gateway:</span>
-                <span className="font-medium text-foreground">
-                  {paymentDetails.payment_gateway || '—'}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Transaction Date/Time:</span>
-                <span className="font-medium text-foreground">
-                  {paymentDetails.transaction_datetime ? fmtDate(paymentDetails.transaction_datetime) : fmtDate(emd?.payment_date)}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Account Number:</span>
-                <span className="font-mono font-medium text-foreground">
-                  {paymentDetails.account_number || bid?.emd_account_number || '—'}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">IFSC Code:</span>
-                <span className="font-mono font-medium text-foreground">
-                  {paymentDetails.ifsc_code || bid?.emd_ifsc_code || '—'}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Payment Status:</span>
-                <Badge variant="outline" className="text-[10px] font-semibold bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
-                  {paymentDetails.payment_status || emd?.payment_status || 'Successful'}
-                </Badge>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Paid Amount:</span>
-                <span className="font-mono font-bold text-foreground">
-                  {fmtMoney(paymentDetails.payment_amount || emd?.payment_amount || emd?.emd_amount)}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* If Mode is Challan */}
-          {paymentModeName.toLowerCase() === 'challan' && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Bank Name:</span>
-                <span className="font-semibold text-foreground">
-                  {paymentDetails.bank_name || '—'}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Challan Number:</span>
-                <span className="font-mono font-semibold text-foreground">
-                  {paymentDetails.challan_number || emd?.payment_reference || '—'}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Challan Date:</span>
-                <span className="font-medium text-foreground">
-                  {fmtDate(paymentDetails.challan_date || emd?.payment_date)}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Branch Name:</span>
-                <span className="font-medium text-foreground">
-                  {paymentDetails.branch_name || '—'}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Challan Type / Purpose:</span>
-                <span className="font-medium text-foreground">
-                  {paymentDetails.challan_type || '—'}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Challan Status:</span>
-                <Badge variant="outline" className="text-[10px] font-semibold bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
-                  {paymentDetails.challan_status || emd?.payment_status || 'Submitted'}
-                </Badge>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Challan Amount:</span>
-                <span className="font-mono font-bold text-foreground">
-                  {fmtMoney(paymentDetails.amount || emd?.payment_amount || emd?.emd_amount)}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Payment Reference:</span>
-                <span className="font-mono font-medium text-foreground">
-                  {emd?.payment_reference || '—'}
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
+          }
+        >
+          {modeBlocks.map(([show, rows], i) => show && <InfoGrid key={i} rows={rows} />)}
+        </Section>
 
         {/* Section 3: Uploaded Proof & Receipt Documents */}
-        <div className="p-4 rounded-xl border border-emerald-200/80 bg-emerald-50/20 dark:bg-emerald-950/10 space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-[11px] font-bold uppercase tracking-wider text-emerald-900 dark:text-emerald-300 flex items-center gap-1.5">
-              <FileCheck className="size-3.5 text-emerald-600 dark:text-emerald-400" />
-              Uploaded Proof &amp; Receipt Documents
-            </h4>
-            <span className="text-[10px] text-muted-foreground">Scanned Verification Evidence</span>
-          </div>
-
+        <Section
+          box="border-emerald-200/80 bg-emerald-50/20 dark:bg-emerald-950/10"
+          h="text-emerald-900 dark:text-emerald-300"
+          title={<>
+            <FileCheck className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+            Uploaded Proof &amp; Receipt Documents
+          </>}
+          right={<span className="text-[10px] text-muted-foreground">Scanned Verification Evidence</span>}
+        >
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            {/* Payment Proof Card */}
-            <div className="p-3 rounded-lg border border-border bg-card flex items-center justify-between gap-3 shadow-2xs">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="size-9 rounded-lg bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
-                  <FileText className="size-4" />
-                </div>
-                <div className="min-w-0">
-                  <span className="font-semibold text-foreground text-xs block truncate">
-                    EMD Payment Proof / Receipt
-                  </span>
-                  <span className="text-[10px] text-muted-foreground block truncate">
-                    {paymentReceiptUrl ? 'Document attached' : 'No document uploaded yet'}
-                  </span>
-                </div>
-              </div>
-
-              {paymentReceiptUrl ? (
+            <ProofCard
+              iconBox="bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300"
+              icon={<FileText className="size-4" />}
+              title="EMD Payment Proof / Receipt"
+              sub={paymentReceiptUrl ? 'Document attached' : 'No document uploaded yet'}
+              action={paymentReceiptUrl ? (
                 <Button
                   size="sm"
                   variant="outline"
@@ -643,25 +516,13 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
                   Upload Proof
                 </Button>
               )}
-            </div>
-
-            {/* Refund Proof Card */}
-            <div className="p-3 rounded-lg border border-border bg-card flex items-center justify-between gap-3 shadow-2xs">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="size-9 rounded-lg bg-teal-100 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 flex items-center justify-center shrink-0">
-                  <Receipt className="size-4" />
-                </div>
-                <div className="min-w-0">
-                  <span className="font-semibold text-foreground text-xs block truncate">
-                    Refund Advice / Proof
-                  </span>
-                  <span className="text-[10px] text-muted-foreground block truncate">
-                    {refundReceiptUrl ? 'Refund advice uploaded' : 'Pending release/refund'}
-                  </span>
-                </div>
-              </div>
-
-              {refundReceiptUrl ? (
+            />
+            <ProofCard
+              iconBox="bg-teal-100 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300"
+              icon={<Receipt className="size-4" />}
+              title="Refund Advice / Proof"
+              sub={refundReceiptUrl ? 'Refund advice uploaded' : 'Pending release/refund'}
+              action={refundReceiptUrl ? (
                 <Button
                   size="sm"
                   variant="outline"
@@ -675,129 +536,55 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
                   {emd?.refund_status === 'Refunded' ? 'Not uploaded' : '—'}
                 </span>
               )}
-            </div>
+            />
           </div>
-        </div>
+        </Section>
 
         {/* Section 4: Depositor Details (All Depositor / Person Details) */}
-        <div className="p-4 rounded-xl border border-purple-200/80 bg-purple-50/20 dark:bg-purple-950/10 space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-[11px] font-bold uppercase tracking-wider text-purple-900 dark:text-purple-300 flex items-center gap-1.5">
-              <User className="size-3.5 text-purple-600 dark:text-purple-400" /> Depositor / Person Details
-            </h4>
-            <span className="text-[10px] text-muted-foreground">Authorized Depositor Information</span>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 text-xs">
-            <div>
-              <span className="text-muted-foreground block text-[11px]">Deposited By:</span>
-              <span className="font-semibold text-foreground">
-                {emd?.depositor_name || '—'}
+        <Section
+          box="border-purple-200/80 bg-purple-50/20 dark:bg-purple-950/10"
+          h="text-purple-900 dark:text-purple-300"
+          title={<><User className="size-3.5 text-purple-600 dark:text-purple-400" /> Depositor / Person Details</>}
+          right={<span className="text-[10px] text-muted-foreground">Authorized Depositor Information</span>}
+        >
+          <InfoGrid gap="gap-3.5" rows={[
+            ['Deposited By', emd?.depositor_name || '—', V.sb],
+            ['Employee ID', emd?.depositor_employee_id || '—', V.monoMd],
+            ['Department', emd?.depositor_department || '—', V.md],
+            ['Designation', emd?.depositor_designation || '—', V.md],
+            ['Contact Number', emd?.depositor_contact ? (
+              <>
+                <Phone className="size-3 text-muted-foreground" />
+                {emd.depositor_contact}
+              </>
+            ) : '—', `${V.monoMd} flex items-center gap-1`],
+            ['Email ID', emd?.depositor_email ? (
+              <span className="flex items-center gap-1">
+                <Mail className="size-3 text-muted-foreground shrink-0" />
+                <span className="truncate">{emd.depositor_email}</span>
               </span>
-            </div>
-            <div>
-              <span className="text-muted-foreground block text-[11px]">Employee ID:</span>
-              <span className="font-mono font-medium text-foreground">
-                {emd?.depositor_employee_id || '—'}
-              </span>
-            </div>
-            <div>
-              <span className="text-muted-foreground block text-[11px]">Department:</span>
-              <span className="font-medium text-foreground">
-                {emd?.depositor_department || '—'}
-              </span>
-            </div>
-            <div>
-              <span className="text-muted-foreground block text-[11px]">Designation:</span>
-              <span className="font-medium text-foreground">
-                {emd?.depositor_designation || '—'}
-              </span>
-            </div>
-            <div>
-              <span className="text-muted-foreground block text-[11px]">Contact Number:</span>
-              <span className="font-mono font-medium text-foreground flex items-center gap-1">
-                {emd?.depositor_contact ? (
-                  <>
-                    <Phone className="size-3 text-muted-foreground" />
-                    {emd.depositor_contact}
-                  </>
-                ) : '—'}
-              </span>
-            </div>
-            <div>
-              <span className="text-muted-foreground block text-[11px]">Email ID:</span>
-              <span className="font-medium text-foreground truncate block" title={emd?.depositor_email}>
-                {emd?.depositor_email ? (
-                  <span className="flex items-center gap-1">
-                    <Mail className="size-3 text-muted-foreground shrink-0" />
-                    <span className="truncate">{emd.depositor_email}</span>
-                  </span>
-                ) : '—'}
-              </span>
-            </div>
-            <div>
-              <span className="text-muted-foreground block text-[11px]">Deposit Date:</span>
-              <span className="font-medium text-foreground">
-                {fmtDate(emd?.deposit_date)}
-              </span>
-            </div>
-            <div>
-              <span className="text-muted-foreground block text-[11px]">Depositor Remarks:</span>
-              <span className="font-medium text-foreground italic truncate block" title={emd?.depositor_remarks}>
-                {emd?.depositor_remarks || 'None'}
-              </span>
-            </div>
-          </div>
-        </div>
+            ) : '—', `${V.md} truncate block`, { title: emd?.depositor_email }],
+            ['Deposit Date', fmtDate(emd?.deposit_date), V.md],
+            ['Depositor Remarks', emd?.depositor_remarks || 'None', `${V.md} italic truncate block`, { title: emd?.depositor_remarks }],
+          ]} />
+        </Section>
 
         {/* Section 5: Refund Tracking */}
-        <div className="p-4 rounded-xl border border-teal-200/80 bg-teal-50/20 dark:bg-teal-950/10 space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-[11px] font-bold uppercase tracking-wider text-teal-900 dark:text-teal-300 flex items-center gap-1.5">
-              <ArrowRight className="size-3.5 text-teal-600" /> EMD Release &amp; Refund Status
-            </h4>
-            <span className="text-[10px] text-muted-foreground">Post-Bid Closure Tracking</span>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-            <div>
-              <span className="text-muted-foreground block text-[11px]">Refund Status:</span>
-              <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold border mt-0.5 ${REFUND_STATUS_CONFIG[emd?.refund_status]?.color || 'bg-muted'}`}>
-                {emd?.refund_status || 'Pending'}
-              </span>
-            </div>
-            <div>
-              <span className="text-muted-foreground block text-[11px]">Expected Refund Date:</span>
-              <span className="font-medium text-foreground">
-                {fmtDate(emd?.expected_refund_date)}
-              </span>
-            </div>
-            <div>
-              <span className="text-muted-foreground block text-[11px]">Actual Refund Date:</span>
-              <span className="font-medium text-foreground">
-                {fmtDate(emd?.actual_refund_date)}
-              </span>
-            </div>
-            <div>
-              <span className="text-muted-foreground block text-[11px]">Refund Mode:</span>
-              <span className="font-medium text-foreground">
-                {emd?.refund_mode || '—'}
-              </span>
-            </div>
-            <div>
-              <span className="text-muted-foreground block text-[11px]">Refund Reference / UTR:</span>
-              <span className="font-mono font-medium text-foreground">
-                {emd?.refund_reference_no || emd?.refund_transaction_id || '—'}
-              </span>
-            </div>
-            <div className="sm:col-span-3">
-              <span className="text-muted-foreground block text-[11px]">Refund Remarks:</span>
-              <span className="font-medium text-foreground italic">
-                {emd?.refund_remarks || '—'}
-              </span>
-            </div>
-          </div>
-        </div>
+        <Section
+          box="border-teal-200/80 bg-teal-50/20 dark:bg-teal-950/10"
+          h="text-teal-900 dark:text-teal-300"
+          title={<><ArrowRight className="size-3.5 text-teal-600" /> EMD Release &amp; Refund Status</>}
+          right={<span className="text-[10px] text-muted-foreground">Post-Bid Closure Tracking</span>}
+        >
+          <InfoGrid rows={[
+            ['Refund Status', emd?.refund_status || 'Pending', `inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold border mt-0.5 ${REFUND_STATUS_CONFIG[emd?.refund_status]?.color || 'bg-muted'}`],
+            ['Expected Refund Date', fmtDate(emd?.expected_refund_date), V.md],
+            ['Actual Refund Date', fmtDate(emd?.actual_refund_date), V.md],
+            ['Refund Mode', emd?.refund_mode || '—', V.md],
+            ['Refund Reference / UTR', emd?.refund_reference_no || emd?.refund_transaction_id || '—', V.monoMd],
+            ['Refund Remarks', emd?.refund_remarks || '—', `${V.md} italic`, { wrap: 'sm:col-span-3' }],
+          ]} />
+        </Section>
 
         </>)}
 

@@ -3,6 +3,11 @@ import { apiFetch } from './auth'
 const BASE = '/api/v1'
 
 // ── Status Configurations & Color Badges ─────────────────────────────────────
+const SLATE = {
+  color: 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-950/30 dark:text-slate-400 dark:border-slate-800',
+  dot: 'bg-slate-400',
+}
+
 export const EMD_STATUS_CONFIG = {
   'Pending': {
     label: 'Pending',
@@ -44,16 +49,8 @@ export const EMD_STATUS_CONFIG = {
     color: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/30 dark:text-rose-400 dark:border-rose-800',
     dot: 'bg-rose-500',
   },
-  'Exempted': {
-    label: 'Exempted',
-    color: 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-950/30 dark:text-slate-400 dark:border-slate-800',
-    dot: 'bg-slate-400',
-  },
-  'Not Applicable': {
-    label: 'Not Applicable',
-    color: 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-950/30 dark:text-slate-400 dark:border-slate-800',
-    dot: 'bg-slate-400',
-  },
+  'Exempted': { label: 'Exempted', ...SLATE },
+  'Not Applicable': { label: 'Not Applicable', ...SLATE },
   'Released': {
     label: 'Released',
     color: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/30 dark:text-sky-400 dark:border-sky-800',
@@ -67,12 +64,17 @@ export const EMD_STATUS_CONFIG = {
 }
 
 export const REFUND_STATUS_CONFIG = {
-  'Not Applicable': { label: 'Not Applicable', color: 'bg-gray-100 text-gray-700 border-gray-200' },
-  'Pending': { label: 'Refund Pending', color: 'bg-amber-50 text-amber-700 border-amber-200' },
-  'Initiated': { label: 'Refund Initiated', color: 'bg-blue-50 text-blue-700 border-blue-200' },
-  'Released': { label: 'Released', color: 'bg-teal-50 text-teal-700 border-teal-200' },
-  'Refunded': { label: 'Refunded', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-  'Failed': { label: 'Failed', color: 'bg-rose-50 text-rose-700 border-rose-200' },
+  'Not Applicable': { color: 'bg-gray-100 text-gray-700 border-gray-200' },
+  'Pending': { color: 'bg-amber-50 text-amber-700 border-amber-200' },
+  'Initiated': { color: 'bg-blue-50 text-blue-700 border-blue-200' },
+  'Released': { color: 'bg-teal-50 text-teal-700 border-teal-200' },
+  'Refunded': { color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  'Failed': { color: 'bg-rose-50 text-rose-700 border-rose-200' },
+}
+
+export function fmtMoney(v) {
+  if (!v && v !== 0) return '—'
+  return `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
 }
 
 // ── API Functions ─────────────────────────────────────────────────────────────

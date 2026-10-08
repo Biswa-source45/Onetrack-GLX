@@ -14,7 +14,7 @@ import { toast } from 'sonner'
 import {
   getEmdDetails, updateBasicEmd, submitEmdForMdApproval,
   recordEmdPayment, verifyEmdPayment, updateEmdRefund, uploadEmdReceipt,
-  EMD_STATUS_CONFIG, REFUND_STATUS_CONFIG, safeReceiptUrl, openReceipt
+  EMD_STATUS_CONFIG, REFUND_STATUS_CONFIG, safeReceiptUrl, openReceipt, fmtMoney
 } from '../../services/emd'
 import { usePermissions } from '../../hooks/usePermissions'
 
@@ -34,9 +34,59 @@ function fmtDate(dt) {
   return d.toISOString().split('T')[0]
 }
 
-function fmtMoney(v) {
-  if (!v && v !== 0) return '—'
-  return `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+const SELECT_CLS = 'w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring'
+
+// One labelled form control. `opts` (strings or [value, text] pairs) renders a select,
+// `area` a textarea, otherwise an input. `sm` is the compact style used inside the
+// payment-mode boxes; `wrap` / `lcls` append classes to the wrapper / label.
+function Field({ label, v, set, ph, req, type, cls = 'text-xs', opts, area, sm, wrap, lcls, disabled, ...rest }) {
+  const onChange = (e) => set(e.target.value)
+  return (
+    <div className={`${sm ? 'space-y-1' : 'space-y-1.5'}${wrap ? ` ${wrap}` : ''}`}>
+      <Label className={`${sm ? 'text-[11px]' : 'text-xs'} font-semibold${lcls ? ` ${lcls}` : ''}`}>{label}</Label>
+      {opts ? (
+        <select disabled={disabled} value={v} onChange={onChange} className={SELECT_CLS}>
+          {opts.map((o) => {
+            const [val, text] = Array.isArray(o) ? o : [o, o]
+            return <option key={val} value={val}>{text}</option>
+          })}
+        </select>
+      ) : area ? (
+        <Textarea disabled={disabled} value={v} onChange={onChange} placeholder={ph} className={cls} />
+      ) : (
+        <Input type={type} {...rest} required={req} disabled={disabled} value={v} onChange={onChange} placeholder={ph} className={cls} />
+      )}
+    </div>
+  )
+}
+
+function ReceiptUpload({ label, view, url, onOpen, uploading, disabled, onUpload }) {
+  return (
+    <div className="space-y-1.5 p-3.5 rounded-xl border border-border bg-muted/20">
+      <Label className="text-xs font-semibold flex items-center justify-between">
+        <span>{label}</span>
+        {url && (
+          <button
+            type="button"
+            onClick={() => onOpen(url)}
+            className="text-primary hover:underline flex items-center gap-1 text-[11px]"
+          >
+            <ExternalLink className="size-3" /> {view}
+          </button>
+        )}
+      </Label>
+      <div className="flex items-center gap-2">
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp,application/pdf"
+          disabled={disabled || uploading}
+          onChange={onUpload}
+          className="text-xs file:mr-2 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-primary file:text-primary-foreground hover:file:opacity-90"
+        />
+        {uploading && <Loader2 className="size-4 animate-spin text-primary" />}
+      </div>
+    </div>
+  )
 }
 
 export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
@@ -47,9 +97,11 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [emd, setEmd] = useState(null)
+  // The EMD amount is set on the tender (read-only here) and verification status comes from the record.
+  const basicAmount = emd?.emd_amount ? String(emd.emd_amount) : ''
+  const verStatus = emd?.verification_status || 'Pending Verification'
 
   // Section A: Basic Form State
-  const [basicAmount, setBasicAmount] = useState('')
   const [basicDueDate, setBasicDueDate] = useState('')
   const [basicRefNo, setBasicRefNo] = useState('')
   const [basicPurpose, setBasicPurpose] = useState('')
@@ -97,7 +149,6 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
   const [depRemarks, setDepRemarks] = useState('')
 
   // Section E: Verification Form State
-  const [verStatus, setVerStatus] = useState('Pending Verification')
   const [verRemarks, setVerRemarks] = useState('')
 
   // Section F: Refund Form State
@@ -113,7 +164,7 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
   const [uploadingRefundReceipt, setUploadingRefundReceipt] = useState(false)
 
   // Derived validation properties
-  const targetEmdAmount = Number(emd?.emd_amount || basicAmount || 0)
+  const targetEmdAmount = Number(emd?.emd_amount || 0)
   const parsedPaymentAmt = parseFloat(paymentAmount)
   const hasPaymentInput = !isNaN(parsedPaymentAmt) && paymentAmount !== ''
   const isPaymentLess = targetEmdAmount > 0 && hasPaymentInput && parsedPaymentAmt < targetEmdAmount - 0.009
@@ -122,7 +173,7 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
   const isPaymentMismatched = isPaymentLess || isPaymentGreater
 
   // Step completion indicators
-  const isBasicDone = Boolean(emd && (emd.emd_amount > 0 || parseFloat(basicAmount) > 0) && (emd.due_date || basicDueDate) && (emd.reference_number || basicRefNo))
+  const isBasicDone = Boolean(emd && emd.emd_amount > 0 && (emd.due_date || basicDueDate) && (emd.reference_number || basicRefNo))
   const isApprovalDone = Boolean(emd?.is_md_approved)
   const isPaymentDone = Boolean(emd && (emd.payment_amount > 0 || (paymentAmount && !isPaymentMismatched)) && (emd.payment_date || paymentDate))
   const isDepositorDone = Boolean(emd && (emd.depositor_name?.trim() || depName?.trim()))
@@ -148,7 +199,6 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
         setEmd(d)
 
         // Initialize Basic
-        setBasicAmount(d.emd_amount ? String(d.emd_amount) : '')
         setBasicDueDate(fmtDate(d.due_date))
         setBasicRefNo(d.reference_number || '')
         setBasicPurpose(d.purpose || `EMD for ${bid.title}`)
@@ -205,7 +255,6 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
         setDepRemarks(d.depositor_remarks || '')
 
         // Initialize Verification
-        setVerStatus(d.verification_status || 'Pending Verification')
         setVerRemarks(d.verification_remarks || '')
 
         // Initialize Refund
@@ -234,6 +283,51 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
 
   if (!open) return null
 
+  // Renders a <Field> already wired to the role gate.
+  const fld = (f) => <Field key={f.label} disabled={!canEdit} {...f} />
+
+  // Payment-mode boxes: colours, title and field list (rendered by one generic block).
+  const mode = {
+    Online: {
+      title: 'Online Payment Details',
+      box: 'border-blue-200/80 bg-blue-50/30 dark:bg-blue-950/10',
+      h: 'text-blue-900 dark:text-blue-300',
+      fields: [
+        { label: 'Transaction ID / UTR Number *', req: true, v: onlineUtr, set: setOnlineUtr, ph: 'e.g. HDFC123456789', cls: 'text-xs font-mono' },
+        { label: 'Payment Gateway *', req: true, v: onlineGateway, set: setOnlineGateway, ph: 'e.g. Razorpay / GeM e-PBG / SBI ePay' },
+        { label: 'Bank Name (Recommended)', v: onlineBank, set: setOnlineBank, ph: 'e.g. HDFC Bank' },
+        { label: 'Payment Status *', opts: ['Successful', 'Pending', 'Failed'], v: paymentStatus, set: setPaymentStatus },
+      ],
+    },
+    Cheque: {
+      title: 'Cheque Payment Details',
+      box: 'border-amber-200/80 bg-amber-50/30 dark:bg-amber-950/10',
+      h: 'text-amber-900 dark:text-amber-300',
+      fields: [
+        { label: 'Cheque Number *', req: true, v: chequeNo, set: setChequeNo, ph: 'e.g. 000492', cls: 'text-xs font-mono' },
+        { label: 'Cheque Date *', type: 'date', req: true, v: chequeDate, set: setChequeDate },
+        { label: 'Bank Name *', req: true, v: chequeBank, set: setChequeBank, ph: 'e.g. State Bank of India' },
+        { label: 'Branch Name', v: chequeBranch, set: setChequeBranch, ph: 'e.g. Connaught Place' },
+        { label: 'Account Holder Name', v: chequeHolder, set: setChequeHolder, ph: 'GlobX Technologies Pvt Ltd' },
+        { label: 'Cheque Submission Date *', type: 'date', req: true, v: chequeSubDate, set: setChequeSubDate },
+        { label: 'Cheque Status *', wrap: 'sm:col-span-2', opts: ['Submitted', 'Deposited', 'Cleared', 'Bounced', 'Cancelled'], v: chequeStatus, set: setChequeStatus },
+      ],
+    },
+    Challan: {
+      title: 'Challan Payment Details',
+      box: 'border-teal-200/80 bg-teal-50/30 dark:bg-teal-950/10',
+      h: 'text-teal-900 dark:text-teal-300',
+      fields: [
+        { label: 'Challan Number *', req: true, v: challanNo, set: setChallanNo, ph: 'e.g. TR-2026-981', cls: 'text-xs font-mono' },
+        { label: 'Challan Date *', type: 'date', req: true, v: challanDate, set: setChallanDate },
+        { label: 'Bank Name *', req: true, v: challanBank, set: setChallanBank, ph: 'e.g. Punjab National Bank' },
+        { label: 'Branch Name', v: challanBranch, set: setChallanBranch, ph: 'Branch location' },
+        { label: 'Challan Type / Purpose *', req: true, v: challanType, set: setChallanType, ph: 'e.g. Treasury Challan TR-6' },
+        { label: 'Challan Status *', opts: ['Submitted', 'Verified', 'Rejected', 'Paid', 'Cancelled'], v: challanStatus, set: setChallanStatus },
+      ],
+    },
+  }[paymentMode]
+
   const handleOpenReceipt = (url) => {
     openReceipt(url).catch(() => toast.error('Could not open the receipt'))
   }
@@ -241,10 +335,6 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
   // ── Handler for Saving Basic Info ──────────────────────────────────────────
   const handleSaveBasic = async (e) => {
     e?.preventDefault()
-    if (!canEdit) {
-      toast.error('Only Super Admin, Admin, and Finance Manager are authorized to modify EMD details.')
-      return
-    }
     const amt = parseFloat(basicAmount)
     if (isNaN(amt) || amt <= 0) {
       toast.error('EMD Amount cannot be empty or zero')
@@ -287,10 +377,6 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
 
   // ── Handler for Submitting for MD Approval ─────────────────────────────────
   const handleSubmitMDApproval = async () => {
-    if (!canEdit) {
-      toast.error('Only Super Admin, Admin, and Finance Manager are authorized to submit EMD for MD approval.')
-      return
-    }
     const amt = parseFloat(basicAmount)
     if (isNaN(amt) || amt <= 0 || !basicDueDate || !basicRefNo.trim() || !basicPurpose.trim()) {
       toast.error('Please complete all required fields in Basic EMD Info first.')
@@ -323,56 +409,47 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
     }
   }
 
-  // ── Handler for Navigating from Payment Details to Depositor Info ───────────
-  const handleProceedToDepositor = (e) => {
-    e?.preventDefault()
-    if (!canEdit) {
-      toast.error('Only Super Admin, Admin, and Finance Manager are authorized to record EMD payment.')
-      return
-    }
-
+  // First failing payment check as a message, or null. `save` selects the wording used when
+  // the user jumped straight to the depositor step instead of arriving via "Next Step".
+  const validatePayment = (save) => {
+    const pick = (proceedMsg, saveMsg) => (save ? saveMsg : proceedMsg)
     const payAmt = parseFloat(paymentAmount)
-    if (isNaN(payAmt) || payAmt <= 0) {
-      toast.error('Payment Amount must be greater than zero')
-      return
-    }
+    if (isNaN(payAmt) || payAmt <= 0) return pick('Payment Amount must be greater than zero', 'Please complete Payment Amount in Step 3 (Payment Details)')
 
     // Validation: Payment Amount cannot be less or greater than required EMD Amount
     if (targetEmdAmount > 0) {
       if (payAmt < targetEmdAmount - 0.009) {
-        toast.error(`Payment amount (${fmtMoney(payAmt)}) cannot be less than required EMD amount (${fmtMoney(targetEmdAmount)}). It must match exactly.`)
-        return
+        return `Payment amount (${fmtMoney(payAmt)}) cannot be less than required EMD amount (${fmtMoney(targetEmdAmount)}). It must match exactly.`
       }
       if (payAmt > targetEmdAmount + 0.009) {
-        toast.error(`Payment amount (${fmtMoney(payAmt)}) cannot be greater than required EMD amount (${fmtMoney(targetEmdAmount)}). It must match exactly.`)
-        return
+        return `Payment amount (${fmtMoney(payAmt)}) cannot be greater than required EMD amount (${fmtMoney(targetEmdAmount)}). It must match exactly.`
       }
     }
 
-    if (!paymentDate) {
-      toast.error('Payment Date is required')
-      return
-    }
+    if (!paymentDate) return pick('Payment Date is required', 'Please set Payment Date in Step 3 (Payment Details)')
 
     if (paymentMode === 'Online') {
-      if (!onlineUtr.trim()) {
-        toast.error('Transaction ID / UTR Number is required for Online Payment')
-        return
-      }
-      if (!onlineGateway.trim()) {
-        toast.error('Payment Gateway is required')
-        return
-      }
+      if (!onlineUtr.trim()) return pick('Transaction ID / UTR Number is required for Online Payment', 'Please complete Online Payment details in Step 3')
+      if (!onlineGateway.trim()) return pick('Payment Gateway is required', 'Please complete Online Payment details in Step 3')
     } else if (paymentMode === 'Cheque') {
       if (!chequeNo.trim() || !chequeDate || !chequeBank.trim() || !chequeSubDate) {
-        toast.error('Cheque Number, Cheque Date, Bank Name, and Submission Date are required')
-        return
+        return pick('Cheque Number, Cheque Date, Bank Name, and Submission Date are required', 'Please complete Cheque details in Step 3')
       }
     } else if (paymentMode === 'Challan') {
       if (!challanNo.trim() || !challanDate || !challanBank.trim() || !challanType.trim()) {
-        toast.error('Challan Number, Challan Date, Bank Name, and Challan Type are required')
-        return
+        return pick('Challan Number, Challan Date, Bank Name, and Challan Type are required', 'Please complete Challan details in Step 3')
       }
+    }
+    return null
+  }
+
+  // ── Handler for Navigating from Payment Details to Depositor Info ───────────
+  const handleProceedToDepositor = (e) => {
+    e?.preventDefault()
+    const err = validatePayment(false)
+    if (err) {
+      toast.error(err)
+      return
     }
 
     // Proceed to Step 4: Depositor Info
@@ -382,58 +459,15 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
   // ── Handler for Directly Saving Payment & Depositor Details ────────────────
   const handleSavePayment = async (e) => {
     e?.preventDefault()
-    if (!canEdit) {
-      toast.error('Only Super Admin, Admin, and Finance Manager are authorized to record EMD payment details.')
-      return
-    }
 
     // 1. Payment Details check (in case user jumped directly to depositor tab)
+    const err = validatePayment(true)
+    if (err) {
+      toast.error(err)
+      setActiveSection('payment')
+      return
+    }
     const payAmt = parseFloat(paymentAmount)
-    if (isNaN(payAmt) || payAmt <= 0) {
-      toast.error('Please complete Payment Amount in Step 3 (Payment Details)')
-      setActiveSection('payment')
-      return
-    }
-
-    // Validation: Payment Amount cannot be less or greater than required EMD Amount
-    if (targetEmdAmount > 0) {
-      if (payAmt < targetEmdAmount - 0.009) {
-        toast.error(`Payment amount (${fmtMoney(payAmt)}) cannot be less than required EMD amount (${fmtMoney(targetEmdAmount)}). It must match exactly.`)
-        setActiveSection('payment')
-        return
-      }
-      if (payAmt > targetEmdAmount + 0.009) {
-        toast.error(`Payment amount (${fmtMoney(payAmt)}) cannot be greater than required EMD amount (${fmtMoney(targetEmdAmount)}). It must match exactly.`)
-        setActiveSection('payment')
-        return
-      }
-    }
-
-    if (!paymentDate) {
-      toast.error('Please set Payment Date in Step 3 (Payment Details)')
-      setActiveSection('payment')
-      return
-    }
-
-    if (paymentMode === 'Online') {
-      if (!onlineUtr.trim() || !onlineGateway.trim()) {
-        toast.error('Please complete Online Payment details in Step 3')
-        setActiveSection('payment')
-        return
-      }
-    } else if (paymentMode === 'Cheque') {
-      if (!chequeNo.trim() || !chequeDate || !chequeBank.trim() || !chequeSubDate) {
-        toast.error('Please complete Cheque details in Step 3')
-        setActiveSection('payment')
-        return
-      }
-    } else if (paymentMode === 'Challan') {
-      if (!challanNo.trim() || !challanDate || !challanBank.trim() || !challanType.trim()) {
-        toast.error('Please complete Challan details in Step 3')
-        setActiveSection('payment')
-        return
-      }
-    }
 
     // 2. Depositor validation
     if (!depName.trim()) {
@@ -524,10 +558,6 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
 
   // ── Handler for Payment Verification ───────────────────────────────────────
   const handleVerify = async (status) => {
-    if (!canEdit) {
-      toast.error('Only Super Admin, Admin, and Finance Manager are authorized to verify EMD payment.')
-      return
-    }
     setSaving(true)
     try {
       const res = await verifyEmdPayment(bid.id, {
@@ -537,7 +567,6 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
       if (res.ok) {
         toast.success(`EMD payment verification set to ${status}!`)
         setEmd(res.data)
-        setVerStatus(status)
         onSuccess?.()
       } else {
         toast.error(res.message || 'Failed to verify payment')
@@ -552,10 +581,6 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
   // ── Handler for Release / Refund ───────────────────────────────────────────
   const handleSaveRefund = async (e) => {
     e?.preventDefault()
-    if (!canEdit) {
-      toast.error('Only Super Admin, Admin, and Finance Manager are authorized to update EMD refund information.')
-      return
-    }
     if (refStatus === 'Refunded' && !refActualDate) {
       toast.error('Actual Refund Date is mandatory when status is Refunded')
       return
@@ -600,10 +625,6 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
 
   // ── Receipt Upload Helper ──────────────────────────────────────────────────
   const handleReceiptUpload = async (e, type = 'payment') => {
-    if (!canEdit) {
-      toast.error('Only Super Admin, Admin, and Finance Manager are authorized to upload EMD receipts.')
-      return
-    }
     const file = e.target.files?.[0]
     if (!file) return
 
@@ -801,30 +822,8 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
                       />
                     </div>
 
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">EMD Due / Submission Date *</Label>
-                      <Input
-                        type="date"
-                        required
-                        disabled={!canEdit}
-                        value={basicDueDate}
-                        onChange={(e) => setBasicDueDate(e.target.value)}
-                        className="text-xs"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">EMD Reference Number *</Label>
-                      <Input
-                        type="text"
-                        required
-                        disabled={!canEdit}
-                        value={basicRefNo}
-                        onChange={(e) => setBasicRefNo(e.target.value)}
-                        placeholder="e.g. GEM/2026/B/881923"
-                        className="text-xs font-mono"
-                      />
-                    </div>
+                    {fld({ label: 'EMD Due / Submission Date *', type: 'date', req: true, v: basicDueDate, set: setBasicDueDate })}
+                    {fld({ label: 'EMD Reference Number *', type: 'text', req: true, v: basicRefNo, set: setBasicRefNo, ph: 'e.g. GEM/2026/B/881923', cls: 'text-xs font-mono' })}
 
                     <div className="space-y-1.5">
                       <Label className="text-xs font-semibold">EMD Status</Label>
@@ -832,29 +831,9 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
                     </div>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold">EMD Purpose / Description *</Label>
-                    <Input
-                      type="text"
-                      required
-                      disabled={!canEdit}
-                      value={basicPurpose}
-                      onChange={(e) => setBasicPurpose(e.target.value)}
-                      placeholder="e.g. Bid Security for High-Performance Compute Cluster"
-                      className="text-xs"
-                    />
-                  </div>
+                  {fld({ label: 'EMD Purpose / Description *', type: 'text', req: true, v: basicPurpose, set: setBasicPurpose, ph: 'e.g. Bid Security for High-Performance Compute Cluster' })}
 
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold">Finance Remarks / Clarifications</Label>
-                    <Textarea
-                      disabled={!canEdit}
-                      value={basicRemarks}
-                      onChange={(e) => setBasicRemarks(e.target.value)}
-                      placeholder="Notes on exemption eligibility, DD details, or bank instructions..."
-                      className="text-xs min-h-[75px]"
-                    />
-                  </div>
+                  {fld({ label: 'Finance Remarks / Clarifications', area: true, v: basicRemarks, set: setBasicRemarks, ph: 'Notes on exemption eligibility, DD details, or bank instructions...', cls: 'text-xs min-h-[75px]' })}
 
                   {canEdit && (
                     <div className="flex items-center justify-between pt-3 border-t border-border">
@@ -1062,270 +1041,31 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
                       )}
                     </div>
 
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">Payment Date *</Label>
-                      <Input
-                        type="date"
-                        required
-                        disabled={!canEdit}
-                        value={paymentDate}
-                        onChange={(e) => setPaymentDate(e.target.value)}
-                        className="text-xs"
-                      />
-                    </div>
+                    {fld({ label: 'Payment Date *', type: 'date', req: true, v: paymentDate, set: setPaymentDate })}
                   </div>
 
-                  {/* Dynamic Fields: ONLINE */}
-                  {paymentMode === 'Online' && (
-                    <div className="p-4 rounded-xl border border-blue-200/80 bg-blue-50/30 dark:bg-blue-950/10 space-y-3">
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-blue-900 dark:text-blue-300">
-                        Online Payment Details
+                  {/* Dynamic Fields: ONLINE / CHEQUE / CHALLAN */}
+                  {mode && (
+                    <div className={`p-4 rounded-xl border ${mode.box} space-y-3`}>
+                      <h4 className={`text-xs font-bold uppercase tracking-wider ${mode.h}`}>
+                        {mode.title}
                       </h4>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold">Transaction ID / UTR Number *</Label>
-                          <Input
-                            required
-                            disabled={!canEdit}
-                            value={onlineUtr}
-                            onChange={(e) => setOnlineUtr(e.target.value)}
-                            placeholder="e.g. HDFC123456789"
-                            className="text-xs font-mono"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold">Payment Gateway *</Label>
-                          <Input
-                            required
-                            disabled={!canEdit}
-                            value={onlineGateway}
-                            onChange={(e) => setOnlineGateway(e.target.value)}
-                            placeholder="e.g. Razorpay / GeM e-PBG / SBI ePay"
-                            className="text-xs"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold">Bank Name (Recommended)</Label>
-                          <Input
-                            disabled={!canEdit}
-                            value={onlineBank}
-                            onChange={(e) => setOnlineBank(e.target.value)}
-                            placeholder="e.g. HDFC Bank"
-                            className="text-xs"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold">Payment Status *</Label>
-                          <select
-                            disabled={!canEdit}
-                            value={paymentStatus}
-                            onChange={(e) => setPaymentStatus(e.target.value)}
-                            className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                          >
-                            <option value="Successful">Successful</option>
-                            <option value="Pending">Pending</option>
-                            <option value="Failed">Failed</option>
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Dynamic Fields: CHEQUE */}
-                  {paymentMode === 'Cheque' && (
-                    <div className="p-4 rounded-xl border border-amber-200/80 bg-amber-50/30 dark:bg-amber-950/10 space-y-3">
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-amber-900 dark:text-amber-300">
-                        Cheque Payment Details
-                      </h4>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold">Cheque Number *</Label>
-                          <Input
-                            required
-                            disabled={!canEdit}
-                            value={chequeNo}
-                            onChange={(e) => setChequeNo(e.target.value)}
-                            placeholder="e.g. 000492"
-                            className="text-xs font-mono"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold">Cheque Date *</Label>
-                          <Input
-                            type="date"
-                            required
-                            disabled={!canEdit}
-                            value={chequeDate}
-                            onChange={(e) => setChequeDate(e.target.value)}
-                            className="text-xs"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold">Bank Name *</Label>
-                          <Input
-                            required
-                            disabled={!canEdit}
-                            value={chequeBank}
-                            onChange={(e) => setChequeBank(e.target.value)}
-                            placeholder="e.g. State Bank of India"
-                            className="text-xs"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold">Branch Name</Label>
-                          <Input
-                            disabled={!canEdit}
-                            value={chequeBranch}
-                            onChange={(e) => setChequeBranch(e.target.value)}
-                            placeholder="e.g. Connaught Place"
-                            className="text-xs"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold">Account Holder Name</Label>
-                          <Input
-                            disabled={!canEdit}
-                            value={chequeHolder}
-                            onChange={(e) => setChequeHolder(e.target.value)}
-                            placeholder="GlobX Technologies Pvt Ltd"
-                            className="text-xs"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold">Cheque Submission Date *</Label>
-                          <Input
-                            type="date"
-                            required
-                            disabled={!canEdit}
-                            value={chequeSubDate}
-                            onChange={(e) => setChequeSubDate(e.target.value)}
-                            className="text-xs"
-                          />
-                        </div>
-                        <div className="space-y-1 sm:col-span-2">
-                          <Label className="text-[11px] font-semibold">Cheque Status *</Label>
-                          <select
-                            disabled={!canEdit}
-                            value={chequeStatus}
-                            onChange={(e) => setChequeStatus(e.target.value)}
-                            className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                          >
-                            <option value="Submitted">Submitted</option>
-                            <option value="Deposited">Deposited</option>
-                            <option value="Cleared">Cleared</option>
-                            <option value="Bounced">Bounced</option>
-                            <option value="Cancelled">Cancelled</option>
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Dynamic Fields: CHALLAN */}
-                  {paymentMode === 'Challan' && (
-                    <div className="p-4 rounded-xl border border-teal-200/80 bg-teal-50/30 dark:bg-teal-950/10 space-y-3">
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-teal-900 dark:text-teal-300">
-                        Challan Payment Details
-                      </h4>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold">Challan Number *</Label>
-                          <Input
-                            required
-                            disabled={!canEdit}
-                            value={challanNo}
-                            onChange={(e) => setChallanNo(e.target.value)}
-                            placeholder="e.g. TR-2026-981"
-                            className="text-xs font-mono"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold">Challan Date *</Label>
-                          <Input
-                            type="date"
-                            required
-                            disabled={!canEdit}
-                            value={challanDate}
-                            onChange={(e) => setChallanDate(e.target.value)}
-                            className="text-xs"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold">Bank Name *</Label>
-                          <Input
-                            required
-                            disabled={!canEdit}
-                            value={challanBank}
-                            onChange={(e) => setChallanBank(e.target.value)}
-                            placeholder="e.g. Punjab National Bank"
-                            className="text-xs"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold">Branch Name</Label>
-                          <Input
-                            disabled={!canEdit}
-                            value={challanBranch}
-                            onChange={(e) => setChallanBranch(e.target.value)}
-                            placeholder="Branch location"
-                            className="text-xs"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold">Challan Type / Purpose *</Label>
-                          <Input
-                            required
-                            disabled={!canEdit}
-                            value={challanType}
-                            onChange={(e) => setChallanType(e.target.value)}
-                            placeholder="e.g. Treasury Challan TR-6"
-                            className="text-xs"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-semibold">Challan Status *</Label>
-                          <select
-                            disabled={!canEdit}
-                            value={challanStatus}
-                            onChange={(e) => setChallanStatus(e.target.value)}
-                            className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                          >
-                            <option value="Submitted">Submitted</option>
-                            <option value="Verified">Verified</option>
-                            <option value="Rejected">Rejected</option>
-                            <option value="Paid">Paid</option>
-                            <option value="Cancelled">Cancelled</option>
-                          </select>
-                        </div>
+                        {mode.fields.map((f) => fld({ sm: true, ...f }))}
                       </div>
                     </div>
                   )}
 
                   {/* Receipt Upload / View */}
-                  <div className="space-y-1.5 p-3.5 rounded-xl border border-border bg-muted/20">
-                    <Label className="text-xs font-semibold flex items-center justify-between">
-                      <span>Payment Receipt / Scanned Proof</span>
-                      {paymentReceiptUrl && (
-                        <button
-                          type="button"
-                          onClick={() => handleOpenReceipt(paymentReceiptUrl)}
-                          className="text-primary hover:underline flex items-center gap-1 text-[11px]"
-                        >
-                          <ExternalLink className="size-3" /> View Uploaded Receipt
-                        </button>
-                      )}
-                    </Label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp,application/pdf"
-                        disabled={!canEdit || uploadingReceipt}
-                        onChange={(e) => handleReceiptUpload(e, 'payment')}
-                        className="text-xs file:mr-2 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-primary file:text-primary-foreground hover:file:opacity-90"
-                      />
-                      {uploadingReceipt && <Loader2 className="size-4 animate-spin text-primary" />}
-                    </div>
-                  </div>
+                  <ReceiptUpload
+                    label="Payment Receipt / Scanned Proof"
+                    view="View Uploaded Receipt"
+                    url={paymentReceiptUrl}
+                    onOpen={handleOpenReceipt}
+                    uploading={uploadingReceipt}
+                    disabled={!canEdit}
+                    onUpload={(e) => handleReceiptUpload(e, 'payment')}
+                  />
 
                   {canEdit && (
                     <div className="flex justify-end pt-3 border-t border-border">
@@ -1382,99 +1122,16 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">Person Name *</Label>
-                      <Input
-                        required
-                        disabled={!canEdit}
-                        value={depName}
-                        onChange={(e) => setDepName(e.target.value)}
-                        placeholder="e.g. Rahul Kumar"
-                        className="text-xs font-medium"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">Employee ID (Recommended)</Label>
-                      <Input
-                        disabled={!canEdit}
-                        value={depEmpId}
-                        onChange={(e) => setDepEmpId(e.target.value)}
-                        placeholder="e.g. GLX-082"
-                        className="text-xs font-mono"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">Department *</Label>
-                      <Input
-                        required
-                        disabled={!canEdit}
-                        value={depDept}
-                        onChange={(e) => setDepDept(e.target.value)}
-                        placeholder="Finance & Accounts"
-                        className="text-xs"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">Designation</Label>
-                      <Input
-                        disabled={!canEdit}
-                        value={depDesignation}
-                        onChange={(e) => setDepDesignation(e.target.value)}
-                        placeholder="Senior Finance Executive"
-                        className="text-xs"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">Contact Number</Label>
-                      <Input
-                        type="tel"
-                        disabled={!canEdit}
-                        value={depContact}
-                        onChange={(e) => setDepContact(e.target.value)}
-                        placeholder="+91 98765 43210"
-                        className="text-xs"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">Email ID</Label>
-                      <Input
-                        type="email"
-                        disabled={!canEdit}
-                        value={depEmail}
-                        onChange={(e) => setDepEmail(e.target.value)}
-                        placeholder="rahul.k@globx.co.in"
-                        className="text-xs"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5 sm:col-span-2">
-                      <Label className="text-xs font-semibold">Deposit / Submission Date *</Label>
-                      <Input
-                        type="date"
-                        required
-                        disabled={!canEdit}
-                        value={depDate}
-                        onChange={(e) => setDepDate(e.target.value)}
-                        className="text-xs"
-                      />
-                    </div>
+                    {fld({ label: 'Person Name *', req: true, v: depName, set: setDepName, ph: 'e.g. Rahul Kumar', cls: 'text-xs font-medium' })}
+                    {fld({ label: 'Employee ID (Recommended)', v: depEmpId, set: setDepEmpId, ph: 'e.g. GLX-082', cls: 'text-xs font-mono' })}
+                    {fld({ label: 'Department *', req: true, v: depDept, set: setDepDept, ph: 'Finance & Accounts' })}
+                    {fld({ label: 'Designation', v: depDesignation, set: setDepDesignation, ph: 'Senior Finance Executive' })}
+                    {fld({ label: 'Contact Number', type: 'tel', v: depContact, set: setDepContact, ph: '+91 98765 43210' })}
+                    {fld({ label: 'Email ID', type: 'email', v: depEmail, set: setDepEmail, ph: 'rahul.k@globx.co.in' })}
+                    {fld({ label: 'Deposit / Submission Date *', type: 'date', req: true, v: depDate, set: setDepDate, wrap: 'sm:col-span-2' })}
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold">Depositor Remarks (Optional)</Label>
-                    <Textarea
-                      disabled={!canEdit}
-                      value={depRemarks}
-                      onChange={(e) => setDepRemarks(e.target.value)}
-                      placeholder="Bank counter details, slip number, or processing notes..."
-                      className="text-xs min-h-[70px]"
-                    />
-                  </div>
+                  {fld({ label: 'Depositor Remarks (Optional)', area: true, v: depRemarks, set: setDepRemarks, ph: 'Bank counter details, slip number, or processing notes...', cls: 'text-xs min-h-[70px]' })}
 
                   {canEdit && (
                     <div className="flex items-center justify-between pt-4 border-t border-border">
@@ -1554,16 +1211,7 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
                       </div>
                     </div>
 
-                    <div className="space-y-1.5 pt-2">
-                      <Label className="text-xs font-semibold">Verification Remarks / Audit Notes</Label>
-                      <Textarea
-                        disabled={!canEdit}
-                        value={verRemarks}
-                        onChange={(e) => setVerRemarks(e.target.value)}
-                        placeholder="Confirm bank statement match, challan stamp check, or reason if rejected..."
-                        className="text-xs min-h-[75px]"
-                      />
-                    </div>
+                    {fld({ label: 'Verification Remarks / Audit Notes', area: true, wrap: 'pt-2', v: verRemarks, set: setVerRemarks, ph: 'Confirm bank statement match, challan stamp check, or reason if rejected...', cls: 'text-xs min-h-[75px]' })}
                   </div>
 
                   {canEdit && (
@@ -1614,139 +1262,37 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">EMD Release/Refund Status *</Label>
-                      <select
-                        disabled={!canEdit}
-                        value={refStatus}
-                        onChange={(e) => setRefStatus(e.target.value)}
-                        className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                      >
-                        {Object.keys(REFUND_STATUS_CONFIG).map((s) => (
-                          <option key={s} value={s}>{s}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">Refund Mode</Label>
-                      <select
-                        disabled={!canEdit}
-                        value={refMode}
-                        onChange={(e) => setRefMode(e.target.value)}
-                        className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                      >
-                        <option value="Online">Online Transfer / RTGS</option>
-                        <option value="Cheque">Cheque Return</option>
-                        <option value="Portal Auto-Credit">GeM Portal Auto-Credit</option>
-                      </select>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">Expected Refund Date (Recommended)</Label>
-                      <Input
-                        type="date"
-                        disabled={!canEdit}
-                        value={refExpectedDate}
-                        onChange={(e) => setRefExpectedDate(e.target.value)}
-                        className="text-xs"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold flex items-center justify-between">
-                        <span>Actual Refund Date</span>
-                        {refStatus === 'Refunded' && <span className="text-rose-500 text-[10px]">Mandatory</span>}
-                      </Label>
-                      <Input
-                        type="date"
-                        required={refStatus === 'Refunded'}
-                        disabled={!canEdit}
-                        value={refActualDate}
-                        onChange={(e) => setRefActualDate(e.target.value)}
-                        className="text-xs"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">Refund Amount (₹)</Label>
-                      <Input
-                        type="number"
-                        min="1"
-                        step="0.01"
-                        disabled={!canEdit}
-                        value={refAmount}
-                        onChange={(e) => setRefAmount(e.target.value)}
-                        placeholder="50000"
-                        className="text-xs font-mono font-medium"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">Refund Reference Number</Label>
-                      <Input
-                        disabled={!canEdit}
-                        value={refRefNo}
-                        onChange={(e) => setRefRefNo(e.target.value)}
-                        placeholder="REF-REFUND-991"
-                        className="text-xs font-mono"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5 sm:col-span-2">
-                      <Label className="text-xs font-semibold flex items-center justify-between">
-                        <span>Refund Transaction / UTR Number</span>
-                        {refStatus === 'Refunded' && refMode === 'Online' && (
-                          <span className="text-rose-500 text-[10px]">Mandatory for Online</span>
-                        )}
-                      </Label>
-                      <Input
-                        required={refStatus === 'Refunded' && refMode === 'Online'}
-                        disabled={!canEdit}
-                        value={refUtr}
-                        onChange={(e) => setRefUtr(e.target.value)}
-                        placeholder="e.g. CMS1882949102"
-                        className="text-xs font-mono"
-                      />
-                    </div>
+                    {fld({ label: 'EMD Release/Refund Status *', opts: Object.keys(REFUND_STATUS_CONFIG), v: refStatus, set: setRefStatus })}
+                    {fld({ label: 'Refund Mode', opts: [['Online', 'Online Transfer / RTGS'], ['Cheque', 'Cheque Return'], ['Portal Auto-Credit', 'GeM Portal Auto-Credit']], v: refMode, set: setRefMode })}
+                    {fld({ label: 'Expected Refund Date (Recommended)', type: 'date', v: refExpectedDate, set: setRefExpectedDate })}
+                    {fld({
+                      label: <><span>Actual Refund Date</span>{refStatus === 'Refunded' && <span className="text-rose-500 text-[10px]">Mandatory</span>}</>,
+                      lcls: 'flex items-center justify-between',
+                      type: 'date', req: refStatus === 'Refunded', v: refActualDate, set: setRefActualDate,
+                    })}
+                    {fld({ label: 'Refund Amount (₹)', type: 'number', min: '1', step: '0.01', v: refAmount, set: setRefAmount, ph: '50000', cls: 'text-xs font-mono font-medium' })}
+                    {fld({ label: 'Refund Reference Number', v: refRefNo, set: setRefRefNo, ph: 'REF-REFUND-991', cls: 'text-xs font-mono' })}
+                    {fld({
+                      label: <><span>Refund Transaction / UTR Number</span>{refStatus === 'Refunded' && refMode === 'Online' && (
+                        <span className="text-rose-500 text-[10px]">Mandatory for Online</span>
+                      )}</>,
+                      lcls: 'flex items-center justify-between', wrap: 'sm:col-span-2',
+                      req: refStatus === 'Refunded' && refMode === 'Online', v: refUtr, set: setRefUtr, ph: 'e.g. CMS1882949102', cls: 'text-xs font-mono',
+                    })}
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold">Refund Remarks (Optional)</Label>
-                    <Textarea
-                      disabled={!canEdit}
-                      value={refRemarks}
-                      onChange={(e) => setRefRemarks(e.target.value)}
-                      placeholder="e.g. Bank credit received in HDFC account on tender closure..."
-                      className="text-xs min-h-[70px]"
-                    />
-                  </div>
+                  {fld({ label: 'Refund Remarks (Optional)', area: true, v: refRemarks, set: setRefRemarks, ph: 'e.g. Bank credit received in HDFC account on tender closure...', cls: 'text-xs min-h-[70px]' })}
 
                   {/* Refund Proof Upload */}
-                  <div className="space-y-1.5 p-3.5 rounded-xl border border-border bg-muted/20">
-                    <Label className="text-xs font-semibold flex items-center justify-between">
-                      <span>Refund Proof / Bank Statement Receipt</span>
-                      {refReceiptUrl && (
-                        <button
-                          type="button"
-                          onClick={() => handleOpenReceipt(refReceiptUrl)}
-                          className="text-primary hover:underline flex items-center gap-1 text-[11px]"
-                        >
-                          <ExternalLink className="size-3" /> View Refund Proof
-                        </button>
-                      )}
-                    </Label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp,application/pdf"
-                        disabled={!canEdit || uploadingRefundReceipt}
-                        onChange={(e) => handleReceiptUpload(e, 'refund')}
-                        className="text-xs file:mr-2 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-primary file:text-primary-foreground hover:file:opacity-90"
-                      />
-                      {uploadingRefundReceipt && <Loader2 className="size-4 animate-spin text-primary" />}
-                    </div>
-                  </div>
+                  <ReceiptUpload
+                    label="Refund Proof / Bank Statement Receipt"
+                    view="View Refund Proof"
+                    url={refReceiptUrl}
+                    onOpen={handleOpenReceipt}
+                    uploading={uploadingRefundReceipt}
+                    disabled={!canEdit}
+                    onUpload={(e) => handleReceiptUpload(e, 'refund')}
+                  />
 
                   {canEdit && (
                     <div className="flex justify-end pt-3 border-t border-border">
