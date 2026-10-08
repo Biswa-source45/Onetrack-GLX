@@ -39,7 +39,6 @@ type WorkingCalendarRepository interface {
 	HasRedZoneNotificationBeenSent(ctx context.Context, tenderID string, deadline time.Time) (bool, error)
 	ClaimNotification(ctx context.Context, notif *TaskNotification, force bool) (string, error)
 	ReleaseNotification(ctx context.Context, id string) error
-	ListNotificationsByTender(ctx context.Context, tenderID string) ([]TaskNotification, error)
 
 	// One-time engine baseline marker, and a cross-instance evaluation lock.
 	IsEngineBaselined(ctx context.Context) (bool, error)
@@ -74,17 +73,7 @@ type TenderDeadlineCandidate struct {
 }
 
 type WorkingCalendarService interface {
-	IsWorkingDay(ctx context.Context, calendarID string, date time.Time) (bool, string, error)
-	GetSaturdayNumber(date time.Time) int
-
-	SubtractWorkingHours(ctx context.Context, calendarID string, fromTime time.Time, hours float64) (time.Time, error)
-	SubtractWorkingDays(ctx context.Context, calendarID string, fromTime time.Time, days int) (time.Time, error)
-	CalculateRemainingWorkingHours(ctx context.Context, calendarID string, fromTime, toTime time.Time) (float64, error)
-	CalculateRemainingWorkingDays(ctx context.Context, calendarID string, fromTime, toTime time.Time) (float64, error)
 	CalculateTender72HourDeadline(ctx context.Context, tenderID string) (*CalculateDeadlineResult, error)
-	CalculateArbitraryDeadline(ctx context.Context, calendarID string, closingDate time.Time, targetHours float64) (*CalculateDeadlineResult, error)
-	CalculateArbitraryDeadlineWithUnit(ctx context.Context, calendarID string, closingDate time.Time, targetValue float64, targetUnit string) (*CalculateDeadlineResult, error)
-	GetTenderStakeholders(ctx context.Context, tenderID string) ([]TenderStakeholder, error)
 
 	// EvaluateActiveTenders runs one engine pass (see EvaluationSummary).
 	EvaluateActiveTenders(ctx context.Context) (*EvaluationSummary, error)

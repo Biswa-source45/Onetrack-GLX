@@ -134,6 +134,21 @@ type GoogleCalendarIntegration struct {
 	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
+// DefaultGoogleCalendarID is the public Indian holidays feed used until an admin configures another.
+const DefaultGoogleCalendarID = "en.indian#holiday@group.v.calendar.google.com"
+
+// DefaultIntegration is the unsaved Google sync configuration of a calendar that has none yet.
+func DefaultIntegration(calendarID string) *GoogleCalendarIntegration {
+	return &GoogleCalendarIntegration{
+		CalendarID:         calendarID,
+		GoogleCalendarID:   DefaultGoogleCalendarID,
+		GoogleCalendarName: "Indian National Holidays",
+		SyncEnabled:        true,
+		SyncIntervalHours:  24,
+		SyncStatus:         "IDLE",
+	}
+}
+
 type GoogleCalendarSyncLog struct {
 	ID            string    `json:"id"`
 	IntegrationID string    `json:"integration_id"`
@@ -149,21 +164,14 @@ type GoogleCalendarSyncLog struct {
 }
 
 type TaskNotification struct {
-	ID               string     `json:"id"`
-	TenderID         string     `json:"tender_id"`
-	RecipientUserID  string     `json:"recipient_user_id"`
-	RecipientName    *string    `json:"recipient_name,omitempty"`
-	RecipientEmail   *string    `json:"recipient_email,omitempty"`
-	RecipientRole    *string    `json:"recipient_role,omitempty"`
-	NotificationType string     `json:"notification_type"`
-	ScheduledAt      time.Time  `json:"scheduled_at"`
-	TriggeredAt      time.Time  `json:"triggered_at"`
-	SentAt           *time.Time `json:"sent_at,omitempty"`
-	DeliveryStatus   string     `json:"delivery_status"`
-	Subject          string     `json:"subject"`
-	Message          string     `json:"message"`
-	ErrorMessage     *string    `json:"error_message,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
+	ID               string    `json:"id"`
+	TenderID         string    `json:"tender_id"`
+	RecipientUserID  string    `json:"recipient_user_id"`
+	RecipientRole    *string   `json:"recipient_role,omitempty"`
+	NotificationType string    `json:"notification_type"`
+	ScheduledAt      time.Time `json:"scheduled_at"`
+	Subject          string    `json:"subject"`
+	Message          string    `json:"message"`
 }
 
 type TenderStakeholder struct {
@@ -195,35 +203,14 @@ type EvaluationSummary struct {
 	Skipped   bool `json:"skipped"`  // another instance holds the evaluation lock
 }
 
-type WorkingInterval struct {
-	Start time.Time `json:"start"`
-	End   time.Time `json:"end"`
-}
-
-type SkippedDateInfo struct {
-	Date   string `json:"date"`
-	Reason string `json:"reason"`
-}
-
 type CalculateDeadlineResult struct {
-	TenderID              string              `json:"tender_id,omitempty"`
-	TenderTitle           string              `json:"tender_title,omitempty"`
-	ClosingDate           time.Time           `json:"closing_date"`
-	TargetWorkingHours    float64             `json:"target_working_hours"` // working hours the trigger spans (days x workday length)
-	TargetWorkingDays     int                 `json:"target_working_days"`
-	TargetWorkingValue    float64             `json:"target_working_value,omitempty"`
-	TargetWorkingUnit     string              `json:"target_working_unit,omitempty"`
-	CalculatedDeadline    time.Time           `json:"calculated_deadline"`
-	RemainingWorkingHours float64             `json:"remaining_working_hours"`
-	RemainingWorkingDays  float64             `json:"remaining_working_days"` // remaining hours / working day length
-	WorkingDayHours       float64             `json:"working_day_hours"`
-	CalendarDaysSpanned   int                 `json:"calendar_days_spanned"`
-	SkippedDates          []SkippedDateInfo   `json:"skipped_dates,omitempty"`
-	IsThresholdReached    bool                `json:"is_threshold_reached"`
-	CalendarName          string              `json:"calendar_name"`
-	WorkingIntervals      []WorkingInterval   `json:"working_intervals,omitempty"`
-	NextAction            *NextActionableTask `json:"next_action,omitempty"`
-	Stakeholders          []TenderStakeholder `json:"stakeholders,omitempty"`
+	TargetWorkingValue    float64   `json:"target_working_value"`
+	TargetWorkingUnit     string    `json:"target_working_unit"`
+	CalculatedDeadline    time.Time `json:"calculated_deadline"`
+	RemainingWorkingHours float64   `json:"remaining_working_hours"`
+	RemainingWorkingDays  float64   `json:"remaining_working_days"` // remaining hours / working day length
+	WorkingDayHours       float64   `json:"working_day_hours"`
+	IsThresholdReached    bool      `json:"is_threshold_reached"`
 }
 
 type NextActionableTask struct {

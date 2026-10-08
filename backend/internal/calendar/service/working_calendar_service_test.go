@@ -182,7 +182,6 @@ func (m *mockCalendarRepo) ClaimNotification(ctx context.Context, n *domain.Task
 	}
 	c := *n
 	c.ID = "n-" + key
-	c.DeliveryStatus = "SENT"
 	m.notifications[key] = &c
 	return c.ID, nil
 }
@@ -194,15 +193,6 @@ func (m *mockCalendarRepo) ReleaseNotification(ctx context.Context, id string) e
 		}
 	}
 	return nil
-}
-func (m *mockCalendarRepo) ListNotificationsByTender(ctx context.Context, tenderID string) ([]domain.TaskNotification, error) {
-	var list []domain.TaskNotification
-	for _, n := range m.notifications {
-		if n.TenderID == tenderID {
-			list = append(list, *n)
-		}
-	}
-	return list, nil
 }
 func (m *mockCalendarRepo) IsEngineBaselined(ctx context.Context) (bool, error) {
 	return m.baselined, nil
@@ -294,18 +284,14 @@ func inWindowTender(id string) domain.TenderDeadlineCandidate {
 
 func TestWeekdaysAndSundayRules(t *testing.T) {
 	svc := newSvc(newMockCalendarRepo(), nil, testNow)
-	ctx := context.Background()
-
 	for _, d := range []string{"2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09"} {
 		date, _ := time.Parse("2006-01-02", d)
-		ok, reason, err := svc.IsWorkingDay(ctx, "cal-default", date)
-		require.NoError(t, err)
+		ok, reason := isWorkingDay(t, svc, "cal-default", date)
 		assert.True(t, ok, d)
 		assert.Contains(t, reason, "Working Day")
 	}
 	sun, _ := time.Parse("2006-01-02", "2026-10-04")
-	ok, reason, err := svc.IsWorkingDay(ctx, "cal-default", sun)
-	require.NoError(t, err)
+	ok, reason := isWorkingDay(t, svc, "cal-default", sun)
 	assert.False(t, ok)
 	assert.Equal(t, "Sunday Holiday", reason)
 }
@@ -325,9 +311,8 @@ func TestSaturdayRulesOctober2026(t *testing.T) {
 		{"2026-10-31", 5, true, "5th Saturday Working Day"},
 	} {
 		date, _ := time.Parse("2006-01-02", tt.date)
-		assert.Equal(t, tt.num, svc.GetSaturdayNumber(date))
-		ok, reason, err := svc.IsWorkingDay(context.Background(), "cal-default", date)
-		require.NoError(t, err)
+		assert.Equal(t, tt.num, saturdayNumber(date))
+		ok, reason := isWorkingDay(t, svc, "cal-default", date)
 		assert.Equal(t, tt.working, ok, tt.date)
 		assert.Equal(t, tt.reason, reason, tt.date)
 	}
@@ -344,12 +329,10 @@ func TestHolidaysAndExceptions(t *testing.T) {
 	repo.exceptions["2026-10-10"] = &domain.CalendarException{CalendarID: "cal-default", ExceptionDate: "2026-10-10", ExceptionType: domain.ExceptionSpecialWorkingDay}
 	repo.exceptions["2026-10-07"] = &domain.CalendarException{CalendarID: "cal-default", ExceptionDate: "2026-10-07", ExceptionType: domain.ExceptionSpecialNonWorkingDay}
 	svc := newSvc(repo, nil, testNow)
-	ctx := context.Background()
 
 	check := func(date string, wantWorking bool, wantReason string) {
 		d, _ := time.Parse("2006-01-02", date)
-		ok, reason, err := svc.IsWorkingDay(ctx, "cal-default", d)
-		require.NoError(t, err)
+		ok, reason := isWorkingDay(t, svc, "cal-default", d)
 		assert.Equal(t, wantWorking, ok, date)
 		assert.Contains(t, reason, wantReason, date)
 	}
@@ -371,14 +354,14 @@ func TestMultipleCalendars(t *testing.T) {
 	svc := newSvc(repo, nil, testNow)
 	sat1, _ := time.Parse("2006-01-02", "2026-06-06")
 
-	odisha, _, _ := svc.IsWorkingDay(context.Background(), "cal-odisha", sat1)
-	corp, _, _ := svc.IsWorkingDay(context.Background(), "cal-default", sat1)
+	odisha, _ := isWorkingDay(t, svc, "cal-odisha", sat1)
+	corp, _ := isWorkingDay(t, svc, "cal-default", sat1)
 	assert.False(t, odisha)
 	assert.True(t, corp)
 
 	// The Odisha holiday must not leak into the default calendar.
 	raja, _ := time.Parse("2006-01-02", "2026-06-15")
-	ok, _, _ := svc.IsWorkingDay(context.Background(), "cal-default", raja)
+	ok, _ := isWorkingDay(t, svc, "cal-default", raja)
 	assert.True(t, ok)
 }
 
@@ -386,41 +369,41 @@ func TestMultipleCalendars(t *testing.T) {
 
 func TestSubtractWorkingHours(t *testing.T) {
 	svc := newSvc(newMockCalendarRepo(), nil, testNow)
-	ctx := context.Background()
+	r := rules(t, svc, "cal-default")
 
 	// 72 working hours = 8 working days of 9h: Tue 20-Oct 18:00 back to Mon 12-Oct 09:00,
 	// skipping Sunday 18-Oct and using the working 3rd Saturday 17-Oct.
 	closing := time.Date(2026, 10, 20, 18, 0, 0, 0, ist)
-	got, err := svc.SubtractWorkingHours(ctx, "cal-default", closing, 72)
+	got, err := r.subtractHours(closing, 72)
 	require.NoError(t, err)
 	assert.True(t, got.Equal(time.Date(2026, 10, 12, 9, 0, 0, 0, ist)), got)
 
 	// A closing time after hours clamps to 18:00.
-	got, err = svc.SubtractWorkingHours(ctx, "cal-default", time.Date(2026, 10, 20, 21, 0, 0, 0, ist), 72)
+	got, err = r.subtractHours(time.Date(2026, 10, 20, 21, 0, 0, 0, ist), 72)
 	require.NoError(t, err)
 	assert.True(t, got.Equal(time.Date(2026, 10, 12, 9, 0, 0, 0, ist)), got)
 
 	// Month, year and leap-day crossings.
-	got, _ = svc.SubtractWorkingHours(ctx, "cal-default", time.Date(2026, 11, 4, 18, 0, 0, 0, ist), 72)
+	got, _ = r.subtractHours(time.Date(2026, 11, 4, 18, 0, 0, 0, ist), 72)
 	assert.Equal(t, time.October, got.Month())
-	got, _ = svc.SubtractWorkingHours(ctx, "cal-default", time.Date(2027, 1, 8, 18, 0, 0, 0, ist), 72)
+	got, _ = r.subtractHours(time.Date(2027, 1, 8, 18, 0, 0, 0, ist), 72)
 	assert.Equal(t, 2026, got.Year())
-	got, _ = svc.SubtractWorkingHours(ctx, "cal-default", time.Date(2028, 3, 2, 18, 0, 0, 0, ist), 27)
+	got, _ = r.subtractHours(time.Date(2028, 3, 2, 18, 0, 0, 0, ist), 27)
 	assert.Equal(t, 29, got.Day())
 	assert.Equal(t, time.February, got.Month())
 }
 
 func TestSubtractWorkingDaysKeepsTimeAndSkipsNonWorking(t *testing.T) {
 	svc := newSvc(newMockCalendarRepo(), nil, testNow)
-	ctx := context.Background()
+	r := rules(t, svc, "cal-default")
 
 	fri := time.Date(2026, 10, 16, 15, 30, 0, 0, ist)
-	got, err := svc.SubtractWorkingDays(ctx, "cal-default", fri, 3)
+	got, err := r.subtractDays(fri, 3)
 	require.NoError(t, err)
 	assert.True(t, got.Equal(time.Date(2026, 10, 13, 15, 30, 0, 0, ist)), got)
 
 	// From Mon 12-Oct: Sun 11 and 2nd Saturday 10 are skipped -> Wed 7-Oct.
-	got, err = svc.SubtractWorkingDays(ctx, "cal-default", time.Date(2026, 10, 12, 11, 0, 0, 0, ist), 3)
+	got, err = r.subtractDays(time.Date(2026, 10, 12, 11, 0, 0, 0, ist), 3)
 	require.NoError(t, err)
 	assert.True(t, got.Equal(time.Date(2026, 10, 7, 11, 0, 0, 0, ist)), got)
 }
@@ -431,26 +414,26 @@ func TestScanLimitReturnsErrorInsteadOfWrongDate(t *testing.T) {
 	c.MondayWorking, c.TuesdayWorking, c.WednesdayWorking, c.ThursdayWorking, c.FridayWorking = false, false, false, false, false
 	c.Saturday1Working, c.Saturday3Working, c.Saturday5Working = false, false, false
 	svc := newSvc(repo, nil, testNow)
-	ctx := context.Background()
+	r := rules(t, svc, "cal-default")
 	closing := time.Date(2026, 10, 16, 15, 30, 0, 0, ist)
 
-	_, err := svc.SubtractWorkingDays(ctx, "cal-default", closing, 1)
+	_, err := r.subtractDays(closing, 1)
 	assert.ErrorIs(t, err, errScanLimit)
-	_, err = svc.SubtractWorkingHours(ctx, "cal-default", closing, 5)
+	_, err = r.subtractHours(closing, 5)
 	assert.ErrorIs(t, err, errScanLimit)
-	_, err = svc.CalculateRemainingWorkingHours(ctx, "cal-default", testNow, testNow.AddDate(4, 0, 0))
+	_, err = r.remainingHours(testNow, testNow.AddDate(4, 0, 0))
 	assert.ErrorIs(t, err, errScanLimit)
 }
 
 func TestTriggerOrderingIsMonotonic(t *testing.T) {
 	svc := newSvc(newMockCalendarRepo(), nil, testNow)
-	ctx := context.Background()
+	r := rules(t, svc, "cal-default")
 	closing := time.Date(2026, 10, 16, 15, 30, 0, 0, ist) // Fri 15:30
 
 	at := func(v float64, unit string) time.Time {
-		res, err := svc.CalculateArbitraryDeadlineWithUnit(ctx, "cal-default", closing, v, unit)
+		got, err := r.subtractTime(closing, v, unit)
 		require.NoError(t, err)
-		return res.CalculatedDeadline
+		return got
 	}
 	d36, d48, d72 := at(36, "HOURS"), at(48, "HOURS"), at(72, "HOURS")
 
@@ -464,33 +447,29 @@ func TestTriggerOrderingIsMonotonic(t *testing.T) {
 	assert.True(t, at(24, "HOURS").After(d36))
 	assert.True(t, at(12, "HOURS").After(at(24, "HOURS")))
 
-	res, err := svc.CalculateArbitraryDeadline(ctx, "cal-default", closing, 72)
-	require.NoError(t, err)
-	assert.Equal(t, 3, res.TargetWorkingDays)
-	assert.Equal(t, 27.0, res.TargetWorkingHours) // 3 working days x 9h
-	assert.Equal(t, 9.0, res.WorkingDayHours)
+	assert.Equal(t, 3.0, domain.TriggerDays(72, "HOURS"))
+	assert.Equal(t, 9.0, r.dayHours)
 }
 
 func TestRemainingWorkingHours(t *testing.T) {
 	svc := newSvc(newMockCalendarRepo(), nil, testNow)
 	ctx := context.Background()
+	r := rules(t, svc, "cal-default")
 
 	// Tue 13-Oct 15:30 -> Fri 16-Oct 15:30: 2.5 + 9 + 9 + 6.5 = 27 working hours = 3 working days.
 	from, to := time.Date(2026, 10, 13, 15, 30, 0, 0, ist), time.Date(2026, 10, 16, 15, 30, 0, 0, ist)
-	h, err := svc.CalculateRemainingWorkingHours(ctx, "cal-default", from, to)
+	h, err := r.remainingHours(from, to)
 	require.NoError(t, err)
 	assert.Equal(t, 27.0, h)
-	d, err := svc.CalculateRemainingWorkingDays(ctx, "cal-default", from, to)
-	require.NoError(t, err)
-	assert.Equal(t, 3.0, d)
+	assert.Equal(t, 3.0, r.remainingDays(h))
 
 	// Fri 9-Oct 16:00 -> Mon 12-Oct 10:00 over a 2nd Saturday and a Sunday: 2h + 1h.
-	h, err = svc.CalculateRemainingWorkingHours(ctx, "cal-default", time.Date(2026, 10, 9, 16, 0, 0, 0, ist), time.Date(2026, 10, 12, 10, 0, 0, 0, ist))
+	h, err = r.remainingHours(time.Date(2026, 10, 9, 16, 0, 0, 0, ist), time.Date(2026, 10, 12, 10, 0, 0, 0, ist))
 	require.NoError(t, err)
 	assert.Equal(t, 3.0, h)
 
 	// Nothing remains once closing has passed.
-	h, _ = svc.CalculateRemainingWorkingHours(ctx, "cal-default", to, from)
+	h, _ = r.remainingHours(to, from)
 	assert.Zero(t, h)
 
 	// The tender result reports real working hours (23.5), not days x 24.
@@ -501,6 +480,9 @@ func TestRemainingWorkingHours(t *testing.T) {
 	assert.Equal(t, 23.5, res.RemainingWorkingHours)
 	assert.InDelta(t, 2.61, res.RemainingWorkingDays, 0.001)
 	assert.True(t, res.IsThresholdReached)
+	assert.Equal(t, 9.0, res.WorkingDayHours)
+	assert.Equal(t, 72.0, res.TargetWorkingValue)
+	assert.Equal(t, domain.TriggerUnitHours, res.TargetWorkingUnit)
 }
 
 func TestThresholdLabelIsDerived(t *testing.T) {
@@ -717,4 +699,17 @@ func TestBadStoredTriggerFallsBackTo72Hours(t *testing.T) {
 	v, u := trigger(cal)
 	assert.Equal(t, 72.0, v)
 	assert.Equal(t, "HOURS", u)
+}
+
+// rules loads a calendar's rules, the private path every deadline calculation uses.
+func rules(t *testing.T, svc *workingCalendarService, calendarID string) *calRules {
+	t.Helper()
+	r, err := svc.loadRules(context.Background(), calendarID)
+	require.NoError(t, err)
+	return r
+}
+
+func isWorkingDay(t *testing.T, svc *workingCalendarService, calendarID string, date time.Time) (bool, string) {
+	t.Helper()
+	return rules(t, svc, calendarID).isWorking(date)
 }

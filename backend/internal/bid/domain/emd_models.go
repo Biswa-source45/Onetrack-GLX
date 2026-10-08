@@ -33,19 +33,11 @@ const (
 // Cheque Statuses
 const (
 	ChequeStatusSubmitted = "Submitted"
-	ChequeStatusDeposited = "Deposited"
-	ChequeStatusCleared   = "Cleared"
-	ChequeStatusBounced   = "Bounced"
-	ChequeStatusCancelled = "Cancelled"
 )
 
 // Challan Statuses
 const (
 	ChallanStatusSubmitted = "Submitted"
-	ChallanStatusVerified  = "Verified"
-	ChallanStatusRejected  = "Rejected"
-	ChallanStatusPaid      = "Paid"
-	ChallanStatusCancelled = "Cancelled"
 )
 
 // Verification Statuses

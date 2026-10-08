@@ -488,51 +488,6 @@ func (r *postgresCalendarRepo) ReleaseNotification(ctx context.Context, id strin
 	return err
 }
 
-func (r *postgresCalendarRepo) ListNotificationsByTender(ctx context.Context, tenderID string) ([]domain.TaskNotification, error) {
-	rows, err := r.db.Query(ctx, `
-		SELECT n.id, n.tender_id, n.recipient_user_id, u.full_name, u.email,
-		       COALESCE(n.recipient_role, ''), n.notification_type, n.scheduled_at, n.triggered_at,
-		       n.sent_at, n.delivery_status, n.subject, n.message, n.error_message, n.created_at
-		FROM calendar.task_notifications n
-		LEFT JOIN auth.users u ON n.recipient_user_id = u.id
-		WHERE n.tender_id = $1
-		ORDER BY n.created_at DESC
-	`, tenderID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var notifs []domain.TaskNotification
-	for rows.Next() {
-		var n domain.TaskNotification
-		var rName, rEmail, rRole, errStr sql.NullString
-		var sentAt sql.NullTime
-		if err := rows.Scan(&n.ID, &n.TenderID, &n.RecipientUserID, &rName, &rEmail,
-			&rRole, &n.NotificationType, &n.ScheduledAt, &n.TriggeredAt, &sentAt, &n.DeliveryStatus,
-			&n.Subject, &n.Message, &errStr, &n.CreatedAt); err != nil {
-			return nil, err
-		}
-		if rName.Valid {
-			n.RecipientName = &rName.String
-		}
-		if rEmail.Valid {
-			n.RecipientEmail = &rEmail.String
-		}
-		if rRole.Valid && rRole.String != "" {
-			n.RecipientRole = &rRole.String
-		}
-		if sentAt.Valid {
-			n.SentAt = &sentAt.Time
-		}
-		if errStr.Valid {
-			n.ErrorMessage = &errStr.String
-		}
-		notifs = append(notifs, n)
-	}
-	return notifs, rows.Err()
-}
-
 // ── Engine baseline & evaluation lock ────────────────────────────────────────
 
 func (r *postgresCalendarRepo) IsEngineBaselined(ctx context.Context) (bool, error) {

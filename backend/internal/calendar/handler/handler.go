@@ -103,15 +103,6 @@ func isRealAPIKey(k string) bool {
 
 // ── Calendars ────────────────────────────────────────────────────────────────
 
-func (h *CalendarHandler) ListCalendars(c *gin.Context) {
-	calendars, err := h.repo.ListCalendars(c.Request.Context())
-	if err != nil {
-		fail(c, err, "Failed to retrieve working calendars")
-		return
-	}
-	response.Success(c, http.StatusOK, "Working calendars retrieved", calendars)
-}
-
 func (h *CalendarHandler) GetDefaultCalendar(c *gin.Context) {
 	cal, err := h.repo.GetDefaultCalendar(c.Request.Context())
 	if err != nil {
@@ -123,19 +114,6 @@ func (h *CalendarHandler) GetDefaultCalendar(c *gin.Context) {
 		return
 	}
 	response.Success(c, http.StatusOK, "Default calendar retrieved", cal)
-}
-
-func (h *CalendarHandler) GetCalendarByID(c *gin.Context) {
-	cal, err := h.repo.GetCalendarByID(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		fail(c, err, "Failed to retrieve working calendar")
-		return
-	}
-	if cal == nil {
-		response.NotFound(c, "Working calendar not found")
-		return
-	}
-	response.Success(c, http.StatusOK, "Working calendar retrieved", cal)
 }
 
 func (h *CalendarHandler) UpdateCalendar(c *gin.Context) {
@@ -313,14 +291,7 @@ func (h *CalendarHandler) GetGoogleIntegration(c *gin.Context) {
 		return
 	}
 	if integration == nil {
-		integration = &domain.GoogleCalendarIntegration{
-			CalendarID:         calendarID,
-			GoogleCalendarID:   "en.indian#holiday@group.v.calendar.google.com",
-			GoogleCalendarName: "Indian National Holidays",
-			SyncEnabled:        true,
-			SyncIntervalHours:  24,
-			SyncStatus:         "IDLE",
-		}
+		integration = domain.DefaultIntegration(calendarID)
 	}
 	response.Success(c, http.StatusOK, "Google Calendar integration status retrieved", maskIntegration(integration))
 }
@@ -391,78 +362,6 @@ func (h *CalendarHandler) ListSyncLogs(c *gin.Context) {
 
 // ── Deadline Calculations ────────────────────────────────────────────────────
 
-// parseClosing reads a closing time; values without a zone are in the calendar's own timezone.
-func parseClosing(s string, loc *time.Location) (time.Time, error) {
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t, nil
-	}
-	var err error
-	for _, f := range []string{"2006-01-02T15:04", "2006-01-02T15:04:05", "2006-01-02 15:04", "2006-01-02 15:04:05", "2006-01-02"} {
-		var t time.Time
-		if t, err = time.ParseInLocation(f, s, loc); err == nil {
-			return t, nil
-		}
-	}
-	return time.Time{}, err
-}
-
-func (h *CalendarHandler) CalculateArbitraryDeadline(c *gin.Context) {
-	ctx := c.Request.Context()
-	var req struct {
-		ClosingDate string   `json:"closing_date" binding:"required"`
-		TargetHours float64  `json:"target_hours"`
-		TargetValue *float64 `json:"target_value"`
-		TargetUnit  *string  `json:"target_unit"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid calculation input", nil)
-		return
-	}
-
-	cal, err := h.repo.GetCalendarByID(ctx, c.Param("id"))
-	if err != nil {
-		fail(c, err, "Failed to retrieve working calendar")
-		return
-	}
-	if cal == nil {
-		response.NotFound(c, "Working calendar not found")
-		return
-	}
-	loc, lerr := time.LoadLocation(cal.Timezone)
-	if lerr != nil {
-		loc = time.FixedZone("IST", 5*3600+1800)
-	}
-	closing, err := parseClosing(req.ClosingDate, loc)
-	if err != nil {
-		response.BadRequest(c, "Invalid date format. Expected datetime format (e.g. YYYY-MM-DDTHH:mm or RFC3339)", nil)
-		return
-	}
-
-	// Default to the calendar's own trigger when the request names none.
-	value, unit := cal.DeadlineTriggerValue, cal.DeadlineTriggerUnit
-	switch {
-	case req.TargetValue != nil && *req.TargetValue > 0:
-		value, unit = *req.TargetValue, domain.TriggerUnitHours
-		if req.TargetUnit != nil && *req.TargetUnit != "" {
-			unit = *req.TargetUnit
-		}
-	case req.TargetHours > 0:
-		value, unit = req.TargetHours, domain.TriggerUnitHours
-	}
-	unit, err = domain.ValidateTrigger(value, unit)
-	if err != nil {
-		response.BadRequest(c, err.Error(), nil)
-		return
-	}
-
-	res, err := h.calSvc.CalculateArbitraryDeadlineWithUnit(ctx, cal.ID, closing, value, unit)
-	if err != nil {
-		fail(c, err, "Failed to calculate working deadline")
-		return
-	}
-	response.Success(c, http.StatusOK, "Working deadline calculated", res)
-}
-
 func (h *CalendarHandler) GetTenderWorkingDeadline(c *gin.Context) {
 	res, err := h.calSvc.CalculateTender72HourDeadline(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -470,15 +369,6 @@ func (h *CalendarHandler) GetTenderWorkingDeadline(c *gin.Context) {
 		return
 	}
 	response.Success(c, http.StatusOK, "Tender working deadline calculated", res)
-}
-
-func (h *CalendarHandler) ListTenderNotifications(c *gin.Context) {
-	notifs, err := h.repo.ListNotificationsByTender(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		fail(c, err, "Failed to list tender notifications")
-		return
-	}
-	response.Success(c, http.StatusOK, "Tender notifications retrieved", gin.H{"notifications": notifs})
 }
 
 func (h *CalendarHandler) UpdateChecklistPriority(c *gin.Context) {
@@ -519,13 +409,4 @@ func (h *CalendarHandler) TriggerTenderRedZoneNotification(c *gin.Context) {
 		return
 	}
 	response.Success(c, http.StatusOK, "Red Zone notification processed", res)
-}
-
-func (h *CalendarHandler) GetTenderStakeholders(c *gin.Context) {
-	stakeholders, err := h.calSvc.GetTenderStakeholders(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		fail(c, err, "Failed to fetch tender stakeholders")
-		return
-	}
-	response.Success(c, http.StatusOK, "Tender stakeholders retrieved", stakeholders)
 }

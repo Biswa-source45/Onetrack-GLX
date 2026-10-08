@@ -17,14 +17,11 @@ func RegisterCalendarRoutes(
 	cal := r.Group("/calendars", auth.Authenticate())
 	{
 		// Calendar rules are readable by any signed-in user (the tender form and banner use them).
-		cal.GET("", h.ListCalendars)
 		cal.GET("/default", h.GetDefaultCalendar)
-		cal.GET("/:id", h.GetCalendarByID)
 		cal.GET("/:id/holidays", h.ListHolidays)
 		cal.GET("/:id/exceptions", h.ListExceptions)
 		cal.GET("/:id/google-sync", h.GetGoogleIntegration)
 		cal.GET("/:id/google-sync/logs", h.ListSyncLogs)
-		cal.POST("/:id/calculate", bidView, h.CalculateArbitraryDeadline)
 
 		// Administration (SUPER_ADMIN and ADMIN only)
 		cal.PUT("/:id", adminOnly, h.UpdateCalendar)
@@ -43,8 +40,6 @@ func RegisterCalendarRoutes(
 		grp := r.Group(prefix, auth.Authenticate())
 		{
 			grp.GET("/:id/working-deadline", bidView, h.GetTenderWorkingDeadline)
-			grp.GET("/:id/deadline-notifications", bidView, h.ListTenderNotifications)
-			grp.GET("/:id/stakeholders", bidView, h.GetTenderStakeholders)
 			// force=true (re-send) is further restricted to admins in the handler.
 			grp.POST("/:id/trigger-red-zone-notification", bidEdit, h.TriggerTenderRedZoneNotification)
 		}

@@ -60,22 +60,10 @@ func (s *googleSyncService) SyncHolidays(ctx context.Context, calendarID string,
 		return nil, fmt.Errorf("failed to retrieve google calendar integration config: %w", err)
 	}
 	if integration == nil {
-		integration, err = s.repo.SaveGoogleIntegration(ctx, &domain.GoogleCalendarIntegration{
-			CalendarID:         calendarID,
-			GoogleCalendarID:   "en.indian#holiday@group.v.calendar.google.com",
-			GoogleCalendarName: "Indian National Holidays",
-			SyncEnabled:        true,
-			SyncIntervalHours:  24,
-			SyncStatus:         "IDLE",
-		})
+		integration, err = s.repo.SaveGoogleIntegration(ctx, domain.DefaultIntegration(calendarID))
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	integration.SyncStatus = "SYNCING"
-	if _, err := s.repo.SaveGoogleIntegration(ctx, integration); err != nil {
-		log.Printf("[GoogleSync] could not mark sync started: %v", err)
 	}
 
 	// From the start of last year to the end of year+2.
@@ -170,7 +158,7 @@ func (s *googleSyncService) fetchHolidays(
 
 	calID := integration.GoogleCalendarID
 	if calID == "" {
-		calID = "en.indian#holiday@group.v.calendar.google.com"
+		calID = domain.DefaultGoogleCalendarID
 	}
 	apiURL := fmt.Sprintf(
 		"%s/calendars/%s/events?timeMin=%s&timeMax=%s&singleEvents=true&orderBy=startTime&maxResults=2500&key=%s",

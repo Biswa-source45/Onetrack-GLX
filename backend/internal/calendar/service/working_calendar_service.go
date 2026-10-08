@@ -239,61 +239,6 @@ func (r *calRules) remainingHours(from, to time.Time) (float64, error) {
 
 func (r *calRules) remainingDays(hours float64) float64 { return round2(hours / r.dayHours) }
 
-// ── Public calendar maths ────────────────────────────────────────────────────
-
-func (s *workingCalendarService) GetSaturdayNumber(date time.Time) int {
-	if date.Weekday() != time.Saturday {
-		return 0
-	}
-	return saturdayNumber(date)
-}
-
-func (s *workingCalendarService) IsWorkingDay(ctx context.Context, calendarID string, date time.Time) (bool, string, error) {
-	r, err := s.loadRules(ctx, calendarID)
-	if err != nil {
-		return false, "", err
-	}
-	ok, reason := r.isWorking(date)
-	return ok, reason, nil
-}
-
-func (s *workingCalendarService) SubtractWorkingHours(ctx context.Context, calendarID string, from time.Time, hours float64) (time.Time, error) {
-	r, err := s.loadRules(ctx, calendarID)
-	if err != nil {
-		return time.Time{}, err
-	}
-	return r.subtractHours(from, hours)
-}
-
-func (s *workingCalendarService) SubtractWorkingDays(ctx context.Context, calendarID string, from time.Time, days int) (time.Time, error) {
-	r, err := s.loadRules(ctx, calendarID)
-	if err != nil {
-		return time.Time{}, err
-	}
-	return r.subtractDays(from, days)
-}
-
-func (s *workingCalendarService) CalculateRemainingWorkingHours(ctx context.Context, calendarID string, from, to time.Time) (float64, error) {
-	r, err := s.loadRules(ctx, calendarID)
-	if err != nil {
-		return 0, err
-	}
-	return r.remainingHours(from, to)
-}
-
-// CalculateRemainingWorkingDays is remaining working hours / working-day length.
-func (s *workingCalendarService) CalculateRemainingWorkingDays(ctx context.Context, calendarID string, from, to time.Time) (float64, error) {
-	r, err := s.loadRules(ctx, calendarID)
-	if err != nil {
-		return 0, err
-	}
-	h, err := r.remainingHours(from, to)
-	if err != nil {
-		return 0, err
-	}
-	return r.remainingDays(h), nil
-}
-
 // ── Deadline calculation ─────────────────────────────────────────────────────
 
 type deadlineCalc struct {
@@ -343,85 +288,20 @@ func (s *workingCalendarService) CalculateTender72HourDeadline(ctx context.Conte
 		return nil, err
 	}
 	v, u := trigger(r.cal)
-	res, err := s.deadlineResult(r, t.ClosingDate, v, u)
+	c, err := s.compute(r, t.ClosingDate, v, u, s.now())
 	if err != nil {
 		return nil, err
 	}
-	res.TenderID, res.TenderTitle = tenderID, t.Title
-
-	if next, err := s.repo.GetNextPendingChecklist(ctx, tenderID); err == nil {
-		res.NextAction = next
-	}
-	if sh, err := s.repo.GetTenderStakeholders(ctx, tenderID); err == nil {
-		res.Stakeholders = sh
-	}
-	s.cacheDeadline(ctx, t, res.CalculatedDeadline, res.RemainingWorkingHours)
-	return res, nil
-}
-
-func (s *workingCalendarService) CalculateArbitraryDeadline(ctx context.Context, calendarID string, closingDate time.Time, targetHours float64) (*domain.CalculateDeadlineResult, error) {
-	return s.CalculateArbitraryDeadlineWithUnit(ctx, calendarID, closingDate, targetHours, domain.TriggerUnitHours)
-}
-
-func (s *workingCalendarService) CalculateArbitraryDeadlineWithUnit(ctx context.Context, calendarID string, closingDate time.Time, targetValue float64, targetUnit string) (*domain.CalculateDeadlineResult, error) {
-	r, err := s.loadRules(ctx, calendarID)
-	if err != nil {
-		return nil, err
-	}
-	if targetValue <= 0 {
-		targetValue, targetUnit = 72, domain.TriggerUnitHours
-	}
-	return s.deadlineResult(r, closingDate, targetValue, targetUnit)
-}
-
-func (s *workingCalendarService) deadlineResult(r *calRules, closing time.Time, value float64, unit string) (*domain.CalculateDeadlineResult, error) {
-	unit, err := domain.ValidateTrigger(value, unit)
-	if err != nil {
-		return nil, err
-	}
-	now := s.now()
-	c, err := s.compute(r, closing, value, unit, now)
-	if err != nil {
-		return nil, err
-	}
-
-	targetDays := domain.TriggerDays(value, unit)
-	spanned := int(math.Ceil(closing.Sub(c.deadline).Hours() / 24))
-	if spanned < 1 {
-		spanned = 1
-	}
-
-	var skipped []domain.SkippedDateInfo
-	endDay := closing.In(r.loc)
-	endDay = time.Date(endDay.Year(), endDay.Month(), endDay.Day(), 0, 0, 0, 0, r.loc)
-	startDay := c.deadline.In(r.loc)
-	for d := time.Date(startDay.Year(), startDay.Month(), startDay.Day(), 0, 0, 0, 0, r.loc); !d.After(endDay); d = d.AddDate(0, 0, 1) {
-		if ok, reason := r.isWorking(d); !ok {
-			skipped = append(skipped, domain.SkippedDateInfo{Date: d.Format("02-Jan-2006 (Mon)"), Reason: reason})
-		}
-	}
-
-	start, end := r.window(closing)
+	s.cacheDeadline(ctx, t, c.deadline, c.remHours)
 	return &domain.CalculateDeadlineResult{
-		ClosingDate:           closing,
-		TargetWorkingHours:    round2(targetDays * r.dayHours),
-		TargetWorkingDays:     int(math.Ceil(targetDays)),
-		TargetWorkingValue:    value,
-		TargetWorkingUnit:     unit,
+		TargetWorkingValue:    v,
+		TargetWorkingUnit:     u,
 		CalculatedDeadline:    c.deadline,
 		RemainingWorkingHours: c.remHours,
 		RemainingWorkingDays:  c.remDays,
 		WorkingDayHours:       r.dayHours,
-		CalendarDaysSpanned:   spanned,
-		SkippedDates:          skipped,
 		IsThresholdReached:    c.triggered,
-		CalendarName:          r.cal.Name,
-		WorkingIntervals:      []domain.WorkingInterval{{Start: start, End: end}},
 	}, nil
-}
-
-func (s *workingCalendarService) GetTenderStakeholders(ctx context.Context, tenderID string) ([]domain.TenderStakeholder, error) {
-	return s.repo.GetTenderStakeholders(ctx, tenderID)
 }
 
 // cacheDeadline refreshes the tender's cached columns when the deadline moves.

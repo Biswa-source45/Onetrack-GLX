@@ -13,7 +13,6 @@ ALTER TABLE bid.bid_checklists
     DROP COLUMN IF EXISTS due_at,
     DROP COLUMN IF EXISTS status;
 
-DROP TABLE IF EXISTS calendar.task_escalations;
 DROP TABLE IF EXISTS calendar.task_notifications;
 DROP TABLE IF EXISTS calendar.google_calendar_sync_logs;
 DROP TABLE IF EXISTS calendar.google_calendar_integrations;
