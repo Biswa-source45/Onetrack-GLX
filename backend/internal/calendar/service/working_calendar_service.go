@@ -424,11 +424,11 @@ func (s *workingCalendarService) GetTenderStakeholders(ctx context.Context, tend
 	return s.repo.GetTenderStakeholders(ctx, tenderID)
 }
 
-// cacheDeadline refreshes the tender's cached columns only when they changed.
+// cacheDeadline refreshes the tender's cached columns when the deadline moves.
+// Remaining hours change every tick, so they alone never trigger a write; the
+// tender page computes them live.
 func (s *workingCalendarService) cacheDeadline(ctx context.Context, t *domain.TenderDeadlineCandidate, deadline time.Time, remHours float64) {
-	if t.CachedDeadline != nil && t.CachedRemainingHours != nil &&
-		t.CachedDeadline.Sub(deadline).Abs() < time.Second &&
-		math.Abs(*t.CachedRemainingHours-remHours) < 0.005 {
+	if t.CachedDeadline != nil && t.CachedRemainingHours != nil && t.CachedDeadline.Sub(deadline).Abs() < time.Second {
 		return
 	}
 	if err := s.repo.UpdateTenderDeadlineCache(ctx, t.ID, deadline, remHours); err != nil {
@@ -475,12 +475,9 @@ func (s *workingCalendarService) EvaluateActiveTenders(ctx context.Context) (*do
 
 	sum := &domain.EvaluationSummary{Baselined: !baselined}
 	rules := map[string]*calRules{}
-	clean := true
-
 	for i := range tenders {
 		t := &tenders[i]
 		if ctx.Err() != nil {
-			clean = false
 			break
 		}
 		if sum.Notified >= maxNotificationsPerTick {
@@ -493,7 +490,6 @@ func (s *workingCalendarService) EvaluateActiveTenders(ctx context.Context) (*do
 		if r == nil {
 			if r, err = s.loadRules(ctx, key); err != nil {
 				log.Printf("[WorkingCalendar] calendar %q unavailable: %v", key, err)
-				clean = false
 				continue
 			}
 			rules[key] = r
@@ -514,7 +510,6 @@ func (s *workingCalendarService) EvaluateActiveTenders(ctx context.Context) (*do
 		sent, err := s.repo.HasRedZoneNotificationBeenSent(ctx, t.ID, c.deadline)
 		if err != nil {
 			log.Printf("[WorkingCalendar] tender %s dedup check failed: %v", t.ID, err)
-			clean = false
 			continue
 		}
 		if sent {
@@ -523,12 +518,14 @@ func (s *workingCalendarService) EvaluateActiveTenders(ctx context.Context) (*do
 		out, err := s.notifyTender(ctx, t, r, c, v, u, false, !baselined)
 		if err != nil || out.errs > 0 {
 			log.Printf("[WorkingCalendar] tender %s notification incomplete: %v (%d claim errors)", t.ID, err, out.errs)
-			clean = false
 		}
 		sum.Notified += len(out.notified)
 	}
 
-	if !baselined && clean {
+	// The first pass ends baseline mode even when a tender errored: staying in it
+	// would silently swallow every later alert. A tender that failed to baseline
+	// simply alerts normally once its error clears.
+	if !baselined && ctx.Err() == nil {
 		if err := s.repo.MarkEngineBaselined(ctx); err != nil {
 			return sum, err
 		}
@@ -604,7 +601,7 @@ func (s *workingCalendarService) TriggerRedZoneNotificationForTender(ctx context
 
 type notifyOutcome struct {
 	notified []domain.TenderStakeholder
-	failed   int // claimed but the alert could not be created
+	failed   int // claimed but the alert could not be created (claim released, retried next run)
 	errs     int // claim itself failed; nothing was sent for that recipient
 }
 
@@ -668,8 +665,8 @@ func (s *workingCalendarService) notifyTender(
 			Link:    alertDomain.TenderLink(t.ID),
 		}); err != nil {
 			log.Printf("[WorkingCalendar] alert failed for tender %s user %s: %v", t.ID, sh.UserID, err)
-			if ferr := s.repo.FailNotification(ctx, id, err.Error()); ferr != nil {
-				log.Printf("[WorkingCalendar] could not flag notification %s failed: %v", id, ferr)
+			if ferr := s.repo.ReleaseNotification(ctx, id); ferr != nil {
+				log.Printf("[WorkingCalendar] could not release claim %s: %v", id, ferr)
 			}
 			out.failed++
 			continue

@@ -194,6 +194,11 @@ func (t *pgEMDTx) MarkBidEMDReady(ctx context.Context, at time.Time) error {
 	return err
 }
 
+func (t *pgEMDTx) ClearBidEMDReady(ctx context.Context) error {
+	_, err := t.tx.Exec(ctx, `UPDATE bid.bid_workspaces SET emd_ready = false, emd_ready_date = NULL, updated_at = NOW() WHERE id = $1`, t.bidID)
+	return err
+}
+
 func (t *pgEMDTx) MarkBidEMDReturned(ctx context.Context, at time.Time) error {
 	_, err := t.tx.Exec(ctx, `UPDATE bid.bid_workspaces SET emd_returned = true, emd_returned_date = $2, updated_at = NOW() WHERE id = $1`, t.bidID, at)
 	return err

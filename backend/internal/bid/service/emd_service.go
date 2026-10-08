@@ -551,8 +551,10 @@ func (s *bidService) RecordEMDPayment(ctx context.Context, bidID string, req *do
 		switch emd.Status {
 		case domain.EMDStatusApproved, domain.EMDStatusMDApproved, domain.EMDStatusVerificationRejected:
 		case domain.EMDStatusPaid, domain.EMDStatusVerified:
-			// Re-recording a corrected payment is an administrator action.
-			if !isAdminRole(actorRoles) {
+			// Re-recording a corrected payment is an administrator action. A row
+			// with no payment details is a tender confirmed ready through Mark EMD
+			// Ready before the lifecycle existed: Finance may fill those in.
+			if emd.PaymentAmount != nil && !isAdminRole(actorRoles) {
 				return nil, emdForbidden("payment is already recorded; only an Administrator can correct it")
 			}
 		default:
@@ -654,6 +656,10 @@ func (s *bidService) VerifyEMDPayment(ctx context.Context, bidID string, req *do
 		if req.Status == domain.VerificationStatusRejected {
 			action = domain.EMDActionVerificationRejected
 			emd.Status = domain.EMDStatusVerificationRejected
+			// A payment Finance rejected is not a ready EMD; re-recording it sets the flag again.
+			if err := tx.ClearBidEMDReady(ctx); err != nil {
+				return nil, err
+			}
 		}
 		return &domain.TenderEMDAuditLog{Action: action, Remarks: req.Remarks}, nil
 	})

@@ -52,7 +52,7 @@ func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, importHandl
 		bids.POST("/:id/emd/refund", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.UpdateEMDRefund)
 		bids.GET("/:id/emd/audit-history", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.GetEMDAuditLogs)
 		bids.POST("/:id/emd/upload-receipt", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.UploadEMDReceipt)
-		bids.GET("/:id/emd/receipt/:filename", authMiddleware.RequirePermission("bid.view"), handler.GetEMDReceiptFile)
+		bids.GET("/:id/emd/receipt/:filename", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.GetEMDReceiptFile)
 	}
 
 	// Stage-Level Access Control lives in the bid module (the restriction

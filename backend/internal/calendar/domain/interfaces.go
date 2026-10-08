@@ -34,11 +34,11 @@ type WorkingCalendarRepository interface {
 
 	// Notifications. ClaimNotification inserts the dedup row before anything is
 	// sent and returns its id, or "" when a row for the same deadline already
-	// exists (force overrides). FailNotification flags a claimed row whose alert
-	// could not be created.
+	// exists (force overrides). ReleaseNotification drops a claimed row whose alert
+	// could not be created, so the next run retries it.
 	HasRedZoneNotificationBeenSent(ctx context.Context, tenderID string, deadline time.Time) (bool, error)
 	ClaimNotification(ctx context.Context, notif *TaskNotification, force bool) (string, error)
-	FailNotification(ctx context.Context, id, errMsg string) error
+	ReleaseNotification(ctx context.Context, id string) error
 	ListNotificationsByTender(ctx context.Context, tenderID string) ([]TaskNotification, error)
 
 	// One-time engine baseline marker, and a cross-instance evaluation lock.

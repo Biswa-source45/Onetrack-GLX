@@ -186,11 +186,11 @@ func (m *mockCalendarRepo) ClaimNotification(ctx context.Context, n *domain.Task
 	m.notifications[key] = &c
 	return c.ID, nil
 }
-func (m *mockCalendarRepo) FailNotification(ctx context.Context, id, errMsg string) error {
+func (m *mockCalendarRepo) ReleaseNotification(ctx context.Context, id string) error {
 	m.failedClaims = append(m.failedClaims, id)
-	for _, n := range m.notifications {
+	for k, n := range m.notifications {
 		if n.ID == id {
-			n.DeliveryStatus = "FAILED"
+			delete(m.notifications, k)
 		}
 	}
 	return nil
@@ -604,17 +604,17 @@ func TestClaimFailureNeverSends(t *testing.T) {
 	assert.Empty(t, alerts.created, "no claim, no send")
 }
 
-func TestBaselineNotMarkedWhenClaimsFail(t *testing.T) {
+func TestBaselineEndsEvenWhenClaimsFail(t *testing.T) {
 	repo := newMockCalendarRepo()
 	repo.claimErr = errors.New("db down")
 	repo.candidates = []domain.TenderDeadlineCandidate{inWindowTender("t1")}
 
 	_, err := newSvc(repo, &mockAlertSvc{}, testNow).EvaluateActiveTenders(context.Background())
 	require.NoError(t, err)
-	assert.False(t, repo.baselined, "a partial baseline must be retried, not trusted")
+	assert.True(t, repo.baselined, "staying in baseline mode would silently swallow every later alert")
 }
 
-func TestAlertFailureIsRecordedAndNotRetried(t *testing.T) {
+func TestAlertFailureReleasesClaimForRetry(t *testing.T) {
 	repo := newMockCalendarRepo()
 	repo.baselined = true
 	repo.candidates = []domain.TenderDeadlineCandidate{inWindowTender("t1")}
@@ -625,14 +625,12 @@ func TestAlertFailureIsRecordedAndNotRetried(t *testing.T) {
 	_, err := svc.EvaluateActiveTenders(ctx)
 	require.NoError(t, err)
 	assert.Len(t, repo.failedClaims, 4)
-	for _, n := range repo.notifications {
-		assert.Equal(t, "FAILED", n.DeliveryStatus)
-	}
+	assert.Empty(t, repo.notifications, "failed claims are released, not left looking sent")
 
 	alerts.err = nil
 	_, err = svc.EvaluateActiveTenders(ctx)
 	require.NoError(t, err)
-	assert.Empty(t, alerts.created, "a claimed (failed) recipient is not mass-retried every tick")
+	assert.Len(t, alerts.created, 4, "the next run retries recipients whose alert failed")
 }
 
 func TestPerRunCap(t *testing.T) {

@@ -483,10 +483,8 @@ func (r *postgresCalendarRepo) ClaimNotification(ctx context.Context, n *domain.
 	return id, err
 }
 
-func (r *postgresCalendarRepo) FailNotification(ctx context.Context, id, errMsg string) error {
-	_, err := r.db.Exec(ctx, `
-		UPDATE calendar.task_notifications SET delivery_status = 'FAILED', error_message = $2 WHERE id = $1
-	`, id, errMsg)
+func (r *postgresCalendarRepo) ReleaseNotification(ctx context.Context, id string) error {
+	_, err := r.db.Exec(ctx, `DELETE FROM calendar.task_notifications WHERE id = $1`, id)
 	return err
 }
 

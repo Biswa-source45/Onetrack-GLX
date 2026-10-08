@@ -105,8 +105,9 @@ type EMDTx interface {
 	Save(ctx context.Context, emd *TenderEMDDetails) error
 	// Log appends to the audit trail (insert only).
 	Log(ctx context.Context, entry *TenderEMDAuditLog) error
-	// MarkBidEMDReady / MarkBidEMDReturned set the bid_workspaces gate flags.
+	// MarkBidEMDReady / ClearBidEMDReady / MarkBidEMDReturned set the bid_workspaces gate flags.
 	MarkBidEMDReady(ctx context.Context, at time.Time) error
+	ClearBidEMDReady(ctx context.Context) error
 	MarkBidEMDReturned(ctx context.Context, at time.Time) error
 }
 

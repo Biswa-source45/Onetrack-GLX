@@ -1126,6 +1126,12 @@ func (r *postgresBidRepo) UpdateChecklistDetails(ctx context.Context, checklistI
 		sets = append(sets, fmt.Sprintf("status = $%d", idx))
 		args = append(args, *req.Status)
 		idx++
+		// is_done follows status so the two can never disagree.
+		if *req.Status == "COMPLETED" {
+			sets = append(sets, "is_done = true", "done_at = COALESCE(done_at, NOW())")
+		} else {
+			sets = append(sets, "is_done = false", "done_at = NULL", "done_by = NULL")
+		}
 	}
 	if req.AssignedTo != nil {
 		if strings.TrimSpace(*req.AssignedTo) == "" {
@@ -1191,7 +1197,9 @@ func (r *postgresBidRepo) ToggleChecklist(ctx context.Context, checklistID strin
 		return err
 	}
 	_, err := r.pool.Exec(ctx,
-		`UPDATE bid.bid_checklists SET is_done = false, done_by = NULL, done_at = NULL, status = $2 WHERE id = $1`,
+		// Only a COMPLETED item goes back to $2; a DELAYED / CANCELLED marker survives unticking.
+		`UPDATE bid.bid_checklists SET is_done = false, done_by = NULL, done_at = NULL,
+		        status = CASE WHEN status = 'COMPLETED' THEN $2 ELSE status END WHERE id = $1`,
 		checklistID, status,
 	)
 	return err

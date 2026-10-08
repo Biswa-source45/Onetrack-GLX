@@ -261,6 +261,10 @@ func (t fakeEMDTx) MarkBidEMDReady(ctx context.Context, at time.Time) error {
 	t.f.bid.EMDReady = true
 	return nil
 }
+func (t fakeEMDTx) ClearBidEMDReady(ctx context.Context) error {
+	t.f.bid.EMDReady = false
+	return nil
+}
 func (t fakeEMDTx) MarkBidEMDReturned(ctx context.Context, at time.Time) error {
 	t.f.bid.EMDReturned = true
 	return nil

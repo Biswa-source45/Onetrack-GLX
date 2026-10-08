@@ -387,6 +387,9 @@ func TestEMD_VerifyAndRefund(t *testing.T) {
 	if err != nil || rej.Status != domain.EMDStatusVerificationRejected {
 		t.Fatalf("verification rejected: %v %+v", err, rej)
 	}
+	if s.repo.bid.EMDReady {
+		t.Fatal("a rejected verification must clear emd_ready")
+	}
 	// Re-recording the payment restarts verification.
 	if _, err := s.svc.RecordEMDPayment(ctx, "bid-123", onlinePayment(50000), finance, financeRoles); err != nil {
 		t.Fatal(err)
@@ -421,6 +424,21 @@ func TestEMD_VerifyAndRefund(t *testing.T) {
 	}
 	_, err = s.svc.UpdateEMDRefund(ctx, "bid-123", &domain.UpdateEMDRefundRequest{RefundStatus: domain.RefundStatusPending}, finance, financeRoles)
 	wantErr(t, err, domain.ErrValidation, "refund after refunded")
+}
+
+// A tender confirmed ready through the old button has a synthetic Paid row with no
+// payment details; Finance (not only an admin) can complete it.
+func TestEMD_LegacyReadyTenderLetsFinanceRecordPayment(t *testing.T) {
+	s := newEMDTestSetup()
+	s.repo.bid.EMDReady = true
+	s.repo.emd = &domain.TenderEMDDetails{ID: "emd-1", BidID: "bid-123", EMDAmount: 50000, Status: domain.EMDStatusPaid,
+		VerificationStatus: domain.VerificationStatusPending, RefundStatus: domain.RefundStatusPending}
+	if _, err := s.svc.RecordEMDPayment(context.Background(), "bid-123", onlinePayment(50000), finance, financeRoles); err != nil {
+		t.Fatalf("finance could not complete a legacy-ready row: %v", err)
+	}
+	// Once details exist, correcting them is admin-only again.
+	_, err := s.svc.RecordEMDPayment(context.Background(), "bid-123", onlinePayment(50000), finance, financeRoles)
+	wantErr(t, err, domain.ErrForbidden, "finance re-recording a recorded payment")
 }
 
 func TestEMD_ReadyGate(t *testing.T) {

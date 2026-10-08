@@ -158,7 +158,7 @@ func main() {
 	calendarRepository := calendarRepo.NewPostgresCalendarRepository(dbPool)
 	calendarSvc := calendarService.NewWorkingCalendarService(calendarRepository, alertSvc, systemlogSvc)
 	googleSyncSvc := calendarService.NewGoogleSyncService(calendarRepository, systemlogSvc, cfg.GoogleCalendarAPIKey)
-	calendarHdlr := calendarHandler.NewCalendarHandler(calendarRepository, calendarSvc, googleSyncSvc)
+	calendarHdlr := calendarHandler.NewCalendarHandler(calendarRepository, calendarSvc, googleSyncSvc, cfg.CalendarSchedulerEnabled)
 	calendarHandler.RegisterCalendarRoutes(v1, calendarHdlr, authMiddleware)
 
 	// The deadline engine sends alerts, so it only runs when CALENDAR_SCHEDULER_ENABLED=true.

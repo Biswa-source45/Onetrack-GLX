@@ -18,14 +18,17 @@ type CalendarHandler struct {
 	repo    domain.WorkingCalendarRepository
 	calSvc  domain.WorkingCalendarService
 	syncSvc domain.GoogleSyncService
+	// engineEnabled mirrors CALENDAR_SCHEDULER_ENABLED: while off, only admins can send alerts by hand.
+	engineEnabled bool
 }
 
 func NewCalendarHandler(
 	repo domain.WorkingCalendarRepository,
 	calSvc domain.WorkingCalendarService,
 	syncSvc domain.GoogleSyncService,
+	engineEnabled bool,
 ) *CalendarHandler {
-	return &CalendarHandler{repo: repo, calSvc: calSvc, syncSvc: syncSvc}
+	return &CalendarHandler{repo: repo, calSvc: calSvc, syncSvc: syncSvc, engineEnabled: engineEnabled}
 }
 
 // fail logs the real error and answers with a generic message; known
@@ -337,7 +340,7 @@ func (h *CalendarHandler) ConfigureGoogleIntegration(c *gin.Context) {
 		}
 	}
 
-	saved, err := h.repo.SaveGoogleIntegration(c.Request.Context(), &domain.GoogleCalendarIntegration{
+	cfg := &domain.GoogleCalendarIntegration{
 		CalendarID:         c.Param("id"),
 		GoogleCalendarID:   req.GoogleCalendarID,
 		GoogleCalendarName: req.GoogleCalendarName,
@@ -345,7 +348,12 @@ func (h *CalendarHandler) ConfigureGoogleIntegration(c *gin.Context) {
 		SyncEnabled:        req.SyncEnabled,
 		SyncIntervalHours:  req.SyncIntervalHours,
 		SyncStatus:         "IDLE",
-	})
+	}
+	// Editing the configuration must not erase the outcome of the last sync.
+	if prev, err := h.repo.GetGoogleIntegration(c.Request.Context(), cfg.CalendarID); err == nil && prev != nil {
+		cfg.SyncStatus, cfg.LastSyncAt, cfg.LastError = prev.SyncStatus, prev.LastSyncAt, prev.LastError
+	}
+	saved, err := h.repo.SaveGoogleIntegration(c.Request.Context(), cfg)
 	if err != nil {
 		fail(c, err, "Failed to save Google Calendar configuration")
 		return
@@ -499,6 +507,10 @@ func (h *CalendarHandler) TriggerTenderRedZoneNotification(c *gin.Context) {
 	force := c.Query("force") == "true"
 	if force && !isAdmin(c) {
 		response.Forbidden(c, "Only administrators can re-send a Red Zone notification")
+		return
+	}
+	if !h.engineEnabled && !isAdmin(c) {
+		response.Success(c, http.StatusOK, "Deadline engine is disabled", gin.H{"delivery_status": "ENGINE_DISABLED", "message": "The deadline alert engine is not enabled on this server"})
 		return
 	}
 	res, err := h.calSvc.TriggerRedZoneNotificationForTender(c.Request.Context(), c.Param("id"), force)
