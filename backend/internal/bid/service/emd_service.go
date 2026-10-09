@@ -363,6 +363,7 @@ func (s *bidService) SubmitEMDForMDApproval(ctx context.Context, bidID string, r
 			BidID:      &bidID,
 			CreatedBy:  &actorID,
 			Type:       "ACTION_REQUIRED",
+			Link:       alertDomain.StageLink(bidID, domain.StageEMDProcessing),
 			Title:      fmt.Sprintf("EMD Approval Required — %s", op.bid.Title),
 			Message:    fmt.Sprintf("<p>EMD details of <strong>₹%.2f</strong> have been verified and submitted by %s for MD Approval.</p>", op.emd.EMDAmount, html.EscapeString(op.actorName)),
 		})
@@ -396,7 +397,7 @@ func (s *bidService) decideEMD(ctx context.Context, bidID string, req *domain.MD
 		if emd.Status != domain.EMDStatusPendingMDApproval {
 			return nil, emdInvalid("EMD is not awaiting MD approval (status: %s)", emd.Status)
 		}
-		if emd.MDSubmittedBy != nil && *emd.MDSubmittedBy == actorID {
+		if emd.MDSubmittedBy != nil && *emd.MDSubmittedBy == actorID && !hasAnyRole(actorRoles, "SUPER_ADMIN") {
 			return nil, emdForbidden("the approver must be a different user from the one who submitted the EMD")
 		}
 		emd.MDDecidedBy, emd.MDDecidedAt = &actorID, &op.now
@@ -416,7 +417,12 @@ func (s *bidService) decideEMD(ctx context.Context, bidID string, req *domain.MD
 		return nil, err
 	}
 
-	alert := &alertDomain.Alert{TargetRole: "FINANCE", BidID: &bidID, CreatedBy: &actorID}
+	alert := &alertDomain.Alert{
+		TargetRole: "FINANCE",
+		BidID:      &bidID,
+		CreatedBy:  &actorID,
+		Link:       alertDomain.StageLink(bidID, domain.StageEMDProcessing),
+	}
 	name, note := html.EscapeString(op.actorName), html.EscapeString(remarks)
 	if approve {
 		s.emdStageEvent(ctx, op, domain.StageEMDProcessing, "EMD_MD_APPROVED", fmt.Sprintf("EMD approved by MD (%s). Payment unlocked.", op.actorName))

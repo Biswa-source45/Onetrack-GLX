@@ -1020,10 +1020,14 @@ function StageSectionsTab({ bid, onRefresh, onAdvance, searchParams, setSearchPa
   // stage's workspace into view instead of leaving it below the stage grid.
   // Mount-only: clicking stage cards on the page shouldn't jump the scroll.
   const workspaceRef = useRef(null)
-  const deepLinkedStage = useRef(!!rawStage)
   useEffect(() => {
-    if (deepLinkedStage.current) workspaceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [])
+    if (rawStage) {
+      const timer = setTimeout(() => {
+        workspaceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [rawStage])
   const [refreshing, setRefreshing] = useState(false)
   const handleStageRefresh = async () => {
     setRefreshing(true)
@@ -2098,7 +2102,9 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
   // instead of always resetting to Overview / the tender's workflow stage.
   const [searchParams, setSearchParams] = useSearchParams()
   const rawTab = searchParams.get('tab')
-  const activeTab = TAB_IDS.has(rawTab) ? rawTab : 'overview'
+  const rawStage = searchParams.get('stage')
+  const normalizedTab = (rawTab === 'lifecycle' || (!rawTab && rawStage)) ? 'stages' : rawTab
+  const activeTab = TAB_IDS.has(normalizedTab) ? normalizedTab : 'overview'
   const setActiveTab = (tabId, stageKey) => {
     const next = new URLSearchParams(searchParams)
     next.set('tab', tabId)
