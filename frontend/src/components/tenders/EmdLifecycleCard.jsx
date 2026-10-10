@@ -302,8 +302,8 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
   const isRejected = emd?.status === 'Rejected'
   const isMDApproved = Boolean(emd?.is_md_approved)
   const canSubmitForApproval = canEdit && isRequiredInfoComplete && (emd?.status === 'Pending' || isRejected)
-  // The approver must be someone other than whoever submitted.
-  const submittedBySelf = Boolean(user?.id && emd?.md_submitted_by?.id === user.id)
+  // The approver must be someone other than whoever submitted (unless SUPER_ADMIN override).
+  const submittedBySelf = Boolean(user?.id && emd?.md_submitted_by?.id === user.id && !hasRole('SUPER_ADMIN'))
 
   const handleSubmitForApproval = async () => {
     if (!isRequiredInfoComplete) {

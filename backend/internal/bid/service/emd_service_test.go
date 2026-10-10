@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	alertDomain "github.com/onetrack/backend/internal/alert/domain"
 	"github.com/onetrack/backend/internal/bid/domain"
 )
 
@@ -302,6 +303,9 @@ func TestEMD_SubmitAlertsSuperAdminAndAdmin(t *testing.T) {
 	roles := map[string]bool{}
 	for _, a := range s.alerts.created {
 		roles[a.TargetRole] = true
+		if a.Link != alertDomain.StageLink("bid-123", domain.StageEMDProcessing) {
+			t.Fatalf("expected alert Link to be %q, got %q", alertDomain.StageLink("bid-123", domain.StageEMDProcessing), a.Link)
+		}
 	}
 	if !roles["SUPER_ADMIN"] || !roles["ADMIN"] {
 		t.Fatalf("alert targets = %v", roles)

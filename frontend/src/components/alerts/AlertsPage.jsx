@@ -84,8 +84,18 @@ export function AlertsPage() {
     if (!alert.is_read) handleMarkRead(alert.id)
     // link = the exact stage/approval the alert is about (backend-validated
     // in-app path); bare tender page only for alerts that don't carry one.
-    const target = alert.link || (alert.bid_id && `/dashboard/tenders/${alert.bid_id}`)
-    if (target) navigate(target)
+    let target = alert.link || (alert.bid_id && `/dashboard/tenders/${alert.bid_id}`)
+    if (target) {
+      // If it's an EMD alert and target does not yet specify the stage, deep link directly to EMD_PROCESSING stage
+      const isEmd = alert.type === 'EMD' ||
+        (alert.title && /emd/i.test(alert.title)) ||
+        (alert.message && /emd/i.test(alert.message))
+      if (isEmd && !target.includes('stage=')) {
+        const sep = target.includes('?') ? '&' : '?'
+        target = `${target}${sep}tab=stages&stage=EMD_PROCESSING`
+      }
+      navigate(target)
+    }
   }
 
   const unreadCount = alerts.filter((a) => !a.is_read).length
