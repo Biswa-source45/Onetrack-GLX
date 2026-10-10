@@ -9,6 +9,7 @@ import (
 
 	"github.com/onetrack/backend/internal/alert/domain"
 	emailService "github.com/onetrack/backend/internal/platform/email"
+	"github.com/onetrack/backend/internal/platform/roles"
 	userDomain "github.com/onetrack/backend/internal/user/domain"
 )
 
@@ -78,17 +79,25 @@ func (s *alertService) dispatchAlertEmails(ctx context.Context, alert *domain.Al
 				}
 			}
 		} else if alert.TargetRole != "" {
-			var roleToQuery string
+			// A target role reaches everyone holding it directly or through an
+			// organisation role that acts as it (e.g. FINANCE -> Finance
+			// Manager/Executive); "ALL" is the one unfiltered query.
+			targets := []string{""}
 			if alert.TargetRole != "ALL" {
-				roleToQuery = alert.TargetRole
+				targets = roles.Holders(alert.TargetRole)
 			}
-			users, _, err := s.userRepo.List(ctx, userDomain.ListUsersParams{
-				Role:  roleToQuery,
-				Limit: 100,
-			})
-			if err == nil {
+			seen := map[string]bool{}
+			for _, role := range targets {
+				users, _, err := s.userRepo.List(ctx, userDomain.ListUsersParams{
+					Role:  role,
+					Limit: 100,
+				})
+				if err != nil {
+					continue
+				}
 				for _, u := range users {
-					if u.Email != nil && *u.Email != "" {
+					if u.Email != nil && *u.Email != "" && !seen[*u.Email] {
+						seen[*u.Email] = true
 						recipients = append(recipients, *u.Email)
 					}
 				}
@@ -151,18 +160,18 @@ func (s *alertService) dispatchAlertEmails(ctx context.Context, alert *domain.Al
 	}
 }
 
-func (s *alertService) GetUserAlerts(ctx context.Context, userID string, userRole string) ([]domain.Alert, error) {
-	return s.repo.GetUserAlerts(ctx, userID, userRole)
+func (s *alertService) GetUserAlerts(ctx context.Context, userID string, userRoles []string) ([]domain.Alert, error) {
+	return s.repo.GetUserAlerts(ctx, userID, userRoles)
 }
 
 func (s *alertService) MarkAsRead(ctx context.Context, alertID string, userID string) error {
 	return s.repo.MarkAsRead(ctx, alertID, userID)
 }
 
-func (s *alertService) MarkAllAsRead(ctx context.Context, userID string, userRole string) error {
-	return s.repo.MarkAllAsRead(ctx, userID, userRole)
+func (s *alertService) MarkAllAsRead(ctx context.Context, userID string, userRoles []string) error {
+	return s.repo.MarkAllAsRead(ctx, userID, userRoles)
 }
 
-func (s *alertService) DeleteAlert(ctx context.Context, alertID string, userID string, userRole string) error {
-	return s.repo.DeleteAlert(ctx, alertID, userID, userRole)
+func (s *alertService) DeleteAlert(ctx context.Context, alertID string, userID string, userRoles []string) error {
+	return s.repo.DeleteAlert(ctx, alertID, userID, userRoles)
 }

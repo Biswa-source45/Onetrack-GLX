@@ -59,7 +59,12 @@ export function UserManagement() {
 
   // ── Permission flags (derived from JWT payload, never hardcoded) ──────────
   const canCreate = hasPermission("user.create");
-  const canEdit = hasPermission("user.edit");
+  // user.edit alone covers your own profile; editing anyone else and force-resetting
+  // a password are admin-tier — the server enforces the same split.
+  const isAdminTier = ["SUPER_ADMIN", "ADMIN"].some(hasRole);
+  const canEditSelf = hasPermission("user.edit");
+  const canEdit = canEditSelf && isAdminTier;
+  const canForceReset = isAdminTier;
   const canDeactivate = hasPermission("user.deactivate");
   const canAssignRole = hasPermission("user.assign_role");
 
@@ -327,10 +332,12 @@ export function UserManagement() {
         totalPages={totalPages}
         onPageChange={(p) => setPage(p)}
         canEdit={canEdit}
+        canEditSelf={canEditSelf}
+        canForceReset={canForceReset}
         canDeactivate={canDeactivate}
         canAssignRole={canAssignRole}
         canViewActivityLog={isManagementRole}
-        canManageStageAccess={isManagementRole}
+        canManageStageAccess={isManagementRole && hasPermission("bid.edit")}
         onEdit={(user) => setEditUser(user)}
         onRoles={(user) => setRolesUser(user)}
         onForceReset={(user) => setResetUser(user)}
@@ -351,7 +358,7 @@ export function UserManagement() {
         />
       )}
 
-      {canEdit && (
+      {canEditSelf && (
         <EditUserDialog
           open={!!editUser}
           onOpenChange={(v) => !v && setEditUser(null)}
@@ -369,7 +376,7 @@ export function UserManagement() {
         />
       )}
 
-      {canEdit && (
+      {canForceReset && (
         <ForceResetDialog
           open={!!resetUser}
           onOpenChange={(v) => !v && setResetUser(null)}

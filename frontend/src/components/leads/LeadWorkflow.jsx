@@ -16,6 +16,7 @@ import { transitionLead } from "../../services/leads";
 import { useBidStore } from "../../store/useBidStore";
 import { tokenStorage } from "../../services/auth";
 import { formatDateTime } from "../../lib/tenderFormat";
+import { actsAs } from "../../lib/roles";
 import { UserSelect } from "./UserSelect";
 
 // Mirrors domain.ApproverRoles — only to narrow the picker; the server
@@ -105,7 +106,7 @@ export function LeadWorkflow({ lead, onChanged }) {
 
   // You cannot approve your own request, so you are not in your own list.
   const myId = tokenStorage.getUser()?.id;
-  const approvers = users.filter((u) => u.id !== myId && u.is_active !== false && u.roles?.some((r) => APPROVER_ROLES.includes(r)));
+  const approvers = users.filter((u) => u.id !== myId && u.is_active !== false && actsAs(u, ...APPROVER_ROLES));
   const cfg = action && ACTIONS[action];
   const stepIndex = STEPS.findIndex((s) => s.stage === lead.stage);
   const cancelled = lead.stage === "NO_GO";

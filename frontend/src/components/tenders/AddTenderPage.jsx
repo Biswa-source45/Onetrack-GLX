@@ -54,6 +54,7 @@ import {
 import { createBid } from "../../services/bids";
 import { tokenStorage } from "../../services/auth";
 import { useBidStore } from "../../store/useBidStore";
+import { actsAs } from "../../lib/roles";
 
 const BIDDER_SUGGESTIONS = [
   "Experience Certificate",
@@ -156,12 +157,8 @@ export function AddTenderPage() {
 
   // Account Manager is required (approving authority); Pre-Sales is optional —
   // both filtered to users holding that role as primary or secondary.
-  const accountManagers = users.filter(
-    (u) => Array.isArray(u.roles) && u.roles.includes("ACCOUNT_MANAGER"),
-  );
-  const presalesUsers = users.filter(
-    (u) => Array.isArray(u.roles) && u.roles.includes("PRE_SALES"),
-  );
+  const accountManagers = users.filter((u) => actsAs(u, "ACCOUNT_MANAGER"));
+  const presalesUsers = users.filter((u) => actsAs(u, "PRE_SALES"));
 
   // Load users and system configurations
   useEffect(() => {

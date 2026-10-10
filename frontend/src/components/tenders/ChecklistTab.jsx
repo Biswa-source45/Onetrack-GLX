@@ -21,6 +21,8 @@ import {
 import { logStageMicroEvent } from '../../services/auditLogger'
 import { isOemDocItem, readOemDoc, writeOemDoc } from '../../lib/checklistOem'
 import { exportChecklistToExcel } from '../../lib/checklistExport'
+import { readOemRows } from '../../lib/oem'
+import { formatDateTime } from '../../lib/tenderFormat'
 import { updateChecklistPriority } from '../../services/calendar'
 
 // Cycled by OEM index so each OEM reads as a consistent color across every
@@ -51,8 +53,9 @@ export function ChecklistTab({ bid, onRefresh }) {
   const [oemPickerItem, setOemPickerItem] = useState(null)
   const [oemPickerSelected, setOemPickerSelected] = useState({})
 
-  const oemList = Array.isArray(bid.oem_workspace) ? bid.oem_workspace
-    : (bid.oem_workspace && Array.isArray(bid.oem_workspace.oems) ? bid.oem_workspace.oems : [])
+  const pr = (bid.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
+  // Same rows Stage 3 shows: duplicates merged and OEMs Primary Review never confirmed dropped.
+  const oemList = readOemRows(bid)
 
   // 1. Log checklist events to local stage history with username fallback
   function logChecklistHistory(actionText) {
@@ -567,6 +570,11 @@ export function ChecklistTab({ bid, onRefresh }) {
             </h3>
             <p className="text-xs text-muted-foreground">
               {doneCount} of {totalCount} items completed. Items can be added, edited, re-opened, or deleted anytime.
+              {pr.checklistConfirmedAt && (
+                <span className="block text-emerald-700 dark:text-emerald-400 font-medium">
+                  Checklist confirmed in Primary Review{pr.checklistConfirmedBy ? ` by ${pr.checklistConfirmedBy}` : ''} on {formatDateTime(pr.checklistConfirmedAt)}.
+                </span>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-3">

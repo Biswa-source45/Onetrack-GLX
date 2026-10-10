@@ -33,7 +33,7 @@ func (r *postgresAlertRepo) CreateAlert(ctx context.Context, alert *domain.Alert
 	).Scan(&alert.ID, &alert.CreatedAt)
 }
 
-func (r *postgresAlertRepo) GetUserAlerts(ctx context.Context, userID string, userRole string) ([]domain.Alert, error) {
+func (r *postgresAlertRepo) GetUserAlerts(ctx context.Context, userID string, userRoles []string) ([]domain.Alert, error) {
 	query := `
 		SELECT a.id, a.user_id, a.target_role, a.bid_id, a.type, a.title, a.message, COALESCE(a.link, ''), a.is_read, a.created_at,
 		       CASE
@@ -43,11 +43,11 @@ func (r *postgresAlertRepo) GetUserAlerts(ctx context.Context, userID string, us
 		       END
 		FROM public.alerts a
 		LEFT JOIN bid.bid_workspaces b ON b.id = a.bid_id
-		WHERE a.user_id = $1 OR a.target_role = $2 OR a.target_role = 'ALL'
+		WHERE a.user_id = $1 OR a.target_role = ANY($2) OR a.target_role = 'ALL'
 		ORDER BY a.created_at DESC
 		LIMIT 100
 	`
-	rows, err := r.pool.Query(ctx, query, userID, userRole)
+	rows, err := r.pool.Query(ctx, query, userID, userRoles)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query alerts: %w", err)
 	}
@@ -70,9 +70,9 @@ func (r *postgresAlertRepo) MarkAsRead(ctx context.Context, alertID string, user
 	return err
 }
 
-func (r *postgresAlertRepo) MarkAllAsRead(ctx context.Context, userID string, userRole string) error {
-	query := `UPDATE public.alerts SET is_read = true WHERE user_id = $1 OR target_role = $2 OR target_role = 'ALL'`
-	_, err := r.pool.Exec(ctx, query, userID, userRole)
+func (r *postgresAlertRepo) MarkAllAsRead(ctx context.Context, userID string, userRoles []string) error {
+	query := `UPDATE public.alerts SET is_read = true WHERE user_id = $1 OR target_role = ANY($2) OR target_role = 'ALL'`
+	_, err := r.pool.Exec(ctx, query, userID, userRoles)
 	return err
 }
 
@@ -80,9 +80,9 @@ func (r *postgresAlertRepo) MarkAllAsRead(ctx context.Context, userID string, us
 // user (their own targeted alert, or a role/ALL broadcast they'd see) — the
 // same scoping rule GetUserAlerts uses — so one user can't delete another's
 // private alert just by guessing an ID.
-func (r *postgresAlertRepo) DeleteAlert(ctx context.Context, alertID string, userID string, userRole string) error {
-	query := `DELETE FROM public.alerts WHERE id = $1 AND (user_id = $2 OR target_role = $3 OR target_role = 'ALL')`
-	tag, err := r.pool.Exec(ctx, query, alertID, userID, userRole)
+func (r *postgresAlertRepo) DeleteAlert(ctx context.Context, alertID string, userID string, userRoles []string) error {
+	query := `DELETE FROM public.alerts WHERE id = $1 AND (user_id = $2 OR target_role = ANY($3) OR target_role = 'ALL')`
+	tag, err := r.pool.Exec(ctx, query, alertID, userID, userRoles)
 	if err != nil {
 		return err
 	}

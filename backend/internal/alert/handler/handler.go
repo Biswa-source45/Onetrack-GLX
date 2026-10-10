@@ -82,12 +82,9 @@ func (h *AlertHandler) GetUserAlerts(c *gin.Context) {
 	userID := c.GetString("user_id")
 	rolesVal, _ := c.Get("roles")
 	
-	roleStr := "OPERATOR"
-	if roles, ok := rolesVal.([]string); ok && len(roles) > 0 {
-		roleStr = roles[0]
-	}
+	roles, _ := rolesVal.([]string)
 
-	alerts, err := h.svc.GetUserAlerts(c.Request.Context(), userID, roleStr)
+	alerts, err := h.svc.GetUserAlerts(c.Request.Context(), userID, roles)
 	if err != nil {
 		response.InternalError(c, "Failed to retrieve alerts")
 		return
@@ -117,12 +114,9 @@ func (h *AlertHandler) DeleteAlert(c *gin.Context) {
 	userID := c.GetString("user_id")
 	rolesVal, _ := c.Get("roles")
 
-	roleStr := "OPERATOR"
-	if roles, ok := rolesVal.([]string); ok && len(roles) > 0 {
-		roleStr = roles[0]
-	}
+	roles, _ := rolesVal.([]string)
 
-	if err := h.svc.DeleteAlert(c.Request.Context(), alertID, userID, roleStr); err != nil {
+	if err := h.svc.DeleteAlert(c.Request.Context(), alertID, userID, roles); err != nil {
 		response.NotFound(c, "Alert not found")
 		return
 	}
@@ -134,12 +128,9 @@ func (h *AlertHandler) MarkAllAsRead(c *gin.Context) {
 	userID := c.GetString("user_id")
 	rolesVal, _ := c.Get("roles")
 
-	roleStr := "OPERATOR"
-	if roles, ok := rolesVal.([]string); ok && len(roles) > 0 {
-		roleStr = roles[0]
-	}
+	roles, _ := rolesVal.([]string)
 
-	if err := h.svc.MarkAllAsRead(c.Request.Context(), userID, roleStr); err != nil {
+	if err := h.svc.MarkAllAsRead(c.Request.Context(), userID, roles); err != nil {
 		response.InternalError(c, "Failed to mark all alerts as read")
 		return
 	}

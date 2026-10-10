@@ -131,6 +131,8 @@ function DeleteConfirmDialog({ user, onClose, onConfirm, loading }) {
 function RowActions({
   user,
   canEdit,
+  canEditSelf,
+  canForceReset,
   canDeactivate,
   canAssignRole,
   canViewActivityLog,
@@ -148,9 +150,26 @@ function RowActions({
     currentUser?.id === user.id || currentUser?.username === user.username;
   const isSadmin = user.username === "Sadmin";
   // Stage-Level Access Control only ever governs Bid Executives — the menu
-  // item is simply absent for every other role, not just disabled.
+  // item is simply absent for every other role, not just disabled. The server
+  // checks the user's primary role, so a Bid Executive who is primary-something
+  // else isn't offered it.
   const showStageAccess =
-    canManageStageAccess && (user.roles || []).includes("BID_EXECUTIVE");
+    canManageStageAccess && (user.roles || [])[0] === "BID_EXECUTIVE";
+  // user.edit alone only covers your own profile; editing anyone else is admin-tier.
+  const showEdit = canEdit || (canEditSelf && isSelf);
+  const showDeactivate = canDeactivate && !isSelf;
+  if (
+    !(
+      showEdit ||
+      canViewActivityLog ||
+      canAssignRole ||
+      showStageAccess ||
+      canForceReset ||
+      showDeactivate
+    )
+  ) {
+    return null;
+  }
 
   return (
     <DropdownMenu>
@@ -160,7 +179,7 @@ function RowActions({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-52">
-        {canEdit && (
+        {showEdit && (
           <DropdownMenuItem onSelect={onEdit} className="gap-2">
             <Pencil className="size-3.5 text-muted-foreground" />
             Edit Profile
@@ -190,13 +209,13 @@ function RowActions({
             Stage Access
           </DropdownMenuItem>
         )}
-        {canEdit && (
+        {canForceReset && (
           <DropdownMenuItem onSelect={onForceReset} className="gap-2">
             <KeyRound className="size-3.5 text-muted-foreground" />
             Force Password Reset
           </DropdownMenuItem>
         )}
-        {canDeactivate && !isSelf && (
+        {showDeactivate && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem
@@ -248,6 +267,8 @@ export function UserTable({
   totalPages = 1,
   onPageChange,
   canEdit = false,
+  canEditSelf = false,
+  canForceReset = false,
   canDeactivate = false,
   canAssignRole = false,
   canViewActivityLog = false,
@@ -305,6 +326,8 @@ export function UserTable({
 
   const hasActions =
     canEdit ||
+    canEditSelf ||
+    canForceReset ||
     canDeactivate ||
     canAssignRole ||
     canViewActivityLog ||
@@ -409,12 +432,12 @@ export function UserTable({
                   {/* Roles */}
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-1.5 max-w-[240px]">
-                      {(user.roles || []).slice(0, 2).map((role, idx) => (
+                      {(user.roles || []).map((role, idx) => (
                         <RoleBadge
                           key={role}
                           role={role}
                           isPrimary={idx === 0}
-                          isSecondary={idx === 1}
+                          isSecondary={idx > 0}
                         />
                       ))}
                       {(user.roles || []).length === 0 && (
@@ -467,6 +490,8 @@ export function UserTable({
                       <RowActions
                         user={user}
                         canEdit={canEdit}
+                        canEditSelf={canEditSelf}
+                        canForceReset={canForceReset}
                         canDeactivate={canDeactivate}
                         canAssignRole={canAssignRole}
                         canViewActivityLog={canViewActivityLog}

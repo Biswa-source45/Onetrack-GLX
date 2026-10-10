@@ -105,6 +105,7 @@ import {
 import { StageBadge, StatusTag } from "../../lib/tenderDisplay";
 import { downloadExcel } from "../../lib/excelExport";
 import { ExportSuccessDialog } from "./ExportSuccessDialog";
+import { TodoBlocks } from "./TodoBlocks";
 
 // ── Stage List order for progress computation ────────────────────────────────
 // The real 11-stage pipeline (mirrors services/bids.js STAGE_LABELS). A
@@ -379,7 +380,7 @@ const APPROVAL_KIND_LABELS = {
   INTERNAL_APPROVAL: "Internal approval",
 };
 
-export function TendersPage({ initialScope = "all" }) {
+export function TendersPage({ initialScope = "all", todoMode = false }) {
   const { hasPermission, isAdmin, hasRole } = usePermissions();
   const isManagementRole = isAdmin || hasRole("MANAGER");
   const navigate = useNavigate();
@@ -500,6 +501,7 @@ export function TendersPage({ initialScope = "all" }) {
     setInBin,
     setViewMode,
     setScope,
+    setTodoMode,
     setEndDateFilter,
     setOwnerFilterId,
     loadBids,
@@ -572,9 +574,10 @@ export function TendersPage({ initialScope = "all" }) {
     }
 
     const targetOwnerId = isOwnedView ? currentUser?.id || "" : "";
+    setTodoMode(todoMode);
     setScope(isOwnedView ? "owned" : "all", targetOwnerId);
     loadUsers();
-  }, [searchParams, isOwnedView, currentUser?.id]);
+  }, [searchParams, isOwnedView, currentUser?.id, todoMode]);
 
   const handleRestoreBid = async (bidId, bidTitle) => {
     try {
@@ -935,9 +938,11 @@ export function TendersPage({ initialScope = "all" }) {
             <h1 className="font-heading text-2xl font-bold text-foreground">
               {inBin
                 ? "Tender Bin"
-                : isOwnedView
-                  ? "Owned Tenders"
-                  : "Tenders Workspace"}
+                : todoMode
+                  ? "Quick To-Dos"
+                  : isOwnedView
+                    ? "Owned Tenders"
+                    : "Tenders Workspace"}
             </h1>
 
             {/* Workspace Navigation Tabs */}
@@ -950,7 +955,7 @@ export function TendersPage({ initialScope = "all" }) {
                   navigate("/dashboard/tenders");
                 }}
                 className={`px-3 py-1 rounded-md font-semibold transition-all flex items-center gap-1.5 ${
-                  !inBin && !isOwnedView
+                  !inBin && !isOwnedView && !todoMode
                     ? "bg-card text-foreground shadow-xs"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
@@ -1120,6 +1125,8 @@ export function TendersPage({ initialScope = "all" }) {
         </div>
       </div>
 
+      {todoMode && !inBin && <TodoBlocks />}
+
       {/* Tender Bin Banner */}
       {inBin && (
         <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/30 rounded-xl p-4 flex items-center justify-between gap-4">
@@ -1153,16 +1160,22 @@ export function TendersPage({ initialScope = "all" }) {
       )}
 
       {/* ── Stats Row ────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+      <div className={`grid grid-cols-2 sm:grid-cols-4 gap-3 ${todoMode ? "lg:grid-cols-3" : "lg:grid-cols-7"}`}>
         {[
           {
             label: "Total Tenders",
-            value: meta.total ?? 0,
+            // To-Do view: everything in the chosen window (the list's own total
+            // shrinks when a status is picked, so sum the per-status counts).
+            value: todoMode
+              ? ["active", "tech_eval", "submitted", "won", "lost", "cancelled", "closed"].reduce((n, k) => n + (meta[`${k}_count`] ?? 0), 0)
+              : (meta.total ?? 0),
             icon: FileText,
             color: "text-blue-600",
             bg: "bg-blue-50/50",
             filterKey: "",
-            explain: "Every tender ever created, including Won, Lost, Cancelled and Closed.",
+            explain: todoMode
+              ? "Every tender in this window that is still in play: In Progress plus Submitted."
+              : "Every tender ever created, including Won, Lost, Cancelled and Closed.",
           },
           {
             label: "In Progress",
@@ -1218,7 +1231,10 @@ export function TendersPage({ initialScope = "all" }) {
             filterKey: "CLOSED",
             explain: "Manually closed out, outside the Won/Lost/Cancelled outcomes.",
           },
-        ].map((stat) => {
+        ]
+          // Quick To-Dos only deals with tenders still in play.
+          .filter((stat) => !todoMode || ["Total Tenders", "In Progress", "Submitted"].includes(stat.label))
+          .map((stat) => {
           const isActiveFilter =
             statusFilter === stat.filterKey ||
             (!statusFilter && stat.filterKey === "");

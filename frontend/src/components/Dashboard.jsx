@@ -6,7 +6,7 @@ import {
   Users, LayoutDashboard, Menu, X, ChevronRight,
   FileText, TrendingUp, Activity, BarChart2, ShieldCheck, Bell,
   Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Pencil,
-  FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass, ScrollText, Settings, Target } from 'lucide-react'
+  FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass, ScrollText, Settings, Target, ListChecks } from 'lucide-react'
 import { toast } from 'sonner'
 import { toBlob } from 'html-to-image'
 
@@ -37,6 +37,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { computePipelineSummary, getEffectiveStage } from '../lib/pipelineMetrics'
 import { openMasterSheetDrill } from '../lib/masterSheetDrill'
+import { expandRoles } from '../lib/roles'
 import { PipelineKpiBand } from './analytics/PipelineKpiBand'
 import { EmdProjectionBlock } from './analytics/EmdProjectionBlock'
 import { dimOtherSlices } from '../lib/chartUtils'
@@ -55,6 +56,7 @@ const NAV_ITEMS = [
     permission: 'bid.view',
     children: [
       { id: 'tenders-all', label: 'All Tenders', icon: Layers, path: '/dashboard/tenders' },
+      { id: 'tenders-todos', label: 'Quick To-Dos', icon: ListChecks, path: '/dashboard/tenders/todos' },
       { id: 'tenders-owned', label: 'Owned Tenders', icon: UserCheck, path: '/dashboard/tenders/owned' }
     ]
   },
@@ -63,10 +65,9 @@ const NAV_ITEMS = [
     id: 'analytics',
     label: 'Analytics',
     icon: BarChart2,
-    permission: 'bid.view',
-    // Finance gets its own EMD-focused Overview instead — stage funnels and
-    // win/loss analytics aren't part of their job.
-    excludeRole: 'FINANCE',
+    // analytics.view is withheld from Bid Executive and Finance roles; Finance
+    // gets its own EMD-focused Overview instead of stage funnels / win-loss.
+    permission: 'analytics.view',
     children: [
       { id: 'analytics-tenders', label: 'Tender Analytics', icon: Activity, path: '/dashboard/analytics/tenders' },
       { id: 'analytics-matrix', label: 'Owner Matrix', icon: Users, path: '/dashboard/analytics/performance-matrix' }
@@ -290,11 +291,13 @@ export function OverviewPanel() {
   }, [fetchMatrix])
 
   // Management Role Gating: Super Admin, Admin, Manager, and Account Manager get full BI Analytics
-  const isManagement = user?.roles?.some(r => ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ACCOUNT_MANAGER'].includes(r))
+  const isManagement = expandRoles(user?.roles).some(r => ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ACCOUNT_MANAGER'].includes(r))
   // Finance gets its own financial-operations Overview instead of either of
   // the above — EMD given/returned/pending, not win-rate or stage funnels,
   // which aren't part of their job.
-  const isFinance = user?.roles?.includes('FINANCE')
+  // Follows the primary role only: a Bid Executive who is also a Finance
+  // Executive keeps the executive Overview when Bid Executive is primary.
+  const isFinance = expandRoles(user?.roles?.slice(0, 1)).includes('FINANCE')
 
   // Filter logic
   const filteredBids = bids.filter(b => {

@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect } from 'react'
 import { tokenStorage } from '../services/auth'
+import { expandRoles } from '../lib/roles'
 
 /**
  * Returns a reactive helper for checking the current user's
@@ -35,10 +36,9 @@ export function usePermissions() {
     [user]
   )
 
-  const roles = useMemo(
-    () => new Set(Array.isArray(user?.roles) ? user.roles : []),
-    [user]
-  )
+  // Expanded so hasRole('MANAGER'), isAdmin, ... also hold for the organisation
+  // roles that act as them (see lib/roles.js). primaryRole below stays the real one.
+  const roles = useMemo(() => new Set(expandRoles(user?.roles)), [user])
 
   const primaryRole = Array.isArray(user?.roles) && user.roles.length > 0 ? user.roles[0] : 'USER'
   const secondaryRole = Array.isArray(user?.roles) && user.roles.length > 1 ? user.roles[1] : null

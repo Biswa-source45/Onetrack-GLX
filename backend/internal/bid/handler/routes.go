@@ -66,7 +66,7 @@ func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, importHandl
 	userStages.Use(authMiddleware.Authenticate())
 	{
 		userStages.GET("", handler.GetStageRestrictions)
-		userStages.PUT("", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "MANAGER"), handler.SetStageRestrictions)
+		userStages.PUT("", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "MANAGER"), authMiddleware.RequirePermission("bid.edit"), handler.SetStageRestrictions)
 
 		// Members
 		bids.POST("/:id/members", authMiddleware.RequirePermission("bid.edit"), handler.AddMember)

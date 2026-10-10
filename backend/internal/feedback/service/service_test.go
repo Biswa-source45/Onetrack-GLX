@@ -124,14 +124,14 @@ func (f *fakeAlertSvc) SendNotificationEmail(ctx context.Context, alert *alertDo
 	f.emailed = append(f.emailed, alert)
 	return nil
 }
-func (f *fakeAlertSvc) GetUserAlerts(ctx context.Context, userID, userRole string) ([]alertDomain.Alert, error) {
+func (f *fakeAlertSvc) GetUserAlerts(ctx context.Context, userID string, userRoles []string) ([]alertDomain.Alert, error) {
 	return nil, nil
 }
 func (f *fakeAlertSvc) MarkAsRead(ctx context.Context, alertID, userID string) error { return nil }
-func (f *fakeAlertSvc) MarkAllAsRead(ctx context.Context, userID, userRole string) error {
+func (f *fakeAlertSvc) MarkAllAsRead(ctx context.Context, userID string, userRoles []string) error {
 	return nil
 }
-func (f *fakeAlertSvc) DeleteAlert(ctx context.Context, alertID, userID, userRole string) error {
+func (f *fakeAlertSvc) DeleteAlert(ctx context.Context, alertID, userID string, userRoles []string) error {
 	return nil
 }
 

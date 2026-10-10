@@ -42,6 +42,7 @@ import { tokenStorage } from '../../services/auth'
 import { ChecklistTab } from './ChecklistTab'
 import { EditTenderDialog } from './EditTenderDialog'
 import { DynamicStageWorkspace, checkStageState } from './StageWorkspaces'
+import { resolveProductOem } from '../../lib/oem'
 import { triggerRedZoneNotification, getTenderWorkingDeadline } from '../../services/calendar'
 
 // Module scope (not runtime-dependent) so the URL-backed tab state below can
@@ -104,6 +105,124 @@ function fmtMoney(v) {
   if (v >= 10000000) return `₹${(v/10000000).toFixed(1)}Cr`
   if (v >= 100000) return `₹${(v/100000).toFixed(1)}L`
   return `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+}
+
+// One label/value line of an Overview card.
+function InfoRows({ rows }) {
+  return rows.map(([label, value]) => (
+    <div key={label} className="flex justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0 last:pb-0">
+      <span className="text-muted-foreground shrink-0">{label}</span>
+      <span className="font-medium text-foreground text-right">{value}</span>
+    </div>
+  ))
+}
+
+// "Compliance & Critical Dates". EMD shows what the Account Manager confirmed in
+// Primary Review (the emd_* columns it writes); until then it says so and shows
+// what the tender document offered instead of pretending the mode is ONLINE.
+function ComplianceCard({ bid }) {
+  const emdDecided = !!(bid.emd_type || bid.emd_exempted || bid.emd_not_applicable)
+  const emdMode = bid.emd_not_applicable ? 'NOT APPLICABLE' : bid.emd_exempted ? 'EXEMPTED' : bid.emd_type
+  const offered = Array.isArray(bid.emd_exemption_types) ? bid.emd_exemption_types.filter(Boolean) : []
+  const hasEmd = !bid.emd_not_applicable && !bid.emd_exempted
+  // Confirmed ONLINE/DD shows only its own details; undecided shows whatever the tender document gave.
+  const bank = hasEmd && (bid.emd_type === 'ONLINE' || !emdDecided)
+    ? [['Bank Name', bid.emd_bank_name], ['Account Number', bid.emd_account_number], ['IFSC Code', bid.emd_ifsc_code], ['Branch', bid.emd_branch]] : []
+  const dd = hasEmd && (bid.emd_type === 'DD' || !emdDecided)
+    ? [['Beneficiary', bid.emd_beneficiary], ['Payable At', bid.emd_payable_at]] : []
+  const details = [...bank, ...dd].filter(([, v]) => v)
+  const bgParts = [bid.bg_rate != null && `${bid.bg_rate}%`, bid.bg_duration_months && `${bid.bg_duration_months} months`].filter(Boolean)
+
+  return (
+    <div className="rounded-lg border border-border p-4 space-y-3 bg-card shadow-sm">
+      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+        <ShieldCheck className="size-3.5 text-emerald-600" /> Compliance & Critical Dates
+      </p>
+      <div className="space-y-2 text-sm">
+        <InfoRows rows={[
+          ['EMD Processing Type', emdDecided ? emdMode : 'Awaiting Primary Review decision'],
+          ...(!bid.emd_not_applicable ? [['EMD Amount', fmtMoney(bid.emd_amount)]] : []),
+          ...(bid.emd_exempted ? [[
+            'EMD Exemption Basis',
+            bid.emd_exemption_type === 'OTHER'
+              ? `Other — ${bid.emd_exemption_reason || 'N/A'}`
+              : bid.emd_exemption_type === 'MSME' ? 'MSME'
+                : bid.emd_exemption_type === 'STARTUP' ? 'Startup' : '—',
+          ]] : []),
+          ...(!emdDecided && offered.length ? [['Exemptions offered (per tender)', offered.join(', ')]] : []),
+          ['Bank Guarantee', bid.bg_required ? ['Required', ...bgParts].join(' · ') : 'Not required'],
+          ['Start Date', getBidStartDate(bid)],
+          ['End Date', getBidEndDate(bid)],
+          ['Target Month', fmt(bid.target_month_date, 'Not Specified')],
+        ]} />
+        {details.length > 0 && (
+          <>
+            {!emdDecided && <p className="text-[11px] text-muted-foreground italic">EMD details per tender document, pending Primary Review confirmation</p>}
+            <InfoRows rows={details} />
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Scope, products (with the OEM Primary Review settled on) and the alert note —
+// everything the Add/Edit Tender form captured that the cards above don't show.
+function ScopeProductsCard({ bid }) {
+  const products = Array.isArray(bid.requested_products) ? bid.requested_products : []
+  const pr = (bid.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
+  const note = bid.alert_note && typeof bid.alert_note === 'object' ? bid.alert_note : null
+  if (!bid.high_level_scope && !products.length && !note?.text) return null
+  return (
+    <div className="rounded-lg border border-border p-4 space-y-3 bg-card shadow-sm">
+      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+        <Layers className="size-3.5 text-primary" /> Scope & Products
+      </p>
+      {note?.text && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+          {note.label && <span className="font-semibold">{note.label}: </span>}{note.text}
+        </div>
+      )}
+      {bid.high_level_scope && <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">{bid.high_level_scope}</p>}
+      {products.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-muted-foreground border-b border-border">
+                <th className="py-1.5 pr-3 font-semibold">Product / Service</th>
+                <th className="py-1.5 pr-3 font-semibold">Description</th>
+                <th className="py-1.5 pr-3 font-semibold">Qty</th>
+                <th className="py-1.5 font-semibold">OEM</th>
+              </tr>
+            </thead>
+            <tbody>
+              {products.map((p, i) => {
+                const oem = resolveProductOem(bid, i)
+                const confirmed = !!(pr.amOemSelections || {})[i]
+                return (
+                  <tr key={i} className="border-b border-border/40 last:border-0 align-top">
+                    <td className="py-1.5 pr-3 font-medium">{p.product || '—'}</td>
+                    <td className="py-1.5 pr-3 text-muted-foreground">{p.description || '—'}</td>
+                    <td className="py-1.5 pr-3">{p.qty || '—'}</td>
+                    <td className="py-1.5">
+                      {oem || '—'}
+                      {oem && (
+                        <span className={`ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${confirmed
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-900'
+                          : 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-900'}`}>
+                          {confirmed ? 'Confirmed' : 'Pending'}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function StageBadge({ stage }) {
@@ -1001,6 +1120,7 @@ function MembersTab({ bid, onRefresh }) {
 
 // ── Stage Sections Tab (Interactive Stage Lifecycle Grid & Workspace) ────────
 function StageSectionsTab({ bid, onRefresh, onAdvance, searchParams, setSearchParams }) {
+  const { hasPermission } = usePermissions()
   const currentIdx = WORKFLOW_STAGES_ORDERED.indexOf(bid.workflow_stage)
   const isTerminal = ['WON', 'LOST', 'CANCELLED', 'CLOSED', 'ARCHIVED'].includes(bid.bid_status)
 
@@ -1219,6 +1339,13 @@ function StageSectionsTab({ bid, onRefresh, onAdvance, searchParams, setSearchPa
           })}
         </div>
       </div>
+
+      {/* Roles without bid.edit (e.g. Delivery Manager) can look but not change anything. */}
+      {!hasPermission('bid.edit') && (
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          <Eye className="size-3.5 shrink-0" /> View only — your role cannot edit this tender.
+        </div>
+      )}
 
       {/* Workspace Panel for Selected Stage */}
       <AnimatePresence mode="wait">
@@ -2196,6 +2323,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
   // drops the param so it doesn't reopen on refresh/Back.
   const autoReview = searchParams.get('approval') === '1' && !!pendingEdit &&
     (pendingEdit.action_type || 'EDIT') === 'EDIT' &&
+    hasPermission('bid.edit') &&
     (user?.id === pendingEdit.reporting_manager_id || isAdmin || hasRole('MANAGER') || hasRole('BID_MANAGER'))
   const closeReview = () => {
     setReviewingEdit(false)
@@ -2222,7 +2350,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
       {/* Pending Action Approval Banner — EDIT reopens the Edit Tender review
           dialog; CANCEL/DELETE decide inline since there's no form to reopen. */}
       {pendingEdit && (() => {
-        const isApprover = user?.id === pendingEdit.reporting_manager_id || isAdmin || hasRole('MANAGER') || hasRole('BID_MANAGER')
+        const isApprover = hasPermission('bid.edit') && (user?.id === pendingEdit.reporting_manager_id || isAdmin || hasRole('MANAGER') || hasRole('BID_MANAGER'))
         const requesterName = pendingEdit.requested_by?.full_name || 'A Bid Executive'
         const actionType = pendingEdit.action_type || 'EDIT'
         const actionLabel = actionType === 'CANCEL'
@@ -2702,9 +2830,10 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                     <Building2 className="size-3.5 text-primary" /> Organization & Portal Metadata
                   </p>
                   <div className="space-y-2 text-sm">
-                    {[
+                    <InfoRows rows={[
                       ['Owner', bid.bid_owner?.full_name || 'Unassigned'],
                       ['Account Manager', bid.account_manager?.full_name || 'Unassigned'],
+                      ['Reporting Manager', bid.reporting_manager?.full_name || 'Not Assigned'],
                       ['Pre-Sales', bid.presales?.full_name || 'Not Assigned'],
                       ['Account Name', bid.organization_name || 'Not Specified'],
                       ['Department', bid.department_name || 'Not Specified'],
@@ -2720,70 +2849,13 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                       ) : 'Not Specified'],
                       ['Scope Type', bid.scope_type || 'Not Specified'],
                       ['Bid Scope Type', bid.bid_type || 'CUSTOM_BID'],
-                    ].map(([l,v])=>(
-                      <div key={l} className="flex justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0 last:pb-0">
-                        <span className="text-muted-foreground shrink-0">{l}</span>
-                        <span className="font-medium text-foreground text-right">{v}</span>
-                      </div>
-                    ))}
+                      ['Quantity', bid.quantity ?? 'Not Specified'],
+                    ]} />
                   </div>
                 </div>
-                <div className="rounded-lg border border-border p-4 space-y-3 bg-card shadow-sm">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                    <ShieldCheck className="size-3.5 text-emerald-600" /> Compliance & Critical Dates
-                  </p>
-                  <div className="space-y-2 text-sm">
-                    {[
-                      ['EMD Processing Type', bid.emd_not_applicable ? 'NOT APPLICABLE' : bid.emd_exempted ? 'EXEMPTED' : (bid.emd_type || 'ONLINE')],
-                      ...(bid.emd_exempted ? [[
-                        'EMD Exemption Basis',
-                        bid.emd_exemption_type === 'OTHER'
-                          ? `Other — ${bid.emd_exemption_reason || 'N/A'}`
-                          : bid.emd_exemption_type === 'MSME'
-                            ? 'MSME'
-                            : bid.emd_exemption_type === 'STARTUP'
-                              ? 'Startup'
-                              : '—',
-                      ]] : []),
-                      ['Start Date', getBidStartDate(bid)],
-                      ['End Date', getBidEndDate(bid)],
-                    ].map(([l,v])=>(
-                      <div key={l} className="flex justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0 last:pb-0">
-                        <span className="text-muted-foreground shrink-0">{l}</span>
-                        <span className="font-medium text-foreground text-right">{v}</span>
-                      </div>
-                    ))}
-                    {!bid.emd_exempted && bid.emd_type === 'ONLINE' && (
-                      <>
-                        {[
-                          ['Bank Name', bid.emd_bank_name],
-                          ['Account Number', bid.emd_account_number],
-                          ['IFSC Code', bid.emd_ifsc_code],
-                          ['Branch', bid.emd_branch],
-                        ].filter(([, v]) => v).map(([l, v]) => (
-                          <div key={l} className="flex justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0 last:pb-0">
-                            <span className="text-muted-foreground shrink-0">{l}</span>
-                            <span className="font-medium text-foreground text-right">{v}</span>
-                          </div>
-                        ))}
-                      </>
-                    )}
-                    {!bid.emd_exempted && bid.emd_type === 'DD' && (
-                      <>
-                        {[
-                          ['Beneficiary', bid.emd_beneficiary],
-                          ['Payable At', bid.emd_payable_at],
-                        ].filter(([, v]) => v).map(([l, v]) => (
-                          <div key={l} className="flex justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0 last:pb-0">
-                            <span className="text-muted-foreground shrink-0">{l}</span>
-                            <span className="font-medium text-foreground text-right">{v}</span>
-                          </div>
-                        ))}
-                      </>
-                    )}
-                  </div>
-                </div>
+                <ComplianceCard bid={bid} />
               </div>
+              <ScopeProductsCard bid={bid} />
               <StageActionPanel bid={bid} onSelectStage={(stageKey) => setActiveTab('stages', stageKey)} />
               {bid.remarks && (
                 <div className="rounded-lg border border-border p-4 bg-card shadow-sm">

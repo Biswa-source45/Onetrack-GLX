@@ -25,7 +25,7 @@ func RegisterAuthRoutes(router *gin.RouterGroup, handler *AuthHandler, authMiddl
 
 		// Admin-only routes
 		admin := auth.Group("")
-		admin.Use(authMiddleware.Authenticate(), authMiddleware.RequirePermission("user.edit"))
+		admin.Use(authMiddleware.Authenticate(), authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN"))
 		{
 			admin.PATCH("/force-reset", handler.ForceReset)
 		}

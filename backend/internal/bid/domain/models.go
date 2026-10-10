@@ -1022,6 +1022,16 @@ type ListBidsParams struct {
 	ClosingAfter  *time.Time
 	OEMRequired   *bool
 	InBin         bool
+	// DueSoon (Quick To-Dos): tenders that have not closed yet and are still
+	// in play (live or submitted, not won/lost/cancelled/closed), closest
+	// closing date first; the status counts describe the same set. HighAlert
+	// narrows it to live tenders already inside their deadline-engine alert
+	// window; it implies DueSoon.
+	DueSoon   bool
+	HighAlert bool
+	// Sort "closing" lists the tender ending soonest first (see
+	// nearestClosingFirst). Anything else keeps newest-added-first.
+	Sort string
 }
 
 // IdentifierMatch is the minimal description of an existing tender that already

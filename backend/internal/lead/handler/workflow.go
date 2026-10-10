@@ -15,6 +15,7 @@ import (
 	alertDomain "github.com/onetrack/backend/internal/alert/domain"
 	"github.com/onetrack/backend/internal/lead/domain"
 	"github.com/onetrack/backend/internal/platform/response"
+	"github.com/onetrack/backend/internal/platform/roles"
 )
 
 func actorOf(c *gin.Context) domain.Actor {
@@ -137,7 +138,7 @@ func (h *LeadHandler) Transition(c *gin.Context) {
 
 	var approverID, note *string
 	if req.Action == domain.ActionSend {
-		ok, err := h.repo.UserHasAnyRole(ctx, req.ApproverID, domain.ApproverRoles)
+		ok, err := h.repo.UserHasAnyRole(ctx, req.ApproverID, roles.Holders(domain.ApproverRoles...))
 		if err != nil {
 			fail(c, err)
 			return

@@ -28,6 +28,9 @@ export async function listBids({
   closing_after = '',
   oem_required = '',
   in_bin = false,
+  due_soon = false,
+  high_alert = false,
+  sort = '',
 } = {}) {
   const params = new URLSearchParams()
   params.set('page', String(page))
@@ -44,6 +47,9 @@ export async function listBids({
   if (closing_after)  params.set('closing_after', closing_after)
   if (oem_required !== '') params.set('oem_required', String(oem_required))
   if (in_bin)         params.set('in_bin', 'true')
+  if (due_soon)       params.set('due_soon', 'true')
+  if (high_alert)     params.set('high_alert', 'true')
+  if (sort)           params.set('sort', sort)
 
   const res = await apiFetch(`${BASE}/bids?${params.toString()}`)
   const data = await res.json()

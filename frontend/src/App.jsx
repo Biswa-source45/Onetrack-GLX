@@ -101,6 +101,7 @@ export default function App() {
               <Route element={<PermissionGuard permission="bid.view" />}>
                 <Route path="tenders" element={<TendersPage initialScope="all" />} />
                 <Route path="tenders/owned" element={<TendersPage initialScope="owned" />} />
+                <Route path="tenders/todos" element={<TendersPage initialScope="all" todoMode />} />
                 <Route path="tenders/master" element={<MasterSheetPage />} />
                 <Route path="tenders/master/:drillId" element={<MasterSheetPage />} />
                 <Route path="tenders/:bidId" element={<TenderDetailPage />} />
@@ -129,15 +130,13 @@ export default function App() {
                 <Route path="tickets" element={<TicketsPage />} />
               </Route>
 
-              {/* Analytics sub-routes — Finance gets its own EMD-focused
-                  Overview instead, so they're routed away even if they type
-                  the URL directly, same as Feedback is for Super Admin. */}
-              <Route element={<ExcludeRoleGuard role="FINANCE" />}>
-                <Route element={<PermissionGuard permission="bid.view" />}>
-                  <Route path="analytics" element={<Navigate to="/dashboard/analytics/tenders" replace />} />
-                  <Route path="analytics/tenders" element={<AnalyticsPage defaultTab="tender-analytics" />} />
-                  <Route path="analytics/performance-matrix" element={<AnalyticsPage defaultTab="owner-matrix" />} />
-                </Route>
+              {/* Analytics sub-routes — gated by analytics.view, which the role
+                  matrix withholds from Bid Executive and Finance Executive (and
+                  legacy Finance, who get their own EMD-focused Overview). */}
+              <Route element={<PermissionGuard permission="analytics.view" />}>
+                <Route path="analytics" element={<Navigate to="/dashboard/analytics/tenders" replace />} />
+                <Route path="analytics/tenders" element={<AnalyticsPage defaultTab="tender-analytics" />} />
+                <Route path="analytics/performance-matrix" element={<AnalyticsPage defaultTab="owner-matrix" />} />
               </Route>
 
               {/* Admin sub-routes */}

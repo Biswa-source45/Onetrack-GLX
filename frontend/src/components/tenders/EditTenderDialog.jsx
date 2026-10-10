@@ -54,6 +54,7 @@ import {
 } from "../../services/bids";
 import { listUsers } from "../../services/users";
 import { usePermissions } from "../../hooks/usePermissions";
+import { actsAs } from "../../lib/roles";
 import { RejectReasonDialog } from "./RejectReasonDialog";
 import {
   BID_TYPES,
@@ -296,12 +297,8 @@ export function EditTenderDialog({
     setProducts((prev) =>
       prev.length > 1 ? prev.filter((p) => p.id !== id) : prev,
     );
-  const accountManagers = users.filter(
-    (u) => Array.isArray(u.roles) && u.roles.includes("ACCOUNT_MANAGER"),
-  );
-  const presalesUsers = users.filter(
-    (u) => Array.isArray(u.roles) && u.roles.includes("PRE_SALES"),
-  );
+  const accountManagers = users.filter((u) => actsAs(u, "ACCOUNT_MANAGER"));
+  const presalesUsers = users.filter((u) => actsAs(u, "PRE_SALES"));
 
   // Load users for owner selector
   useEffect(() => {

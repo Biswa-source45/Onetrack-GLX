@@ -175,6 +175,75 @@ export const PERMISSION_METADATA = {
 }
 
 export const ROLE_DETAILS = {
+  // Organisation roles (business permission matrix) — assigned from now on.
+  MANAGING_DIRECTOR: {
+    label: 'Managing Director',
+    badgeVariant: 'destructive',
+    description: 'Full administration: every permission, tender and EMD approval, and assigning roles to users.',
+    summary: 'Full Administration & Approvals'
+  },
+  ACCOUNTS_MANAGER: {
+    label: 'Accounts Manager',
+    badgeVariant: 'secondary',
+    description: 'Tender approving authority (Account Manager). Edits tenders, assigns bid ownership, manages leads and views analytics.',
+    summary: 'Tender Approving Authority'
+  },
+  PRESALES_MANAGER: {
+    label: 'Presales Manager',
+    badgeVariant: 'secondary',
+    description: 'Leads pre-sales work and is selectable as a tender Pre-Sales. Edits tenders, assigns bid ownership, manages leads and approves like a Manager.',
+    summary: 'Pre-Sales Lead & Approver'
+  },
+  SALES_MANAGER: {
+    label: 'Sales Manager',
+    badgeVariant: 'secondary',
+    description: 'Tender approving authority (Account Manager). Edits tenders, manages leads and views analytics.',
+    summary: 'Sales & Tender Approval'
+  },
+  REPORTING_MANAGER: {
+    label: 'Reporting Manager',
+    badgeVariant: 'secondary',
+    description: 'Manages the full tender lifecycle: create, edit, delete and assign tenders, approve edits from Bid Executives, manage leads.',
+    summary: 'Full Tender Lifecycle & Approvals'
+  },
+  BID_MANAGER: {
+    label: 'Bid Manager',
+    badgeVariant: 'secondary',
+    description: 'Manages the bid pipeline end to end: create, edit, delete and assign tenders, approve edits, manage leads.',
+    summary: 'Bid Pipeline Lead'
+  },
+  BID_EXECUTIVE: {
+    label: 'Bid Executive',
+    badgeVariant: 'outline',
+    description: 'Tender discovery and stage-by-stage execution: create and edit tenders, upload documents, work checklists and leads. Edits go to the Reporting Manager for approval.',
+    summary: 'Tender Execution Lead'
+  },
+  DELIVERY_MANAGER: {
+    label: 'Delivery Manager',
+    badgeVariant: 'outline',
+    description: 'View-only: sees tenders, analytics and the user directory but cannot change any tender.',
+    summary: 'View-Only Visibility'
+  },
+  FINANCE_MANAGER: {
+    label: 'Finance Manager',
+    badgeVariant: 'outline',
+    description: 'Finance lead: EMD deposits, Bank Guarantees and costing. Edits tenders, manages documents, views analytics.',
+    summary: 'EMD, Costing & Financial Operations'
+  },
+  FINANCE_EXECUTIVE: {
+    label: 'Finance Executive',
+    badgeVariant: 'outline',
+    description: 'Finance support: EMD processing and financial documents. Edits tenders and manages documents; no analytics.',
+    summary: 'EMD & Financial Support'
+  },
+  SOFTWARE_DEVELOPER: {
+    label: 'Software Developer',
+    badgeVariant: 'destructive',
+    description: 'Unrestricted system access including System Logs, Settings, Bulk Import and Tickets.',
+    summary: 'Unrestricted System Access'
+  },
+
+  // Legacy roles — still work; reassign people to the organisation roles above.
   SUPER_ADMIN: {
     label: 'Super Admin',
     badgeVariant: 'destructive',
@@ -188,31 +257,25 @@ export const ROLE_DETAILS = {
     summary: 'User & System Administration'
   },
   MANAGER: {
-    label: 'Manager',
+    label: 'Manager (old)',
     badgeVariant: 'secondary',
     description: 'Manages the complete tender lifecycle. Can create tenders, assign Bid Owners, manage team tasks, and review analytics.',
     summary: 'Full Bid Lifecycle & Pipeline Lead'
   },
   ACCOUNT_MANAGER: {
-    label: 'Account Manager',
+    label: 'Account Manager (old)',
     badgeVariant: 'secondary',
     description: 'The approving authority for a tender. Owns the Primary Review Go/No-Go decision, the EMD mode/exemption choice, Pre-Sales assignment, and pricing sign-off.',
     summary: 'Tender Approving Authority'
   },
-  BID_EXECUTIVE: {
-    label: 'Bid Executive',
-    badgeVariant: 'outline',
-    description: 'Responsible for tender discovery, stage-by-stage execution, document uploads, and compliance checklists.',
-    summary: 'Tender Execution Lead'
-  },
   PRE_SALES: {
-    label: 'Pre-Sales',
+    label: 'Pre-Sales (old)',
     badgeVariant: 'outline',
     description: 'Conducts technical eligibility evaluation, OEM tracking, and pre-sales feasibility assessments.',
     summary: 'Technical & Pre-Sales Assessment'
   },
   FINANCE: {
-    label: 'Finance',
+    label: 'Finance (old)',
     badgeVariant: 'outline',
     description: 'Handles EMD deposits, Bank Guarantees (BG), margin calculations, cost sheets, and commercial pricing.',
     summary: 'EMD, Costing & Financial Operations'

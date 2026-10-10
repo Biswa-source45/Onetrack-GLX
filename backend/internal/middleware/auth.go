@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/onetrack/backend/internal/auth/domain"
 	"github.com/onetrack/backend/internal/platform/response"
+	"github.com/onetrack/backend/internal/platform/roles"
 )
 
 type AuthMiddleware struct {
@@ -49,7 +50,9 @@ func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
 		// Set user context
 		c.Set("user_id", claims.UserID)
 		c.Set("username", claims.Username)
-		c.Set("roles", claims.Roles)
+		// Expanded so every role check below (and in handlers/services) also
+		// accepts the organisation roles that act as the legacy ones.
+		c.Set("roles", roles.Expand(claims.Roles))
 		c.Set("permissions", claims.Permissions)
 
 		c.Next()
@@ -141,6 +144,20 @@ func (m *AuthMiddleware) RequireAnyRole(roles ...string) gin.HandlerFunc {
 
 		response.Forbidden(c, "Insufficient role")
 		c.Abort()
+	}
+}
+
+// RequireSelfOrAnyRole passes when the :id route param is the caller's own id,
+// or the caller holds one of the roles â€” for actions anyone may do to
+// themselves but only an admin tier may do to others.
+func (m *AuthMiddleware) RequireSelfOrAnyRole(want ...string) gin.HandlerFunc {
+	anyRole := m.RequireAnyRole(want...)
+	return func(c *gin.Context) {
+		if id := c.Param("id"); id != "" && id == c.GetString("user_id") {
+			c.Next()
+			return
+		}
+		anyRole(c)
 	}
 }
 

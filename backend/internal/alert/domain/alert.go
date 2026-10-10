@@ -53,10 +53,10 @@ func SafeLink(link string, bidID *string) string {
 
 type AlertRepository interface {
 	CreateAlert(ctx context.Context, alert *Alert) error
-	GetUserAlerts(ctx context.Context, userID string, userRole string) ([]Alert, error)
+	GetUserAlerts(ctx context.Context, userID string, userRoles []string) ([]Alert, error)
 	MarkAsRead(ctx context.Context, alertID string, userID string) error
-	MarkAllAsRead(ctx context.Context, userID string, userRole string) error
-	DeleteAlert(ctx context.Context, alertID string, userID string, userRole string) error
+	MarkAllAsRead(ctx context.Context, userID string, userRoles []string) error
+	DeleteAlert(ctx context.Context, alertID string, userID string, userRoles []string) error
 }
 
 type AlertService interface {
@@ -67,8 +67,8 @@ type AlertService interface {
 	// have their own dedicated in-app surface (Feedback Loop's Tickets
 	// badge, say) so they don't also clutter the general Alerts inbox.
 	SendNotificationEmail(ctx context.Context, alert *Alert) error
-	GetUserAlerts(ctx context.Context, userID string, userRole string) ([]Alert, error)
+	GetUserAlerts(ctx context.Context, userID string, userRoles []string) ([]Alert, error)
 	MarkAsRead(ctx context.Context, alertID string, userID string) error
-	MarkAllAsRead(ctx context.Context, userID string, userRole string) error
-	DeleteAlert(ctx context.Context, alertID string, userID string, userRole string) error
+	MarkAllAsRead(ctx context.Context, userID string, userRoles []string) error
+	DeleteAlert(ctx context.Context, alertID string, userID string, userRoles []string) error
 }

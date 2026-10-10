@@ -10,7 +10,6 @@ import {
   X,
   Star,
   Shield,
-  ArrowLeftRight,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -21,7 +20,7 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { createUser } from "../../services/users";
-import { ALL_ROLES, ROLE_LABELS } from "./RoleBadge";
+import { ASSIGNABLE_ROLES, ROLE_LABELS } from "./RoleBadge";
 
 // ── Form initial state ────────────────────────────────────────────────────────
 const INITIAL_FORM = {
@@ -146,13 +145,6 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
         };
       }
 
-      if (prev.roles.length >= 2) {
-        toast.warning(
-          "Maximum 2 roles allowed per user (1 Primary + 1 Secondary).",
-        );
-        return prev;
-      }
-
       return {
         ...prev,
         roles: [...prev.roles, role],
@@ -160,16 +152,6 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
     });
     if (fieldErrors.roles)
       setFieldErrors((prev) => ({ ...prev, roles: undefined }));
-  }
-
-  function handleSwapRoles() {
-    if (form.roles.length === 2) {
-      setForm((prev) => ({
-        ...prev,
-        roles: [prev.roles[1], prev.roles[0]],
-      }));
-      toast.info("Swapped Primary and Secondary roles.");
-    }
   }
 
   function setPrimaryRole(role) {
@@ -190,8 +172,6 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
     if (!form.password) errors.password = "Required";
     else if (form.password.length < 8) errors.password = "Minimum 8 characters";
     if (form.roles.length === 0) errors.roles = "Select at least one role";
-    else if (form.roles.length > 2)
-      errors.roles = "A user can have at most 2 roles";
     return errors;
   }
 
@@ -210,7 +190,7 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
         full_name: form.full_name.trim(),
         username: form.username.trim().toLowerCase(),
         password: form.password,
-        roles: form.roles, // [primaryRole, secondaryRole?]
+        roles: form.roles, // [primaryRole, ...additionalRoles]
         ...(form.email.trim() && { email: form.email.trim() }),
         ...(form.phone.trim() && { phone: form.phone.trim() }),
         ...(form.department.trim() && { department: form.department.trim() }),
@@ -249,7 +229,6 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
   }
 
   const primaryRole = form.roles[0] || null;
-  const secondaryRole = form.roles[1] || null;
 
   // ── Render via portal so nothing clips ───────────────────────────────────
   const content = (
@@ -497,7 +476,7 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
 
                       <Separator />
 
-                      {/* Row 6: Role Selection (Max 2 Roles, Primary & Secondary) */}
+                      {/* Row 6: Role Selection (first = Primary, any number may follow) */}
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
                           <Label className="flex items-center gap-1.5">
@@ -505,7 +484,7 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
                             <span className="text-destructive">*</span>
                           </Label>
                           <span className="text-xs text-muted-foreground">
-                            {form.roles.length} of 2 selected
+                            {form.roles.length} selected
                           </span>
                         </div>
 
@@ -516,16 +495,6 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
                               <span className="font-semibold text-foreground text-[11px] uppercase tracking-wide">
                                 Role Priority
                               </span>
-                              {form.roles.length === 2 && (
-                                <button
-                                  type="button"
-                                  onClick={handleSwapRoles}
-                                  className="text-[11px] text-primary hover:underline font-semibold flex items-center gap-1"
-                                >
-                                  <ArrowLeftRight className="size-3" /> Swap
-                                  Roles
-                                </button>
-                              )}
                             </div>
                             <div className="flex flex-wrap gap-2 items-center">
                               {primaryRole && (
@@ -536,44 +505,44 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
                                     primaryRole}
                                 </Badge>
                               )}
-                              {secondaryRole && (
-                                <Badge className="text-[10px] font-bold bg-blue-600 text-white gap-1 py-0.5 px-2 shadow-2xs">
-                                  <Shield className="size-3" /> Secondary:{" "}
-                                  {ROLE_LABELS[secondaryRole]?.label ||
-                                    secondaryRole}
-                                </Badge>
-                              )}
+                              {form.roles.slice(1).map((r) => (
+                                <button
+                                  key={r}
+                                  type="button"
+                                  title="Make Primary"
+                                  onClick={() => setPrimaryRole(r)}
+                                >
+                                  <Badge className="text-[10px] font-bold bg-blue-600 text-white gap-1 py-0.5 px-2 shadow-2xs cursor-pointer">
+                                    <Shield className="size-3" /> Additional:{" "}
+                                    {ROLE_LABELS[r]?.label || r}
+                                  </Badge>
+                                </button>
+                              ))}
                             </div>
                           </div>
                         )}
 
                         <div className="grid grid-cols-2 gap-2">
-                          {ALL_ROLES.map((role) => {
+                          {ASSIGNABLE_ROLES.map((role) => {
                             const isPrimary = form.roles[0] === role;
-                            const isSecondary = form.roles[1] === role;
+                            const isSecondary = form.roles.indexOf(role) > 0;
                             const checked = isPrimary || isSecondary;
-                            const isLimitReached =
-                              form.roles.length >= 2 && !checked;
 
                             return (
                               <button
                                 key={role}
                                 type="button"
-                                onClick={() =>
-                                  !isLimitReached && toggleRole(role)
-                                }
-                                disabled={loading || isLimitReached}
+                                onClick={() => toggleRole(role)}
+                                disabled={loading}
                                 className={`
                                 flex items-center justify-between gap-2 rounded-md border px-3 py-2.5
                                 text-xs font-medium text-left transition-all duration-150
                                 ${
-                                  isLimitReached
-                                    ? "opacity-40 cursor-not-allowed border-border bg-muted/20 text-muted-foreground"
-                                    : isPrimary
-                                      ? "border-amber-400 bg-amber-500/10 text-foreground shadow-xs ring-1 ring-amber-400/30"
-                                      : isSecondary
-                                        ? "border-blue-400 bg-blue-500/10 text-foreground shadow-xs ring-1 ring-blue-400/30"
-                                        : "border-border bg-background text-muted-foreground hover:bg-muted hover:border-muted-foreground/30"
+                                  isPrimary
+                                    ? "border-amber-400 bg-amber-500/10 text-foreground shadow-xs ring-1 ring-amber-400/30"
+                                    : isSecondary
+                                      ? "border-blue-400 bg-blue-500/10 text-foreground shadow-xs ring-1 ring-blue-400/30"
+                                      : "border-border bg-background text-muted-foreground hover:bg-muted hover:border-muted-foreground/30"
                                 }
                               `}
                               >
@@ -618,7 +587,7 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
                                 )}
                                 {isSecondary && (
                                   <span className="text-[9px] font-semibold text-blue-600 dark:text-blue-400 shrink-0">
-                                    Secondary
+                                    Additional
                                   </span>
                                 )}
                               </button>

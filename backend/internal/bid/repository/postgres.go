@@ -171,6 +171,20 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 	return scanBid(row)
 }
 
+// closingExpr is a tender's closing moment: the same fallback the deadline
+// engine uses, so list filters/sorting and deadline alerts agree on it.
+const closingExpr = `COALESCE(b.closing_date, b.end_date)`
+
+// nearestClosingFirst orders a list by "which tender needs attention first":
+// tenders closing today or later, soonest first (a tender closing earlier today
+// is still today's, not "past"), then ones that closed on an earlier day with the
+// most recently closed first, and tenders without a closing date last.
+// b.id keeps LIMIT/OFFSET pages stable.
+const nearestClosingFirst = closingExpr + ` IS NULL, ` +
+	closingExpr + ` < date_trunc('day', now()), ` +
+	`CASE WHEN ` + closingExpr + ` >= date_trunc('day', now()) THEN ` + closingExpr + ` END ASC, ` +
+	`CASE WHEN ` + closingExpr + ` < date_trunc('day', now()) THEN ` + closingExpr + ` END DESC, b.id ASC`
+
 // derivedStatusExpr is the single definition of a tender's effective status.
 //
 // It has to be shared by the status counts and the status filter: they used to
@@ -288,12 +302,12 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		idx++
 	}
 	if params.ClosingBefore != nil {
-		conditions = append(conditions, fmt.Sprintf("b.closing_date <= $%d", idx))
+		conditions = append(conditions, fmt.Sprintf("%s <= $%d", closingExpr, idx))
 		args = append(args, params.ClosingBefore)
 		idx++
 	}
 	if params.ClosingAfter != nil {
-		conditions = append(conditions, fmt.Sprintf("b.closing_date >= $%d", idx))
+		conditions = append(conditions, fmt.Sprintf("%s >= $%d", closingExpr, idx))
 		args = append(args, params.ClosingAfter)
 		idx++
 	}
@@ -301,6 +315,24 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		conditions = append(conditions, fmt.Sprintf("b.oem_required = $%d", idx))
 		args = append(args, *params.OEMRequired)
 		idx++
+	}
+	// Quick To-Dos. Built on derivedStatusExpr (the same definition the status
+	// tiles use) so a to-do count can never disagree with those tiles. todoConds
+	// take no arguments, so the status counts below reuse them as they are.
+	orderBy := "b.created_at DESC, b.id DESC"
+	todo := params.DueSoon || params.HighAlert
+	var todoConds []string
+	if todo {
+		todoConds = append(todoConds, closingExpr+" >= now()", "("+derivedStatusExpr+") NOT IN ('WON', 'LOST', 'CANCELLED', 'CLOSED')")
+	}
+	if params.HighAlert {
+		// The deadline engine's red zone: its calculated alert time has passed.
+		// Only live tenders are ever calculated (submitted ones are skipped).
+		todoConds = append(todoConds, "("+derivedStatusExpr+") = 'ACTIVE'", "b.calculated_72h_deadline <= now()")
+	}
+	conditions = append(conditions, todoConds...)
+	if todo || params.Sort == "closing" {
+		orderBy = nearestClosingFirst
 	}
 
 	where := "WHERE " + strings.Join(conditions, " AND ")
@@ -331,6 +363,21 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		baseConditions = append(baseConditions, fmt.Sprintf("b.bid_owner_id = $%d", baseIdx))
 		baseArgs = append(baseArgs, params.BidOwnerID)
 		baseIdx++
+	}
+	// In Quick To-Dos the tiles count the very window the list shows (any status),
+	// instead of the whole workspace.
+	if todo {
+		baseConditions = append(baseConditions, todoConds...)
+		if params.ClosingBefore != nil {
+			baseConditions = append(baseConditions, fmt.Sprintf("%s <= $%d", closingExpr, baseIdx))
+			baseArgs = append(baseArgs, params.ClosingBefore)
+			baseIdx++
+		}
+		if params.ClosingAfter != nil {
+			baseConditions = append(baseConditions, fmt.Sprintf("%s >= $%d", closingExpr, baseIdx))
+			baseArgs = append(baseArgs, params.ClosingAfter)
+			baseIdx++
+		}
 	}
 	baseWhere := "WHERE " + strings.Join(baseConditions, " AND ")
 
@@ -394,15 +441,15 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		FROM bid.bid_workspaces b
 		LEFT JOIN auth.users u ON b.bid_owner_id = u.id
 		%s
-		-- Newest-added-first: whichever tender was most recently created or
+		-- Default is newest-added-first: whichever tender was most recently created or
 		-- imported into OneTrack sorts to the top, regardless of the tender's
 		-- own start date. A bulk import lands together at the top as "latest".
 		-- b.id breaks created_at ties (a bulk import shares one timestamp) so
 		-- LIMIT/OFFSET pages are stable - without it rows repeat or go missing
 		-- across pages.
-		ORDER BY b.created_at DESC, b.id DESC
+		ORDER BY %s
 		LIMIT $%d OFFSET $%d
-	`, where, idx, idx+1)
+	`, where, orderBy, idx, idx+1)
 
 	rows, err := r.pool.Query(ctx, dataQuery, listArgs...)
 	if err != nil {

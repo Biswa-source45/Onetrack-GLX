@@ -32,6 +32,9 @@ import { PricingSuggestionHint } from './PricingSuggestionHint'
 import { logStageMicroEvent } from '../../services/auditLogger'
 import { useBidStore } from '../../store/useBidStore'
 import { buildAlertNoteHtml } from '../../lib/tenderFormat'
+import { actsAs, expandRoles } from '../../lib/roles'
+import { ChecklistReview } from './ChecklistReview'
+import { normalizeOemCandidates, resolveProductOem, oemKey, confirmedOems, reconcileOemRows } from '../../lib/oem'
 import { EmdLifecycleCard } from './EmdLifecycleCard'
 
 function fmtMoney(v) {
@@ -58,32 +61,6 @@ function fmtDate(dt) {
 function fmtDateTime(dt) {
   if (!dt) return '—'
   return new Date(dt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-}
-
-// Pre-Sales' per-product OEM used to be one free-text string per product
-// index; it's now an array of candidates. Old tenders still carry the
-// string, so every read goes through here. A legacy single value is treated
-// as "suggested" so it keeps winning over the static requested_products
-// seed in resolveProductOem below — an old tender must not visibly change.
-function normalizeOemCandidates(stored) {
-  if (Array.isArray(stored)) return stored.filter(c => c && c.oem)
-  if (typeof stored === 'string' && stored.trim()) {
-    return [{ oem: stored.trim(), remarks: '', suggested: true }]
-  }
-  return []
-}
-
-// Single source of truth for "which OEM applies to requested_products[index]".
-// Priority: Account Manager's final pick > Pre-Sales' suggested candidate >
-// Pre-Sales' first candidate > the static Add/Edit-Tender seed.
-function resolveProductOem(bid, index) {
-  const pr = (bid?.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
-  const am = (pr.amOemSelections || {})[index]
-  if (am) return am
-  const cands = normalizeOemCandidates((pr.presalesProducts || {})[index])
-  const pick = cands.find(c => c.suggested) || cands[0]
-  if (pick?.oem) return pick.oem
-  return (bid?.requested_products || [])[index]?.oem || ''
 }
 
 // Local-id generator for OEM-candidate/matrix rows that only need a stable
@@ -777,7 +754,7 @@ function EmdDecisionModal({ bid, onClose, onDone }) {
 function AssignPresalesModal({ bid, users, onClose, onDone }) {
   const [presalesId, setPresalesId] = useState(bid.presales?.id || '')
   const [submitting, setSubmitting] = useState(false)
-  const presalesUsers = users.filter(u => Array.isArray(u.roles) && u.roles.includes('PRE_SALES'))
+  const presalesUsers = users.filter(u => actsAs(u, 'PRE_SALES'))
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -992,6 +969,19 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
   // Without a recorded EMD decision the tender would slide into EMD Processing
   // as "required / Online" and wait on Finance — even if it's actually exempt.
   const emdDecided = !!(bid.emd_type || bid.emd_exempted || bid.emd_not_applicable)
+  // The Account Manager's sign-off on the document checklist; recorded in primary_review.
+  const checklistConfirmed = !!primaryReview.checklistConfirmedAt
+
+  const handleConfirmChecklist = async (count) => {
+    const by = currentUser?.full_name || currentUser?.username || ''
+    const res = await updateBid(bid.id, {
+      primary_review: JSON.stringify({ ...primaryReview, checklistConfirmedAt: new Date().toISOString(), checklistConfirmedBy: by }),
+    })
+    if (!res.ok) { toast.error(res.error?.message || 'Failed to confirm checklist'); return }
+    logStageInteraction(bid.id, 'PRIMARY_REVIEW', `${by || 'Reviewer'} confirmed the document checklist (${count} item${count === 1 ? '' : 's'})`)
+    toast.success('Checklist confirmed')
+    onRefresh()
+  }
 
   const handleSaveAmOems = async () => {
     const map = {}
@@ -1001,6 +991,7 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
       amOemSelections: map,
       amOemFinalizedAt: new Date().toISOString(),
       amOemFinalizedBy: currentUser?.full_name || currentUser?.username || '',
+      oemRowsDismissed: (primaryReview.oemRowsDismissed || []).filter(n => !Object.values(map).some(v => oemKey(v) === oemKey(n))),
     }
     const res = await updateBid(bid.id, { primary_review: JSON.stringify(payload) })
     if (!res.ok) { toast.error(res.error?.message || 'Failed to save'); return }
@@ -1035,14 +1026,16 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
           onCompleteClick={() => setShowCompleteModal(true)}
           onRefresh={onRefresh}
           completeLabel="Mark Primary Review Complete"
-          disabled={!canManageAM || !amOemComplete || !emdDecided}
+          disabled={!canManageAM || !amOemComplete || !emdDecided || !checklistConfirmed}
           disabledTooltip={!canManageAM
             ? (requireAmPresales
                 ? 'Only the assigned Account Manager (or an Admin) can complete Primary Review.'
                 : 'Only the Bid Owner, Reporting Manager, or an Admin can complete Primary Review.')
             : !amOemComplete
               ? 'Finalize the OEM for every product before completing Primary Review.'
-              : 'Set the EMD decision (Online / DD / Exempted / Not Applicable) before completing Primary Review — it decides whether Finance has to process EMD.'}
+              : !emdDecided
+                ? 'Set the EMD decision (Online / DD / Exempted / Not Applicable) before completing Primary Review — it decides whether Finance has to process EMD.'
+                : 'Review and confirm the document checklist before completing Primary Review.'}
         />
       </div>
 
@@ -1193,6 +1186,14 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
               </div>
             </div>
           )}
+
+          <ChecklistReview
+            bid={bid}
+            canEdit={canManageAM}
+            confirmedAt={primaryReview.checklistConfirmedAt}
+            confirmedBy={primaryReview.checklistConfirmedBy}
+            onConfirm={handleConfirmChecklist}
+          />
 
           <div className="p-4 rounded-xl border border-border bg-card space-y-3">
             <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{requireAmPresales ? 'Account Manager Actions' : 'Primary Review Actions'}</h4>
@@ -1639,11 +1640,11 @@ export function Stage3Workspace({ bid, onRefresh }) {
   // next render, before the backend round-trip that persists it completes.
   const [dismissedNames, setDismissedNames] = useState(() => {
     const pr = (bid.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
-    return new Set((pr.oemRowsDismissed || []).map(n => n.trim().toLowerCase()))
+    return new Set((pr.oemRowsDismissed || []).map(oemKey))
   })
   useEffect(() => {
     const pr = (bid.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
-    const fromServer = (pr.oemRowsDismissed || []).map(n => n.trim().toLowerCase())
+    const fromServer = (pr.oemRowsDismissed || []).map(oemKey)
     if (!fromServer.length) return
     setDismissedNames(prev => {
       // Bail out to the same Set (no state change, no re-render) when there's
@@ -1656,38 +1657,33 @@ export function Stage3Workspace({ bid, onRefresh }) {
     })
   }, [bid.primary_review])
 
-  // Additive sync: every OEM the Account Manager has finalized gets a row on
-  // this sheet if it doesn't have one already — not just the first time, so
-  // a later addition in Primary Review still lands here without a manual
-  // "Add OEM Row" step. Runs on every render where `oems` or the AM's
-  // selections change; it's a no-op (checked via existingNames) once nothing
-  // is missing, so it settles after one write instead of looping.
+  // Keeps the sheet equal to what the Account Manager confirmed in Primary
+  // Review (lib/oem.js reconcileOemRows): adds confirmed OEMs that have no row,
+  // merges duplicates, drops rows that were never confirmed and have no progress.
+  // Rows with real progress are never dropped. Skipped while the matrix is open
+  // for editing. Settles after one write: reconcile returns the very same row
+  // objects once nothing needs changing.
   useEffect(() => {
-    const pr = (bid.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
-    const picks = [...new Set([
-      ...Object.values(pr.amOemSelections || {}),
-      ...Object.values(pr.presalesProducts || {}).flatMap(v => normalizeOemCandidates(v).map(c => c.oem)),
-      ...(bid.requested_products || []).map(p => (p.oem || '').trim()),
-    ].map(s => (s || '').trim()).filter(Boolean))]
-
-    if (!picks.length) return
-    const existingNames = new Set(oems.map(o => (o.name || '').trim().toLowerCase()))
-    const missing = picks.filter(n => !existingNames.has(n.toLowerCase()) && !dismissedNames.has(n.toLowerCase()))
-    if (!missing.length) return
-    const newRows = missing.map(n => makeOemRow(n, 'presales', ''))
-    const rows = [...oems, ...newRows]
-    setOems(rows)
-    localStorage.setItem(key, JSON.stringify(rows))
-    updateBid(bid.id, { oem_workspace: JSON.stringify(rows) }).then(() => { if (onRefresh) onRefresh() }).catch(() => {})
+    if (isEditing) return
+    const next = reconcileOemRows(oems, confirmedOems(bid), {
+      makeRow: (n) => makeOemRow(n, 'presales', ''),
+      dismissed: dismissedNames,
+    })
+    if (next.length === oems.length && next.every((r, i) => r === oems[i])) return
+    const added = next.filter((r) => !oems.includes(r)).map((r) => r.name)
+    const removed = oems.length - (next.length - added.length)
+    setOems(next)
+    localStorage.setItem(key, JSON.stringify(next))
+    updateBid(bid.id, { oem_workspace: JSON.stringify(next) }).then(() => { if (onRefresh) onRefresh() }).catch(() => {})
     logStageMicroEvent(bid.id, {
       fromStage: 'OEM_AUTHORIZATION_REQUEST',
       toStage: 'OEM_AUTHORIZATION_REQUEST',
       eventType: 'OEM',
-      transitionReason: `Auto-created ${newRows.length} OEM row(s) from product OEM definitions`,
-      details: { oems: missing },
+      transitionReason: `Synced OEM rows with Primary Review: ${added.length} added, ${removed} duplicate/unconfirmed removed`,
+      details: { added },
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bid.primary_review, bid.requested_products, bid.id, oems, dismissedNames])
+  }, [bid.primary_review, bid.id, oems, dismissedNames, isEditing])
 
   const [showModal, setShowModal] = useState(false)
   const [showAddOemDlg, setShowAddOemDlg] = useState(false)
@@ -1700,6 +1696,7 @@ export function Stage3Workspace({ bid, onRefresh }) {
   const handleAddOemSubmit = async () => {
     const name = newOemName.trim()
     if (!name) { toast.error('OEM name is required'); return }
+    if (oems.some(o => oemKey(o.name) === oemKey(name))) { toast.error(`"${name}" is already on the sheet`); return }
     const row = makeOemRow(name, 'manual', currentUser?.full_name || '')
     if (newOemContact.trim()) {
       row.contactName = newOemContact.trim()
@@ -1786,7 +1783,7 @@ export function Stage3Workspace({ bid, onRefresh }) {
     const updated = oems.filter(o => o.id !== id)
     saveOems(updated)
     if (target?.name) {
-      const normalized = target.name.trim().toLowerCase()
+      const normalized = oemKey(target.name)
       setDismissedNames(prev => new Set([...prev, normalized]))
       const pr = (bid.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
       const nextDismissed = [...new Set([...(pr.oemRowsDismissed || []), target.name])]
@@ -1840,13 +1837,10 @@ export function Stage3Workspace({ bid, onRefresh }) {
   // fixed metadata from Add/Edit Tender time, not something Pre-Sales
   // actively maintains, so a matrix row matching only that seed was never
   // actually "confirmed" by a Pre-Sales mapping in the first place.
-  const presalesConfirmedNames = useMemo(() => {
-    const pr = (bid.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
-    const cands = Object.values(pr.presalesProducts || {}).flatMap(v => normalizeOemCandidates(v).map(c => c.oem))
-    const rfpOems = (bid.requested_products || []).map(p => (p.oem || '').trim())
-    const all = [...cands, ...Object.values(pr.amOemSelections || {}), ...rfpOems].map(s => (s || '').trim().toLowerCase()).filter(Boolean)
-    return new Set(all)
-  }, [bid.primary_review, bid.requested_products])
+  const confirmedKeys = useMemo(() => {
+    const confirmed = confirmedOems({ primary_review: bid.primary_review })
+    return confirmed ? new Set(confirmed.map(oemKey)) : null
+  }, [bid.primary_review])
 
   const totalOEMs = oems.length
   const totalFollowUpsCount = useMemo(() => {
@@ -2002,17 +1996,17 @@ export function Stage3Workspace({ bid, onRefresh }) {
 
                       {/* OEM Name */}
                       <td className="p-3 font-bold text-foreground border-r border-border/60">
-                        {isEditing ? (
+                        {isEditing && o.origin === 'manual' ? (
                           <Input size="sm" value={o.name} onChange={e => updateOemField(o.id, 'name', e.target.value)} className="h-8 text-xs font-bold" />
                         ) : (
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-xs font-extrabold text-foreground">{o.name}</span>
-                            {o.origin === 'presales' && presalesConfirmedNames.size > 0 && !presalesConfirmedNames.has((o.name || '').trim().toLowerCase()) && (
+                            {confirmedKeys && o.origin !== 'manual' && !confirmedKeys.has(oemKey(o.name)) && (
                               <span
                                 className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800"
-                                title="No longer matches any current Pre-Sales product→OEM mapping — rename this row or leave it if it's still valid."
+                                title="Not among the OEMs confirmed in Primary Review. Kept because it has recorded progress — delete it if it is no longer needed."
                               >
-                                Unmapped
+                                Not confirmed
                               </span>
                             )}
                           </div>
@@ -3412,7 +3406,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
                   bid.account_manager && { id: bid.account_manager.id, label: `${bid.account_manager.full_name} (Account Manager)` },
                   bid.reporting_manager && { id: bid.reporting_manager.id, label: `${bid.reporting_manager.full_name} (Reporting Manager)` },
                   bid.bid_owner && { id: bid.bid_owner.id, label: `${bid.bid_owner.full_name} (Bid Owner)` },
-                  ...users.filter(u => Array.isArray(u.roles) && (u.roles.includes('ADMIN') || u.roles.includes('SUPER_ADMIN') || u.roles.includes('MANAGER'))).map(u => ({ id: u.id, label: `${u.full_name} (${u.roles.join(', ')})` }))
+                  ...users.filter(u => actsAs(u, 'ADMIN', 'SUPER_ADMIN', 'MANAGER')).map(u => ({ id: u.id, label: `${u.full_name} (${u.roles.join(', ')})` }))
                 ].filter(Boolean).filter((v, idx, arr) => arr.findIndex(x => x.id === v.id) === idx)
 
                 if (approverOptions.length === 0) {
@@ -3654,6 +3648,9 @@ export function Stage6Workspace({ bid, onRefresh }) {
   // EMD alerts must be triggered by someone other than Finance — Bid Executive,
   // Manager, or Admin — so Finance can't self-trigger its own processing request.
   const canTriggerEmdAlert = isMD || hasRole('MANAGER') || hasRole('ACCOUNT_MANAGER') || hasRole('BID_EXECUTIVE')
+  // Finance staff who hold no executing role (e.g. a Bid Executive who is also a
+  // Finance Executive can still advance the stage as a Bid Executive).
+  const financeOnly = isFinance && !canTriggerEmdAlert
   // EMD isn't required, so completing THIS stage is handled by Stage 5
   // instead — Internal-Approval readiness is only framed here when EMD
   // actually has to be processed (mirrors Stage5Workspace's emdNotRequired).
@@ -3825,8 +3822,8 @@ export function Stage6Workspace({ bid, onRefresh }) {
             onRefresh={onRefresh}
             completeLabel="EMD Ready & Advance"
             completeClass="bg-amber-600 hover:bg-amber-700 text-white"
-            disabled={!bid.emd_ready || isFinance}
-            disabledTooltip={isFinance ? 'Advancing this stage is a Bid Executive/Account Manager action, not Finance.' : 'Awaiting EMD Ready confirmation from Finance'}
+            disabled={!bid.emd_ready || financeOnly}
+            disabledTooltip={financeOnly ? 'Advancing this stage is a Bid Executive/Account Manager action, not Finance.' : 'Awaiting EMD Ready confirmation from Finance'}
           />
         </div>
       </div>
@@ -5094,10 +5091,10 @@ export function EmdReturnWorkspace({ bid, onRefresh }) {
 // ── Dynamic Dispatcher for Active Stage Workspace ────────────────────────────
 export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
   const currentUser = tokenStorage.getUser()
-  const userRoles = [
+  const userRoles = expandRoles([
     ...(Array.isArray(currentUser?.roles) ? currentUser.roles : []),
     ...(currentUser?.role ? [currentUser.role] : [])
-  ].map(r => String(r).toUpperCase())
+  ].map(r => String(r).toUpperCase()))
 
   const stage = selectedStage || bid.workflow_stage
   const { isLocked, stageIdx } = checkStageState(bid, stage)

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { toast } from 'sonner'
 import {
   ShieldCheck, Loader2, Info, Check, Sparkles, Shield,
-  ArrowLeftRight, Star, AlertCircle, CheckCircle2
+  Star, AlertCircle, CheckCircle2
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/tooltip'
 
 import { updateUserRoles } from '../../services/users'
-import { ALL_ROLES } from './RoleBadge'
+import { ASSIGNABLE_ROLES } from './RoleBadge'
 import { ROLE_DETAILS } from './permissionMetaData'
 
 /**
@@ -60,15 +60,13 @@ function RoleInfoButton({ title, summary, description }) {
 }
 
 export function RolesPermissionsDialog({ open, onOpenChange, user, onUpdated }) {
-  // Ordered array of selected roles: index 0 is Primary, index 1 (if present) is Secondary
+  // Ordered array of selected roles: index 0 is Primary, the rest are additional roles
   const [selectedRoles, setSelectedRoles] = useState([])
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     if (user) {
-      const userRoles = Array.isArray(user.roles) ? [...user.roles] : []
-      // Enforce max 2 roles if incoming user had more
-      setSelectedRoles(userRoles.slice(0, 2))
+      setSelectedRoles(Array.isArray(user.roles) ? [...user.roles] : [])
     }
   }, [user])
 
@@ -77,37 +75,20 @@ export function RolesPermissionsDialog({ open, onOpenChange, user, onUpdated }) 
   }
 
   function handleToggleRole(role) {
-    const isAlreadySelected = selectedRoles.includes(role)
-
-    if (isAlreadySelected) {
-      // Remove the role
-      setSelectedRoles((prev) => prev.filter((r) => r !== role))
-    } else {
-      // Check limit of 2 roles
-      if (selectedRoles.length >= 2) {
-        toast.warning('Maximum 2 roles allowed per user (1 Primary + 1 Secondary).')
-        return
-      }
-      // Add as secondary if primary already exists
-      setSelectedRoles((prev) => [...prev, role])
-    }
+    // First role picked becomes Primary; later ones are added after it
+    setSelectedRoles((prev) =>
+      prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]
+    )
   }
 
   function handleSetAsPrimary(role) {
     if (!selectedRoles.includes(role)) return
     if (selectedRoles[0] === role) return // Already primary
 
-    // Put this role first, and the other as secondary
+    // Put this role first; the others keep their order
     const remaining = selectedRoles.filter((r) => r !== role)
     setSelectedRoles([role, ...remaining])
     toast.info(`Designated ${ROLE_DETAILS[role]?.label || role} as Primary role.`)
-  }
-
-  function handleSwapRoles() {
-    if (selectedRoles.length === 2) {
-      setSelectedRoles([selectedRoles[1], selectedRoles[0]])
-      toast.info('Primary and Secondary roles swapped.')
-    }
   }
 
   async function handleSave() {
@@ -116,14 +97,9 @@ export function RolesPermissionsDialog({ open, onOpenChange, user, onUpdated }) 
       return
     }
 
-    if (selectedRoles.length > 2) {
-      toast.error('A user cannot have more than 2 roles.')
-      return
-    }
-
     setLoading(true)
     try {
-      // Save ordered roles: [primaryRole, secondaryRole?]
+      // Save ordered roles: [primaryRole, ...additionalRoles]
       const result = await updateUserRoles(user.id, selectedRoles)
       if (result.ok && result.success) {
         toast.success(`Roles updated for ${user.full_name || user.username}`)
@@ -143,7 +119,12 @@ export function RolesPermissionsDialog({ open, onOpenChange, user, onUpdated }) 
   if (!user) return null
 
   const primaryRole = selectedRoles[0] || null
-  const secondaryRole = selectedRoles[1] || null
+  const additionalRoles = selectedRoles.slice(1)
+  // The 11 organisation roles, plus any legacy role this user still holds so it can be removed
+  const roleChoices = [
+    ...ASSIGNABLE_ROLES,
+    ...(user.roles || []).filter((r) => !ASSIGNABLE_ROLES.includes(r)),
+  ]
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -159,14 +140,14 @@ export function RolesPermissionsDialog({ open, onOpenChange, user, onUpdated }) 
                 Role & Access Assignment
               </DialogTitle>
               <DialogDescription className="text-xs text-muted-foreground truncate mt-0.5">
-                Configure Primary and Secondary operational roles for{' '}
+                Configure the Primary role and any additional roles for{' '}
                 <span className="font-semibold text-foreground">
                   {user.full_name || user.username} (@{user.username})
                 </span>
               </DialogDescription>
             </div>
             <Badge variant="outline" className="text-[11px] font-semibold border-primary/30 text-primary bg-primary/5 hidden sm:inline-flex">
-              Max 2 Roles Enforced
+              First role = Primary
             </Badge>
           </div>
         </DialogHeader>
@@ -179,22 +160,10 @@ export function RolesPermissionsDialog({ open, onOpenChange, user, onUpdated }) 
               <div className="flex items-center gap-2">
                 <Sparkles className="size-4 text-amber-500 shrink-0" />
                 <span className="text-xs font-bold text-foreground uppercase tracking-wide">
-                  Assigned Role Configuration ({selectedRoles.length}/2)
+                  Assigned Role Configuration ({selectedRoles.length})
                 </span>
               </div>
 
-              {selectedRoles.length === 2 && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSwapRoles}
-                  className="h-7 text-xs font-medium gap-1.5 border-primary/30 text-primary hover:bg-primary/10 self-start sm:self-auto shadow-2xs"
-                >
-                  <ArrowLeftRight className="size-3" />
-                  Swap Primary & Secondary
-                </Button>
-              )}
             </div>
 
             {selectedRoles.length === 0 ? (
@@ -222,39 +191,38 @@ export function RolesPermissionsDialog({ open, onOpenChange, user, onUpdated }) 
                   </p>
                 </div>
 
-                {/* Secondary Role Box */}
+                {/* Additional Roles Box */}
                 <div className={`p-3 rounded-xl border transition-all ${
-                  secondaryRole
+                  additionalRoles.length > 0
                     ? 'border-blue-300/80 bg-blue-50/70 dark:bg-blue-950/25 dark:border-blue-700/50'
                     : 'border-dashed border-border/80 bg-muted/20 text-muted-foreground'
                 }`}>
                   <div className="flex items-center justify-between gap-1 mb-1">
                     <span className="text-[11px] font-bold flex items-center gap-1 uppercase tracking-wider text-foreground">
-                      <Shield className="size-3.5 text-blue-500" /> Secondary Role
+                      <Shield className="size-3.5 text-blue-500" /> Additional Roles
                     </span>
                     <Badge variant="outline" className="text-[9px] font-medium border-border/60 bg-background/50">
                       Additional Access
                     </Badge>
                   </div>
-                  {secondaryRole ? (
-                    <>
-                      <div className="text-xs font-bold text-foreground mt-1 flex items-center justify-between">
-                        <span>{ROLE_DETAILS[secondaryRole]?.label || secondaryRole}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleSetAsPrimary(secondaryRole)}
-                          className="text-[10px] text-primary hover:underline font-semibold"
-                        >
-                          Make Primary
-                        </button>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-1">
-                        {ROLE_DETAILS[secondaryRole]?.summary || 'Inherits all secondary role permissions'}
-                      </p>
-                    </>
+                  {additionalRoles.length > 0 ? (
+                    <div className="space-y-1 mt-1">
+                      {additionalRoles.map((role) => (
+                        <div key={role} className="text-xs font-bold text-foreground flex items-center justify-between gap-2">
+                          <span className="truncate">{ROLE_DETAILS[role]?.label || role}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleSetAsPrimary(role)}
+                            className="text-[10px] text-primary hover:underline font-semibold shrink-0"
+                          >
+                            Make Primary
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   ) : (
                     <p className="text-[11px] text-muted-foreground italic mt-1">
-                      Optional: Click another role below to grant secondary permissions (e.g. Admin).
+                      Optional: click more roles below to grant their permissions as well.
                     </p>
                   )}
                 </div>
@@ -270,21 +238,20 @@ export function RolesPermissionsDialog({ open, onOpenChange, user, onUpdated }) 
                   <Shield className="size-4 text-primary" /> Select Operational Roles
                 </span>
                 <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Click to assign or toggle. You can select a maximum of 2 roles.
+                  Click to assign or toggle. The first role you pick is the Primary role.
                 </p>
               </div>
               <span className="text-[11px] font-medium text-muted-foreground">
-                Selected: <strong className="text-foreground">{selectedRoles.length}</strong> / 2
+                Selected: <strong className="text-foreground">{selectedRoles.length}</strong>
               </span>
             </div>
 
-            {/* Grid of 6 System Roles */}
+            {/* Grid of organisation roles */}
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-1">
-              {ALL_ROLES.map((role) => {
+              {roleChoices.map((role) => {
                 const isPrimary = selectedRoles[0] === role
-                const isSecondary = selectedRoles[1] === role
+                const isSecondary = selectedRoles.indexOf(role) > 0
                 const isSelected = isPrimary || isSecondary
-                const isLimitReached = selectedRoles.length >= 2 && !isSelected
                 const details = ROLE_DETAILS[role] ?? {
                   label: role,
                   summary: 'System Role',
@@ -294,11 +261,9 @@ export function RolesPermissionsDialog({ open, onOpenChange, user, onUpdated }) 
                 return (
                   <div
                     key={role}
-                    onClick={() => !isLimitReached && handleToggleRole(role)}
+                    onClick={() => handleToggleRole(role)}
                     className={`group flex flex-col justify-between p-3.5 rounded-xl border transition-all select-none relative ${
-                      isLimitReached
-                        ? 'opacity-50 cursor-not-allowed border-border/50 bg-muted/10'
-                        : isPrimary
+                      isPrimary
                         ? 'border-amber-400 dark:border-amber-500 bg-amber-500/10 shadow-xs cursor-pointer ring-1 ring-amber-400/40'
                         : isSecondary
                         ? 'border-blue-400 dark:border-blue-500 bg-blue-500/10 shadow-xs cursor-pointer ring-1 ring-blue-400/40'
@@ -344,12 +309,12 @@ export function RolesPermissionsDialog({ open, onOpenChange, user, onUpdated }) 
                       )}
                       {isSecondary && (
                         <Badge className="text-[9px] font-bold bg-blue-600 hover:bg-blue-600 text-white border-0 py-0.5 px-2 flex items-center gap-1 shadow-2xs">
-                          <Shield className="size-2.5" /> Secondary Role
+                          <Shield className="size-2.5" /> Additional Role
                         </Badge>
                       )}
                       {!isSelected && (
                         <span className="text-[10px] text-muted-foreground/80 font-medium">
-                          {isLimitReached ? 'Max 2 reached' : 'Click to assign'}
+                          Click to assign
                         </span>
                       )}
 
@@ -379,7 +344,7 @@ export function RolesPermissionsDialog({ open, onOpenChange, user, onUpdated }) 
               Unified Access Privilege Rule:
             </p>
             <p className="text-[11px] leading-relaxed">
-              When a secondary role (such as <strong>Admin</strong>) is paired with an operational primary role (such as <strong>Bid Executive</strong>), the user seamlessly inherits all administrative controls including user management, role modification, and full tender authority without permission conflicts.
+              A user's access is the combination of every role they hold. When an additional role (such as <strong>Managing Director</strong>) is paired with an operational primary role (such as <strong>Bid Executive</strong>), the user inherits the permissions of both. The Primary role is the one shown on their profile.
             </p>
           </div>
         </div>

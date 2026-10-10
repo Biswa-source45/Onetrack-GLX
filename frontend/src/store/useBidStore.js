@@ -4,15 +4,24 @@ import { listUsers, getStageRestrictions } from '../services/users'
 import { getSystemConfigs } from '../services/systemConfig'
 import { tokenStorage } from '../services/auth'
 
-// Resolves a quick end-date filter key ('today' | 'week' | 'month') into a
-// closing_after/closing_before ISO range for the bids list API. 'week' is
-// Monday-Sunday of the current calendar week; 'month' is the current calendar month.
-function computeEndDateRange(filterKey) {
+// Resolves a quick end-date filter key ('today' | 'tomorrow' | 'week' | 'month' | '72h')
+// into a closing_after/closing_before ISO range for the bids list API. 'week' is
+// Monday-Sunday of the current calendar week; 'month' is the current calendar month;
+// 'tomorrow' is the next calendar day; '72h' is a rolling window from now.
+export function computeEndDateRange(filterKey) {
   if (!filterKey) return { closing_after: undefined, closing_before: undefined }
   const now = new Date()
   const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x }
   const endOfDay = (d) => { const x = new Date(d); x.setHours(23, 59, 59, 999); return x }
 
+  if (filterKey === '72h') {
+    return { closing_after: now.toISOString(), closing_before: new Date(now.getTime() + 72 * 3600000).toISOString() }
+  }
+  if (filterKey === 'tomorrow') {
+    const next = new Date(now)
+    next.setDate(now.getDate() + 1)
+    return { closing_after: startOfDay(next).toISOString(), closing_before: endOfDay(next).toISOString() }
+  }
   if (filterKey === 'today') {
     return { closing_after: startOfDay(now).toISOString(), closing_before: endOfDay(now).toISOString() }
   }
@@ -49,6 +58,10 @@ export const useBidStore = create((set, get) => ({
   viewMode: 'cards',
   // Quick end-date filter: '' | 'today' | 'week' | 'month'
   endDateFilter: '',
+  // Quick To-Dos tab: todoMode lists only live, not-yet-closed tenders closest
+  // closing date first; todoFilter ('' | 'today' | 'tomorrow' | '72h' | 'week' | 'alert') narrows it.
+  todoMode: false,
+  todoFilter: '',
   // Tender source / portal source filter: '' | 'GeM' | 'Private' | 'RTC' | 'CPPP' | 'eProcure' | 'Others'
   portalSourceFilter: '',
   // Management-only cross-filter: view another user's tenders without
@@ -112,6 +125,17 @@ export const useBidStore = create((set, get) => ({
     get().loadBids()
   },
 
+  // No reload here: TendersPage calls it right before setScope, which loads.
+  // A no-op when unchanged so a re-run of that effect keeps the chosen block.
+  // Entering or leaving also drops a status/stage chosen in the other view, so it
+  // can't silently empty this one.
+  setTodoMode: (todoMode) => set((s) => (s.todoMode === todoMode ? {} : { todoMode, todoFilter: '', statusFilter: '', stageFilter: '', page: 1 })),
+
+  setTodoFilter: (todoFilter) => {
+    set({ todoFilter, page: 1 })
+    get().loadBids()
+  },
+
   setOwnerFilterId: (ownerFilterId) => {
     set({ ownerFilterId, page: 1 })
     get().loadBids()
@@ -137,7 +161,7 @@ export const useBidStore = create((set, get) => ({
   // Shared by loadBids and the Tenders page's Excel export so an export always
   // matches exactly what the list is showing.
   getListParams: (overrideOwnerId) => {
-    const { debouncedSearch, stageFilter, statusFilter, portalSourceFilter, inBin, bidOwnerId, scope, endDateFilter, ownerFilterId } = get()
+    const { debouncedSearch, stageFilter, statusFilter, portalSourceFilter, inBin, bidOwnerId, scope, endDateFilter, ownerFilterId, todoMode, todoFilter } = get()
     let finalOwnerId = overrideOwnerId !== undefined ? overrideOwnerId : bidOwnerId
     if (scope === 'owned' && !finalOwnerId) {
       finalOwnerId = tokenStorage.getUser()?.id || ''
@@ -147,7 +171,11 @@ export const useBidStore = create((set, get) => ({
     if (ownerFilterId) {
       finalOwnerId = ownerFilterId
     }
-    const { closing_after, closing_before } = computeEndDateRange(endDateFilter)
+    const quick = todoMode && todoFilter && todoFilter !== 'alert' ? todoFilter : endDateFilter
+    // Any filter in play (or the To-Do view) puts the tender ending soonest first;
+    // an unfiltered list stays newest-added-first.
+    const filtered = !!(debouncedSearch || stageFilter || statusFilter || portalSourceFilter || endDateFilter || ownerFilterId || todoMode)
+    const { closing_after, closing_before } = computeEndDateRange(quick)
     return {
       search: debouncedSearch,
       workflow_stage: stageFilter,
@@ -157,6 +185,9 @@ export const useBidStore = create((set, get) => ({
       closing_after,
       closing_before,
       in_bin: inBin,
+      sort: filtered ? 'closing' : undefined,
+      due_soon: todoMode || undefined,
+      high_alert: (todoMode && todoFilter === 'alert') || undefined,
     }
   },
 

@@ -85,6 +85,9 @@ func (h *BidHandler) ListBids(c *gin.Context) {
 		b := v == "true"
 		params.OEMRequired = &b
 	}
+	params.DueSoon = c.Query("due_soon") == "true"
+	params.HighAlert = c.Query("high_alert") == "true"
+	params.Sort = c.Query("sort")
 
 	result, err := h.svc.ListBids(c.Request.Context(), params)
 	if err != nil {
