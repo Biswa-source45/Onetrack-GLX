@@ -380,7 +380,9 @@ func (s *bidService) RejectEMD(ctx context.Context, bidID string, req *domain.MD
 }
 
 // decideEMD records the MD's decision. The approver must be someone other
-// than the user who submitted (maker-checker).
+// than the user who submitted (maker-checker), except a Super Admin, who may
+// decide their own submission; that is flagged on the audit entry and in the
+// tender's stage history so it never passes unnoticed.
 func (s *bidService) decideEMD(ctx context.Context, bidID string, req *domain.MDDecisionRequest, actorID string, actorRoles []string, approve bool) (*domain.TenderEMDResponse, error) {
 	if !isAdminRole(actorRoles) {
 		return nil, emdForbidden("only Managing Director (Admin/Super Admin) can approve or reject EMD")
@@ -392,12 +394,14 @@ func (s *bidService) decideEMD(ctx context.Context, bidID string, req *domain.MD
 	if !approve && remarks == "" {
 		return nil, emdInvalid("rejection reason is mandatory")
 	}
+	selfDecided := false
 	op, err := s.mutateEMD(ctx, bidID, actorID, actorRoles, func(tx domain.EMDTx, op *emdOp) (*domain.TenderEMDAuditLog, error) {
 		emd := op.emd
 		if emd.Status != domain.EMDStatusPendingMDApproval {
 			return nil, emdInvalid("EMD is not awaiting MD approval (status: %s)", emd.Status)
 		}
-		if emd.MDSubmittedBy != nil && *emd.MDSubmittedBy == actorID && !hasAnyRole(actorRoles, "SUPER_ADMIN") {
+		selfDecided = emd.MDSubmittedBy != nil && *emd.MDSubmittedBy == actorID
+		if selfDecided && !hasAnyRole(actorRoles, "SUPER_ADMIN") {
 			return nil, emdForbidden("the approver must be a different user from the one who submitted the EMD")
 		}
 		emd.MDDecidedBy, emd.MDDecidedAt = &actorID, &op.now
@@ -411,7 +415,11 @@ func (s *bidService) decideEMD(ctx context.Context, bidID string, req *domain.MD
 			action = domain.EMDActionMDApproved
 			emd.Status = domain.EMDStatusMDApproved
 		}
-		return &domain.TenderEMDAuditLog{Action: action, Remarks: &remarks}, nil
+		entry := &domain.TenderEMDAuditLog{Action: action, Remarks: &remarks}
+		if selfDecided {
+			entry.Details = json.RawMessage(`{"override":"SUPER_ADMIN_SELF_DECISION"}`)
+		}
+		return entry, nil
 	})
 	if err != nil {
 		return nil, err
@@ -424,13 +432,17 @@ func (s *bidService) decideEMD(ctx context.Context, bidID string, req *domain.MD
 		Link:       alertDomain.StageLink(bidID, domain.StageEMDProcessing),
 	}
 	name, note := html.EscapeString(op.actorName), html.EscapeString(remarks)
+	by := op.actorName
+	if selfDecided {
+		by += ", Super Admin self-decision override"
+	}
 	if approve {
-		s.emdStageEvent(ctx, op, domain.StageEMDProcessing, "EMD_MD_APPROVED", fmt.Sprintf("EMD approved by MD (%s). Payment unlocked.", op.actorName))
+		s.emdStageEvent(ctx, op, domain.StageEMDProcessing, "EMD_MD_APPROVED", fmt.Sprintf("EMD approved by MD (%s). Payment unlocked.", by))
 		alert.Type = "EMD"
 		alert.Title = fmt.Sprintf("EMD Approved by MD — %s", op.bid.Title)
 		alert.Message = fmt.Sprintf("<p>EMD of <strong>₹%.2f</strong> was approved by %s. Finance can now proceed to execute payment and enter payment details.</p>", op.emd.EMDAmount, name)
 	} else {
-		s.emdStageEvent(ctx, op, domain.StageEMDProcessing, "EMD_MD_REJECTED", fmt.Sprintf("EMD rejected by MD (%s): %s", op.actorName, remarks))
+		s.emdStageEvent(ctx, op, domain.StageEMDProcessing, "EMD_MD_REJECTED", fmt.Sprintf("EMD rejected by MD (%s): %s", by, remarks))
 		alert.Type = "ACTION_REQUIRED"
 		alert.Title = fmt.Sprintf("EMD Rejected by MD — %s", op.bid.Title)
 		alert.Message = fmt.Sprintf("<p>EMD was rejected by %s with remark: <em>%s</em>. Returned to Finance for correction.</p>", name, note)

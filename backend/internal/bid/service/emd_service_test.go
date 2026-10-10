@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -294,6 +295,69 @@ func TestEMD_MakerCannotBeChecker(t *testing.T) {
 	}
 	_, err = s.svc.ApproveEMD(ctx, "bid-123", &domain.MDDecisionRequest{}, mdTwo, superRoles)
 	wantErr(t, err, domain.ErrValidation, "approving twice")
+}
+
+// A Super Admin may decide their own submission, but only they, and it is flagged.
+func TestEMD_SuperAdminSelfDecisionAllowedAndFlagged(t *testing.T) {
+	s := newEMDTestSetup()
+	ctx := context.Background()
+	s.fill(t)
+	if _, err := s.svc.SubmitEMDForMDApproval(ctx, "bid-123", nil, mdOne, superRoles); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.svc.ApproveEMD(ctx, "bid-123", &domain.MDDecisionRequest{}, mdOne, superRoles); err != nil {
+		t.Fatalf("super admin self-approval: %v", err)
+	}
+	if s.repo.emd.Status != domain.EMDStatusMDApproved {
+		t.Fatalf("status = %s", s.repo.emd.Status)
+	}
+	last := s.repo.emdLogs[len(s.repo.emdLogs)-1]
+	if last.Action != domain.EMDActionMDApproved || !strings.Contains(string(last.Details), "SUPER_ADMIN_SELF_DECISION") {
+		t.Fatalf("decision audit entry not flagged: %+v", last)
+	}
+	flagged := false
+	for _, h := range s.repo.addedHistory {
+		flagged = flagged || (h.TransitionReason != nil && strings.Contains(*h.TransitionReason, "self-decision"))
+	}
+	if !flagged {
+		t.Fatal("stage history does not mention the self-decision override")
+	}
+}
+
+func TestEMD_AdminHoldingOtherRolesStillBlockedFromSelfDecision(t *testing.T) {
+	s := newEMDTestSetup()
+	ctx := context.Background()
+	s.fill(t)
+	roles := []string{"FINANCE", "ADMIN"}
+	if _, err := s.svc.SubmitEMDForMDApproval(ctx, "bid-123", nil, mdOne, roles); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.svc.ApproveEMD(ctx, "bid-123", &domain.MDDecisionRequest{}, mdOne, roles)
+	wantErr(t, err, domain.ErrForbidden, "self approval by a non-super admin")
+}
+
+// Both MD decisions notify Finance with a link straight to the EMD stage.
+func TestEMD_DecisionAlertsLinkToEMDStage(t *testing.T) {
+	want := alertDomain.StageLink("bid-123", domain.StageEMDProcessing)
+	for _, approve := range []bool{true, false} {
+		s := newEMDTestSetup()
+		ctx := context.Background()
+		s.fill(t)
+		s.submit(t)
+		s.alerts.created = nil
+		var err error
+		if approve {
+			_, err = s.svc.ApproveEMD(ctx, "bid-123", &domain.MDDecisionRequest{}, mdOne, adminRoles)
+		} else {
+			_, err = s.svc.RejectEMD(ctx, "bid-123", &domain.MDDecisionRequest{Remarks: "wrong date"}, mdOne, adminRoles)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(s.alerts.created) != 1 || s.alerts.created[0].TargetRole != "FINANCE" || s.alerts.created[0].Link != want {
+			t.Fatalf("approve=%v alerts = %+v, want one FINANCE alert linking %q", approve, s.alerts.created, want)
+		}
+	}
 }
 
 func TestEMD_SubmitAlertsSuperAdminAndAdmin(t *testing.T) {

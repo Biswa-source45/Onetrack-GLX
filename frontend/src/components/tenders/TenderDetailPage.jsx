@@ -1140,14 +1140,16 @@ function StageSectionsTab({ bid, onRefresh, onAdvance, searchParams, setSearchPa
   // stage's workspace into view instead of leaving it below the stage grid.
   // Mount-only: clicking stage cards on the page shouldn't jump the scroll.
   const workspaceRef = useRef(null)
+  const deepLinkedStage = useRef(!!rawStage)
   useEffect(() => {
-    if (rawStage) {
-      const timer = setTimeout(() => {
-        workspaceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }, 100)
-      return () => clearTimeout(timer)
-    }
-  }, [rawStage])
+    if (!deepLinkedStage.current) return
+    // Short delay: the pending-edit banner above the tabs loads just after the
+    // page does and would otherwise push the workspace away from its scroll target.
+    const timer = setTimeout(() => {
+      workspaceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 100)
+    return () => clearTimeout(timer)
+  }, [])
   const [refreshing, setRefreshing] = useState(false)
   const handleStageRefresh = async () => {
     setRefreshing(true)
@@ -2230,7 +2232,8 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const rawTab = searchParams.get('tab')
   const rawStage = searchParams.get('stage')
-  const normalizedTab = (rawTab === 'lifecycle' || (!rawTab && rawStage)) ? 'stages' : rawTab
+  // A bare ?stage=<valid stage> (no tab) opens the Stages tab rather than Overview.
+  const normalizedTab = !rawTab && WORKFLOW_STAGES_ORDERED.includes(rawStage) ? 'stages' : rawTab
   const activeTab = TAB_IDS.has(normalizedTab) ? normalizedTab : 'overview'
   const setActiveTab = (tabId, stageKey) => {
     const next = new URLSearchParams(searchParams)

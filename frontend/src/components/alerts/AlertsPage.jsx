@@ -85,17 +85,13 @@ export function AlertsPage() {
     // link = the exact stage/approval the alert is about (backend-validated
     // in-app path); bare tender page only for alerts that don't carry one.
     let target = alert.link || (alert.bid_id && `/dashboard/tenders/${alert.bid_id}`)
-    if (target) {
-      // If it's an EMD alert and target does not yet specify the stage, deep link directly to EMD_PROCESSING stage
-      const isEmd = alert.type === 'EMD' ||
-        (alert.title && /emd/i.test(alert.title)) ||
-        (alert.message && /emd/i.test(alert.message))
-      if (isEmd && !target.includes('stage=')) {
-        const sep = target.includes('?') ? '&' : '?'
-        target = `${target}${sep}tab=stages&stage=EMD_PROCESSING`
-      }
-      navigate(target)
+    // EMD alerts stored before they carried a stage link only have the bare tender
+    // link. Match on the fixed title prefix only: message text mentions "EMD" in
+    // plenty of other alerts (tender-created summaries, edit diffs).
+    if (target && /^\/dashboard\/tenders\/[^/?]+$/.test(target) && /^(Reminder: )?EMD\b/i.test(alert.title || '')) {
+      target += '?tab=stages&stage=EMD_PROCESSING'
     }
+    if (target) navigate(target)
   }
 
   const unreadCount = alerts.filter((a) => !a.is_read).length
