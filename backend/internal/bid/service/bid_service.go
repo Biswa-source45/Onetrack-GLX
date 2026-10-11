@@ -1716,8 +1716,13 @@ func (s *bidService) ApprovePendingEdit(ctx context.Context, editID string, fina
 	if approver != nil && approver.FullName != "" {
 		approverName = approver.FullName
 	}
+	// The repository returns the requester with an id only.
+	requesterName := "the requester"
+	if r, _ := s.repo.GetUserSummary(ctx, edit.RequestedBy.ID); r != nil && r.FullName != "" {
+		requesterName = r.FullName
+	}
 	{
-		reason := fmt.Sprintf("%s approved %s's edit to '%s'", approverName, edit.RequestedBy.FullName, edit.BidTitle)
+		reason := fmt.Sprintf("%s approved %s's edit to '%s'", approverName, requesterName, edit.BidTitle)
 		eventType := "EDIT_APPROVED"
 		_ = s.repo.AddStageHistory(ctx, &domain.BidStageHistory{
 			BidID: edit.BidID, BidTitle: edit.BidTitle, ToStage: "FIELD_EDIT",

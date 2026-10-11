@@ -54,6 +54,7 @@ import {
 } from "../../services/bids";
 import { listUsers } from "../../services/users";
 import { usePermissions } from "../../hooks/usePermissions";
+import { overlayPendingPayload } from "../../lib/pendingEdit";
 import { actsAs } from "../../lib/roles";
 import { RejectReasonDialog } from "./RejectReasonDialog";
 import {
@@ -111,8 +112,10 @@ function safeDateTimeStr(dt) {
 // Parses a bid's requested_products (array of {product,description,qty,oem}
 // or null) into the row shape the products table needs, with local ids for
 // React keys. Falls back to one blank row so the table is never empty.
-// alert_note comes back from the API already parsed (interface{} on the Go
-// side), same as requested_products — no JSON.parse needed here.
+// alert_note and requested_products come back from the API already parsed, so
+// both helpers below expect parsed values. In review mode the proposed values
+// arrive as JSON strings; overlayPendingPayload (lib/pendingEdit.js) converts
+// them before they reach here.
 function applyAlertNote(note, setShow, setText, setLabel, setColor) {
   if (note && typeof note === "object" && note.text) {
     setShow(true);
@@ -334,9 +337,7 @@ export function EditTenderDialog({
           // Review mode: overlay the executive's proposed values onto the
           // freshly-fetched (current, unchanged) bid, so the form starts
           // from what they asked to change rather than what's live today.
-          const b = approvalContext?.payload
-            ? { ...res.data, ...approvalContext.payload }
-            : res.data;
+          const b = overlayPendingPayload(res.data, approvalContext?.payload);
           setForm({
             title: b.title || "",
             high_level_scope: b.high_level_scope || "",
