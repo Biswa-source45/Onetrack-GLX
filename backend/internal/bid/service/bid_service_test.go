@@ -1683,3 +1683,71 @@ func TestUpdateBid_BidSubmissionNeedsPostBidContacts(t *testing.T) {
 		t.Fatalf("tender already past Bid Submission must not be blocked: %v", err)
 	}
 }
+
+// A document shortfall is approved only by the approver chosen for it, and the
+// Technical Evaluation cannot be passed while a round is still open.
+func TestUpdateBid_DocShortfallRules(t *testing.T) {
+	rm, am := "rm-1", "am-1"
+	try := func(roles []string, actor, stored string, req *domain.UpdateBidRequest) error {
+		bid := &domain.BidWorkspace{ID: "bid-1", Title: "T", WorkflowStage: domain.StageTechnicalEvaluation, CreationMode: domain.CreationModeManual,
+			BidOwnerID: "owner-1", ReportingManagerID: &rm, AccountManagerID: &am, StageCompletions: []byte(`{}`)}
+		if stored != "" {
+			bid.DocShortfall = []byte(stored)
+		}
+		svc := NewBidService(&fakeBidRepo{bid: bid}, &fakeAlertSvc{}, &fakeSystemLog{})
+		return svc.UpdateBid(context.Background(), "bid-1", req, actor, roles)
+	}
+	round := func(status string) *string {
+		s := `{"rounds":[{"n":1,"status":"` + status + `","approverId":"rm-1"}]}`
+		return &s
+	}
+	pending := `{"rounds":[{"n":1,"status":"PENDING_APPROVAL","approverId":"rm-1"}]}`
+	qualified := "QUALIFIED"
+	disqualified := "DISQUALIFIED"
+
+	// Approving: only the chosen approver (or an admin), and only from PENDING_APPROVAL.
+	if err := try(nil, "rm-1", pending, &domain.UpdateBidRequest{DocShortfall: round("APPROVED")}); err != nil {
+		t.Fatalf("chosen approver: %v", err)
+	}
+	if err := try(nil, "am-1", pending, &domain.UpdateBidRequest{DocShortfall: round("APPROVED")}); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("someone else approving: want ErrForbidden, got %v", err)
+	}
+	if err := try(nil, "rm-1", `{"rounds":[{"n":1,"status":"COLLECTING","approverId":"rm-1"}]}`, &domain.UpdateBidRequest{DocShortfall: round("APPROVED")}); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("approving before it was submitted: want ErrForbidden, got %v", err)
+	}
+	if err := try([]string{"ADMIN"}, "admin-1", pending, &domain.UpdateBidRequest{DocShortfall: round("APPROVED")}); err != nil {
+		t.Fatalf("admin override: %v", err)
+	}
+
+	// Submitting for approval: the approver must be the tender's RM or AM.
+	if err := try(nil, "exec-1", `{"rounds":[{"n":1,"status":"COLLECTING"}]}`, &domain.UpdateBidRequest{DocShortfall: round("PENDING_APPROVAL")}); err != nil {
+		t.Fatalf("submit to the reporting manager: %v", err)
+	}
+	stranger := `{"rounds":[{"n":1,"status":"PENDING_APPROVAL","approverId":"someone-else"}]}`
+	if err := try(nil, "exec-1", `{"rounds":[{"n":1,"status":"COLLECTING"}]}`, &domain.UpdateBidRequest{DocShortfall: &stranger}); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("approver who is not RM/AM: want ErrValidation, got %v", err)
+	}
+
+	// An open round blocks qualifying / completing the stage, never disqualifying.
+	open := `{"rounds":[{"n":1,"status":"APPROVED","approverId":"rm-1"}]}`
+	complete := map[string]bool{domain.StageTechnicalEvaluation: true}
+	if err := try(nil, "exec-1", open, &domain.UpdateBidRequest{TechnicalResult: &qualified}); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("qualify with an open round: want ErrValidation, got %v", err)
+	}
+	if err := try(nil, "exec-1", open, &domain.UpdateBidRequest{StageCompletions: complete}); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("complete with an open round: want ErrValidation, got %v", err)
+	}
+	if err := try(nil, "exec-1", open, &domain.UpdateBidRequest{TechnicalResult: &disqualified, StageCompletions: complete}); err != nil {
+		t.Fatalf("disqualify with an open round must stay possible: %v", err)
+	}
+	if err := try([]string{"ADMIN"}, "admin-1", open, &domain.UpdateBidRequest{TechnicalResult: &qualified}); err != nil {
+		t.Fatalf("admin override: %v", err)
+	}
+	submitted := `{"rounds":[{"n":1,"status":"SUBMITTED","approverId":"rm-1"}]}`
+	if err := try(nil, "exec-1", submitted, &domain.UpdateBidRequest{TechnicalResult: &qualified, StageCompletions: complete}); err != nil {
+		t.Fatalf("round answered: %v", err)
+	}
+	if err := try(nil, "exec-1", "", &domain.UpdateBidRequest{TechnicalResult: &qualified}); err != nil {
+		t.Fatalf("no shortfall at all: %v", err)
+	}
+}

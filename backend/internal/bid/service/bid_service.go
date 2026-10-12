@@ -7,6 +7,7 @@ import (
 	"html"
 	"math"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -894,6 +895,62 @@ func checkPostBidContactsDone(bid *domain.BidWorkspace, req *domain.UpdateBidReq
 	return nil
 }
 
+// shortfallRound is the part of a doc_shortfall round the server enforces; the
+// rest of the JSON is the UI's.
+type shortfallRound struct {
+	N          int    `json:"n"`
+	Status     string `json:"status"`
+	ApproverID string `json:"approverId"`
+}
+
+func shortfallRounds(raw []byte) []shortfallRound {
+	var ds struct {
+		Rounds []shortfallRound `json:"rounds"`
+	}
+	_ = json.Unmarshal(raw, &ds)
+	return ds.Rounds
+}
+
+// checkDocShortfall guards the document shortfall flow: only the approver chosen
+// for a round (the tender's Reporting Manager or Account Manager) may approve it,
+// and the Technical Evaluation cannot be passed while a round is still open
+// (anything but SUBMITTED). Marking the bid disqualified is always allowed, and an
+// admin may do any of it.
+func checkDocShortfall(bid *domain.BidWorkspace, req *domain.UpdateBidRequest, actorID string, actorRoles []string) error {
+	if isAdminRole(actorRoles) {
+		return nil
+	}
+	disqualifying := req.TechnicalResult != nil && *req.TechnicalResult == "DISQUALIFIED"
+	passing := (req.TechnicalResult != nil && *req.TechnicalResult == "QUALIFIED") ||
+		(req.StageCompletions[domain.StageTechnicalEvaluation] && !disqualifying)
+	current := bid.DocShortfall
+	if req.DocShortfall != nil {
+		current = []byte(*req.DocShortfall)
+		old := map[int]shortfallRound{}
+		for _, r := range shortfallRounds(bid.DocShortfall) {
+			old[r.N] = r
+		}
+		allowed := internalApprovalRecipients(bid, &domain.UpdateBidRequest{})
+		for _, r := range shortfallRounds(current) {
+			was := old[r.N]
+			if r.Status == "APPROVED" && was.Status != "APPROVED" && (was.Status != "PENDING_APPROVAL" || was.ApproverID != actorID) {
+				return fmt.Errorf("%w: only the approver chosen for this document shortfall can approve it", domain.ErrForbidden)
+			}
+			if r.Status == "PENDING_APPROVAL" && was.Status != "PENDING_APPROVAL" && !slices.Contains(allowed, r.ApproverID) {
+				return fmt.Errorf("%w: the approver must be this tender's Reporting Manager or Account Manager", domain.ErrValidation)
+			}
+		}
+	}
+	if passing {
+		for _, r := range shortfallRounds(current) {
+			if r.Status != "SUBMITTED" {
+				return fmt.Errorf("%w: finish the open document shortfall (submit the approved documents to the customer) before recording the technical evaluation result", domain.ErrValidation)
+			}
+		}
+	}
+	return nil
+}
+
 func indexOfStage(stage string) int {
 	for i, st := range domain.OrderedWorkflowStages {
 		if st == stage {
@@ -945,6 +1002,9 @@ func (s *bidService) applyUpdate(ctx context.Context, id string, req *domain.Upd
 	}
 
 	if err := checkPostBidContactsDone(bid, req, actorRoles); err != nil {
+		return err
+	}
+	if err := checkDocShortfall(bid, req, actorID, actorRoles); err != nil {
 		return err
 	}
 
@@ -2372,6 +2432,11 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, repor
 		_ = json.Unmarshal(bid.PostBid, &postBid)
 	}
 
+	var docShortfall interface{}
+	if len(bid.DocShortfall) > 0 {
+		_ = json.Unmarshal(bid.DocShortfall, &docShortfall)
+	}
+
 	var alertNote interface{}
 	if len(bid.AlertNote) > 0 {
 		_ = json.Unmarshal(bid.AlertNote, &alertNote)
@@ -2431,6 +2496,7 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, repor
 		RequestedProducts:         requestedProducts,
 		PrimaryReview:             primaryReview,
 		PostBid:                   postBid,
+		DocShortfall:              docShortfall,
 		AlertNote:                 alertNote,
 		Members:                   members,
 		Checklists:                checklists,
@@ -2928,6 +2994,8 @@ func (s *bidService) ListMyPendingApprovals(ctx context.Context, userID string) 
 			items[i].Link = alertDomain.StageLink(items[i].BidID, "INTERNAL_APPROVAL")
 		case "POST_BID_CONTACTS":
 			items[i].Link = alertDomain.StageLink(items[i].BidID, domain.StageGeMSubmission)
+		case "DOC_SHORTFALL":
+			items[i].Link = alertDomain.StageLink(items[i].BidID, domain.StageTechnicalEvaluation)
 		default: // EDIT / CANCEL / DELETE — decided from the tender page's approval banner
 			items[i].Link = alertDomain.ApprovalLink(items[i].BidID)
 		}

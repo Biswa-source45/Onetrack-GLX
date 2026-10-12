@@ -44,6 +44,7 @@ import { EditTenderDialog } from './EditTenderDialog'
 import { DynamicStageWorkspace, checkStageState } from './StageWorkspaces'
 import { resolveProductOem } from '../../lib/oem'
 import { PostBidContactsCard } from './PostBidContacts'
+import { ShortfallHistoryCard } from './DocShortfall'
 import { triggerRedZoneNotification, getTenderWorkingDeadline } from '../../services/calendar'
 
 // Module scope (not runtime-dependent) so the URL-backed tab state below can
@@ -2867,6 +2868,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
               </div>
               <ScopeProductsCard bid={bid} />
               <PostBidContactsCard bid={bid} />
+              <ShortfallHistoryCard bid={bid} />
               <StageActionPanel bid={bid} onSelectStage={(stageKey) => setActiveTab('stages', stageKey)} />
               {bid.remarks && (
                 <div className="rounded-lg border border-border p-4 bg-card shadow-sm">

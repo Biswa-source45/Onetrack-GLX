@@ -1,4 +1,5 @@
 import { apiFetch } from './auth'
+import { openReceipt } from './emd'
 
 const BASE = '/api/v1'
 
@@ -496,4 +497,22 @@ export async function listFieldSuggestions(field) {
   const res = await apiFetch(`${BASE}/bids/field-suggestions?field=${encodeURIComponent(field)}`)
   const data = await res.json()
   return { ok: res.ok, status: res.status, ...data }
+}
+
+// ── Document shortfall files (Technical Evaluation) ──────────────────────────
+export async function uploadShortfallDoc(bidId, file) {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await apiFetch(`${BASE}/bids/${bidId}/shortfall/upload`, { method: 'POST', body: form })
+  const data = await res.json().catch(() => ({}))
+  return { ok: res.ok, ...data, message: data.error?.message || data.message }
+}
+
+// Opens a shortfall document in a new tab, but only a URL of the exact shape the
+// server issues for this tender (anything else, e.g. a javascript: URL, is ignored).
+const SHORTFALL_FILE_RE = /^\/api\/v1\/bids\/([0-9a-fA-F-]{36})\/shortfall\/file\/[0-9a-f]{32}\.(jpg|png|webp|pdf)$/
+export async function openShortfallDoc(bidId, url) {
+  const m = SHORTFALL_FILE_RE.exec(url || '')
+  if (!m || m[1] !== bidId) throw new Error('Not a shortfall document link')
+  return openReceipt(url)
 }

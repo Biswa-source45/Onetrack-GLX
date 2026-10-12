@@ -2,6 +2,8 @@
 // "All Tenders" sheet and the read-only Master Sheet). Kept in one place so
 // the two views can never drift apart on how a value reads.
 
+import { openRound } from './docShortfall.js'
+
 export function formatCurrency(val) {
   if (!val && val !== 0) return '—'
   if (val >= 10000000) return `₹${(val / 10000000).toFixed(1)}Cr`
@@ -99,7 +101,7 @@ export function getFinEvalStatusVal(bid) {
   if (stage === 'FINANCIAL_EVALUATION') return 'In Progress'
   if (stage === 'AWARD_HANDOVER' || status === 'WON') return 'Qualified (L1)'
   if (status === 'LOST') return 'Non-L1'
-  if (stage === 'TECHNICAL_EVALUATION') return 'Awaiting Tech Clear'
+  if (stage === 'TECHNICAL_EVALUATION') return openRound(bid.doc_shortfall) ? 'Doc Shortfall Open' : 'Awaiting Tech Clear'
   return 'Pending'
 }
 

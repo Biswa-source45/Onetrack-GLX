@@ -379,6 +379,7 @@ const APPROVAL_KIND_LABELS = {
   PRICING: "Pricing approval",
   INTERNAL_APPROVAL: "Internal approval",
   POST_BID_CONTACTS: "Post-bid contacts (high priority)",
+  DOC_SHORTFALL: "Document shortfall approval",
 };
 
 export function TendersPage({ initialScope = "all", todoMode = false }) {

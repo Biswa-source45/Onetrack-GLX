@@ -30,6 +30,8 @@ import { stageLink, createAlert } from '../../services/alerts'
 import { UserSelect } from '../leads/UserSelect'
 import { PostBidContactsForm, PostBidContactsView } from './PostBidContacts'
 import { postBidStatus } from '../../lib/postBid'
+import { RaiseShortfallDialog, ShortfallPanel, ShortfallHistory } from './DocShortfall'
+import { addRound, awaitingReeval, lastRound, openRound, patchRound, shortfallRounds } from '../../lib/docShortfall'
 import { ChecklistTab } from './ChecklistTab'
 import { PricingSuggestionHint } from './PricingSuggestionHint'
 import { logStageMicroEvent } from '../../services/auditLogger'
@@ -4579,11 +4581,73 @@ export function Stage10Workspace({ bid, onRefresh }) {
   const [status, setStatus] = useState('QUALIFIED')
   const [disqualifyReason, setDisqualifyReason] = useState('')
 
+  // Document shortfall: instead of disqualifying us the customer may ask for missing
+  // documents within a deadline. Rounds live in bid.doc_shortfall; the bid service
+  // blocks qualifying while a round is open and lets only the chosen approver approve.
+  const { user: currentUser, isAdmin } = usePermissions()
+  const [showRaise, setShowRaise] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const ds = bid?.doc_shortfall && typeof bid.doc_shortfall === 'object' ? bid.doc_shortfall : null
+  const round = openRound(ds)
+  const last = lastRound(ds)
+  const reeval = awaitingReeval(ds)
+  const actorName = currentUser?.full_name || currentUser?.username || ''
+  const canRaise = !round && bid?.stage_completions?.TECHNICAL_EVALUATION !== true && !['WON', 'LOST', 'CANCELLED', 'CLOSED', 'ARCHIVED'].includes(bid?.bid_status)
+  const team = () => [bid?.bid_owner?.id, bid?.account_manager?.id, bid?.reporting_manager?.id, bid?.presales?.id]
+
+  // ponytail: whole-object save like post_bid; the bid team writes it one after the other.
+  const saveShortfall = async (next, { ok, log, notify, extra } = {}) => {
+    setBusy(true)
+    try {
+      const res = await updateBid(bid.id, { doc_shortfall: JSON.stringify({ ...next, updatedAt: new Date().toISOString() }), ...extra })
+      if (!res.ok) { toast.error(res.error?.message || 'Failed to save'); return false }
+      if (ok) toast.success(ok)
+      if (log) logStageInteraction(bid.id, 'TECHNICAL_EVALUATION', log)
+      if (notify) {
+        ;[...new Set(notify.ids)].filter(id => id && id !== currentUser?.id).forEach(id =>
+          createAlert({ user_id: id, bid_id: bid.id, created_by: currentUser?.id, type: notify.type, link: stageLink(bid.id, 'TECHNICAL_EVALUATION'), title: notify.title, message: notify.html }).catch(() => {}))
+      }
+      // Wait for the reload so a quick second action starts from what was just saved, not a stale copy.
+      await onRefresh()
+      return true
+    } finally { setBusy(false) }
+  }
+
+  const raise = async ({ deadline, note, docs }) => {
+    const next = addRound(ds || {}, { deadline, note, docs, by: actorName, byId: currentUser?.id })
+    const r = next.rounds.at(-1)
+    const names = r.docs.map(d => d.name).join(', ')
+    if (await saveShortfall(next, {
+      ok: 'Document shortfall recorded',
+      log: `Technical evaluation: the customer asked for ${r.docs.length} document(s) by ${fmtDateTime(r.deadline)} (shortfall round ${r.n}): ${names}`,
+      notify: { ids: team(), type: 'ACTION_REQUIRED', title: `Document shortfall: ${bid.title}`,
+        html: `<p>The customer asked for missing documents on <strong>${escHtml(bid.title)}</strong>, due ${escHtml(fmtDateTime(r.deadline))}: ${escHtml(names)}. Open the Technical Evaluation stage to add them.</p>` },
+    })) setShowRaise(false)
+  }
+
+  // We cannot get the documents: the bid is lost, and the round records why.
+  const markLost = async (reason) => {
+    const lostRound = patchRound(ds, round.n, { outcome: 'DISQUALIFIED', lostAt: new Date().toISOString(), lostBy: actorName, lostReason: reason })
+    const ok = await saveShortfall(lostRound, {
+      ok: 'Bid marked as Lost',
+      log: `Document shortfall round ${round.n}: documents could not be provided, bid lost (${reason})`,
+      extra: {
+        technical_result: 'DISQUALIFIED',
+        disqualification_reason: `Document shortfall not met: ${reason}`,
+        stage_completions: { ...(bid?.stage_completions || {}), TECHNICAL_EVALUATION: true },
+        stage_remarks: { ...(bid?.stage_remarks || {}), TECHNICAL_EVALUATION: `[Completed]: Document shortfall not met: ${reason}` },
+      },
+    })
+    return ok
+  }
+
   const handleResult = async (remarks) => {
+    // The re-evaluation answers the last shortfall round, if there was one.
+    const closeRound = last && !last.outcome ? { doc_shortfall: JSON.stringify({ ...patchRound(ds, last.n, { outcome: status }), updatedAt: new Date().toISOString() }) } : {}
     if (status === 'QUALIFIED') {
       confetti({ particleCount: 100, spread: 60 })
       // Stage 9 completion is handled atomically by CompleteStageModal
-      await updateBid(bid.id, { technical_result: 'QUALIFIED' })
+      await updateBid(bid.id, { technical_result: 'QUALIFIED', ...closeRound })
     } else {
       // Setting technical_result to DISQUALIFIED triggers the backend's
       // auto-disqualification rule: it forces bid_status/bid_outcome to LOST,
@@ -4593,6 +4657,7 @@ export function Stage10Workspace({ bid, onRefresh }) {
       await updateBid(bid.id, {
         technical_result: 'DISQUALIFIED',
         disqualification_reason: disqualifyReason,
+        ...closeRound,
       })
     }
     onRefresh()
@@ -4600,20 +4665,46 @@ export function Stage10Workspace({ bid, onRefresh }) {
 
   return (
     <div className="space-y-6">
-      <div className="p-4 rounded-xl border border-teal-200 bg-teal-50/50 dark:bg-teal-950/20 dark:border-teal-900/50 flex items-center justify-between">
+      <div className="p-4 rounded-xl border border-teal-200 bg-teal-50/50 dark:bg-teal-950/20 dark:border-teal-900/50 flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h3 className="text-sm font-semibold text-teal-900 dark:text-teal-300">Stage 9: Technical Evaluation</h3>
-          <p className="text-xs text-teal-700 dark:text-teal-400">Record official technical qualification status from procuring authority.</p>
+          <p className="text-xs text-teal-700 dark:text-teal-400">Record official technical qualification status from procuring authority, or a document shortfall request.</p>
         </div>
-        <StageHeaderActions
-          bid={bid}
-          stageKey="TECHNICAL_EVALUATION"
-          onCompleteClick={() => setShowModal(true)}
-          onRefresh={onRefresh}
-          completeLabel="Add Technical Eval Result"
-          completeClass="bg-teal-600 hover:bg-teal-700 text-white"
-        />
+        <div className="flex items-center gap-2 flex-wrap">
+          {canRaise && (
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => setShowRaise(true)} className="gap-1.5 text-xs border-amber-300 text-amber-900 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30">
+              <AlertTriangle className="size-3.5 text-amber-600" /> Document Shortfall
+            </Button>
+          )}
+          <StageHeaderActions
+            bid={bid}
+            stageKey="TECHNICAL_EVALUATION"
+            onCompleteClick={() => setShowModal(true)}
+            onRefresh={onRefresh}
+            completeLabel="Add Technical Eval Result"
+            completeClass="bg-teal-600 hover:bg-teal-700 text-white"
+            disabled={!!round}
+            disabledTooltip="Finish the open document shortfall first"
+          />
+        </div>
       </div>
+
+      {reeval && (
+        <p className="text-xs text-sky-800 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900 rounded-xl p-3">
+          The shortfall documents were sent to the customer on {fmtDateTime(last.respondedAt)}. Record what the technical re-evaluation decided, or add another document shortfall if they ask for more.
+        </p>
+      )}
+
+      {round && <ShortfallPanel bid={bid} round={round} busy={busy} user={currentUser} isAdmin={isAdmin} onSave={saveShortfall} onLost={markLost} />}
+
+      {shortfallRounds(ds).length > 0 && (
+        <div className="space-y-2">
+          <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Document shortfall history</h4>
+          <ShortfallHistory ds={ds} />
+        </div>
+      )}
+
+      {showRaise && <RaiseShortfallDialog busy={busy} onRaise={raise} onClose={() => setShowRaise(false)} />}
 
       {showModal && (
         <CompleteStageModal
@@ -4650,7 +4741,6 @@ export function Stage10Workspace({ bid, onRefresh }) {
     </div>
   )
 }
-
 
 export function Stage11Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)

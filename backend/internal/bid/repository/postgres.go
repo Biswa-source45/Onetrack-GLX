@@ -161,7 +161,7 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 		       emd_ready_date, delivery_complete, delivery_complete_date,
 		       emd_not_applicable,
 		       account_manager_id, presales_id, location, bg_duration_months,
-		       requested_products, primary_review, alert_note, tender_link, post_bid,
+		       requested_products, primary_review, alert_note, tender_link, post_bid, doc_shortfall,
 		       ` + derivedStatusExpr + ` AS derived_status,
 		       calendar_id, calculated_72h_deadline, deadline_remaining_working_hours, deadline_last_computed_at
 		FROM bid.bid_workspaces b
@@ -435,7 +435,7 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		       b.emd_ready_date, b.delivery_complete, b.delivery_complete_date,
 		       b.emd_not_applicable,
 		       b.account_manager_id, b.presales_id, b.location, b.bg_duration_months,
-		       b.requested_products, b.primary_review, b.alert_note, b.tender_link, b.post_bid,
+		       b.requested_products, b.primary_review, b.alert_note, b.tender_link, b.post_bid, b.doc_shortfall,
 		       ` + derivedStatusExpr + ` AS derived_status,
 		       b.calendar_id, b.calculated_72h_deadline, b.deadline_remaining_working_hours, b.deadline_last_computed_at
 		FROM bid.bid_workspaces b
@@ -822,6 +822,9 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	}
 	if req.PostBid != nil {
 		addSet("post_bid", []byte(*req.PostBid))
+	}
+	if req.DocShortfall != nil {
+		addSet("doc_shortfall", []byte(*req.DocShortfall))
 	}
 	if req.AlertNote != nil {
 		addSet("alert_note", []byte(*req.AlertNote))
@@ -1402,7 +1405,7 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 		&b.EMDReadyDate, &b.DeliveryComplete, &b.DeliveryCompleteDate,
 		&b.EMDNotApplicable,
 		&b.AccountManagerID, &b.PresalesID, &b.Location, &b.BGDurationMonths,
-		&b.RequestedProducts, &b.PrimaryReview, &b.AlertNote, &b.TenderLink, &b.PostBid,
+		&b.RequestedProducts, &b.PrimaryReview, &b.AlertNote, &b.TenderLink, &b.PostBid, &b.DocShortfall,
 		&b.DerivedStatus,
 		&b.CalendarID, &b.Calculated72hDeadline, &b.DeadlineRemainingWorkingHours, &b.DeadlineLastComputedAt,
 	)
@@ -1809,6 +1812,14 @@ func (r *postgresBidRepo) ListPendingApprovalsFor(ctx context.Context, userID st
 		  AND b.bid_status NOT IN ('WON', 'LOST', 'CANCELLED', 'CLOSED', 'ARCHIVED')
 		  AND b.post_bid->>'financeUserId' = $1
 		  AND COALESCE(b.post_bid->>'doneAt', '') = ''
+		UNION ALL
+		SELECT b.id::text, b.title, b.gem_bid_no, 'DOC_SHORTFALL', COALESCE(r->>'approvalRequestedByName', ''), b.updated_at
+		FROM bid.bid_workspaces b, jsonb_array_elements(COALESCE(b.doc_shortfall->'rounds', '[]'::jsonb)) r
+		WHERE b.archived_at IS NULL
+		  AND b.workflow_stage = 'TECHNICAL_EVALUATION'
+		  AND b.bid_status NOT IN ('WON', 'LOST', 'CANCELLED', 'CLOSED', 'ARCHIVED')
+		  AND r->>'status' = 'PENDING_APPROVAL'
+		  AND r->>'approverId' = $1
 		ORDER BY 6 DESC
 	`, userID)
 	if err != nil {

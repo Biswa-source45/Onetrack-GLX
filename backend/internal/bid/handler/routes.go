@@ -53,6 +53,10 @@ func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, importHandl
 		bids.GET("/:id/emd/audit-history", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.GetEMDAuditLogs)
 		bids.POST("/:id/emd/upload-receipt", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.UploadEMDReceipt)
 		bids.GET("/:id/emd/receipt/:filename", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.GetEMDReceiptFile)
+
+		// Technical Evaluation document shortfall: the documents the team adds for a round.
+		bids.POST("/:id/shortfall/upload", authMiddleware.RequirePermission("bid.edit"), handler.UploadShortfallDoc)
+		bids.GET("/:id/shortfall/file/:filename", authMiddleware.RequirePermission("bid.view"), handler.GetShortfallFile)
 	}
 
 	// Stage-Level Access Control lives in the bid module (the restriction
