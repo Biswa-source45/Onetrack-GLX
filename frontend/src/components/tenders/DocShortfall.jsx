@@ -122,6 +122,8 @@ export function ShortfallPanel({ bid, round, busy, user, isAdmin, onSave, onLost
   const choices = approverChoices(bid)
   const [approverId, setApproverId] = useState(choices[0]?.id || '')
   const [uploadingId, setUploadingId] = useState('')
+  const fileInput = useRef(null) // one hidden (display:none) input shared by every row; a visually-hidden positioned input makes the browser scroll the page when the file dialog closes
+  const pickedDoc = useRef(null)
   const uploading = useRef(false) // set synchronously, unlike state, so two quick uploads cannot start from the same copy
   const [extraName, setExtraName] = useState('')
   const [dialog, setDialog] = useState('') // 'sendBack' | 'sent' | 'lost'
@@ -216,11 +218,11 @@ export function ShortfallPanel({ bid, round, busy, user, isAdmin, onSave, onLost
                 </button>
               )}
               {editable && (
-                <label className={`inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium cursor-pointer hover:bg-muted ${busy || uploadingId ? 'opacity-50 pointer-events-none' : ''}`}>
+                <button type="button" aria-label={`Upload ${d.name}`} disabled={busy || !!uploadingId}
+                  onClick={() => { pickedDoc.current = d; fileInput.current?.click() }}
+                  className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium hover:bg-muted disabled:opacity-50 disabled:pointer-events-none">
                   <Upload className="size-3" /> {uploadingId === d.id ? 'Uploading…' : d.file ? 'Replace' : 'Upload'}
-                  <input type="file" className="sr-only" aria-label={`Upload ${d.name}`} accept={FILE_TYPES} disabled={busy || !!uploadingId}
-                    onChange={(e) => { upload(d, e.target.files?.[0]); e.target.value = '' }} />
-                </label>
+                </button>
               )}
               {editable && d.extra && (
                 <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove ${d.name}`} disabled={busy}
@@ -241,6 +243,8 @@ export function ShortfallPanel({ bid, round, busy, user, isAdmin, onSave, onLost
           </div>
         )}
         <p className="text-[11px] text-muted-foreground">PDF or image (JPEG, PNG, WebP), up to 10 MB each.</p>
+        <input ref={fileInput} type="file" hidden accept={FILE_TYPES}
+          onChange={(e) => { const doc = pickedDoc.current; const file = e.target.files?.[0]; e.target.value = ''; if (doc) upload(doc, file) }} />
       </div>
 
       {round.status === 'COLLECTING' && (
