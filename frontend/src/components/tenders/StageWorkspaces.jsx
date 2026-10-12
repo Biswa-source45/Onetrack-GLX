@@ -4300,10 +4300,10 @@ export function Stage9Workspace({ bid, onRefresh }) {
 
   // ponytail: whole-object save like primary_review; only the bid person and the
   // assigned Finance user write it, one after the other. Add a field-level merge if that changes.
-  const savePostBid = async (patch, okMsg) => {
+  const savePostBid = async (patch, okMsg, extra = {}) => {
     setBusy(true)
     try {
-      const res = await updateBid(bid.id, { post_bid: JSON.stringify({ ...pb, ...patch, updatedAt: new Date().toISOString() }) })
+      const res = await updateBid(bid.id, { post_bid: JSON.stringify({ ...pb, ...patch, updatedAt: new Date().toISOString() }), ...extra })
       if (!res.ok) { toast.error(res.error?.message || 'Failed to save'); return false }
       if (okMsg) toast.success(okMsg)
       onRefresh()
@@ -4313,9 +4313,22 @@ export function Stage9Workspace({ bid, onRefresh }) {
   const notify = (userId, title, message, type) =>
     createAlert({ user_id: userId, bid_id: bid.id, created_by: currentUser?.id, type, link: stageLink(bid.id, 'GEM_SUBMISSION'), title, message }).catch(() => {})
 
+  const [showSubmit, setShowSubmit] = useState(false)
+  const [priceInput, setPriceInput] = useState('')
+  const priceNum = Number(priceInput.replace(/,/g, ''))
+  const priceOk = priceInput.trim() !== '' && Number.isFinite(priceNum) && priceNum > 0
+  const openSubmit = () => {
+    // Pricing Request's final value as a plain number (e.g. 230000, not 2.3 L); the bid person may round it before submitting.
+    const start = finalPriceNum ?? bid?.quoted_price
+    setPriceInput(start != null && Number(start) > 0 ? String(Math.round(Number(start) * 100) / 100) : '')
+    setShowSubmit(true)
+  }
   const markSubmitted = async () => {
-    if (await savePostBid({ submittedAt: new Date().toISOString(), submittedBy: actorName }, 'Bid marked as submitted')) {
-      logStageInteraction(bid.id, 'GEM_SUBMISSION', `Bid submitted on GeM (confirmed by ${actorName})`)
+    if (!priceOk) { toast.error('Enter the final submitted price'); return }
+    // The price entered here is the official submitted (quoted) price.
+    if (await savePostBid({ submittedAt: new Date().toISOString(), submittedBy: actorName, submittedPrice: priceNum }, 'Bid marked as submitted', { quoted_price: priceNum })) {
+      logStageInteraction(bid.id, 'GEM_SUBMISSION', `Bid submitted on GeM at ${fmtMoneyFull(priceNum)} (confirmed by ${actorName})`, null, { quoted_price: priceNum })
+      setShowSubmit(false)
     }
   }
   const assignFinance = async () => {
@@ -4372,12 +4385,9 @@ export function Stage9Workspace({ bid, onRefresh }) {
   }
 
   const handleConfettiSubmit = async (remarks) => {
-    let priceNum = finalPriceNum != null ? Number(finalPriceNum) : (bid?.quoted_price ? Number(bid.quoted_price) : null)
+    // The submitted price was saved as quoted_price when the bid was marked submitted.
+    const submittedPrice = Number(pb.submittedPrice ?? bid?.quoted_price) || null
     try {
-      // Save the final quoted price submitted on GeM to the bid record
-      if (priceNum) {
-        await updateBid(bid.id, { quoted_price: priceNum }).catch(() => {})
-      }
       if (typeof confetti === 'function') {
         confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } })
       }
@@ -4385,10 +4395,10 @@ export function Stage9Workspace({ bid, onRefresh }) {
     onRefresh()
 
     return {
-      customReason: priceNum
-        ? `Tender Final Submission Recorded — Offered Price on GeM Portal: ${fmtMoney(priceNum)} (Remarks: ${remarks})`
+      customReason: submittedPrice
+        ? `Tender Final Submission Recorded — Offered Price on GeM Portal: ${fmtMoneyFull(submittedPrice)} (Remarks: ${remarks})`
         : `Tender Final Submission Recorded on GeM Portal (Remarks: ${remarks})`,
-      quoted_price: priceNum,
+      quoted_price: submittedPrice,
       submission_portal: 'GeM Portal',
       submitted_at: new Date().toISOString(),
       remarks: remarks
@@ -4432,17 +4442,17 @@ export function Stage9Workspace({ bid, onRefresh }) {
         {status === 'NOT_SUBMITTED' ? (
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <p className="text-xs text-muted-foreground max-w-xl">
-              Submit the bid on the GeM portal, then confirm it here. You will then pick a Finance Manager to record the post-bid contacts.
+              Submit the bid on the GeM portal, then confirm it here with the final submitted price. You will then pick a Finance Manager to record the post-bid contacts.
             </p>
             <span title={financeOnly ? 'Only the bid team can confirm the submission' : undefined}>
-              <Button size="sm" disabled={busy || financeOnly} onClick={markSubmitted} className="gap-1.5 text-xs bg-lime-600 hover:bg-lime-700 text-white">
+              <Button size="sm" disabled={busy || financeOnly} onClick={openSubmit} className="gap-1.5 text-xs bg-lime-600 hover:bg-lime-700 text-white">
                 <CheckCircle2 className="size-3.5" /> Mark Bid Submitted
               </Button>
             </span>
           </div>
         ) : (
           <p className="text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
-            <CheckCircle2 className="size-3.5" /> Submitted{pb.submittedBy ? ` · confirmed by ${pb.submittedBy}` : ''} · {fmtDateTime(pb.submittedAt)}
+            <CheckCircle2 className="size-3.5" /> Submitted{pb.submittedPrice ? ` at ${fmtMoneyFull(pb.submittedPrice)}` : ''}{pb.submittedBy ? ` · confirmed by ${pb.submittedBy}` : ''} · {fmtDateTime(pb.submittedAt)}
           </p>
         )}
       </div>
@@ -4503,19 +4513,17 @@ export function Stage9Workspace({ bid, onRefresh }) {
         </div>
       )}
 
-      {showModal && (
-        <CompleteStageModal
-          title="Complete Bid Submission"
-          description="Marks Stage 8 (Bid Submission) as complete. The post-bid contacts are recorded; confirm the final bid price submitted on GeM."
-          stageKey="GEM_SUBMISSION"
-          bidId={bid.id}
-          bid={bid}
-          onClose={() => setShowModal(false)}
-          onComplete={handleConfettiSubmit}
-        >
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs font-medium">Final Submitted Bid Price (₹)</Label>
+      <Dialog open={showSubmit} onOpenChange={(open) => !busy && setShowSubmit(open)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-bold">Confirm bid submission</DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Confirm the final price submitted on the GeM portal. If it was rounded before submitting, enter the rounded value.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="submitted-price" className="text-xs font-medium">Final Submitted Bid Price (₹)</Label>
               {priceSource === 'approved' && (
                 <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 dark:bg-emerald-950/30 dark:text-emerald-400">
                   ✓ From Stage 4's approved pricing
@@ -4527,13 +4535,39 @@ export function Stage9Workspace({ bid, onRefresh }) {
                 </span>
               )}
             </div>
-            <div className="h-9 px-3 border border-input rounded-md bg-muted/30 flex items-center text-sm font-mono font-bold text-foreground">
-              {finalPriceNum != null ? fmtMoney(finalPriceNum) : 'Not set — complete Stage 4 (Pricing Request) first'}
-            </div>
+            <Input
+              id="submitted-price"
+              inputMode="decimal"
+              value={priceInput}
+              onChange={e => setPriceInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') markSubmitted() }}
+              placeholder="e.g. 230000"
+              className="h-9 font-mono font-bold"
+              autoFocus
+            />
+            <p className="text-xs font-mono text-foreground">{priceOk ? fmtMoneyFull(priceNum) : 'Enter the amount as a plain number'}</p>
             {buybackNote && <p className="text-[10px] font-medium text-violet-700 dark:text-violet-300">{buybackNote}</p>}
-            <p className="text-[10px] text-muted-foreground">This value comes from the Pricing Request stage's GlobX Total (incl. GST) — it is not editable here. It will be saved as your official quoted price for all further comparisons.</p>
+            <p className="text-[10px] text-muted-foreground">Prefilled from the Pricing Request stage (GlobX Total incl. GST). This becomes the official quoted price for all further comparisons.</p>
           </div>
-        </CompleteStageModal>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => setShowSubmit(false)} className="text-xs">Cancel</Button>
+            <Button type="button" size="sm" disabled={busy || !priceOk} onClick={markSubmitted} className="gap-1.5 text-xs bg-lime-600 hover:bg-lime-700 text-white">
+              <CheckCircle2 className="size-3.5" /> Confirm submitted
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {showModal && (
+        <CompleteStageModal
+          title="Complete Bid Submission"
+          description="Marks Stage 8 (Bid Submission) as complete. The post-bid contacts are recorded and the final submitted price is saved as the quoted price."
+          stageKey="GEM_SUBMISSION"
+          bidId={bid.id}
+          bid={bid}
+          onClose={() => setShowModal(false)}
+          onComplete={handleConfettiSubmit}
+        />
       )}
     </div>
   )
