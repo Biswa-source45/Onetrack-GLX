@@ -17,6 +17,11 @@ var ErrValidation = errors.New("validation failed")
 // real-world key, so two records must never share one.
 var ErrDuplicateIdentifier = errors.New("tender identifier already exists")
 
+// ErrConflict is returned when a write was based on an out-of-date copy of a
+// shared record (the document shortfall), so handlers can return 409 and the
+// client can reload instead of silently overwriting someone else's change.
+var ErrConflict = errors.New("conflict")
+
 // ErrForbidden wraps authorization failures (actor lacks the required
 // tender-scoped relationship, e.g. reassigning Bid Owner) so handlers can
 // return 403 instead of a generic 400/500.
@@ -1035,6 +1040,10 @@ type ListBidsParams struct {
 	// window; it implies DueSoon.
 	DueSoon   bool
 	HighAlert bool
+	// DocShortfall (Quick To-Dos): tenders in Technical Evaluation with a document
+	// shortfall round still open, the nearest shortfall deadline first. Unlike
+	// DueSoon it ignores the closing date, which has long passed by then.
+	DocShortfall bool
 	// Sort "closing" lists the tender ending soonest first (see
 	// nearestClosingFirst). Anything else keeps newest-added-first.
 	Sort string

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlarmClock, CalendarClock, CalendarDays, Hourglass, Siren } from 'lucide-react'
+import { AlarmClock, CalendarClock, CalendarDays, FileWarning, Hourglass, Siren } from 'lucide-react'
 import { listBids } from '../../services/bids'
 import { getDefaultCalendar } from '../../services/calendar'
 import { computeEndDateRange, useBidStore } from '../../store/useBidStore'
@@ -20,17 +20,20 @@ function buildBlocks(alertWindow) {
     { key: 'tomorrow', label: 'Ending tomorrow', sub: day(tomorrow), Icon: CalendarClock, cls: 'border-orange-300 bg-orange-50 text-orange-700 dark:border-orange-900 dark:bg-orange-950/30 dark:text-orange-300' },
     { key: '72h', label: 'Ending in 72 hours', sub: `Next 3 days · till ${day(in72)}, ${time(in72)}`, Icon: Hourglass, cls: 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300' },
     { key: 'week', label: 'Ending this week', sub: `Till Sunday, ${day(sunday)}`, Icon: CalendarDays, cls: 'border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-300' },
+    { key: 'shortfall', label: 'Document shortfall', sub: 'Open rounds, nearest deadline first', Icon: FileWarning, cls: 'border-yellow-300 bg-yellow-50 text-yellow-800 dark:border-yellow-900 dark:bg-yellow-950/30 dark:text-yellow-300' },
     { key: 'alert', label: 'High alert', sub: alertWindow ? `Inside ${alertWindow} of closing` : 'In the deadline alert window', Icon: Siren, cls: 'border-purple-300 bg-purple-50 text-purple-700 dark:border-purple-900 dark:bg-purple-950/30 dark:text-purple-300' },
   ]
 }
 
+const KEYS = ['today', 'tomorrow', '72h', 'week', 'shortfall', 'alert']
 const UNIT = { HOURS: 'working hrs', DAYS: 'working days', MINUTES: 'min', SECONDS: 'sec' }
 
 // Counts come from the very same list endpoint (limit 1 -> meta.total) with the
 // same params the list uses, so a block's number always equals the list behind it.
 async function countFor(key) {
-  const range = key === 'alert' ? { high_alert: true } : computeEndDateRange(key)
-  const res = await listBids({ due_soon: true, ...range, page: 1, limit: 1 })
+  const res = key === 'shortfall'
+    ? await listBids({ doc_shortfall: true, page: 1, limit: 1 })
+    : await listBids({ due_soon: true, ...(key === 'alert' ? { high_alert: true } : computeEndDateRange(key)), page: 1, limit: 1 })
   return res.ok ? (res.meta?.total ?? 0) : null
 }
 
@@ -49,8 +52,8 @@ export function TodoBlocks() {
       }
     }).catch(() => {})
     const load = () =>
-      Promise.all(['today', 'tomorrow', '72h', 'week', 'alert'].map((k) => countFor(k).catch(() => null))).then((vals) => {
-        if (!cancelled) setCounts(Object.fromEntries(['today', 'tomorrow', '72h', 'week', 'alert'].map((k, i) => [k, vals[i]])))
+      Promise.all(KEYS.map((k) => countFor(k).catch(() => null))).then((vals) => {
+        if (!cancelled) setCounts(Object.fromEntries(KEYS.map((k, i) => [k, vals[i]])))
       })
     load()
     const timer = setInterval(load, 60000)
@@ -61,7 +64,7 @@ export function TodoBlocks() {
   }, [])
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
       {buildBlocks(alertWindow).map(({ key, label, sub, Icon, cls }) => {
         const active = todoFilter === key
         return (

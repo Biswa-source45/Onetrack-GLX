@@ -87,6 +87,7 @@ func (h *BidHandler) ListBids(c *gin.Context) {
 	}
 	params.DueSoon = c.Query("due_soon") == "true"
 	params.HighAlert = c.Query("high_alert") == "true"
+	params.DocShortfall = c.Query("doc_shortfall") == "true"
 	params.Sort = c.Query("sort")
 
 	result, err := h.svc.ListBids(c.Request.Context(), params)
@@ -134,7 +135,7 @@ func (h *BidHandler) UpdateBid(c *gin.Context) {
 			})
 			return
 		}
-		if errors.Is(err, domain.ErrDuplicateIdentifier) {
+		if errors.Is(err, domain.ErrDuplicateIdentifier) || errors.Is(err, domain.ErrConflict) {
 			response.Conflict(c, err.Error())
 			return
 		}

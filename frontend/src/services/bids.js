@@ -31,6 +31,7 @@ export async function listBids({
   in_bin = false,
   due_soon = false,
   high_alert = false,
+  doc_shortfall = false,
   sort = '',
 } = {}) {
   const params = new URLSearchParams()
@@ -50,6 +51,7 @@ export async function listBids({
   if (in_bin)         params.set('in_bin', 'true')
   if (due_soon)       params.set('due_soon', 'true')
   if (high_alert)     params.set('high_alert', 'true')
+  if (doc_shortfall)  params.set('doc_shortfall', 'true')
   if (sort)           params.set('sort', sort)
 
   const res = await apiFetch(`${BASE}/bids?${params.toString()}`)

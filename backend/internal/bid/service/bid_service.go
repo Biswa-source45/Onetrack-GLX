@@ -903,6 +903,15 @@ type shortfallRound struct {
 	ApproverID string `json:"approverId"`
 }
 
+// shortfallRev is the revision counter the client bumps on every save.
+func shortfallRev(raw []byte) int {
+	var d struct {
+		Rev int `json:"rev"`
+	}
+	_ = json.Unmarshal(raw, &d)
+	return d.Rev
+}
+
 func shortfallRounds(raw []byte) []shortfallRound {
 	var ds struct {
 		Rounds []shortfallRound `json:"rounds"`
@@ -911,12 +920,18 @@ func shortfallRounds(raw []byte) []shortfallRound {
 	return ds.Rounds
 }
 
-// checkDocShortfall guards the document shortfall flow: only the approver chosen
+// checkDocShortfall guards the document shortfall flow: a save must be based on the
+// latest revision (else ErrConflict), only the approver chosen
 // for a round (the tender's Reporting Manager or Account Manager) may approve it,
 // and the Technical Evaluation cannot be passed while a round is still open
 // (anything but SUBMITTED). Marking the bid disqualified is always allowed, and an
 // admin may do any of it.
 func checkDocShortfall(bid *domain.BidWorkspace, req *domain.UpdateBidRequest, actorID string, actorRoles []string) error {
+	// The whole shortfall is saved at once, so a save must be based on the latest revision
+	// (it also holds for admins). The repository enforces the same atomically.
+	if req.DocShortfall != nil && shortfallRev([]byte(*req.DocShortfall)) != shortfallRev(bid.DocShortfall)+1 {
+		return fmt.Errorf("%w: the document shortfall was changed by someone else; it has been reloaded, please repeat your action", domain.ErrConflict)
+	}
 	if isAdminRole(actorRoles) {
 		return nil
 	}

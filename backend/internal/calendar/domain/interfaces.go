@@ -64,6 +64,9 @@ type WorkingCalendarRepository interface {
 
 	// GetActiveTendersForDeadlineCheck returns open, unsubmitted tenders closing in (from, to].
 	GetActiveTendersForDeadlineCheck(ctx context.Context, from, to time.Time) ([]TenderDeadlineCandidate, error)
+	// ListOpenShortfalls returns every document-shortfall round still waiting on the
+	// team (not yet sent to the customer) on a tender in Technical Evaluation.
+	ListOpenShortfalls(ctx context.Context) ([]ShortfallCandidate, error)
 	// GetTenderCandidate applies the same eligibility rules without the time window; nil when ineligible.
 	GetTenderCandidate(ctx context.Context, tenderID string) (*TenderDeadlineCandidate, error)
 }
@@ -84,6 +87,18 @@ type TenderDeadlineCandidate struct {
 	// Escalation target; nil when the tender has no reporting manager.
 	ReportingManagerID   *string
 	ReportingManagerName *string
+}
+
+// ShortfallCandidate is one open document-shortfall round the reminder pass checks.
+type ShortfallCandidate struct {
+	TenderID   string
+	Title      string
+	CalendarID *string
+	Round      int
+	Deadline   time.Time
+	Status     string
+	DocsTotal  int
+	DocsAdded  int
 }
 
 type WorkingCalendarService interface {

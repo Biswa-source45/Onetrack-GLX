@@ -37,6 +37,7 @@ type mockCalendarRepo struct {
 	cacheWrites  int
 	failedClaims []string
 
+	shortfalls      []domain.ShortfallCandidate
 	coverage        *domain.DeadlineCoverage
 	escalations     map[string]string // tender|checklist -> claim id
 	releasedEscs    []string
@@ -211,6 +212,9 @@ func (m *mockCalendarRepo) MarkEngineBaselined(ctx context.Context) error {
 }
 func (m *mockCalendarRepo) TryLockEvaluation(ctx context.Context) (func(), bool, error) {
 	return func() {}, !m.lockBusy, nil
+}
+func (m *mockCalendarRepo) ListOpenShortfalls(ctx context.Context) ([]domain.ShortfallCandidate, error) {
+	return m.shortfalls, nil
 }
 func (m *mockCalendarRepo) GetTenderStakeholders(ctx context.Context, tenderID string) ([]domain.TenderStakeholder, error) {
 	return m.stakeholders, nil
@@ -1137,4 +1141,113 @@ func TestSchedulerPicksUpCadenceChange(t *testing.T) {
 	repo.calendar.SchedulerIntervalValue, repo.calendar.SchedulerIntervalUnit = 5, "SECONDS"
 	assert.Eventually(t, func() bool { return svc.runs.Load() >= 2 }, maxIdle+8*time.Second, 200*time.Millisecond,
 		"a cadence change must take effect within maxIdle, not after the old 10 minute timer")
+}
+
+// ── Document shortfall reminders ─────────────────────────────────────────────
+
+func shortfallRepo(deadline time.Time) *mockCalendarRepo {
+	repo := newMockCalendarRepo()
+	repo.baselined = true
+	repo.shortfalls = []domain.ShortfallCandidate{{TenderID: "t1", Title: "Supply <b>of</b> software", Round: 1, Deadline: deadline, Status: "COLLECTING", DocsTotal: 3, DocsAdded: 1}}
+	return repo
+}
+
+func shortfallAlerts(a *mockAlertSvc) []alertDomain.Alert {
+	var out []alertDomain.Alert
+	for _, al := range a.created {
+		if al.BidID != nil && *al.BidID == "t1" {
+			out = append(out, al)
+		}
+	}
+	return out
+}
+
+func TestShortfallDueReminderGoesToEveryStakeholderOnce(t *testing.T) {
+	repo := shortfallRepo(time.Date(2026, 10, 15, 12, 0, 0, 0, ist)) // inside the 3 working day window of testNow
+	alerts := &mockAlertSvc{}
+	svc := newSvc(repo, alerts, testNow)
+	ctx := context.Background()
+
+	sum, err := svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Equal(t, 4, sum.Notified, "owner, reporting manager, account manager, pre-sales")
+	got := shortfallAlerts(alerts)
+	require.Len(t, got, 4)
+	assert.Equal(t, "/dashboard/tenders/t1?tab=stages&stage=TECHNICAL_EVALUATION", got[0].Link)
+	assert.Equal(t, "ACTION_REQUIRED", got[0].Type)
+	assert.Contains(t, got[0].Title, "DOCUMENT SHORTFALL")
+	assert.Contains(t, got[0].Message, "1 of 3 documents added")
+	assert.NotContains(t, got[0].Message, "<b>", "tender title must be HTML-escaped")
+
+	for i := 0; i < 3; i++ {
+		sum, err = svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+		require.NoError(t, err)
+		assert.Zero(t, sum.Notified)
+	}
+	assert.Len(t, shortfallAlerts(alerts), 4, "later passes never repeat the reminder")
+}
+
+func TestShortfallOutsideTheWindowIsNotReminded(t *testing.T) {
+	repo := shortfallRepo(time.Date(2026, 10, 30, 12, 0, 0, 0, ist))
+	alerts := &mockAlertSvc{}
+	sum, err := newSvc(repo, alerts, testNow).EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Zero(t, sum.Notified)
+	assert.Empty(t, alerts.created)
+}
+
+func TestShortfallOverdueIsAnotherReminderAndAlsoOnce(t *testing.T) {
+	repo := shortfallRepo(time.Date(2026, 10, 14, 12, 0, 0, 0, ist))
+	alerts := &mockAlertSvc{}
+	ctx := context.Background()
+
+	// Due reminder first (deadline in 2 hours), then the deadline passes.
+	_, err := newSvc(repo, alerts, testNow).EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Len(t, shortfallAlerts(alerts), 4)
+
+	late := newSvc(repo, alerts, time.Date(2026, 10, 14, 12, 30, 0, 0, ist))
+	sum, err := late.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Equal(t, 4, sum.Notified)
+	all := shortfallAlerts(alerts)
+	require.Len(t, all, 8)
+	assert.Contains(t, all[4].Title, "OVERDUE")
+
+	sum, err = late.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Zero(t, sum.Notified)
+}
+
+func TestShortfallRoundsAreRemindedSeparately(t *testing.T) {
+	repo := shortfallRepo(time.Date(2026, 10, 15, 12, 0, 0, 0, ist))
+	alerts := &mockAlertSvc{}
+	svc := newSvc(repo, alerts, testNow)
+	ctx := context.Background()
+	_, err := svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+
+	// Round 2 on the same tender with a deadline only hours away from round 1's.
+	repo.shortfalls = []domain.ShortfallCandidate{{TenderID: "t1", Title: "T", Round: 2, Deadline: time.Date(2026, 10, 15, 16, 0, 0, 0, ist), Status: "COLLECTING", DocsTotal: 1}}
+	sum, err := svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Equal(t, 4, sum.Notified)
+}
+
+func TestShortfallFailedAlertIsRetriedAndEmptyListIsHarmless(t *testing.T) {
+	repo := shortfallRepo(time.Date(2026, 10, 15, 12, 0, 0, 0, ist))
+	alerts := &mockAlertSvc{err: errors.New("mail down")}
+	svc := newSvc(repo, alerts, testNow)
+	sum, err := svc.EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Zero(t, sum.Notified)
+
+	alerts.err = nil
+	sum, err = svc.EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Equal(t, 4, sum.Notified, "the released claims let the retry through")
+
+	repo.shortfalls = nil
+	_, err = svc.EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
+	require.NoError(t, err)
 }

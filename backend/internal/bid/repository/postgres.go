@@ -330,9 +330,16 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		// Only live tenders are ever calculated (submitted ones are skipped).
 		todoConds = append(todoConds, "("+derivedStatusExpr+") = 'ACTIVE'", "b.calculated_72h_deadline <= now()")
 	}
+	if params.DocShortfall {
+		todoConds = append(todoConds, "b.workflow_stage = 'TECHNICAL_EVALUATION'", "b.bid_status NOT IN ('WON', 'LOST', 'CANCELLED', 'CLOSED', 'ARCHIVED')",
+			"EXISTS (SELECT 1 FROM "+openShortfallRounds+" r WHERE COALESCE(r->>'status', '') NOT IN ('SUBMITTED', ''))")
+	}
 	conditions = append(conditions, todoConds...)
 	if todo || params.Sort == "closing" {
 		orderBy = nearestClosingFirst
+	}
+	if params.DocShortfall {
+		orderBy = "(SELECT min(r->>'deadline') FROM " + openShortfallRounds + " r WHERE COALESCE(r->>'status', '') NOT IN ('SUBMITTED', '')) ASC NULLS LAST, b.id DESC"
 	}
 
 	where := "WHERE " + strings.Join(conditions, " AND ")
@@ -366,7 +373,7 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 	}
 	// In Quick To-Dos the tiles count the very window the list shows (any status),
 	// instead of the whole workspace.
-	if todo {
+	if todo || params.DocShortfall {
 		baseConditions = append(baseConditions, todoConds...)
 		if params.ClosingBefore != nil {
 			baseConditions = append(baseConditions, fmt.Sprintf("%s <= $%d", closingExpr, baseIdx))
@@ -470,6 +477,10 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 	}
 	return bids, total, statusCounts, nil
 }
+
+// openShortfallRounds lists a tender's document-shortfall rounds (one row per round, as r);
+// a malformed doc_shortfall yields none instead of an error.
+const openShortfallRounds = "jsonb_array_elements(CASE WHEN jsonb_typeof(b.doc_shortfall->'rounds') = 'array' THEN b.doc_shortfall->'rounds' ELSE '[]'::jsonb END)"
 
 func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.UpdateBidRequest) error {
 	sets := []string{"updated_at = NOW()"}
@@ -823,7 +834,9 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	if req.PostBid != nil {
 		addSet("post_bid", []byte(*req.PostBid))
 	}
+	docRevIdx := 0
 	if req.DocShortfall != nil {
+		docRevIdx = idx
 		addSet("doc_shortfall", []byte(*req.DocShortfall))
 	}
 	if req.AlertNote != nil {
@@ -848,7 +861,16 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	args = append(args, id)
 	query := fmt.Sprintf("UPDATE bid.bid_workspaces SET %s WHERE id = $%d AND archived_at IS NULL",
 		strings.Join(sets, ", "), idx)
-	_, err := r.pool.Exec(ctx, query, args...)
+	if docRevIdx > 0 {
+		// Compare-and-swap: the shortfall is saved as a whole, so it only lands on the
+		// revision it was based on (new rev = stored rev + 1). Two people saving at once
+		// can therefore never overwrite each other.
+		query += fmt.Sprintf(" AND COALESCE((doc_shortfall->>'rev')::int, 0) = ($%d::jsonb->>'rev')::int - 1", docRevIdx)
+	}
+	tag, err := r.pool.Exec(ctx, query, args...)
+	if err == nil && docRevIdx > 0 && tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: the document shortfall was changed by someone else", domain.ErrConflict)
+	}
 	return err
 }
 

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -742,6 +743,47 @@ func scanCandidate(row pgx.Row) (*domain.TenderDeadlineCandidate, error) {
 		c.CachedRemainingHours = &cachedHours.Float64
 	}
 	return &c, nil
+}
+
+// ListOpenShortfalls reads the rounds of bid.bid_workspaces.doc_shortfall that are not
+// yet SUBMITTED. The deadline is read as text and parsed here, so one malformed value
+// in a tender's JSON can never fail the whole reminder pass.
+func (r *postgresCalendarRepo) ListOpenShortfalls(ctx context.Context) ([]domain.ShortfallCandidate, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT b.id::text, b.title, b.calendar_id::text,
+		       COALESCE(r->>'n', ''), COALESCE(r->>'deadline', ''), COALESCE(r->>'status', ''),
+		       CASE WHEN jsonb_typeof(r->'docs') = 'array' THEN jsonb_array_length(r->'docs') ELSE 0 END,
+		       CASE WHEN jsonb_typeof(r->'docs') = 'array' THEN (
+		           SELECT count(*) FROM jsonb_array_elements(r->'docs') d
+		           WHERE jsonb_typeof(d->'file') = 'object') ELSE 0 END
+		FROM bid.bid_workspaces b,
+		     jsonb_array_elements(CASE WHEN jsonb_typeof(b.doc_shortfall->'rounds') = 'array' THEN b.doc_shortfall->'rounds' ELSE '[]'::jsonb END) r
+		WHERE b.archived_at IS NULL
+		  AND b.workflow_stage = 'TECHNICAL_EVALUATION'
+		  AND b.bid_status NOT IN ('WON', 'LOST', 'CANCELLED', 'CLOSED', 'ARCHIVED')
+		  AND COALESCE(r->>'status', '') NOT IN ('SUBMITTED', '')
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.ShortfallCandidate
+	for rows.Next() {
+		var c domain.ShortfallCandidate
+		var n, deadline string
+		if err := rows.Scan(&c.TenderID, &c.Title, &c.CalendarID, &n, &deadline, &c.Status, &c.DocsTotal, &c.DocsAdded); err != nil {
+			return nil, err
+		}
+		round, errN := strconv.Atoi(n)
+		at, errT := time.Parse(time.RFC3339, deadline)
+		if errN != nil || errT != nil {
+			continue
+		}
+		c.Round, c.Deadline = round, at
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 func (r *postgresCalendarRepo) GetTenderStakeholders(ctx context.Context, tenderID string) ([]domain.TenderStakeholder, error) {

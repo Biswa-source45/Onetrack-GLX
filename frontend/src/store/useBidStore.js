@@ -171,7 +171,7 @@ export const useBidStore = create((set, get) => ({
     if (ownerFilterId) {
       finalOwnerId = ownerFilterId
     }
-    const quick = todoMode && todoFilter && todoFilter !== 'alert' ? todoFilter : endDateFilter
+    const quick = todoMode && todoFilter && todoFilter !== 'alert' && todoFilter !== 'shortfall' ? todoFilter : endDateFilter
     // Any filter in play (or the To-Do view) puts the tender ending soonest first;
     // an unfiltered list stays newest-added-first.
     const filtered = !!(debouncedSearch || stageFilter || statusFilter || portalSourceFilter || endDateFilter || ownerFilterId || todoMode)
@@ -186,7 +186,9 @@ export const useBidStore = create((set, get) => ({
       closing_before,
       in_bin: inBin,
       sort: filtered ? 'closing' : undefined,
-      due_soon: todoMode || undefined,
+      // The shortfall block is about rounds in Technical Evaluation, whose closing date has long passed.
+      due_soon: (todoMode && todoFilter !== 'shortfall') || undefined,
+      doc_shortfall: (todoMode && todoFilter === 'shortfall') || undefined,
       high_alert: (todoMode && todoFilter === 'alert') || undefined,
     }
   },

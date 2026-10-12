@@ -23,7 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { transitionBidStage, recordBidOutcome, updateBid, getBidStageHistory, toggleChecklist } from '../../services/bids'
+import { transitionBidStage, recordBidOutcome, updateBid, getBid, getBidStageHistory, toggleChecklist } from '../../services/bids'
 import { usePermissions } from '../../hooks/usePermissions'
 import { tokenStorage } from '../../services/auth'
 import { stageLink, createAlert } from '../../services/alerts'
@@ -4588,6 +4588,29 @@ export function Stage10Workspace({ bid, onRefresh }) {
   const [showRaise, setShowRaise] = useState(false)
   const [busy, setBusy] = useState(false)
   const ds = bid?.doc_shortfall && typeof bid.doc_shortfall === 'object' ? bid.doc_shortfall : null
+  // A server older than this screen has no doc_shortfall at all and would drop every save
+  // while still answering OK, so the shortfall controls stay off until it is updated.
+  const supported = !!bid && 'doc_shortfall' in bid
+  const busyRef = useRef(false)
+  const revRef = useRef(0)
+  revRef.current = ds?.rev || 0
+
+  // Everyone on the tender works on the same shortfall, so keep this view current: check
+  // for a newer revision when the tab regains focus and every 20 seconds, and reload only
+  // when it changed (a failed check is ignored, it must never disturb the page).
+  useEffect(() => {
+    if (!supported || !bid?.id) return undefined
+    const check = async () => {
+      if (document.hidden || busyRef.current) return
+      try {
+        const res = await getBid(bid.id)
+        if (res.ok && (res.data?.doc_shortfall?.rev || 0) !== revRef.current && !busyRef.current) onRefresh()
+      } catch { /* try again on the next tick */ }
+    }
+    const timer = setInterval(check, 20000)
+    window.addEventListener('focus', check)
+    return () => { clearInterval(timer); window.removeEventListener('focus', check) }
+  }, [supported, bid?.id, onRefresh])
   const round = openRound(ds)
   const last = lastRound(ds)
   const reeval = awaitingReeval(ds)
@@ -4596,10 +4619,18 @@ export function Stage10Workspace({ bid, onRefresh }) {
   const team = () => [bid?.bid_owner?.id, bid?.account_manager?.id, bid?.reporting_manager?.id, bid?.presales?.id]
 
   // ponytail: whole-object save like post_bid; the bid team writes it one after the other.
+  // Each save carries the next revision; the server refuses it (409) when someone saved in between.
   const saveShortfall = async (next, { ok, log, notify, extra } = {}) => {
+    if (busyRef.current) return false
+    busyRef.current = true
     setBusy(true)
     try {
-      const res = await updateBid(bid.id, { doc_shortfall: JSON.stringify({ ...next, updatedAt: new Date().toISOString() }), ...extra })
+      const res = await updateBid(bid.id, { doc_shortfall: JSON.stringify({ ...next, rev: (ds?.rev || 0) + 1, updatedAt: new Date().toISOString() }), ...extra })
+      if (res.status === 409) {
+        toast.error('Someone else just changed this document shortfall. It has been reloaded, please repeat your action.')
+        await onRefresh()
+        return false
+      }
       if (!res.ok) { toast.error(res.error?.message || 'Failed to save'); return false }
       if (ok) toast.success(ok)
       if (log) logStageInteraction(bid.id, 'TECHNICAL_EVALUATION', log)
@@ -4610,7 +4641,7 @@ export function Stage10Workspace({ bid, onRefresh }) {
       // Wait for the reload so a quick second action starts from what was just saved, not a stale copy.
       await onRefresh()
       return true
-    } finally { setBusy(false) }
+    } finally { busyRef.current = false; setBusy(false) }
   }
 
   const raise = async ({ deadline, note, docs }) => {
@@ -4643,23 +4674,25 @@ export function Stage10Workspace({ bid, onRefresh }) {
 
   const handleResult = async (remarks) => {
     // The re-evaluation answers the last shortfall round, if there was one.
-    const closeRound = last && !last.outcome ? { doc_shortfall: JSON.stringify({ ...patchRound(ds, last.n, { outcome: status }), updatedAt: new Date().toISOString() }) } : {}
+    const closeRound = last && !last.outcome ? { doc_shortfall: JSON.stringify({ ...patchRound(ds, last.n, { outcome: status }), rev: (ds?.rev || 0) + 1, updatedAt: new Date().toISOString() }) } : {}
+    let res
     if (status === 'QUALIFIED') {
       confetti({ particleCount: 100, spread: 60 })
       // Stage 9 completion is handled atomically by CompleteStageModal
-      await updateBid(bid.id, { technical_result: 'QUALIFIED', ...closeRound })
+      res = await updateBid(bid.id, { technical_result: 'QUALIFIED', ...closeRound })
     } else {
       // Setting technical_result to DISQUALIFIED triggers the backend's
       // auto-disqualification rule: it forces bid_status/bid_outcome to LOST,
       // writes stage history, and sets workflow_stage to the terminal LOST
       // state directly — so Financial Evaluation and Award & Handover are
       // correctly locked out instead of being left reachable.
-      await updateBid(bid.id, {
+      res = await updateBid(bid.id, {
         technical_result: 'DISQUALIFIED',
         disqualification_reason: disqualifyReason,
         ...closeRound,
       })
     }
+    if (!res.ok) toast.error(res.status === 409 ? 'Someone else just changed this document shortfall. It has been reloaded, please record the result again.' : (res.error?.message || 'The result could not be saved'))
     onRefresh()
   }
 
@@ -4671,7 +4704,7 @@ export function Stage10Workspace({ bid, onRefresh }) {
           <p className="text-xs text-teal-700 dark:text-teal-400">Record official technical qualification status from procuring authority, or a document shortfall request.</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {canRaise && (
+          {canRaise && supported && (
             <Button size="sm" variant="outline" disabled={busy} onClick={() => setShowRaise(true)} className="gap-1.5 text-xs border-amber-300 text-amber-900 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30">
               <AlertTriangle className="size-3.5 text-amber-600" /> Document Shortfall
             </Button>
@@ -4688,6 +4721,12 @@ export function Stage10Workspace({ bid, onRefresh }) {
           />
         </div>
       </div>
+
+      {!supported && (
+        <p role="alert" className="text-xs text-amber-900 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-900 rounded-xl p-3">
+          This server does not support document shortfall yet, so nothing entered here would be saved. Update and restart the backend, then reload this page.
+        </p>
+      )}
 
       {reeval && (
         <p className="text-xs text-sky-800 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900 rounded-xl p-3">

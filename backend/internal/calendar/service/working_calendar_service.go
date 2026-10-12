@@ -479,6 +479,12 @@ func (s *workingCalendarService) evaluate(ctx context.Context) (*domain.Evaluati
 		}
 	}
 
+	// Open document-shortfall rounds are reminded in the same pass, within what is
+	// left of the per-run notification cap.
+	if budget := maxNotificationsPerTick - (sum.Notified + sum.Escalated); budget > 0 && ctx.Err() == nil {
+		sum.Notified += s.remindShortfalls(ctx, now, budget)
+	}
+
 	// The first pass ends baseline mode even when a tender errored: staying in it
 	// would silently swallow every later alert. A tender that failed to baseline
 	// simply alerts normally once its error clears.
@@ -673,11 +679,6 @@ func (s *workingCalendarService) notifyTender(
 	force, baseline bool,
 ) (notifyOutcome, error) {
 	var out notifyOutcome
-	stakeholders, err := s.repo.GetTenderStakeholders(ctx, t.ID)
-	if err != nil {
-		return out, fmt.Errorf("stakeholders: %w", err)
-	}
-
 	next, err := s.repo.GetNextPendingChecklist(ctx, t.ID)
 	if err != nil {
 		log.Printf("[WorkingCalendar] next checklist lookup failed for %s: %v", t.ID, err)
@@ -690,43 +691,12 @@ func (s *workingCalendarService) notifyTender(
 		body = subject
 	}
 
-	for _, sh := range stakeholders {
-		role := sh.Roles
-		id, err := s.repo.ClaimNotification(ctx, &domain.TaskNotification{
-			TenderID:         t.ID,
-			RecipientUserID:  sh.UserID,
-			RecipientRole:    &role,
-			NotificationType: domain.NotificationTypeRedZoneDueDate,
-			ScheduledAt:      c.deadline,
-			Subject:          subject,
-			Message:          body,
-		}, force)
-		if err != nil {
-			log.Printf("[WorkingCalendar] claim failed for tender %s user %s: %v", t.ID, sh.UserID, err)
-			out.errs++
-			continue
-		}
-		if id == "" || baseline {
-			continue
-		}
-
-		userID, tenderID := sh.UserID, t.ID
-		if err := s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
-			UserID:  &userID,
-			BidID:   &tenderID,
-			Type:    "TENDER",
-			Title:   title,
-			Message: message,
-			Link:    alertDomain.TenderLink(t.ID),
-		}); err != nil {
-			log.Printf("[WorkingCalendar] alert failed for tender %s user %s: %v", t.ID, sh.UserID, err)
-			if ferr := s.repo.ReleaseNotification(ctx, id); ferr != nil {
-				log.Printf("[WorkingCalendar] could not release claim %s: %v", id, ferr)
-			}
-			out.failed++
-			continue
-		}
-		out.notified = append(out.notified, sh)
+	out, err = s.notifyStakeholders(ctx, t.ID,
+		domain.TaskNotification{NotificationType: domain.NotificationTypeRedZoneDueDate, ScheduledAt: c.deadline, Subject: subject, Message: body},
+		alertDomain.Alert{Type: "TENDER", Title: title, Message: message, Link: alertDomain.TenderLink(t.ID)},
+		force, baseline)
+	if err != nil {
+		return out, err
 	}
 
 	if len(out.notified) > 0 && s.systemLog != nil {
@@ -742,6 +712,47 @@ func (s *workingCalendarService) notifyTender(
 				"deadline":        c.deadline.Format(time.RFC3339),
 			},
 		)
+	}
+	return out, nil
+}
+
+// notifyStakeholders is the claim-then-alert loop every engine reminder shares: each
+// stakeholder of the tender is claimed in the dedup table first (once per tender,
+// recipient and notification type) and alerted only if the claim succeeded, so a
+// repeated pass never sends twice and a failed alert releases its claim for a retry.
+// In baseline mode it claims and never sends.
+func (s *workingCalendarService) notifyStakeholders(ctx context.Context, tenderID string, claim domain.TaskNotification, alert alertDomain.Alert, force, baseline bool) (notifyOutcome, error) {
+	var out notifyOutcome
+	stakeholders, err := s.repo.GetTenderStakeholders(ctx, tenderID)
+	if err != nil {
+		return out, fmt.Errorf("stakeholders: %w", err)
+	}
+	for _, sh := range stakeholders {
+		role := sh.Roles
+		n := claim
+		n.TenderID, n.RecipientUserID, n.RecipientRole = tenderID, sh.UserID, &role
+		id, err := s.repo.ClaimNotification(ctx, &n, force)
+		if err != nil {
+			log.Printf("[WorkingCalendar] claim failed for tender %s user %s: %v", tenderID, sh.UserID, err)
+			out.errs++
+			continue
+		}
+		if id == "" || baseline {
+			continue
+		}
+
+		a := alert
+		userID, bidID := sh.UserID, tenderID
+		a.UserID, a.BidID = &userID, &bidID
+		if err := s.alertSvc.CreateAlert(ctx, &a); err != nil {
+			log.Printf("[WorkingCalendar] alert failed for tender %s user %s: %v", tenderID, sh.UserID, err)
+			if ferr := s.repo.ReleaseNotification(ctx, id); ferr != nil {
+				log.Printf("[WorkingCalendar] could not release claim %s: %v", id, ferr)
+			}
+			out.failed++
+			continue
+		}
+		out.notified = append(out.notified, sh)
 	}
 	return out, nil
 }

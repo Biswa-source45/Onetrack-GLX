@@ -1698,12 +1698,25 @@ func TestUpdateBid_DocShortfallRules(t *testing.T) {
 		return svc.UpdateBid(context.Background(), "bid-1", req, actor, roles)
 	}
 	round := func(status string) *string {
-		s := `{"rounds":[{"n":1,"status":"` + status + `","approverId":"rm-1"}]}`
+		s := `{"rev":1,"rounds":[{"n":1,"status":"` + status + `","approverId":"rm-1"}]}`
 		return &s
 	}
 	pending := `{"rounds":[{"n":1,"status":"PENDING_APPROVAL","approverId":"rm-1"}]}`
 	qualified := "QUALIFIED"
 	disqualified := "DISQUALIFIED"
+
+	// A save must be based on the latest revision, for everyone including admins.
+	stale := `{"rev":3,"rounds":[{"n":1,"status":"COLLECTING"}]}`
+	if err := try(nil, "exec-1", `{"rev":3,"rounds":[{"n":1,"status":"COLLECTING"}]}`, &domain.UpdateBidRequest{DocShortfall: &stale}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("write on an outdated revision: want ErrConflict, got %v", err)
+	}
+	if err := try([]string{"ADMIN"}, "admin-1", "", &domain.UpdateBidRequest{DocShortfall: &stale}); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("admin write that skips revisions: want ErrConflict, got %v", err)
+	}
+	next := `{"rev":4,"rounds":[{"n":1,"status":"COLLECTING"}]}`
+	if err := try(nil, "exec-1", `{"rev":3,"rounds":[{"n":1,"status":"COLLECTING"}]}`, &domain.UpdateBidRequest{DocShortfall: &next}); err != nil {
+		t.Fatalf("write on the latest revision: %v", err)
+	}
 
 	// Approving: only the chosen approver (or an admin), and only from PENDING_APPROVAL.
 	if err := try(nil, "rm-1", pending, &domain.UpdateBidRequest{DocShortfall: round("APPROVED")}); err != nil {
@@ -1723,7 +1736,7 @@ func TestUpdateBid_DocShortfallRules(t *testing.T) {
 	if err := try(nil, "exec-1", `{"rounds":[{"n":1,"status":"COLLECTING"}]}`, &domain.UpdateBidRequest{DocShortfall: round("PENDING_APPROVAL")}); err != nil {
 		t.Fatalf("submit to the reporting manager: %v", err)
 	}
-	stranger := `{"rounds":[{"n":1,"status":"PENDING_APPROVAL","approverId":"someone-else"}]}`
+	stranger := `{"rev":1,"rounds":[{"n":1,"status":"PENDING_APPROVAL","approverId":"someone-else"}]}`
 	if err := try(nil, "exec-1", `{"rounds":[{"n":1,"status":"COLLECTING"}]}`, &domain.UpdateBidRequest{DocShortfall: &stranger}); !errors.Is(err, domain.ErrValidation) {
 		t.Fatalf("approver who is not RM/AM: want ErrValidation, got %v", err)
 	}
