@@ -868,6 +868,41 @@ func needsRMApproval(bid *domain.BidWorkspace, actorID string, actorRoles []stri
 		*bid.ReportingManagerID != actorID
 }
 
+// checkPostBidContactsDone: Bid Submission cannot be completed until Finance has
+// filled the post-bid contacts (post_bid.doneAt). Only the not-done -> done edge
+// of a tender still at or before that stage is checked, so tenders that already
+// moved on can be re-verified; an admin may complete it without Finance.
+func checkPostBidContactsDone(bid *domain.BidWorkspace, req *domain.UpdateBidRequest, actorRoles []string) error {
+	if !req.StageCompletions[domain.StageGeMSubmission] || isAdminRole(actorRoles) {
+		return nil
+	}
+	var done map[string]bool
+	_ = json.Unmarshal(bid.StageCompletions, &done)
+	if done[domain.StageGeMSubmission] {
+		return nil
+	}
+	if indexOfStage(bid.WorkflowStage) > indexOfStage(domain.StageGeMSubmission) {
+		return nil
+	}
+	var pb struct {
+		DoneAt string `json:"doneAt"`
+	}
+	_ = json.Unmarshal(bid.PostBid, &pb)
+	if pb.DoneAt == "" {
+		return fmt.Errorf("%w: Finance must complete the post-bid contacts before Bid Submission can be completed", domain.ErrValidation)
+	}
+	return nil
+}
+
+func indexOfStage(stage string) int {
+	for i, st := range domain.OrderedWorkflowStages {
+		if st == stage {
+			return i
+		}
+	}
+	return -1
+}
+
 // UpdateBid is the gate in front of applyUpdate: a Bid Executive's
 // full-form Edit Tender submission (req.FullEditSubmission) on a tender
 // that has a Reporting Manager assigned is held for that manager's
@@ -906,6 +941,10 @@ func (s *bidService) applyUpdate(ctx context.Context, id string, req *domain.Upd
 	// every field UpdateBid can touch belongs to whichever stage the tender
 	// is actually in. No-op for the ~everyone who has no restriction rows.
 	if err := s.checkStageAccess(ctx, actorID, bid.WorkflowStage); err != nil {
+		return err
+	}
+
+	if err := checkPostBidContactsDone(bid, req, actorRoles); err != nil {
 		return err
 	}
 
@@ -2328,6 +2367,11 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, repor
 		_ = json.Unmarshal(bid.PrimaryReview, &primaryReview)
 	}
 
+	var postBid interface{}
+	if len(bid.PostBid) > 0 {
+		_ = json.Unmarshal(bid.PostBid, &postBid)
+	}
+
 	var alertNote interface{}
 	if len(bid.AlertNote) > 0 {
 		_ = json.Unmarshal(bid.AlertNote, &alertNote)
@@ -2386,6 +2430,7 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, repor
 		BGDurationMonths:          bid.BGDurationMonths,
 		RequestedProducts:         requestedProducts,
 		PrimaryReview:             primaryReview,
+		PostBid:                   postBid,
 		AlertNote:                 alertNote,
 		Members:                   members,
 		Checklists:                checklists,
@@ -2881,6 +2926,8 @@ func (s *bidService) ListMyPendingApprovals(ctx context.Context, userID string) 
 			items[i].Link = alertDomain.StageLink(items[i].BidID, "PRICING_REQUEST")
 		case "INTERNAL_APPROVAL":
 			items[i].Link = alertDomain.StageLink(items[i].BidID, "INTERNAL_APPROVAL")
+		case "POST_BID_CONTACTS":
+			items[i].Link = alertDomain.StageLink(items[i].BidID, domain.StageGeMSubmission)
 		default: // EDIT / CANCEL / DELETE — decided from the tender page's approval banner
 			items[i].Link = alertDomain.ApprovalLink(items[i].BidID)
 		}

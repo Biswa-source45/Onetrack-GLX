@@ -230,6 +230,7 @@ type BidWorkspace struct {
 	BGDurationMonths  *int    `json:"bg_duration_months,omitempty"`
 	RequestedProducts []byte  `json:"-"` // raw JSONB — Products/Services Asked in the RFP
 	PrimaryReview     []byte  `json:"-"` // raw JSONB — Stage 2 Primary Review workspace
+	PostBid           []byte  `json:"-"` // raw JSONB — Stage 8 post-bid contacts (Finance hand-off)
 	AlertNote         []byte  `json:"-"` // raw JSONB — {text,label,color} additional info/challenge note
 
 	// Stage tracking
@@ -600,6 +601,7 @@ type UpdateBidRequest struct {
 	BGDurationMonths          *int    `json:"bg_duration_months"`
 	RequestedProducts         *string `json:"requested_products"` // raw JSON string
 	PrimaryReview             *string `json:"primary_review"`     // raw JSON string
+	PostBid                   *string `json:"post_bid"`           // raw JSON string
 	AlertNote                 *string `json:"alert_note"`         // raw JSON string — {text,label,color}
 	Remarks                   *string `json:"remarks"`
 	TechComplianceStatus      *string `json:"tech_compliance_status"`
@@ -784,6 +786,7 @@ type BidResponse struct {
 	BGDurationMonths          *int               `json:"bg_duration_months,omitempty"`
 	RequestedProducts         interface{}        `json:"requested_products"`
 	PrimaryReview             interface{}        `json:"primary_review"`
+	PostBid                   interface{}        `json:"post_bid"`
 	AlertNote                 interface{}        `json:"alert_note,omitempty"`
 	Members                   []MemberResponse   `json:"members"`
 	Checklists                []BidChecklistItem `json:"checklists"`
