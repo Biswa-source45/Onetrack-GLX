@@ -2817,17 +2817,20 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-border">
+      <div className="border-b border-border">
+       {/* The row scrolls sideways when the tabs do not fit (phones, narrow windows). */}
+       <div className="flex gap-1 overflow-x-auto">
         {TABS.map(tab=>(
           <button key={tab.id}
             onClick={()=> !tab.disabled && setActiveTab(tab.id)}
             disabled={tab.disabled}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px
+            className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors
               ${tab.disabled ? 'border-transparent text-muted-foreground/40 cursor-not-allowed' :
                 activeTab===tab.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
             <tab.icon className="size-3.5"/>{tab.label}
           </button>
         ))}
+       </div>
       </div>
 
       {/* Tab content */}
