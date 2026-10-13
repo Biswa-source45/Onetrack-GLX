@@ -794,6 +794,7 @@ type BidResponse struct {
 	RequestedProducts         interface{}        `json:"requested_products"`
 	PrimaryReview             interface{}        `json:"primary_review"`
 	PostBid                   interface{}        `json:"post_bid"`
+	Contacts                  []TenderContact    `json:"contacts"` // GetBid only; the list endpoint leaves it null
 	DocShortfall              interface{}        `json:"doc_shortfall"`
 	AlertNote                 interface{}        `json:"alert_note,omitempty"`
 	Members                   []MemberResponse   `json:"members"`

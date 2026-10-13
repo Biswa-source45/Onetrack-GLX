@@ -1,5 +1,6 @@
 // OEM helpers shared by Primary Review, OEM Authorization (Stage 3), the Checklist
 // tab and the tender Overview. Pure functions only (no React).
+import { oemRowIds } from './contacts.js'
 
 // Pre-Sales' per-product OEM used to be one free-text string per product
 // index; it's now an array of candidates. Old tenders still carry the
@@ -47,10 +48,10 @@ export function confirmedOems(bid) {
 }
 
 // How much real work a matrix row carries; 0 means it is exactly as it was created.
-function progressOf(o) {
+function progressOf(o, withContacts) {
   return [
     o.initiated && o.initiated !== 'NO',
-    o.initiatedByName, o.contactName, o.contactEmail,
+    o.initiatedByName, withContacts?.has(o.id),
     o.maf === 'RECEIVED',
     Object.values(o.docStatus || {}).some((v) => v === 'RECEIVED'),
     o.compliance && o.compliance !== 'NA',
@@ -67,18 +68,18 @@ function progressOf(o) {
  *  4. With `makeRow`, confirmed OEMs that have no row yet get one, unless the user dismissed them.
  * Unchanged rows keep their object identity, so callers can detect "nothing changed" by reference.
  */
-export function reconcileOemRows(rows, confirmed, { makeRow, dismissed } = {}) {
+export function reconcileOemRows(rows, confirmed, { makeRow, dismissed, withContacts } = {}) {
   const best = new Map()
   for (const r of rows || []) {
     const k = oemKey(r?.name)
     if (!k) continue
-    if (!best.has(k) || progressOf(r) > progressOf(best.get(k))) best.set(k, r)
+    if (!best.has(k) || progressOf(r, withContacts) > progressOf(best.get(k), withContacts)) best.set(k, r)
   }
   let out = (rows || []).filter((r) => best.get(oemKey(r?.name)) === r)
   if (confirmed === null || confirmed === undefined) return out
 
   const want = new Set(confirmed.map(oemKey))
-  out = out.filter((r) => want.has(oemKey(r.name)) || r.origin === 'manual' || progressOf(r) > 0)
+  out = out.filter((r) => want.has(oemKey(r.name)) || r.origin === 'manual' || progressOf(r, withContacts) > 0)
   if (makeRow) {
     const have = new Set(out.map((r) => oemKey(r.name)))
     const skip = dismissed || new Set()
@@ -92,5 +93,5 @@ export function reconcileOemRows(rows, confirmed, { makeRow, dismissed } = {}) {
 export function readOemRows(bid) {
   const w = bid?.oem_workspace
   const raw = Array.isArray(w) ? w : (Array.isArray(w?.oems) ? w.oems : [])
-  return reconcileOemRows(raw, confirmedOems(bid))
+  return reconcileOemRows(raw, confirmedOems(bid), { withContacts: oemRowIds(bid?.contacts) })
 }

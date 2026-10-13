@@ -29,8 +29,8 @@ const FILE_TYPES = 'application/pdf,image/jpeg,image/png,image/webp'
 // Alert messages are HTML, so anything typed by a person goes through this.
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 
-// One short text field in a dialog (a reason, or remarks).
-function ReasonDialog({ title, description, label, confirmLabel, danger, busy, onConfirm, onClose }) {
+// One short text field in a dialog (a reason, or remarks). Also used to ban a contact.
+export function ReasonDialog({ title, description, label, confirmLabel, danger, busy, onConfirm, onClose }) {
   const [text, setText] = useState('')
   return (
     <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
@@ -70,7 +70,7 @@ export function RaiseShortfallDialog({ busy, onRaise, onClose }) {
 
   return (
     <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-sm font-bold">Document shortfall requested</DialogTitle>
           <DialogDescription className="text-xs text-muted-foreground">

@@ -1827,14 +1827,6 @@ func (r *postgresBidRepo) ListPendingApprovalsFor(ctx context.Context, userID st
 		      WHERE h.bid_id = b.id AND h.event_type = 'APPROVAL'
 		        AND (h.to_stage = 'INTERNAL_APPROVAL' OR h.from_stage = 'INTERNAL_APPROVAL'))
 		UNION ALL
-		SELECT b.id::text, b.title, b.gem_bid_no, 'POST_BID_CONTACTS', COALESCE(b.post_bid->>'assignedByName', ''), b.updated_at
-		FROM bid.bid_workspaces b
-		WHERE b.archived_at IS NULL
-		  AND b.workflow_stage = 'GEM_SUBMISSION'
-		  AND b.bid_status NOT IN ('WON', 'LOST', 'CANCELLED', 'CLOSED', 'ARCHIVED')
-		  AND b.post_bid->>'financeUserId' = $1
-		  AND COALESCE(b.post_bid->>'doneAt', '') = ''
-		UNION ALL
 		SELECT b.id::text, b.title, b.gem_bid_no, 'DOC_SHORTFALL', COALESCE(r->>'approvalRequestedByName', ''), b.updated_at
 		FROM bid.bid_workspaces b, jsonb_array_elements(COALESCE(b.doc_shortfall->'rounds', '[]'::jsonb)) r
 		WHERE b.archived_at IS NULL

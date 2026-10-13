@@ -7,7 +7,7 @@ import {
   XCircle, Edit2, Save, X, MoreHorizontal, Calendar,
   FileText, Activity, History, UserPlus, Target, ChevronDown,
   RotateCcw, Trash2, Trophy, Search, ShieldCheck, Share2, Coins, Eye,
-  Send, Upload, Hourglass, Ban, ArrowRight, Layers, Lock, Check, Sparkles, AlertTriangle, UserCheck, RefreshCw, ExternalLink, Printer
+  Send, Upload, Hourglass, Ban, ArrowRight, Layers, Lock, Check, Sparkles, AlertTriangle, UserCheck, RefreshCw, ExternalLink, Printer, Contact
 } from 'lucide-react'
 import { isHttpUrl } from '../../lib/tenderSpec'
 import { TenderPrintSheet } from './TenderPrintSheet'
@@ -43,8 +43,8 @@ import { ChecklistTab } from './ChecklistTab'
 import { EditTenderDialog } from './EditTenderDialog'
 import { DynamicStageWorkspace, checkStageState } from './StageWorkspaces'
 import { resolveProductOem } from '../../lib/oem'
-import { PostBidContactsCard } from './PostBidContacts'
 import { ShortfallHistoryCard } from './DocShortfall'
+import { ContactsTab } from './ContactsTab'
 import { triggerRedZoneNotification, getTenderWorkingDeadline } from '../../services/calendar'
 
 // Module scope (not runtime-dependent) so the URL-backed tab state below can
@@ -54,6 +54,7 @@ const TABS = [
   { id: 'stages', label: `Stage Lifecycle (${WORKFLOW_STAGES_ORDERED.length})`, icon: Layers },
   { id: 'checklist', label: 'Checklist', icon: CheckSquare },
   { id: 'history', label: 'Stage History', icon: History },
+  { id: 'contacts', label: 'Contacts', icon: Contact },
   { id: 'members', label: 'Members', icon: Users },
 ]
 const TAB_IDS = new Set(TABS.map(t => t.id))
@@ -2870,7 +2871,6 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                 <ComplianceCard bid={bid} />
               </div>
               <ScopeProductsCard bid={bid} />
-              <PostBidContactsCard bid={bid} />
               <ShortfallHistoryCard bid={bid} />
               <StageActionPanel bid={bid} onSelectStage={(stageKey) => setActiveTab('stages', stageKey)} />
               {bid.remarks && (
@@ -2885,6 +2885,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
           {activeTab === 'stages' && <StageSectionsTab bid={bid} onRefresh={loadBid} onAdvance={() => setShowTransition(true)} searchParams={searchParams} setSearchParams={setSearchParams} />}
           {activeTab === 'checklist' && <ChecklistTab bid={bid} onRefresh={loadBid}/>}
           {activeTab === 'history' && <StageHistoryTab bidId={bid.id} bid={bid} />}
+          {activeTab === 'contacts' && <ContactsTab bid={bid} onRefresh={loadBid}/>}
           {activeTab === 'members' && <MembersTab bid={bid} onRefresh={loadBid}/>}
         </motion.div>
       </AnimatePresence>

@@ -48,6 +48,13 @@ test('idempotent and identity-stable once clean', () => {
   assert.ok(again.every((r, i) => r === clean[i]))
 })
 
+test('a row with a contact in the shared list is worked on, so it is never dropped', () => {
+  const quiet = row('Cisco', { id: 'r1' })
+  assert.deepEqual(names(reconcileOemRows([quiet, row('Dell')], ['Dell'])), ['Dell'])
+  assert.deepEqual(names(reconcileOemRows([quiet, row('Dell')], ['Dell'], { withContacts: new Set(['r1']) })), ['Cisco', 'Dell'])
+  assert.deepEqual(names(readOemRows({ ...bid({ 0: 'Dell' }, true, [quiet, row('Dell')]), contacts: [{ source: 'OEM_AUTH', source_ref: 'r1' }] })), ['Cisco', 'Dell'])
+})
+
 test('readOemRows reads both workspace shapes and cleans for display', () => {
   const ws = [row('Dell'), row('Cisco')]
   assert.deepEqual(names(readOemRows(bid({ 0: 'Dell' }, true, ws))), ['Dell'])

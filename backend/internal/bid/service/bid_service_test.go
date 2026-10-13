@@ -49,6 +49,7 @@ type fakeBidRepo struct {
 	emdClosed   bool
 	checklists  []domain.BidChecklist
 	lastToggled string // status ToggleChecklist was asked to set
+	contacts    []domain.TenderContact
 }
 
 type memberCall struct {
@@ -1651,36 +1652,6 @@ func TestValidateTenderLink(t *testing.T) {
 	}
 	if err := validateTenderLink(nil); err != nil {
 		t.Errorf("nil link should be valid, got %v", err)
-	}
-}
-
-// Bid Submission cannot be completed until Finance has filled the post-bid contacts.
-func TestUpdateBid_BidSubmissionNeedsPostBidContacts(t *testing.T) {
-	complete := &domain.UpdateBidRequest{StageCompletions: map[string]bool{domain.StageGeMSubmission: true}}
-	try := func(stage string, postBid string, roles []string) error {
-		bid := &domain.BidWorkspace{ID: "bid-1", Title: "T", WorkflowStage: stage, CreationMode: domain.CreationModeManual,
-			BidOwnerID: "owner-1", StageCompletions: []byte(`{}`)}
-		if postBid != "" {
-			bid.PostBid = []byte(postBid)
-		}
-		svc := NewBidService(&fakeBidRepo{bid: bid}, &fakeAlertSvc{}, &fakeSystemLog{})
-		return svc.UpdateBid(context.Background(), "bid-1", complete, "actor-1", roles)
-	}
-
-	if err := try(domain.StageGeMSubmission, "", nil); !errors.Is(err, domain.ErrValidation) {
-		t.Fatalf("no post_bid: want ErrValidation, got %v", err)
-	}
-	if err := try(domain.StageGeMSubmission, `{"financeUserId":"fm-1","doneAt":""}`, nil); !errors.Is(err, domain.ErrValidation) {
-		t.Fatalf("assigned but not done: want ErrValidation, got %v", err)
-	}
-	if err := try(domain.StageGeMSubmission, `{"doneAt":"2026-10-12T10:00:00Z"}`, nil); err != nil {
-		t.Fatalf("contacts done: %v", err)
-	}
-	if err := try(domain.StageGeMSubmission, "", []string{"ADMIN"}); err != nil {
-		t.Fatalf("admin override: %v", err)
-	}
-	if err := try(domain.StageTechnicalEvaluation, "", nil); err != nil {
-		t.Fatalf("tender already past Bid Submission must not be blocked: %v", err)
 	}
 }
 

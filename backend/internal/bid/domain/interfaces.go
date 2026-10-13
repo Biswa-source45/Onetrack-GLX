@@ -25,6 +25,14 @@ type BidRepository interface {
 	RemoveMember(ctx context.Context, bidID string, userID string) error
 	GetMembers(ctx context.Context, bidID string) ([]MemberResponse, error)
 
+	// Tender contacts, edited row by row (see migration 000063).
+	ListContacts(ctx context.Context, bidID string) ([]TenderContact, error)
+	GetContact(ctx context.Context, bidID, id string) (*TenderContact, error)
+	CreateContact(ctx context.Context, c *TenderContact, actorID string) (*TenderContact, error)
+	UpdateContact(ctx context.Context, c *TenderContact) error
+	DeleteContact(ctx context.Context, bidID, id string) error
+	ReorderContacts(ctx context.Context, bidID string, items []ReorderContactItem) error
+
 	// Stage history / Action Ledger. GetStageHistory and GetGlobalAuditLogs
 	// both return fully user-resolved rows (no N+1 GetUserSummary calls from
 	// the service layer) and page via AuditLogQuery's keyset cursor — each
@@ -145,6 +153,14 @@ type BidService interface {
 	// removed, so the team panel and the tender's actual assignment can't
 	// drift apart the way they used to.
 	RemoveMember(ctx context.Context, bidID string, userID string, actorID string) error
+
+	// Tender contacts. Adding or editing refuses a second contact with the same email or phone number
+	// (ErrConflict); a ban needs a reason; ReorderContacts saves a drag-and-drop result.
+	ListContacts(ctx context.Context, bidID string) ([]TenderContact, error)
+	AddContact(ctx context.Context, bidID string, req *SaveContactRequest, actorID string) (*TenderContact, error)
+	UpdateContact(ctx context.Context, bidID, contactID string, req *UpdateContactRequest, actorID string) (*TenderContact, error)
+	DeleteContact(ctx context.Context, bidID, contactID, actorID string) error
+	ReorderContacts(ctx context.Context, bidID string, req *ReorderContactsRequest, actorID string) ([]TenderContact, error)
 	// RecordOutcome, ArchiveBid and PermanentDeleteBid hold a Bid Executive's
 	// action for Reporting Manager approval the same way UpdateBid does
 	// (actorRoles decides whether the gate applies) when the outcome being

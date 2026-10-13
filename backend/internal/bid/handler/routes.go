@@ -54,6 +54,13 @@ func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, importHandl
 		bids.POST("/:id/emd/upload-receipt", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.UploadEMDReceipt)
 		bids.GET("/:id/emd/receipt/:filename", authMiddleware.RequireAnyRole("SUPER_ADMIN", "ADMIN", "FINANCE"), handler.GetEMDReceiptFile)
 
+		// Tender contacts (Contacts tab); the order route is one call for a whole drag and drop.
+		bids.GET("/:id/contacts", authMiddleware.RequirePermission("bid.view"), handler.ListContacts)
+		bids.POST("/:id/contacts", authMiddleware.RequirePermission("bid.edit"), handler.AddContact)
+		bids.PUT("/:id/contacts/order", authMiddleware.RequirePermission("bid.edit"), handler.ReorderContacts)
+		bids.PATCH("/:id/contacts/:cid", authMiddleware.RequirePermission("bid.edit"), handler.UpdateContact)
+		bids.DELETE("/:id/contacts/:cid", authMiddleware.RequirePermission("bid.edit"), handler.DeleteContact)
+
 		// Technical Evaluation document shortfall: the documents the team adds for a round.
 		bids.POST("/:id/shortfall/upload", authMiddleware.RequirePermission("bid.edit"), handler.UploadShortfallDoc)
 		bids.GET("/:id/shortfall/file/:filename", authMiddleware.RequirePermission("bid.view"), handler.GetShortfallFile)

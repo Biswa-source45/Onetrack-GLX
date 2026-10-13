@@ -647,7 +647,11 @@ func (s *bidService) GetBid(ctx context.Context, id string) (*domain.BidResponse
 		checklistItems = append(checklistItems, s.mapChecklistToItem(ctx, c))
 	}
 
-	return buildBidResponse(bid, owner, reportingManager, accountManager, presales, members, checklistItems), nil
+	resp := buildBidResponse(bid, owner, reportingManager, accountManager, presales, members, checklistItems)
+	if resp.Contacts, err = s.repo.ListContacts(ctx, id); err != nil {
+		resp.Contacts = []domain.TenderContact{}
+	}
+	return resp, nil
 }
 
 func (s *bidService) mapChecklistToItem(ctx context.Context, c domain.BidChecklist) domain.BidChecklistItem {
@@ -869,32 +873,6 @@ func needsRMApproval(bid *domain.BidWorkspace, actorID string, actorRoles []stri
 		*bid.ReportingManagerID != actorID
 }
 
-// checkPostBidContactsDone: Bid Submission cannot be completed until Finance has
-// filled the post-bid contacts (post_bid.doneAt). Only the not-done -> done edge
-// of a tender still at or before that stage is checked, so tenders that already
-// moved on can be re-verified; an admin may complete it without Finance.
-func checkPostBidContactsDone(bid *domain.BidWorkspace, req *domain.UpdateBidRequest, actorRoles []string) error {
-	if !req.StageCompletions[domain.StageGeMSubmission] || isAdminRole(actorRoles) {
-		return nil
-	}
-	var done map[string]bool
-	_ = json.Unmarshal(bid.StageCompletions, &done)
-	if done[domain.StageGeMSubmission] {
-		return nil
-	}
-	if indexOfStage(bid.WorkflowStage) > indexOfStage(domain.StageGeMSubmission) {
-		return nil
-	}
-	var pb struct {
-		DoneAt string `json:"doneAt"`
-	}
-	_ = json.Unmarshal(bid.PostBid, &pb)
-	if pb.DoneAt == "" {
-		return fmt.Errorf("%w: Finance must complete the post-bid contacts before Bid Submission can be completed", domain.ErrValidation)
-	}
-	return nil
-}
-
 // shortfallRound is the part of a doc_shortfall round the server enforces; the
 // rest of the JSON is the UI's.
 type shortfallRound struct {
@@ -966,15 +944,6 @@ func checkDocShortfall(bid *domain.BidWorkspace, req *domain.UpdateBidRequest, a
 	return nil
 }
 
-func indexOfStage(stage string) int {
-	for i, st := range domain.OrderedWorkflowStages {
-		if st == stage {
-			return i
-		}
-	}
-	return -1
-}
-
 // UpdateBid is the gate in front of applyUpdate: a Bid Executive's
 // full-form Edit Tender submission (req.FullEditSubmission) on a tender
 // that has a Reporting Manager assigned is held for that manager's
@@ -1016,9 +985,6 @@ func (s *bidService) applyUpdate(ctx context.Context, id string, req *domain.Upd
 		return err
 	}
 
-	if err := checkPostBidContactsDone(bid, req, actorRoles); err != nil {
-		return err
-	}
 	if err := checkDocShortfall(bid, req, actorID, actorRoles); err != nil {
 		return err
 	}
@@ -3007,8 +2973,6 @@ func (s *bidService) ListMyPendingApprovals(ctx context.Context, userID string) 
 			items[i].Link = alertDomain.StageLink(items[i].BidID, "PRICING_REQUEST")
 		case "INTERNAL_APPROVAL":
 			items[i].Link = alertDomain.StageLink(items[i].BidID, "INTERNAL_APPROVAL")
-		case "POST_BID_CONTACTS":
-			items[i].Link = alertDomain.StageLink(items[i].BidID, domain.StageGeMSubmission)
 		case "DOC_SHORTFALL":
 			items[i].Link = alertDomain.StageLink(items[i].BidID, domain.StageTechnicalEvaluation)
 		default: // EDIT / CANCEL / DELETE — decided from the tender page's approval banner

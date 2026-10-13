@@ -7,6 +7,7 @@ import {
   Lock, Sparkles, UserCheck, Bell, Calculator, ExternalLink, RefreshCw, Edit2, Loader2, AlertTriangle,
   Calendar, Clock, History, MessageSquare, Eye, ChevronRight, Ban, Users, UserPlus
 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import confetti from 'canvas-confetti'
 import { Button } from '@/components/ui/button'
@@ -27,9 +28,9 @@ import { transitionBidStage, recordBidOutcome, updateBid, getBid, getBidStageHis
 import { usePermissions } from '../../hooks/usePermissions'
 import { tokenStorage } from '../../services/auth'
 import { stageLink, createAlert } from '../../services/alerts'
-import { UserSelect } from '../leads/UserSelect'
-import { PostBidContactsForm, PostBidContactsView } from './PostBidContacts'
-import { postBidStatus } from '../../lib/postBid'
+import { OemContactCell, ContactsSummary } from './ContactsTab'
+import { addContact } from '../../services/contacts'
+import { oemRowIds, parseContactText } from '../../lib/contacts'
 import { RaiseShortfallDialog, ShortfallPanel, ShortfallHistory } from './DocShortfall'
 import { addRound, awaitingReeval, lastRound, openRound, patchRound, shortfallRounds } from '../../lib/docShortfall'
 import { ChecklistTab } from './ChecklistTab'
@@ -95,7 +96,6 @@ function makeOemRow(name, origin, byName) {
     // from Primary Review or added by hand) is not the same as someone
     // having actually kicked off the OEM authorization process for it.
     initiated: 'NO', initiatedByName: '',
-    contactName: '', contactEmail: '',
     docStatus: {},
     maf: 'NOT RECEIVED',
     compliance: 'NA',
@@ -1673,6 +1673,7 @@ export function Stage3Workspace({ bid, onRefresh }) {
     const next = reconcileOemRows(oems, confirmedOems(bid), {
       makeRow: (n) => makeOemRow(n, 'presales', ''),
       dismissed: dismissedNames,
+      withContacts: oemRowIds(bid.contacts),
     })
     if (next.length === oems.length && next.every((r, i) => r === oems[i])) return
     const added = next.filter((r) => !oems.includes(r)).map((r) => r.name)
@@ -1703,11 +1704,15 @@ export function Stage3Workspace({ bid, onRefresh }) {
     if (!name) { toast.error('OEM name is required'); return }
     if (oems.some(o => oemKey(o.name) === oemKey(name))) { toast.error(`"${name}" is already on the sheet`); return }
     const row = makeOemRow(name, 'manual', currentUser?.full_name || '')
-    if (newOemContact.trim()) {
-      row.contactName = newOemContact.trim()
-    }
     const updated = [...oems, row]
     await saveOems(updated)
+    if (newOemContact.trim()) {
+      // The contact goes in the tender's shared contact list, tagged as coming from OEM Authorization.
+      const who = parseContactText(newOemContact)
+      const res = await addContact(bid.id, { kind: 'OEM', name: who.name, email: who.email, org: name, source: 'OEM_AUTH', source_ref: row.id }).catch(() => ({ ok: false }))
+      if (res.ok) onRefresh?.()
+      else toast.error(res.message || 'The OEM was added, but its contact could not be')
+    }
     setNewOemName('')
     setNewOemContact('')
     setShowAddOemDlg(false)
@@ -2020,17 +2025,7 @@ export function Stage3Workspace({ bid, onRefresh }) {
 
                       {/* OEM Contact Person */}
                       <td className="p-3 border-r border-border/60">
-                        {isEditing ? (
-                          <div className="space-y-1">
-                            <Input size="sm" value={o.contactName || ''} onChange={e => updateOemField(o.id, 'contactName', e.target.value)} placeholder="Contact name" className="h-7 text-xs" />
-                            <Input size="sm" value={o.contactEmail || ''} onChange={e => updateOemField(o.id, 'contactEmail', e.target.value)} placeholder="Contact email" className="h-7 text-xs" />
-                          </div>
-                        ) : (
-                          <div className="text-xs">
-                            <div className="font-semibold text-foreground">{o.contactName || '—'}</div>
-                            {o.contactEmail && <div className="text-muted-foreground">{o.contactEmail}</div>}
-                          </div>
-                        )}
+                        <OemContactCell bid={bid} row={o} onRefresh={onRefresh} />
                       </td>
 
                       {/* Process Initiated (by whom) */}
@@ -4282,38 +4277,13 @@ export function Stage9Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
   const { isLocked } = checkStageState(bid, 'GEM_SUBMISSION')
 
-  // Hand-off to Finance: the bid person confirms the submission and picks a Finance
-  // Manager/Executive, who fills the post-bid contacts and marks their part complete;
-  // only then can the stage be completed (also enforced by the bid service).
-  const { user: currentUser, isAdmin, hasRole } = usePermissions()
-  const { users, usersLoading, loadUsers } = useBidStore()
-  useEffect(() => { loadUsers() }, [loadUsers])
-  const [pickedId, setPickedId] = useState('')
-  const [reassigning, setReassigning] = useState(false)
+  // Bid Submission: the bid person confirms the GeM submission with the final price. Once it is
+  // submitted the tender's contacts (Contacts tab) are listed here; nothing else gates the stage.
+  const { user: currentUser } = usePermissions()
   const [busy, setBusy] = useState(false)
   const pb = bid?.post_bid && typeof bid.post_bid === 'object' ? bid.post_bid : {}
-  const status = postBidStatus(pb)
-  const stageCompleted = bid?.stage_completions?.GEM_SUBMISSION === true
+  const submitted = !!pb.submittedAt
   const actorName = currentUser?.full_name || currentUser?.username || ''
-  const isTenderPerson = !!currentUser?.id && [bid?.bid_owner?.id, bid?.reporting_manager?.id, bid?.account_manager?.id].includes(currentUser.id)
-  const financeOnly = hasRole('FINANCE') && !isAdmin && !isTenderPerson && !['MANAGER', 'ACCOUNT_MANAGER', 'BID_EXECUTIVE'].some(hasRole)
-  const canFill = !stageCompleted && (isAdmin || (!!currentUser?.id && pb.financeUserId === currentUser.id))
-  const financeUsers = users.filter(u => u.is_active !== false && actsAs(u, 'FINANCE'))
-
-  // ponytail: whole-object save like primary_review; only the bid person and the
-  // assigned Finance user write it, one after the other. Add a field-level merge if that changes.
-  const savePostBid = async (patch, okMsg, extra = {}) => {
-    setBusy(true)
-    try {
-      const res = await updateBid(bid.id, { post_bid: JSON.stringify({ ...pb, ...patch, updatedAt: new Date().toISOString() }), ...extra })
-      if (!res.ok) { toast.error(res.error?.message || 'Failed to save'); return false }
-      if (okMsg) toast.success(okMsg)
-      onRefresh()
-      return true
-    } finally { setBusy(false) }
-  }
-  const notify = (userId, title, message, type) =>
-    createAlert({ user_id: userId, bid_id: bid.id, created_by: currentUser?.id, type, link: stageLink(bid.id, 'GEM_SUBMISSION'), title, message }).catch(() => {})
 
   const [showSubmit, setShowSubmit] = useState(false)
   const [priceInput, setPriceInput] = useState('')
@@ -4327,42 +4297,18 @@ export function Stage9Workspace({ bid, onRefresh }) {
   }
   const markSubmitted = async () => {
     if (!priceOk) { toast.error('Enter the final submitted price'); return }
-    // The price entered here is the official submitted (quoted) price.
-    if (await savePostBid({ submittedAt: new Date().toISOString(), submittedBy: actorName, submittedPrice: priceNum }, 'Bid marked as submitted', { quoted_price: priceNum })) {
+    setBusy(true)
+    try {
+      // The price entered here is the official submitted (quoted) price.
+      const now = new Date().toISOString()
+      const res = await updateBid(bid.id, { post_bid: JSON.stringify({ ...pb, submittedAt: now, submittedBy: actorName, submittedPrice: priceNum, updatedAt: now }), quoted_price: priceNum })
+      if (!res.ok) { toast.error(res.error?.message || 'Failed to save'); return }
+      toast.success('Bid marked as submitted')
       logStageInteraction(bid.id, 'GEM_SUBMISSION', `Bid submitted on GeM at ${fmtMoneyFull(priceNum)} (confirmed by ${actorName})`, null, { quoted_price: priceNum })
       setShowSubmit(false)
-    }
+      onRefresh()
+    } finally { setBusy(false) }
   }
-  const assignFinance = async () => {
-    const person = financeUsers.find(u => u.id === pickedId)
-    if (!person) { toast.error('Choose a Finance Manager or Executive'); return }
-    const name = person.full_name || person.username
-    const ok = await savePostBid({
-      financeUserId: person.id, financeUserName: name, assignedAt: new Date().toISOString(),
-      assignedById: currentUser?.id, assignedByName: actorName, doneAt: '', doneBy: '',
-    }, `Assigned to ${name}`)
-    if (!ok) return
-    logStageInteraction(bid.id, 'GEM_SUBMISSION', `Post-bid contacts requested from ${name}`)
-    notify(person.id, `Post-bid contacts needed: ${bid.title}`,
-      `<p>${escHtml(actorName)} submitted the bid for <strong>${escHtml(bid.title)}</strong>. Please fill the post-bid contacts (payment / refund, OEM, accounts, customer, customer finance manager) and mark your part complete so the stage can be closed.</p>`,
-      'ACTION_REQUIRED')
-    setPickedId('')
-    setReassigning(false)
-  }
-  const saveDraft = ({ contacts, na }) => savePostBid({ contacts, na }, 'Draft saved')
-  const completeMyPart = async ({ contacts, na }) => {
-    if (!await savePostBid({ contacts, na, doneAt: new Date().toISOString(), doneBy: actorName }, 'Post-bid contacts completed')) return
-    logStageInteraction(bid.id, 'GEM_SUBMISSION', `${actorName} completed the post-bid contacts`)
-    ;[...new Set([bid?.bid_owner?.id, pb.assignedById])].filter(id => id && id !== currentUser?.id).forEach(id =>
-      notify(id, `Post-bid contacts completed: ${bid.title}`,
-        `<p>${escHtml(actorName)} filled the post-bid contacts for <strong>${escHtml(bid.title)}</strong>. You can now complete the Bid Submission stage.</p>`, 'INFO'))
-  }
-  const reopen = () => savePostBid({ doneAt: '', doneBy: '' }, 'Reopened for changes')
-  const completeBlockedReason = financeOnly
-    ? 'Completing Bid Submission is a Bid Executive / Account Manager action, not Finance.'
-    : status === 'NOT_SUBMITTED' ? 'Confirm the bid is submitted first.'
-    : status === 'UNASSIGNED' ? 'Choose a Finance Manager for the post-bid contacts first.'
-    : `Waiting for ${pb.financeUserName || 'Finance'} to complete the post-bid contacts.`
 
   // Final submitted price is no longer hand-typed — it's sourced from Stage 4's
   // (Pricing Request) approved GlobX Total (incl. GST). If pricing was never
@@ -4425,7 +4371,7 @@ export function Stage9Workspace({ bid, onRefresh }) {
       <div className="p-4 rounded-xl border border-lime-200 bg-lime-50/50 dark:bg-lime-950/20 dark:border-lime-900/50 flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold text-lime-900 dark:text-lime-300">Stage 8: Tender Submission — GeM Portal</h3>
-          <p className="text-xs text-lime-700 dark:text-lime-400">Confirm the GeM submission, hand the post-bid contacts to Finance, then complete the stage.</p>
+          <p className="text-xs text-lime-700 dark:text-lime-400">Confirm the GeM submission with the final price, then complete the stage.</p>
         </div>
         <StageHeaderActions
           bid={bid}
@@ -4434,23 +4380,21 @@ export function Stage9Workspace({ bid, onRefresh }) {
           onRefresh={onRefresh}
           completeLabel="Complete Stage"
           completeClass="bg-lime-600 hover:bg-lime-700 text-white"
-          disabled={status !== 'DONE' || financeOnly}
-          disabledTooltip={completeBlockedReason}
+          disabled={!submitted}
+          disabledTooltip="Confirm the bid is submitted first."
         />
       </div>
 
       <div className="p-4 rounded-xl border border-border bg-card space-y-3">
         <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Bid submission</h4>
-        {status === 'NOT_SUBMITTED' ? (
+        {!submitted ? (
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <p className="text-xs text-muted-foreground max-w-xl">
-              Submit the bid on the GeM portal, then confirm it here with the final submitted price. You will then pick a Finance Manager to record the post-bid contacts.
+              Submit the bid on the GeM portal, then confirm it here with the final submitted price.
             </p>
-            <span title={financeOnly ? 'Only the bid team can confirm the submission' : undefined}>
-              <Button size="sm" disabled={busy || financeOnly} onClick={openSubmit} className="gap-1.5 text-xs bg-lime-600 hover:bg-lime-700 text-white">
-                <CheckCircle2 className="size-3.5" /> Mark Bid Submitted
-              </Button>
-            </span>
+            <Button size="sm" disabled={busy} onClick={openSubmit} className="gap-1.5 text-xs bg-lime-600 hover:bg-lime-700 text-white">
+              <CheckCircle2 className="size-3.5" /> Mark Bid Submitted
+            </Button>
           </div>
         ) : (
           <p className="text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
@@ -4459,59 +4403,13 @@ export function Stage9Workspace({ bid, onRefresh }) {
         )}
       </div>
 
-      {status !== 'NOT_SUBMITTED' && (
-        <div className="p-4 rounded-xl border border-border bg-card space-y-4">
+      {submitted && (
+        <div className="p-4 rounded-xl border border-border bg-card space-y-3">
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Post-bid contacts (Finance)</h4>
-            {status === 'DONE' && (
-              <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 text-[11px] font-semibold border border-emerald-300 dark:border-emerald-800">
-                Finance part complete
-              </span>
-            )}
-            {status === 'WAITING' && (
-              <span className="px-2.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 text-[11px] font-semibold border border-rose-300 dark:border-rose-800">
-                High priority · waiting for Finance
-              </span>
-            )}
+            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Contacts for this tender</h4>
+            <Link to={{ search: '?tab=contacts' }} className="text-xs text-primary hover:underline">Manage contacts</Link>
           </div>
-
-          {(status === 'UNASSIGNED' || reassigning) ? (
-            <div className="space-y-2 max-w-md">
-              <p className="text-xs text-muted-foreground">
-                {status === 'UNASSIGNED' ? 'Who in Finance should record the post-bid contacts? They are alerted and see it in their Approvals.' : 'Choose who should take this over.'}
-              </p>
-              <UserSelect id="post-bid-finance" users={financeUsers} loading={usersLoading} value={pickedId} onChange={setPickedId} placeholder="Select a Finance Manager or Executive" />
-              <div className="flex gap-2">
-                <Button size="sm" disabled={busy || !pickedId || financeOnly} onClick={assignFinance} className="text-xs">Assign & notify</Button>
-                {reassigning && <Button size="sm" variant="outline" onClick={() => { setReassigning(false); setPickedId('') }} className="text-xs">Cancel</Button>}
-              </div>
-              {financeUsers.length === 0 && !usersLoading && <p className="text-xs text-destructive">No active Finance Manager or Finance Executive found.</p>}
-            </div>
-          ) : (
-            <div className="flex items-center justify-between gap-3 flex-wrap text-xs text-muted-foreground">
-              <span>
-                Assigned to <span className="font-semibold text-foreground">{pb.financeUserName}</span>
-                {pb.assignedByName ? ` by ${pb.assignedByName}` : ''} · {fmtDateTime(pb.assignedAt)}
-              </span>
-              {status === 'WAITING' && !stageCompleted && !financeOnly && (
-                <Button size="sm" variant="outline" onClick={() => setReassigning(true)} className="h-7 text-xs">Change person</Button>
-              )}
-            </div>
-          )}
-
-          {status === 'WAITING' && canFill && (
-            <PostBidContactsForm key={pb.updatedAt || 'new'} initial={pb} busy={busy} onSave={saveDraft} onComplete={completeMyPart} />
-          )}
-          {status === 'WAITING' && !canFill && !reassigning && (
-            <p className="text-xs text-muted-foreground">Waiting for {pb.financeUserName} to fill the contacts. You will be notified when they are done.</p>
-          )}
-          {status === 'DONE' && (
-            <div className="space-y-3">
-              <p className="text-xs text-muted-foreground">Completed by {pb.doneBy} · {fmtDateTime(pb.doneAt)}</p>
-              <PostBidContactsView postBid={pb} />
-              {canFill && <Button size="sm" variant="outline" disabled={busy} onClick={reopen} className="text-xs">Reopen for changes</Button>}
-            </div>
-          )}
+          <ContactsSummary contacts={bid.contacts} />
         </div>
       )}
 
@@ -4563,7 +4461,7 @@ export function Stage9Workspace({ bid, onRefresh }) {
       {showModal && (
         <CompleteStageModal
           title="Complete Bid Submission"
-          description="Marks Stage 8 (Bid Submission) as complete. The post-bid contacts are recorded and the final submitted price is saved as the quoted price."
+          description="Marks Stage 8 (Bid Submission) as complete. The final submitted price is saved as the quoted price."
           stageKey="GEM_SUBMISSION"
           bidId={bid.id}
           bid={bid}
