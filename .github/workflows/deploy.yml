@@ -1,9 +1,9 @@
 name: Build and Push Docker Images to GHCR
 
+# Runs only when started by hand: GitHub -> Actions -> this workflow -> "Run workflow" (branch main).
+# A push, to main or any branch, never builds or deploys anything.
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   build-and-push:
