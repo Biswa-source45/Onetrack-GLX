@@ -2593,6 +2593,7 @@ func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary, accou
 		StartDate:                 bid.StartDate,
 		EndDate:                   bid.EndDate,
 		HighLevelScope:            bid.HighLevelScope,
+		Location:                  bid.Location,
 		TenderLink:                bid.TenderLink,
 		OEMRequired:               bid.OEMRequired,
 		BidOwner:                  *owner,

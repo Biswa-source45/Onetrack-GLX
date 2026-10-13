@@ -877,6 +877,7 @@ type BidListItem struct {
 	StartDate                 *time.Time   `json:"start_date,omitempty"`
 	EndDate                   *time.Time   `json:"end_date,omitempty"`
 	HighLevelScope            *string      `json:"high_level_scope,omitempty"`
+	Location                  *string      `json:"location,omitempty"`
 	TenderLink                *string      `json:"tender_link,omitempty"`
 	OEMRequired               bool         `json:"oem_required"`
 	BidOwner                  UserSummary  `json:"bid_owner"`

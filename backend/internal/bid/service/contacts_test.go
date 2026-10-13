@@ -212,3 +212,12 @@ func TestContactMoveReorderAndDelete(t *testing.T) {
 		t.Fatalf("deleting twice: want ErrNoRows, got %v", err)
 	}
 }
+
+// The list rows carry the tender's location (the sheet views show it).
+func TestBuildBidListItemCarriesLocation(t *testing.T) {
+	loc := "Pune"
+	item := buildBidListItem(&domain.BidWorkspace{ID: "b1", Title: "T", Location: &loc}, &domain.UserSummary{ID: "u1"}, nil, nil)
+	if item.Location == nil || *item.Location != "Pune" {
+		t.Fatalf("location missing from the list item: %+v", item.Location)
+	}
+}

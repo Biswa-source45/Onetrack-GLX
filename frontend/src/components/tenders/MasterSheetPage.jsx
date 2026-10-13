@@ -9,12 +9,12 @@ import { ImportedPill } from './ImportedPill'
 import { InProgressPill } from './InProgressPill'
 import { usePermissions } from '../../hooks/usePermissions'
 import {
-  formatCurrency, formatEmdExemption, formatDate,
+  formatAmount, formatEmdExemption, formatDate,
   formatDateTime, getTargetMonthDisplay, getSubmissionStatusVal,
   getFinEvalStatusVal, getPoRecvStatusVal, getBidResultVal,
 } from '../../lib/tenderFormat'
-import { StageBadge } from '../../lib/tenderDisplay'
-import { statusStyle, STAGE_LABELS } from '../../services/bids'
+import { SHEET_COLUMNS } from '../../lib/sheetColumns'
+import { statusStyle } from '../../services/bids'
 import { readMasterSheetDrill } from '../../lib/masterSheetDrill'
 import { downloadExcel } from '../../lib/excelExport'
 import { ExportSuccessDialog } from './ExportSuccessDialog'
@@ -34,19 +34,16 @@ const PILLS = [
   { key: 'CLOSED', label: 'Closed', metaKey: 'closed_count' },
 ]
 
-// Column definitions for the read-only master view, in display order. Mirrors
-// the editable "All Tenders" sheet column-for-column so the two views never
-// show different data for the same tender - render() is the only thing that
-// differs (plain text here, an input there).
-const COLUMNS = [
+// How each column of the read-only master view is rendered. Which columns exist, their order and their
+// names come from lib/sheetColumns.js (shared with the editable "All Tenders" sheet and both exports),
+// so the views never show different data or a different layout for the same tender.
+const RENDER = [
   { key: 'title', label: 'Tender Title', minWidth: 240, sticky: true,
     render: (b) => b.title },
   { key: 'created_at', label: 'Created At', minWidth: 160,
     render: (b) => formatDateTime(b.created_at) },
   { key: 'status', label: 'Status', minWidth: 110,
     render: (b) => <StatusPill status={b.bid_status} />, exportValue: (b) => b.bid_status ?? '' },
-  { key: 'stage', label: 'Workflow Stage', minWidth: 170,
-    render: (b) => <StageBadge stage={b.workflow_stage} />, exportValue: (b) => STAGE_LABELS[b.workflow_stage] ?? b.workflow_stage ?? '' },
   { key: 'category', label: 'Category', minWidth: 110,
     render: (b) => b.category ?? '—' },
   { key: 'bid_id', label: 'Bid ID', minWidth: 140, mono: true,
@@ -55,7 +52,7 @@ const COLUMNS = [
     render: (b) => b.portal_source ?? '—' },
   { key: 'account_name', label: 'Account Name', minWidth: 170,
     render: (b) => b.organization_name ?? '—' },
-  { key: 'department', label: 'Department', minWidth: 170,
+  { key: 'department', label: 'Department / Ministry', minWidth: 170,
     render: (b) => b.department_name ?? '—' },
   { key: 'location', label: 'Location', minWidth: 130,
     render: (b) => b.location ?? '—' },
@@ -67,8 +64,8 @@ const COLUMNS = [
     render: (b) => b.quantity ?? '—' },
   { key: 'scope_type', label: 'Scope Type', minWidth: 120,
     render: (b) => b.scope_type ?? '—' },
-  { key: 'emd', label: 'EMD', minWidth: 100,
-    render: (b) => formatCurrency(b.emd_amount) },
+  { key: 'emd', label: 'EMD Amount (₹)', minWidth: 100,
+    render: (b) => formatAmount(b.emd_amount), exportValue: (b) => b.emd_amount ?? '' },
   { key: 'no_emd', label: 'No EMD', minWidth: 80,
     render: (b) => (b.emd_not_applicable ? 'Yes' : 'No') },
   { key: 'emd_exemption', label: 'EMD Exemption', minWidth: 120,
@@ -81,10 +78,10 @@ const COLUMNS = [
     render: (b) => formatDate(b.opening_date || b.start_date) },
   { key: 'end_date', label: 'End Date', minWidth: 170,
     render: (b) => formatDateTime(b.closing_date || b.end_date) },
-  { key: 'estimated_value', label: 'Estimated Value', minWidth: 130,
-    render: (b) => formatCurrency(b.estimated_value) },
-  { key: 'globx_total', label: 'GlobX Total', minWidth: 130,
-    render: (b) => formatCurrency(b.quoted_price) },
+  { key: 'estimated_value', label: 'Estimated Tender Value (₹)', minWidth: 130,
+    render: (b) => formatAmount(b.estimated_value), exportValue: (b) => b.estimated_value ?? '' },
+  { key: 'globx_total', label: 'GlobX Total (₹)', minWidth: 130,
+    render: (b) => formatAmount(b.quoted_price), exportValue: (b) => b.quoted_price ?? '' },
   { key: 'tech_eval', label: 'Tech Eval', minWidth: 110,
     render: (b) => (b.technical_result === 'QUALIFIED' ? 'Qualified' : b.technical_result === 'DISQUALIFIED' ? 'Disqualified' : 'Pending') },
   { key: 'submission_status', label: 'Submission Status', minWidth: 130,
@@ -110,6 +107,12 @@ const COLUMNS = [
   { key: 'remarks', label: 'Remarks', minWidth: 220,
     render: (b) => b.remarks ?? '—' },
 ]
+
+const COLUMNS = SHEET_COLUMNS.map((sc) => {
+  const def = RENDER.find((r) => r.key === sc.key)
+  if (!def) throw new Error(`MasterSheetPage: no renderer for sheet column "${sc.key}"`)
+  return { ...def, label: sc.label, minWidth: sc.minWidth }
+})
 
 function StatusPill({ status }) {
   const s = statusStyle(status)
@@ -450,7 +453,7 @@ export function MasterSheetPage() {
 
 // Strips a React element down to its visible text for the Excel export. Only
 // walks a node's own `children` prop, so it cannot see inside a custom
-// component that builds its text internally (StatusPill, StageBadge) -
+// component that builds its text internally (StatusPill) -
 // those columns provide their own `exportValue` instead of relying on this.
 function plainText(node) {
   if (node == null || typeof node === 'boolean') return ''

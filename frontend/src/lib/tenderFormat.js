@@ -11,6 +11,13 @@ export function formatCurrency(val) {
   return `₹${val.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
 }
 
+// A money value as a plain number in Indian grouping, no symbol and no lakh/crore shorthand: the column
+// header carries the rupee sign (sheet views and their exports).
+export function formatAmount(val) {
+  if (val === null || val === undefined || val === '' || !Number.isFinite(Number(val))) return '—'
+  return Number(val).toLocaleString('en-IN', { maximumFractionDigits: 2 })
+}
+
 // EMD exemption basis, shown wherever "EMD Exemption" is tabulated (CSV export, Sheets view).
 // Distinct from "No EMD" (emd_not_applicable): exemption means an EMD is
 // required but waived for MSME/Startup/Other reasons, while Not Applicable

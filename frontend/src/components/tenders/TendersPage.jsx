@@ -72,14 +72,12 @@ import {
   listBids,
   getBid,
   updateBid,
-  transitionBidStage,
   restoreBid,
   permanentDeleteBid,
   getGlobalAuditHistory,
   getTenderPerformanceMatrix,
   STAGE_LABELS,
   statusStyle,
-  STAGE_TRANSITIONS,
   listAllBids,
   getMyPendingApprovals,
 } from "../../services/bids";
@@ -91,6 +89,7 @@ import { useBidStore } from "../../store/useBidStore";
 import { tokenStorage } from "../../services/auth";
 import {
   formatCurrency,
+  formatAmount,
   formatEmdExemption,
   formatDate,
   getBidEndDate,
@@ -102,8 +101,9 @@ import {
   getBidResultVal,
   getDerivedBidStatusAndOutcome,
 } from "../../lib/tenderFormat";
-import { StageBadge, StatusTag } from "../../lib/tenderDisplay";
+import { StatusTag } from "../../lib/tenderDisplay";
 import { downloadExcel } from "../../lib/excelExport";
+import { EDITABLE_SHEET_COLUMNS } from "../../lib/sheetColumns";
 import { ExportSuccessDialog } from "./ExportSuccessDialog";
 import { TodoBlocks } from "./TodoBlocks";
 
@@ -207,89 +207,65 @@ async function exportTendersToExcel(params, keep) {
     return { ...enriched, bid_status: status, bid_outcome: outcome };
   });
 
-  const headers = [
-    "Title",
-    "Status",
-    "Workflow Stage",
-    "Category",
-    "Bid ID",
-    "Platform",
-    "Department",
-    "High Level Scope",
-    "Quantity",
-    "Scope Type",
-    "EMD",
-    "EMD Exemption",
-    "BG Rate (%)",
-    "Target Month",
-    "Start Date",
-    "End Date",
-    "Estimated Value",
-    "GlobX Total (Bid Submit Price)",
-    "Tech Eval",
-    "Submission Status",
-    "Financial Evaluation Status",
-    "PO Received",
-    "PO Received Date",
-    "EMD Ready Date",
-    "BG Issued Date",
-    "Delivery/Work Complete Date",
-    "Our Rank",
-    "Result",
-    "Owner",
-    "Remarks",
-  ];
-
-  const rows = enrichedBids.map((b) => [
-    b.title,
-    b.bid_status,
-    STAGE_LABELS[b.workflow_stage] ?? b.workflow_stage,
-    b.category,
-    b.gem_bid_no ?? b.bid_no,
-    b.portal_source,
-    b.organization_name ?? b.department_name,
-    b.high_level_scope,
-    b.quantity,
-    b.scope_type,
-    b.emd_amount,
-    formatEmdExemption(b),
-    b.bg_rate,
-    b.target_month_date
-      ? new Date(b.target_month_date).toLocaleDateString("en-IN")
-      : "—",
-    b.opening_date ? new Date(b.opening_date).toLocaleDateString("en-IN") : "—",
-    b.closing_date
-      ? new Date(b.closing_date).toLocaleString("en-IN", {
-          day: "2-digit",
-          month: "short",
-          year: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        })
-      : "—",
-    b.estimated_value,
-    b.quoted_price,
-    b.technical_result === "QUALIFIED"
-      ? "Qualified"
-      : b.technical_result === "DISQUALIFIED"
-        ? "Disqualified"
-        : "Pending",
-    b.submission_status,
-    b.financial_evaluation_status,
-    b.po_received_status === "PO Received"
-      ? "Yes"
-      : ["LOST", "CANCELLED"].includes(b.bid_status)
-        ? "N/A"
-        : "No",
-    formatDate(b.po_received_date),
-    formatDate(b.emd_ready_date),
-    formatDate(b.bg_discharged_date),
-    formatDate(b.delivery_complete_date),
-    b.our_rank,
-    b.bid_result,
-    b.bid_owner?.full_name,
-    b.remarks,
-  ]);
+  // Same columns, order and names as the sheet (lib/sheetColumns.js).
+  const fmtDate = (v) => (v ? new Date(v).toLocaleDateString("en-IN") : "—");
+  const value = {
+    title: (b) => b.title,
+    status: (b) => b.bid_status,
+    account_name: (b) => b.organization_name,
+    department: (b) => b.department_name,
+    location: (b) => b.location,
+    bid_id: (b) => b.gem_bid_no ?? b.bid_no,
+    scope: (b) => b.high_level_scope,
+    end_date: (b) =>
+      b.closing_date
+        ? new Date(b.closing_date).toLocaleString("en-IN", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : "—",
+    estimated_value: (b) => b.estimated_value,
+    emd: (b) => b.emd_amount,
+    category: (b) => b.category,
+    platform: (b) => b.portal_source,
+    quantity: (b) => b.quantity,
+    scope_type: (b) => b.scope_type,
+    no_emd: (b) => (b.emd_not_applicable ? "Yes" : "No"),
+    emd_exemption: (b) => formatEmdExemption(b),
+    bg_rate: (b) => b.bg_rate,
+    target_month: (b) => fmtDate(b.target_month_date),
+    start_date: (b) => fmtDate(b.opening_date),
+    globx_total: (b) => b.quoted_price,
+    tech_eval: (b) =>
+      b.technical_result === "QUALIFIED"
+        ? "Qualified"
+        : b.technical_result === "DISQUALIFIED"
+          ? "Disqualified"
+          : "Pending",
+    submission_status: (b) => b.submission_status,
+    fin_eval: (b) => b.financial_evaluation_status,
+    po_received: (b) =>
+      b.po_received_status === "PO Received"
+        ? "Yes"
+        : ["LOST", "CANCELLED"].includes(b.bid_status)
+          ? "N/A"
+          : "No",
+    po_date: (b) => formatDate(b.po_received_date),
+    emd_ready_date: (b) => formatDate(b.emd_ready_date),
+    bg_issued_date: (b) => formatDate(b.bg_discharged_date),
+    delivery_date: (b) => formatDate(b.delivery_complete_date),
+    our_rank: (b) => b.our_rank,
+    result: (b) => b.bid_result,
+    owner: (b) => b.bid_owner?.full_name,
+    remarks: (b) => b.remarks,
+  };
+  const headers = EDITABLE_SHEET_COLUMNS.map((c) => c.label);
+  const rows = enrichedBids.map((b) =>
+    EDITABLE_SHEET_COLUMNS.map((c) => value[c.key](b)),
+  );
 
   const filename = `tenders_export_${new Date().toISOString().slice(0, 10)}.xlsx`;
   await downloadExcel({ sheetName: "Tenders", headers, rows, filename });
@@ -709,39 +685,6 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
   const handleFieldSave = async (bidId, field, value) => {
     const currentBid = bids.find((b) => b.id === bidId);
     if (!currentBid) return;
-
-    if (field === "workflow_stage") {
-      try {
-        const res = await transitionBidStage(
-          bidId,
-          value,
-          "Updated via spreadsheet inline edit",
-        );
-        if (res.ok) {
-          const updated = bids.map((b) => {
-            if (b.id === bidId) {
-              return {
-                ...b,
-                workflow_stage: value,
-              };
-            }
-            return b;
-          });
-          useBidStore.setState({ bids: updated });
-        } else {
-          toast.error(
-            res.error?.message ??
-              `Invalid transition to ${STAGE_LABELS[value] ?? value}`,
-          );
-          loadBids();
-        }
-      } catch (err) {
-        console.error("Failed to transition stage:", err);
-        toast.error("Network error during stage transition");
-        loadBids();
-      }
-      return;
-    }
 
     let sendValue = value;
     if (
@@ -1908,99 +1851,19 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                   <table className="min-w-full w-max text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-muted/40 border-b border-border text-[11px] font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
-                        <th className="p-3 border-r border-border min-w-[240px] sticky left-0 bg-[color-mix(in_srgb,var(--muted)_40%,var(--card))] z-20 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)]">
-                          Tender Title
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[120px]">
-                          Status
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[180px]">
-                          Workflow Stage
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[120px]">
-                          Category
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[140px]">
-                          Bid ID
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[135px]">
-                          Platform
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[180px]">
-                          Department
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[240px]">
-                          High Level Scope
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[90px]">
-                          Quantity
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[140px]">
-                          Scope Type
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[120px]">
-                          EMD
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[100px]">
-                          No EMD
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[130px]">
-                          EMD Exemption
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[110px]">
-                          BG Rate (%)
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[150px]">
-                          Target Month
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[150px]">
-                          Start Date
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[180px]">
-                          End Date
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[130px]">
-                          Estimated Value
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[140px]">
-                          GlobX Total
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[120px]">
-                          Tech Eval
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[140px]">
-                          Submission Status
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[160px]">
-                          Fin Eval Status
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[140px]">
-                          PO Received
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[140px]">
-                          PO Received Date
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[140px]">
-                          EMD Ready Date
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[140px]">
-                          BG Issued Date
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[150px]">
-                          Delivery/Work Complete Date
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[110px]">
-                          Our Rank
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[140px]">
-                          Result
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[130px]">
-                          Owner
-                        </th>
-                        <th className="p-3 border-r border-border min-w-[200px]">
-                          Remarks
-                        </th>
+                        {EDITABLE_SHEET_COLUMNS.map((c) => (
+                          <th
+                            key={c.key}
+                            style={{ minWidth: c.minWidth }}
+                            className={
+                              c.key === "title"
+                                ? "p-3 border-r border-border sticky left-0 bg-[color-mix(in_srgb,var(--muted)_40%,var(--card))] z-20 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)]"
+                                : "p-3 border-r border-border"
+                            }
+                          >
+                            {c.label}
+                          </th>
+                        ))}
                         {inBin && (
                           <th className="p-3 min-w-[160px] text-center bg-rose-50/50 text-rose-900">
                             Bin Actions
@@ -2022,884 +1885,902 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                           : bid.bid_no
                             ? "bid_no"
                             : "gem_bid_no";
+                        const cells = {
+                          title: (
+                        <td key="title"
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        if (isReadOnly && hasPermission("bid.view")) {
+                                                          navigate(`/dashboard/tenders/${bid.id}`);
+                                                        }
+                                                      }}
+                                                      className={`p-3 border-r border-border min-w-[240px] truncate max-w-sm sticky left-0 bg-card group-hover/row:bg-[color-mix(in_srgb,var(--muted)_30%,var(--card))] z-10 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)] ${isReadOnly ? "font-semibold text-foreground hover:text-primary hover:underline cursor-pointer" : ""}`}
+                                                    >
+                                                      <div className="flex items-center gap-2.5 w-full">
+                                                        {bid.is_imported && <ImportedPill compact />}
+                                                        {bid.derived_status === "ACTIVE" && <InProgressPill compact />}
+                                                        {bid.bid_status === "ACTIVE" ? (
+                                                          <span
+                                                            className="relative flex size-2 shrink-0"
+                                                            title="Active"
+                                                          >
+                                                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                                                            <span className="relative inline-flex rounded-full size-2 bg-emerald-500"></span>
+                                                          </span>
+                                                        ) : (
+                                                          <span
+                                                            className={`size-2 rounded-full shrink-0 ${statusStyle(bid.bid_status).dot}`}
+                                                            title={bid.bid_status}
+                                                          />
+                                                        )}
+
+                                                        {!isReadOnly ? (
+                                                          <input
+                                                            type="text"
+                                                            value={bid.title || ""}
+                                                            onChange={(e) =>
+                                                              handleFieldChangeLocal(
+                                                                bid.id,
+                                                                "title",
+                                                                e.target.value,
+                                                              )
+                                                            }
+                                                            onBlur={(e) =>
+                                                              handleFieldSave(
+                                                                bid.id,
+                                                                "title",
+                                                                e.target.value,
+                                                              )
+                                                            }
+                                                            onKeyDown={(e) =>
+                                                              e.key === "Enter" && e.target.blur()
+                                                            }
+                                                            className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground font-semibold rounded"
+                                                          />
+                                                        ) : (
+                                                          <span className="truncate">{bid.title}</span>
+                                                        )}
+                                                      </div>
+                                                    </td>
+                          ),
+                          status: (
+                        <td key="status" className="p-3 border-r border-border text-center">
+                                                      <span
+                                                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${statusStyle(bid.bid_status).pill}`}
+                                                      >
+                                                        {bid.bid_status}
+                                                      </span>
+                                                    </td>
+                          ),
+                          category: (
+                        <td key="category" className="p-3 border-r border-border truncate max-w-xs">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="text"
+                                                          value={bid.category || ""}
+                                                          onChange={(e) =>
+                                                            handleFieldChangeLocal(
+                                                              bid.id,
+                                                              "category",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onBlur={(e) =>
+                                                            handleFieldSave(
+                                                              bid.id,
+                                                              "category",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key === "Enter" && e.target.blur()
+                                                          }
+                                                          className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
+                                                          placeholder="Category"
+                                                        />
+                                                      ) : (
+                                                        (bid.category ?? "—")
+                                                      )}
+                                                    </td>
+                          ),
+                          bid_id: (
+                        <td key="bid_id" className="p-3 border-r border-border font-mono text-primary font-medium">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="text"
+                                                          value={bid[bidIdField] || ""}
+                                                          onChange={(e) =>
+                                                            handleFieldChangeLocal(
+                                                              bid.id,
+                                                              bidIdField,
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onBlur={(e) =>
+                                                            handleFieldSave(
+                                                              bid.id,
+                                                              bidIdField,
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key === "Enter" && e.target.blur()
+                                                          }
+                                                          className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-primary font-medium rounded font-mono"
+                                                          placeholder="Bid Number / RFP Number"
+                                                        />
+                                                      ) : (
+                                                        (bid.gem_bid_no ?? bid.bid_no ?? "—")
+                                                      )}
+                                                    </td>
+                          ),
+                          platform: (
+                        <td key="platform" className="p-3 border-r border-border">
+                                                      {!isReadOnly ? (
+                                                        <DropdownMenu>
+                                                          <DropdownMenuTrigger asChild>
+                                                            <button className="flex items-center gap-1.5 bg-background hover:bg-muted/50 text-foreground border border-border rounded-md px-2 py-1 text-xs text-left min-w-[90px] justify-between focus:ring-1 focus:ring-primary outline-none transition-all shadow-sm">
+                                                              <span>
+                                                                {bid.portal_source || "Select Portal"}
+                                                              </span>
+                                                              <ChevronDown className="size-3 text-muted-foreground ml-1" />
+                                                            </button>
+                                                          </DropdownMenuTrigger>
+                                                          <DropdownMenuContent
+                                                            align="start"
+                                                            className="min-w-[120px]"
+                                                          >
+                                                            {PORTAL_SOURCES.map((p) => (
+                                                              <DropdownMenuItem
+                                                                key={p}
+                                                                onSelect={() =>
+                                                                  handleImmediateChangeAndSave(
+                                                                    bid.id,
+                                                                    "portal_source",
+                                                                    p,
+                                                                  )
+                                                                }
+                                                                className="text-xs"
+                                                              >
+                                                                {p}
+                                                              </DropdownMenuItem>
+                                                            ))}
+                                                          </DropdownMenuContent>
+                                                        </DropdownMenu>
+                                                      ) : (
+                                                        (bid.portal_source ?? "—")
+                                                      )}
+                                                    </td>
+                          ),
+                          account_name: (
+                        <td key="account_name" className="p-3 border-r border-border truncate max-w-xs">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="text"
+                                                          value={bid.organization_name || ""}
+                                                          onChange={(e) =>
+                                                            handleFieldChangeLocal(
+                                                              bid.id,
+                                                              "organization_name",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onBlur={(e) =>
+                                                            handleFieldSave(
+                                                              bid.id,
+                                                              "organization_name",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key === "Enter" && e.target.blur()
+                                                          }
+                                                          className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
+                                                          placeholder="Account Name"
+                                                        />
+                                                      ) : (
+                                                        (bid.organization_name ?? "—")
+                                                      )}
+                                                    </td>
+                          ),
+                          scope: (
+                        <td key="scope" className="p-3 border-r border-border truncate max-w-xs">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="text"
+                                                          value={bid.high_level_scope || ""}
+                                                          onChange={(e) =>
+                                                            handleFieldChangeLocal(
+                                                              bid.id,
+                                                              "high_level_scope",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onBlur={(e) =>
+                                                            handleFieldSave(
+                                                              bid.id,
+                                                              "high_level_scope",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key === "Enter" && e.target.blur()
+                                                          }
+                                                          className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
+                                                          placeholder="High Level Scope"
+                                                        />
+                                                      ) : (
+                                                        (bid.high_level_scope ?? "—")
+                                                      )}
+                                                    </td>
+                          ),
+                          quantity: (
+                        <td key="quantity" className="p-3 border-r border-border">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="text"
+                                                          value={bid.quantity ?? ""}
+                                                          onChange={(e) =>
+                                                            handleFieldChangeLocal(
+                                                              bid.id,
+                                                              "quantity",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onBlur={(e) =>
+                                                            handleFieldSave(
+                                                              bid.id,
+                                                              "quantity",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key === "Enter" && e.target.blur()
+                                                          }
+                                                          className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
+                                                          placeholder="Qty"
+                                                        />
+                                                      ) : (
+                                                        (bid.quantity ?? "—")
+                                                      )}
+                                                    </td>
+                          ),
+                          scope_type: (
+                        <td key="scope_type" className="p-3 border-r border-border">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="text"
+                                                          value={bid.scope_type || ""}
+                                                          onChange={(e) =>
+                                                            handleFieldChangeLocal(
+                                                              bid.id,
+                                                              "scope_type",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onBlur={(e) =>
+                                                            handleFieldSave(
+                                                              bid.id,
+                                                              "scope_type",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key === "Enter" && e.target.blur()
+                                                          }
+                                                          className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
+                                                          placeholder="Scope Type"
+                                                        />
+                                                      ) : (
+                                                        (bid.scope_type ?? "—")
+                                                      )}
+                                                    </td>
+                          ),
+                          emd: (
+                        <td key="emd" className="p-3 border-r border-border font-medium text-foreground">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="number"
+                                                          value={
+                                                            bid.emd_amount !== undefined &&
+                                                            bid.emd_amount !== null
+                                                              ? bid.emd_amount
+                                                              : ""
+                                                          }
+                                                          onChange={(e) =>
+                                                            handleFieldChangeLocal(
+                                                              bid.id,
+                                                              "emd_amount",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onBlur={(e) =>
+                                                            handleFieldSave(
+                                                              bid.id,
+                                                              "emd_amount",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key === "Enter" && e.target.blur()
+                                                          }
+                                                          disabled={!!bid.emd_exempted}
+                                                          className={`w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground font-medium rounded ${bid.emd_exempted ? "text-muted-foreground bg-muted/20 cursor-not-allowed" : ""}`}
+                                                          placeholder="0"
+                                                        />
+                                                      ) : (
+                                                        formatAmount(bid.emd_amount)
+                                                      )}
+                                                    </td>
+                          ),
+                          no_emd: (
+                        <td key="no_emd" className="p-3 border-r border-border">
+                                                      {!isReadOnly ? (
+                                                        <button
+                                                          onClick={() =>
+                                                            handleImmediateChangeAndSave(
+                                                              bid.id,
+                                                              "emd_not_applicable",
+                                                              !bid.emd_not_applicable,
+                                                            )
+                                                          }
+                                                          disabled={!!bid.emd_exempted}
+                                                          className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                                                            bid.emd_not_applicable
+                                                              ? "bg-slate-500 hover:bg-slate-600 text-white"
+                                                              : "bg-muted hover:bg-muted/80 text-muted-foreground border border-border"
+                                                          }`}
+                                                        >
+                                                          {bid.emd_not_applicable ? "Yes" : "No"}
+                                                        </button>
+                                                      ) : bid.emd_not_applicable ? (
+                                                        <span className="text-slate-600 font-bold flex items-center gap-0.5">
+                                                          <Check className="size-3.5" /> Yes
+                                                        </span>
+                                                      ) : (
+                                                        <span className="text-muted-foreground">
+                                                          No
+                                                        </span>
+                                                      )}
+                                                    </td>
+                          ),
+                          emd_exemption: (
+                        <td key="emd_exemption" className="p-3 border-r border-border">
+                                                      {!isReadOnly ? (
+                                                        <button
+                                                          onClick={() =>
+                                                            handleImmediateChangeAndSave(
+                                                              bid.id,
+                                                              "emd_exempted",
+                                                              !bid.emd_exempted,
+                                                            )
+                                                          }
+                                                          disabled={!!bid.emd_not_applicable}
+                                                          className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                                                            bid.emd_exempted
+                                                              ? "bg-emerald-500 hover:bg-emerald-600 text-white"
+                                                              : "bg-muted hover:bg-muted/80 text-muted-foreground border border-border"
+                                                          }`}
+                                                        >
+                                                          {bid.emd_exempted ? "Yes" : "No"}
+                                                        </button>
+                                                      ) : bid.emd_exempted ? (
+                                                        <span
+                                                          className="text-emerald-600 font-bold flex items-center gap-0.5"
+                                                          title={formatEmdExemption(bid)}
+                                                        >
+                                                          <Check className="size-3.5" />{" "}
+                                                          {formatEmdExemption(bid)}
+                                                        </span>
+                                                      ) : (
+                                                        <span className="text-muted-foreground">
+                                                          No
+                                                        </span>
+                                                      )}
+                                                    </td>
+                          ),
+                          bg_rate: (
+                        <td key="bg_rate" className="p-3 border-r border-border">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="number"
+                                                          step="any"
+                                                          value={
+                                                            bid.bg_rate !== undefined &&
+                                                            bid.bg_rate !== null
+                                                              ? bid.bg_rate
+                                                              : ""
+                                                          }
+                                                          onChange={(e) =>
+                                                            handleFieldChangeLocal(
+                                                              bid.id,
+                                                              "bg_rate",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onBlur={(e) =>
+                                                            handleFieldSave(
+                                                              bid.id,
+                                                              "bg_rate",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key === "Enter" && e.target.blur()
+                                                          }
+                                                          className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
+                                                          placeholder="BG Rate"
+                                                        />
+                                                      ) : bid.bg_rate !== undefined &&
+                                                        bid.bg_rate !== null ? (
+                                                        `${bid.bg_rate}%`
+                                                      ) : (
+                                                        "—"
+                                                      )}
+                                                    </td>
+                          ),
+                          target_month: (
+                        <td key="target_month" className="p-3 border-r border-border text-foreground font-medium">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="date"
+                                                          value={safeDateInputFormat(
+                                                            bid.target_month_date,
+                                                          )}
+                                                          onChange={(e) =>
+                                                            handleImmediateChangeAndSave(
+                                                              bid.id,
+                                                              "target_month_date",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          className="bg-transparent border-none text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary p-0.5 rounded"
+                                                        />
+                                                      ) : (
+                                                        getTargetMonthDisplay(bid)
+                                                      )}
+                                                    </td>
+                          ),
+                          start_date: (
+                        <td key="start_date" className="p-3 border-r border-border text-muted-foreground">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="date"
+                                                          value={safeDateInputFormat(bid.opening_date)}
+                                                          onChange={(e) =>
+                                                            handleImmediateChangeAndSave(
+                                                              bid.id,
+                                                              "opening_date",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          className="bg-transparent border-none text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary p-0.5 rounded"
+                                                        />
+                                                      ) : (
+                                                        formatDate(bid.opening_date)
+                                                      )}
+                                                    </td>
+                          ),
+                          end_date: (
+                        <td key="end_date" className="p-3 border-r border-border text-muted-foreground">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="datetime-local"
+                                                          value={safeDateTimeInputFormat(
+                                                            bid.closing_date,
+                                                          )}
+                                                          onChange={(e) =>
+                                                            handleImmediateChangeAndSave(
+                                                              bid.id,
+                                                              "closing_date",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          className="bg-transparent border-none text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary p-0.5 rounded"
+                                                        />
+                                                      ) : (
+                                                        formatDateTime(bid.closing_date)
+                                                      )}
+                                                    </td>
+                          ),
+                          estimated_value: (
+                        <td key="estimated_value" className="p-3 border-r border-border font-medium text-foreground">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="number"
+                                                          value={
+                                                            bid.estimated_value !== undefined &&
+                                                            bid.estimated_value !== null
+                                                              ? bid.estimated_value
+                                                              : ""
+                                                          }
+                                                          onChange={(e) =>
+                                                            handleFieldChangeLocal(
+                                                              bid.id,
+                                                              "estimated_value",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onBlur={(e) =>
+                                                            handleFieldSave(
+                                                              bid.id,
+                                                              "estimated_value",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key === "Enter" && e.target.blur()
+                                                          }
+                                                          className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground font-medium rounded"
+                                                          placeholder="0"
+                                                        />
+                                                      ) : (
+                                                        formatAmount(bid.estimated_value)
+                                                      )}
+                                                    </td>
+                          ),
+                          // The final submitted bid price (Bid Submission), sourced from the approved Pricing Request total. Read-only.
+  globx_total: (
+                        <td key="globx_total" className="p-3 border-r border-border font-mono font-semibold text-foreground">
+                                                      {bid.quoted_price !== null &&
+                                                      bid.quoted_price !== undefined
+                                                        ? formatAmount(bid.quoted_price)
+                                                        : "—"}
+                                                    </td>
+                          ),
+                          // The actual Technical Evaluation result, set only via the Stage 9 workspace (captures the
+  // disqualification reason and closes the bid as LOST). Read-only here so that cannot be bypassed.
+  tech_eval: (
+                        <td key="tech_eval" className="p-3 border-r border-border">
+                                                      {bid.technical_result === "QUALIFIED" ? (
+                                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                                          <Check className="size-3" /> Qualified
+                                                        </span>
+                                                      ) : bid.technical_result === "DISQUALIFIED" ? (
+                                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                                                          <XCircle className="size-3" /> Disqualified
+                                                        </span>
+                                                      ) : (
+                                                        <span className="text-muted-foreground text-[11px]">
+                                                          Pending
+                                                        </span>
+                                                      )}
+                                                    </td>
+                          ),
+                          submission_status: (
+                        <td key="submission_status" className="p-3 border-r border-border">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="text"
+                                                          value={bid.submission_status || ""}
+                                                          onChange={(e) =>
+                                                            handleFieldChangeLocal(
+                                                              bid.id,
+                                                              "submission_status",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onBlur={(e) =>
+                                                            handleFieldSave(
+                                                              bid.id,
+                                                              "submission_status",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key === "Enter" && e.target.blur()
+                                                          }
+                                                          className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
+                                                          placeholder={getSubmissionStatusVal(bid)}
+                                                        />
+                                                      ) : (
+                                                        <StatusTag text={getSubmissionStatusVal(bid)} />
+                                                      )}
+                                                    </td>
+                          ),
+                          fin_eval: (
+                        <td key="fin_eval" className="p-3 border-r border-border">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="text"
+                                                          value={bid.financial_evaluation_status || ""}
+                                                          onChange={(e) =>
+                                                            handleFieldChangeLocal(
+                                                              bid.id,
+                                                              "financial_evaluation_status",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onBlur={(e) =>
+                                                            handleFieldSave(
+                                                              bid.id,
+                                                              "financial_evaluation_status",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key === "Enter" && e.target.blur()
+                                                          }
+                                                          className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
+                                                          placeholder={getFinEvalStatusVal(bid)}
+                                                        />
+                                                      ) : (
+                                                        <StatusTag text={getFinEvalStatusVal(bid)} />
+                                                      )}
+                                                    </td>
+                          ),
+                          po_received: (
+                        <td key="po_received" className="p-3 border-r border-border">
+                                                      {!isReadOnly ? (
+                                                        <button
+                                                          onClick={() =>
+                                                            handlePoReceivedToggle(
+                                                              bid.id,
+                                                              bid.po_received_status !== "PO Received",
+                                                            )
+                                                          }
+                                                          className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${
+                                                            bid.po_received_status === "PO Received"
+                                                              ? "bg-emerald-500 hover:bg-emerald-600 text-white"
+                                                              : "bg-muted hover:bg-muted/80 text-muted-foreground border border-border"
+                                                          }`}
+                                                        >
+                                                          {bid.po_received_status === "PO Received"
+                                                            ? "Yes"
+                                                            : "No"}
+                                                        </button>
+                                                      ) : bid.po_received_status === "PO Received" ? (
+                                                        <span className="text-emerald-600 font-bold flex items-center gap-0.5">
+                                                          <Check className="size-3.5" /> Yes
+                                                        </span>
+                                                      ) : (
+                                                        <span className="text-muted-foreground">
+                                                          {getPoRecvStatusVal(bid) === "N/A"
+                                                            ? "N/A"
+                                                            : "No"}
+                                                        </span>
+                                                      )}
+                                                    </td>
+                          ),
+                          // PO Received / EMD Ready / BG Issued / Delivery Complete dates are read-only: set from their stage workspaces.
+  po_date: (
+                        <td key="po_date" className="p-3 border-r border-border text-muted-foreground">
+                                                      {formatDate(bid.po_received_date)}
+                                                    </td>
+                          ),
+                          emd_ready_date: (
+                        <td key="emd_ready_date" className="p-3 border-r border-border text-muted-foreground">
+                                                      {formatDate(bid.emd_ready_date)}
+                                                    </td>
+                          ),
+                          bg_issued_date: (
+                        <td key="bg_issued_date" className="p-3 border-r border-border text-muted-foreground">
+                                                      {formatDate(bid.bg_discharged_date)}
+                                                    </td>
+                          ),
+                          delivery_date: (
+                        <td key="delivery_date" className="p-3 border-r border-border text-muted-foreground">
+                                                      {formatDate(bid.delivery_complete_date)}
+                                                    </td>
+                          ),
+                          our_rank: (
+                        <td key="our_rank" className="p-3 border-r border-border">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="text"
+                                                          value={bid.our_rank ?? ""}
+                                                          onChange={(e) =>
+                                                            handleFieldChangeLocal(
+                                                              bid.id,
+                                                              "our_rank",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onBlur={(e) =>
+                                                            handleFieldSave(
+                                                              bid.id,
+                                                              "our_rank",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key === "Enter" && e.target.blur()
+                                                          }
+                                                          className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-primary font-medium rounded font-mono"
+                                                          placeholder="e.g. L2"
+                                                        />
+                                                      ) : (
+                                                        (bid.our_rank ?? "—")
+                                                      )}
+                                                    </td>
+                          ),
+                          result: (
+                        <td key="result" className="p-3 border-r border-border">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="text"
+                                                          value={bid.bid_result || ""}
+                                                          onChange={(e) =>
+                                                            handleFieldChangeLocal(
+                                                              bid.id,
+                                                              "bid_result",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onBlur={(e) =>
+                                                            handleFieldSave(
+                                                              bid.id,
+                                                              "bid_result",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key === "Enter" && e.target.blur()
+                                                          }
+                                                          className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
+                                                          placeholder={getBidResultVal(bid)}
+                                                        />
+                                                      ) : (
+                                                        <StatusTag text={getBidResultVal(bid)} />
+                                                      )}
+                                                    </td>
+                          ),
+                          owner: (
+                        <td key="owner" className="p-3 border-r border-border">
+                                                      {!isReadOnly ? (
+                                                        <DropdownMenu>
+                                                          <DropdownMenuTrigger asChild>
+                                                            <button className="flex items-center gap-1.5 bg-background hover:bg-muted/50 text-foreground border border-border rounded-md px-2 py-1 text-xs text-left min-w-[120px] justify-between focus:ring-1 focus:ring-primary outline-none transition-all shadow-sm">
+                                                              <span>
+                                                                {bid.bid_owner?.full_name ||
+                                                                  "Select Owner"}
+                                                              </span>
+                                                              <ChevronDown className="size-3 text-muted-foreground ml-1" />
+                                                            </button>
+                                                          </DropdownMenuTrigger>
+                                                          <DropdownMenuContent
+                                                            align="start"
+                                                            className="max-h-[200px] overflow-y-auto min-w-[140px]"
+                                                          >
+                                                            <DropdownMenuItem
+                                                              onSelect={() =>
+                                                                handleImmediateChangeAndSave(
+                                                                  bid.id,
+                                                                  "bid_owner_id",
+                                                                  null,
+                                                                )
+                                                              }
+                                                              className="text-xs text-muted-foreground italic"
+                                                            >
+                                                              Unassigned
+                                                            </DropdownMenuItem>
+                                                            {users.map((u) => (
+                                                              <DropdownMenuItem
+                                                                key={u.id}
+                                                                onSelect={() =>
+                                                                  handleImmediateChangeAndSave(
+                                                                    bid.id,
+                                                                    "bid_owner_id",
+                                                                    u.id,
+                                                                  )
+                                                                }
+                                                                className="text-xs"
+                                                              >
+                                                                {u.full_name}
+                                                              </DropdownMenuItem>
+                                                            ))}
+                                                          </DropdownMenuContent>
+                                                        </DropdownMenu>
+                                                      ) : (
+                                                        (bid.bid_owner?.full_name ?? "—")
+                                                      )}
+                                                    </td>
+                          ),
+                          remarks: (
+                        <td key="remarks"
+                                                      className={`p-3 truncate max-w-xs text-muted-foreground ${inBin ? "border-r border-border" : ""}`}
+                                                      title={bid.remarks}
+                                                    >
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="text"
+                                                          value={bid.remarks || ""}
+                                                          onChange={(e) =>
+                                                            handleFieldChangeLocal(
+                                                              bid.id,
+                                                              "remarks",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onBlur={(e) =>
+                                                            handleFieldSave(
+                                                              bid.id,
+                                                              "remarks",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key === "Enter" && e.target.blur()
+                                                          }
+                                                          className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
+                                                          placeholder="Remarks"
+                                                        />
+                                                      ) : (
+                                                        (bid.remarks ?? "—")
+                                                      )}
+                                                    </td>
+                          ),
+                          department: (
+                        <td key="department" className="p-3 border-r border-border truncate max-w-xs">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="text"
+                                                          value={bid.department_name || ""}
+                                                          onChange={(e) =>
+                                                            handleFieldChangeLocal(
+                                                              bid.id,
+                                                              "department_name",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onBlur={(e) =>
+                                                            handleFieldSave(
+                                                              bid.id,
+                                                              "department_name",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key === "Enter" && e.target.blur()
+                                                          }
+                                                          className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
+                                                          placeholder="Department / Ministry"
+                                                        />
+                                                      ) : (
+                                                        (bid.department_name ?? "—")
+                                                      )}
+                                                    </td>
+                          ),
+                          location: (
+                        <td key="location" className="p-3 border-r border-border truncate max-w-xs">
+                                                      {!isReadOnly ? (
+                                                        <input
+                                                          type="text"
+                                                          value={bid.location || ""}
+                                                          onChange={(e) =>
+                                                            handleFieldChangeLocal(
+                                                              bid.id,
+                                                              "location",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onBlur={(e) =>
+                                                            handleFieldSave(
+                                                              bid.id,
+                                                              "location",
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          onKeyDown={(e) =>
+                                                            e.key === "Enter" && e.target.blur()
+                                                          }
+                                                          className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
+                                                          placeholder="Location"
+                                                        />
+                                                      ) : (
+                                                        (bid.location ?? "—")
+                                                      )}
+                                                    </td>
+                          ),
+                        };
+
                         return (
                           <tr
                             key={bid.id}
                             className={`hover:bg-muted/30 transition-colors whitespace-nowrap align-middle group/row
                             ${["CANCELLED", "ARCHIVED", "LOST"].includes(bid.bid_status) ? "text-muted-foreground/85" : ""}`}
                           >
-                            {/* 1. Tender Title */}
-                            <td
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (isReadOnly && hasPermission("bid.view")) {
-                                  navigate(`/dashboard/tenders/${bid.id}`);
-                                }
-                              }}
-                              className={`p-3 border-r border-border min-w-[240px] truncate max-w-sm sticky left-0 bg-card group-hover/row:bg-[color-mix(in_srgb,var(--muted)_30%,var(--card))] z-10 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)] ${isReadOnly ? "font-semibold text-foreground hover:text-primary hover:underline cursor-pointer" : ""}`}
-                            >
-                              <div className="flex items-center gap-2.5 w-full">
-                                {bid.is_imported && <ImportedPill compact />}
-                                {bid.derived_status === "ACTIVE" && <InProgressPill compact />}
-                                {bid.bid_status === "ACTIVE" ? (
-                                  <span
-                                    className="relative flex size-2 shrink-0"
-                                    title="Active"
-                                  >
-                                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-                                    <span className="relative inline-flex rounded-full size-2 bg-emerald-500"></span>
-                                  </span>
-                                ) : (
-                                  <span
-                                    className={`size-2 rounded-full shrink-0 ${statusStyle(bid.bid_status).dot}`}
-                                    title={bid.bid_status}
-                                  />
-                                )}
-
-                                {!isReadOnly ? (
-                                  <input
-                                    type="text"
-                                    value={bid.title || ""}
-                                    onChange={(e) =>
-                                      handleFieldChangeLocal(
-                                        bid.id,
-                                        "title",
-                                        e.target.value,
-                                      )
-                                    }
-                                    onBlur={(e) =>
-                                      handleFieldSave(
-                                        bid.id,
-                                        "title",
-                                        e.target.value,
-                                      )
-                                    }
-                                    onKeyDown={(e) =>
-                                      e.key === "Enter" && e.target.blur()
-                                    }
-                                    className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground font-semibold rounded"
-                                  />
-                                ) : (
-                                  <span className="truncate">{bid.title}</span>
-                                )}
-                              </div>
-                            </td>
-
-                            {/* 2. Status */}
-                            <td className="p-3 border-r border-border text-center">
-                              <span
-                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${statusStyle(bid.bid_status).pill}`}
-                              >
-                                {bid.bid_status}
-                              </span>
-                            </td>
-
-                            {/* 3. Workflow Stage */}
-                            <td className="p-3 border-r border-border">
-                              {!isReadOnly ? (
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <button className="flex items-center gap-1.5 bg-background hover:bg-muted/50 text-foreground border border-border rounded-md px-2 py-1 text-xs text-left min-w-[130px] justify-between focus:ring-1 focus:ring-primary outline-none transition-all shadow-sm">
-                                      <span>
-                                        {STAGE_OPTIONS.find(
-                                          (o) => o.value === bid.workflow_stage,
-                                        )?.label ||
-                                          bid.workflow_stage ||
-                                          "Discovered"}
-                                      </span>
-                                      <ChevronDown className="size-3 text-muted-foreground ml-1" />
-                                    </button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent
-                                    align="start"
-                                    className="max-h-[300px] overflow-y-auto min-w-[160px]"
-                                  >
-                                    {STAGE_OPTIONS.filter(
-                                      (o) => o.value !== "",
-                                    ).map((o) => {
-                                      const isCurrent =
-                                        o.value === bid.workflow_stage;
-                                      const allowedNext =
-                                        STAGE_TRANSITIONS[bid.workflow_stage] ??
-                                        [];
-                                      const isAllowed =
-                                        isCurrent ||
-                                        allowedNext.includes(o.value);
-                                      return (
-                                        <DropdownMenuItem
-                                          key={o.value}
-                                          disabled={!isAllowed}
-                                          onSelect={() =>
-                                            handleImmediateChangeAndSave(
-                                              bid.id,
-                                              "workflow_stage",
-                                              o.value,
-                                            )
-                                          }
-                                          className={`text-xs ${isCurrent ? "font-semibold text-primary bg-accent/40" : ""}`}
-                                        >
-                                          {o.label}
-                                        </DropdownMenuItem>
-                                      );
-                                    })}
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              ) : (
-                                <StageBadge stage={bid.workflow_stage} />
-                              )}
-                            </td>
-
-                            {/* 4. Category */}
-                            <td className="p-3 border-r border-border truncate max-w-xs">
-                              {!isReadOnly ? (
-                                <input
-                                  type="text"
-                                  value={bid.category || ""}
-                                  onChange={(e) =>
-                                    handleFieldChangeLocal(
-                                      bid.id,
-                                      "category",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onBlur={(e) =>
-                                    handleFieldSave(
-                                      bid.id,
-                                      "category",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onKeyDown={(e) =>
-                                    e.key === "Enter" && e.target.blur()
-                                  }
-                                  className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                  placeholder="Category"
-                                />
-                              ) : (
-                                (bid.category ?? "—")
-                              )}
-                            </td>
-
-                            {/* 6. Bid ID (gem_bid_no) */}
-                            <td className="p-3 border-r border-border font-mono text-primary font-medium">
-                              {!isReadOnly ? (
-                                <input
-                                  type="text"
-                                  value={bid[bidIdField] || ""}
-                                  onChange={(e) =>
-                                    handleFieldChangeLocal(
-                                      bid.id,
-                                      bidIdField,
-                                      e.target.value,
-                                    )
-                                  }
-                                  onBlur={(e) =>
-                                    handleFieldSave(
-                                      bid.id,
-                                      bidIdField,
-                                      e.target.value,
-                                    )
-                                  }
-                                  onKeyDown={(e) =>
-                                    e.key === "Enter" && e.target.blur()
-                                  }
-                                  className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-primary font-medium rounded font-mono"
-                                  placeholder="Bid ID"
-                                />
-                              ) : (
-                                (bid.gem_bid_no ?? bid.bid_no ?? "—")
-                              )}
-                            </td>
-
-                            {/* 7. Platform (portal_source) */}
-                            <td className="p-3 border-r border-border">
-                              {!isReadOnly ? (
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <button className="flex items-center gap-1.5 bg-background hover:bg-muted/50 text-foreground border border-border rounded-md px-2 py-1 text-xs text-left min-w-[90px] justify-between focus:ring-1 focus:ring-primary outline-none transition-all shadow-sm">
-                                      <span>
-                                        {bid.portal_source || "Select Portal"}
-                                      </span>
-                                      <ChevronDown className="size-3 text-muted-foreground ml-1" />
-                                    </button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent
-                                    align="start"
-                                    className="min-w-[120px]"
-                                  >
-                                    {PORTAL_SOURCES.map((p) => (
-                                      <DropdownMenuItem
-                                        key={p}
-                                        onSelect={() =>
-                                          handleImmediateChangeAndSave(
-                                            bid.id,
-                                            "portal_source",
-                                            p,
-                                          )
-                                        }
-                                        className="text-xs"
-                                      >
-                                        {p}
-                                      </DropdownMenuItem>
-                                    ))}
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              ) : (
-                                (bid.portal_source ?? "—")
-                              )}
-                            </td>
-
-                            {/* 8. Department (organization_name) */}
-                            <td className="p-3 border-r border-border truncate max-w-xs">
-                              {!isReadOnly ? (
-                                <input
-                                  type="text"
-                                  value={bid.organization_name || ""}
-                                  onChange={(e) =>
-                                    handleFieldChangeLocal(
-                                      bid.id,
-                                      "organization_name",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onBlur={(e) =>
-                                    handleFieldSave(
-                                      bid.id,
-                                      "organization_name",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onKeyDown={(e) =>
-                                    e.key === "Enter" && e.target.blur()
-                                  }
-                                  className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                  placeholder="Department"
-                                />
-                              ) : (
-                                (bid.organization_name ?? "—")
-                              )}
-                            </td>
-
-                            {/* High Level Scope */}
-                            <td className="p-3 border-r border-border truncate max-w-xs">
-                              {!isReadOnly ? (
-                                <input
-                                  type="text"
-                                  value={bid.high_level_scope || ""}
-                                  onChange={(e) =>
-                                    handleFieldChangeLocal(
-                                      bid.id,
-                                      "high_level_scope",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onBlur={(e) =>
-                                    handleFieldSave(
-                                      bid.id,
-                                      "high_level_scope",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onKeyDown={(e) =>
-                                    e.key === "Enter" && e.target.blur()
-                                  }
-                                  className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                  placeholder="High Level Scope"
-                                />
-                              ) : (
-                                (bid.high_level_scope ?? "—")
-                              )}
-                            </td>
-
-                            {/* Quantity */}
-                            <td className="p-3 border-r border-border">
-                              {!isReadOnly ? (
-                                <input
-                                  type="text"
-                                  value={bid.quantity ?? ""}
-                                  onChange={(e) =>
-                                    handleFieldChangeLocal(
-                                      bid.id,
-                                      "quantity",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onBlur={(e) =>
-                                    handleFieldSave(
-                                      bid.id,
-                                      "quantity",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onKeyDown={(e) =>
-                                    e.key === "Enter" && e.target.blur()
-                                  }
-                                  className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                  placeholder="Qty"
-                                />
-                              ) : (
-                                (bid.quantity ?? "—")
-                              )}
-                            </td>
-
-                            {/* 9. Scope Type */}
-                            <td className="p-3 border-r border-border">
-                              {!isReadOnly ? (
-                                <input
-                                  type="text"
-                                  value={bid.scope_type || ""}
-                                  onChange={(e) =>
-                                    handleFieldChangeLocal(
-                                      bid.id,
-                                      "scope_type",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onBlur={(e) =>
-                                    handleFieldSave(
-                                      bid.id,
-                                      "scope_type",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onKeyDown={(e) =>
-                                    e.key === "Enter" && e.target.blur()
-                                  }
-                                  className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                  placeholder="Scope Type"
-                                />
-                              ) : (
-                                (bid.scope_type ?? "—")
-                              )}
-                            </td>
-
-                            {/* 10. EMD Amount */}
-                            <td className="p-3 border-r border-border font-medium text-foreground">
-                              {!isReadOnly ? (
-                                <input
-                                  type="number"
-                                  value={
-                                    bid.emd_amount !== undefined &&
-                                    bid.emd_amount !== null
-                                      ? bid.emd_amount
-                                      : ""
-                                  }
-                                  onChange={(e) =>
-                                    handleFieldChangeLocal(
-                                      bid.id,
-                                      "emd_amount",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onBlur={(e) =>
-                                    handleFieldSave(
-                                      bid.id,
-                                      "emd_amount",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onKeyDown={(e) =>
-                                    e.key === "Enter" && e.target.blur()
-                                  }
-                                  disabled={!!bid.emd_exempted}
-                                  className={`w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground font-medium rounded ${bid.emd_exempted ? "text-muted-foreground bg-muted/20 cursor-not-allowed" : ""}`}
-                                  placeholder="0"
-                                />
-                              ) : (
-                                formatCurrency(bid.emd_amount)
-                              )}
-                            </td>
-
-                            {/* 10b. No EMD (distinct from EMD Exempted — tender has no EMD clause at all) */}
-                            <td className="p-3 border-r border-border">
-                              {!isReadOnly ? (
-                                <button
-                                  onClick={() =>
-                                    handleImmediateChangeAndSave(
-                                      bid.id,
-                                      "emd_not_applicable",
-                                      !bid.emd_not_applicable,
-                                    )
-                                  }
-                                  disabled={!!bid.emd_exempted}
-                                  className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                                    bid.emd_not_applicable
-                                      ? "bg-slate-500 hover:bg-slate-600 text-white"
-                                      : "bg-muted hover:bg-muted/80 text-muted-foreground border border-border"
-                                  }`}
-                                >
-                                  {bid.emd_not_applicable ? "Yes" : "No"}
-                                </button>
-                              ) : bid.emd_not_applicable ? (
-                                <span className="text-slate-600 font-bold flex items-center gap-0.5">
-                                  <Check className="size-3.5" /> Yes
-                                </span>
-                              ) : (
-                                <span className="text-muted-foreground">
-                                  No
-                                </span>
-                              )}
-                            </td>
-
-                            {/* 11. EMD Exempted */}
-                            <td className="p-3 border-r border-border">
-                              {!isReadOnly ? (
-                                <button
-                                  onClick={() =>
-                                    handleImmediateChangeAndSave(
-                                      bid.id,
-                                      "emd_exempted",
-                                      !bid.emd_exempted,
-                                    )
-                                  }
-                                  disabled={!!bid.emd_not_applicable}
-                                  className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                                    bid.emd_exempted
-                                      ? "bg-emerald-500 hover:bg-emerald-600 text-white"
-                                      : "bg-muted hover:bg-muted/80 text-muted-foreground border border-border"
-                                  }`}
-                                >
-                                  {bid.emd_exempted ? "Yes" : "No"}
-                                </button>
-                              ) : bid.emd_exempted ? (
-                                <span
-                                  className="text-emerald-600 font-bold flex items-center gap-0.5"
-                                  title={formatEmdExemption(bid)}
-                                >
-                                  <Check className="size-3.5" />{" "}
-                                  {formatEmdExemption(bid)}
-                                </span>
-                              ) : (
-                                <span className="text-muted-foreground">
-                                  No
-                                </span>
-                              )}
-                            </td>
-
-                            {/* 12. BG Rate */}
-                            <td className="p-3 border-r border-border">
-                              {!isReadOnly ? (
-                                <input
-                                  type="number"
-                                  step="any"
-                                  value={
-                                    bid.bg_rate !== undefined &&
-                                    bid.bg_rate !== null
-                                      ? bid.bg_rate
-                                      : ""
-                                  }
-                                  onChange={(e) =>
-                                    handleFieldChangeLocal(
-                                      bid.id,
-                                      "bg_rate",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onBlur={(e) =>
-                                    handleFieldSave(
-                                      bid.id,
-                                      "bg_rate",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onKeyDown={(e) =>
-                                    e.key === "Enter" && e.target.blur()
-                                  }
-                                  className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                  placeholder="BG Rate"
-                                />
-                              ) : bid.bg_rate !== undefined &&
-                                bid.bg_rate !== null ? (
-                                `${bid.bg_rate}%`
-                              ) : (
-                                "—"
-                              )}
-                            </td>
-
-                            {/* 14. Target Month Date */}
-                            <td className="p-3 border-r border-border text-foreground font-medium">
-                              {!isReadOnly ? (
-                                <input
-                                  type="date"
-                                  value={safeDateInputFormat(
-                                    bid.target_month_date,
-                                  )}
-                                  onChange={(e) =>
-                                    handleImmediateChangeAndSave(
-                                      bid.id,
-                                      "target_month_date",
-                                      e.target.value,
-                                    )
-                                  }
-                                  className="bg-transparent border-none text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary p-0.5 rounded"
-                                />
-                              ) : (
-                                getTargetMonthDisplay(bid)
-                              )}
-                            </td>
-
-                            {/* 15. Opening Date */}
-                            <td className="p-3 border-r border-border text-muted-foreground">
-                              {!isReadOnly ? (
-                                <input
-                                  type="date"
-                                  value={safeDateInputFormat(bid.opening_date)}
-                                  onChange={(e) =>
-                                    handleImmediateChangeAndSave(
-                                      bid.id,
-                                      "opening_date",
-                                      e.target.value,
-                                    )
-                                  }
-                                  className="bg-transparent border-none text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary p-0.5 rounded"
-                                />
-                              ) : (
-                                formatDate(bid.opening_date)
-                              )}
-                            </td>
-
-                            {/* 16. Closing Date (carries a real submission-deadline time) */}
-                            <td className="p-3 border-r border-border text-muted-foreground">
-                              {!isReadOnly ? (
-                                <input
-                                  type="datetime-local"
-                                  value={safeDateTimeInputFormat(
-                                    bid.closing_date,
-                                  )}
-                                  onChange={(e) =>
-                                    handleImmediateChangeAndSave(
-                                      bid.id,
-                                      "closing_date",
-                                      e.target.value,
-                                    )
-                                  }
-                                  className="bg-transparent border-none text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary p-0.5 rounded"
-                                />
-                              ) : (
-                                formatDateTime(bid.closing_date)
-                              )}
-                            </td>
-
-                            {/* 17. Estimated Value */}
-                            <td className="p-3 border-r border-border font-medium text-foreground">
-                              {!isReadOnly ? (
-                                <input
-                                  type="number"
-                                  value={
-                                    bid.estimated_value !== undefined &&
-                                    bid.estimated_value !== null
-                                      ? bid.estimated_value
-                                      : ""
-                                  }
-                                  onChange={(e) =>
-                                    handleFieldChangeLocal(
-                                      bid.id,
-                                      "estimated_value",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onBlur={(e) =>
-                                    handleFieldSave(
-                                      bid.id,
-                                      "estimated_value",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onKeyDown={(e) =>
-                                    e.key === "Enter" && e.target.blur()
-                                  }
-                                  className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground font-medium rounded"
-                                  placeholder="0"
-                                />
-                              ) : (
-                                formatCurrency(bid.estimated_value)
-                              )}
-                            </td>
-
-                            {/* GlobX Total — the final submitted bid price (Stage 7 / Bid Submission),
-                               sourced automatically from the approved Pricing Request total. Read-only. */}
-                            <td className="p-3 border-r border-border font-mono font-semibold text-foreground">
-                              {bid.quoted_price !== null &&
-                              bid.quoted_price !== undefined
-                                ? formatCurrency(bid.quoted_price)
-                                : "—"}
-                            </td>
-
-                            {/* 18. Tech Eval — the actual Technical Evaluation result, set only via the
-                               Stage 10 workspace (captures the disqualification reason and correctly
-                               closes the bid as LOST). Read-only here to avoid bypassing that. */}
-                            <td className="p-3 border-r border-border">
-                              {bid.technical_result === "QUALIFIED" ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                                  <Check className="size-3" /> Qualified
-                                </span>
-                              ) : bid.technical_result === "DISQUALIFIED" ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
-                                  <XCircle className="size-3" /> Disqualified
-                                </span>
-                              ) : (
-                                <span className="text-muted-foreground text-[11px]">
-                                  Pending
-                                </span>
-                              )}
-                            </td>
-
-                            {/* 19. Submission Status */}
-                            <td className="p-3 border-r border-border">
-                              {!isReadOnly ? (
-                                <input
-                                  type="text"
-                                  value={bid.submission_status || ""}
-                                  onChange={(e) =>
-                                    handleFieldChangeLocal(
-                                      bid.id,
-                                      "submission_status",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onBlur={(e) =>
-                                    handleFieldSave(
-                                      bid.id,
-                                      "submission_status",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onKeyDown={(e) =>
-                                    e.key === "Enter" && e.target.blur()
-                                  }
-                                  className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                  placeholder={getSubmissionStatusVal(bid)}
-                                />
-                              ) : (
-                                <StatusTag text={getSubmissionStatusVal(bid)} />
-                              )}
-                            </td>
-
-                            {/* 20. Financial Evaluation Status */}
-                            <td className="p-3 border-r border-border">
-                              {!isReadOnly ? (
-                                <input
-                                  type="text"
-                                  value={bid.financial_evaluation_status || ""}
-                                  onChange={(e) =>
-                                    handleFieldChangeLocal(
-                                      bid.id,
-                                      "financial_evaluation_status",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onBlur={(e) =>
-                                    handleFieldSave(
-                                      bid.id,
-                                      "financial_evaluation_status",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onKeyDown={(e) =>
-                                    e.key === "Enter" && e.target.blur()
-                                  }
-                                  className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                  placeholder={getFinEvalStatusVal(bid)}
-                                />
-                              ) : (
-                                <StatusTag text={getFinEvalStatusVal(bid)} />
-                              )}
-                            </td>
-
-                            {/* 21. PO Received — a clear Yes/No fact, mirrors the Stage 12 checklist */}
-                            <td className="p-3 border-r border-border">
-                              {!isReadOnly ? (
-                                <button
-                                  onClick={() =>
-                                    handlePoReceivedToggle(
-                                      bid.id,
-                                      bid.po_received_status !== "PO Received",
-                                    )
-                                  }
-                                  className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${
-                                    bid.po_received_status === "PO Received"
-                                      ? "bg-emerald-500 hover:bg-emerald-600 text-white"
-                                      : "bg-muted hover:bg-muted/80 text-muted-foreground border border-border"
-                                  }`}
-                                >
-                                  {bid.po_received_status === "PO Received"
-                                    ? "Yes"
-                                    : "No"}
-                                </button>
-                              ) : bid.po_received_status === "PO Received" ? (
-                                <span className="text-emerald-600 font-bold flex items-center gap-0.5">
-                                  <Check className="size-3.5" /> Yes
-                                </span>
-                              ) : (
-                                <span className="text-muted-foreground">
-                                  {getPoRecvStatusVal(bid) === "N/A"
-                                    ? "N/A"
-                                    : "No"}
-                                </span>
-                              )}
-                            </td>
-
-                            {/* PO Received / EMD Ready / BG Issued / Delivery Complete dates —
-                               all read-only, set from their respective stage workspace actions. */}
-                            <td className="p-3 border-r border-border text-muted-foreground">
-                              {formatDate(bid.po_received_date)}
-                            </td>
-                            <td className="p-3 border-r border-border text-muted-foreground">
-                              {formatDate(bid.emd_ready_date)}
-                            </td>
-                            <td className="p-3 border-r border-border text-muted-foreground">
-                              {formatDate(bid.bg_discharged_date)}
-                            </td>
-                            <td className="p-3 border-r border-border text-muted-foreground">
-                              {formatDate(bid.delivery_complete_date)}
-                            </td>
-
-                            {/* Our Rank - set at Financial Evaluation (L1 when won) */}
-                            <td className="p-3 border-r border-border">
-                              {!isReadOnly ? (
-                                <input
-                                  type="text"
-                                  value={bid.our_rank ?? ""}
-                                  onChange={(e) =>
-                                    handleFieldChangeLocal(
-                                      bid.id,
-                                      "our_rank",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onBlur={(e) =>
-                                    handleFieldSave(
-                                      bid.id,
-                                      "our_rank",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onKeyDown={(e) =>
-                                    e.key === "Enter" && e.target.blur()
-                                  }
-                                  className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-primary font-medium rounded font-mono"
-                                  placeholder="e.g. L2"
-                                />
-                              ) : (
-                                (bid.our_rank ?? "—")
-                              )}
-                            </td>
-
-                            {/* 22. Bid Result */}
-                            <td className="p-3 border-r border-border">
-                              {!isReadOnly ? (
-                                <input
-                                  type="text"
-                                  value={bid.bid_result || ""}
-                                  onChange={(e) =>
-                                    handleFieldChangeLocal(
-                                      bid.id,
-                                      "bid_result",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onBlur={(e) =>
-                                    handleFieldSave(
-                                      bid.id,
-                                      "bid_result",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onKeyDown={(e) =>
-                                    e.key === "Enter" && e.target.blur()
-                                  }
-                                  className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                  placeholder={getBidResultVal(bid)}
-                                />
-                              ) : (
-                                <StatusTag text={getBidResultVal(bid)} />
-                              )}
-                            </td>
-
-                            {/* 23. Owner */}
-                            <td className="p-3 border-r border-border">
-                              {!isReadOnly ? (
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <button className="flex items-center gap-1.5 bg-background hover:bg-muted/50 text-foreground border border-border rounded-md px-2 py-1 text-xs text-left min-w-[120px] justify-between focus:ring-1 focus:ring-primary outline-none transition-all shadow-sm">
-                                      <span>
-                                        {bid.bid_owner?.full_name ||
-                                          "Select Owner"}
-                                      </span>
-                                      <ChevronDown className="size-3 text-muted-foreground ml-1" />
-                                    </button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent
-                                    align="start"
-                                    className="max-h-[200px] overflow-y-auto min-w-[140px]"
-                                  >
-                                    <DropdownMenuItem
-                                      onSelect={() =>
-                                        handleImmediateChangeAndSave(
-                                          bid.id,
-                                          "bid_owner_id",
-                                          null,
-                                        )
-                                      }
-                                      className="text-xs text-muted-foreground italic"
-                                    >
-                                      Unassigned
-                                    </DropdownMenuItem>
-                                    {users.map((u) => (
-                                      <DropdownMenuItem
-                                        key={u.id}
-                                        onSelect={() =>
-                                          handleImmediateChangeAndSave(
-                                            bid.id,
-                                            "bid_owner_id",
-                                            u.id,
-                                          )
-                                        }
-                                        className="text-xs"
-                                      >
-                                        {u.full_name}
-                                      </DropdownMenuItem>
-                                    ))}
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              ) : (
-                                (bid.bid_owner?.full_name ?? "—")
-                              )}
-                            </td>
-
-                            {/* 24. Remarks */}
-                            <td
-                              className={`p-3 truncate max-w-xs text-muted-foreground ${inBin ? "border-r border-border" : ""}`}
-                              title={bid.remarks}
-                            >
-                              {!isReadOnly ? (
-                                <input
-                                  type="text"
-                                  value={bid.remarks || ""}
-                                  onChange={(e) =>
-                                    handleFieldChangeLocal(
-                                      bid.id,
-                                      "remarks",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onBlur={(e) =>
-                                    handleFieldSave(
-                                      bid.id,
-                                      "remarks",
-                                      e.target.value,
-                                    )
-                                  }
-                                  onKeyDown={(e) =>
-                                    e.key === "Enter" && e.target.blur()
-                                  }
-                                  className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-foreground rounded"
-                                  placeholder="Remarks"
-                                />
-                              ) : (
-                                (bid.remarks ?? "—")
-                              )}
-                            </td>
+                            {EDITABLE_SHEET_COLUMNS.map((c) => cells[c.key])}
 
                             {/* 25. Bin Actions */}
                             {inBin && (
