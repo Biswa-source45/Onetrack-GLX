@@ -6,7 +6,7 @@ import {
   Users, LayoutDashboard, Menu, X, ChevronRight,
   FileText, TrendingUp, Activity, BarChart2, ShieldCheck, Bell,
   Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Pencil,
-  FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass, ScrollText, Settings, Target, ListChecks } from 'lucide-react'
+  FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass, ScrollText, Settings, Target, ListChecks, Building2, Factory } from 'lucide-react'
 import { toast } from 'sonner'
 import { toBlob } from 'html-to-image'
 
@@ -61,6 +61,9 @@ const NAV_ITEMS = [
     ]
   },
   { id: 'leads',      label: 'Leads',            icon: Target,          permission: 'lead.view' },
+  // Private per-person lists: Account Managers keep their accounts, Pre-Sales their OEMs.
+  { id: 'accounts',   label: 'My Accounts',      icon: Building2,       permission: null, role: 'ACCOUNT_MANAGER' },
+  { id: 'oems',       label: 'My OEMs',          icon: Factory,         permission: null, role: 'PRE_SALES' },
   {
     id: 'analytics',
     label: 'Analytics',
@@ -1760,6 +1763,10 @@ export default function Dashboard() {
     ? 'settings'
     : location.pathname.includes('/working-calendar')
     ? 'working-calendar'
+    : location.pathname.includes('/dashboard/accounts')
+    ? 'accounts'
+    : location.pathname.includes('/dashboard/oems')
+    ? 'oems'
     : 'overview'
 
   // Roles that run the system see management-facing wording; everyone else

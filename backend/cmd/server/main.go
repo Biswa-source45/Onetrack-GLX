@@ -24,6 +24,7 @@ import (
 	feedbackRepo "github.com/onetrack/backend/internal/feedback/repository"
 	feedbackService "github.com/onetrack/backend/internal/feedback/service"
 	leadHandler "github.com/onetrack/backend/internal/lead/handler"
+	"github.com/onetrack/backend/internal/directory"
 	leadRepo "github.com/onetrack/backend/internal/lead/repository"
 	calendarHandler "github.com/onetrack/backend/internal/calendar/handler"
 	calendarRepo "github.com/onetrack/backend/internal/calendar/repository"
@@ -154,6 +155,9 @@ func main() {
 	// Leads — standalone pre-tender pipeline, own schema, no bid coupling.
 	leadHdlr := leadHandler.NewLeadHandler(leadRepo.NewPostgresLeadRepository(dbPool), cfg.LeadsUploadDir, alertSvc)
 	leadHandler.RegisterLeadRoutes(v1, leadHdlr, authMiddleware)
+
+	// My Accounts (Account Managers) and My OEMs (Pre-Sales): private per-owner lists with contacts.
+	directory.RegisterRoutes(v1, directory.NewHandler(directory.NewRepo(dbPool)), authMiddleware)
 	// Initialize Working Calendar, Google Sync & 72-Hour Deadline Engine
 	calendarRepository := calendarRepo.NewPostgresCalendarRepository(dbPool)
 	calendarSvc := calendarService.NewWorkingCalendarService(calendarRepository, alertSvc, systemlogSvc)

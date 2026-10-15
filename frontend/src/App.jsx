@@ -24,6 +24,7 @@ import { LeadsPage } from "./components/leads/LeadsPage"
 import { AddLeadPage } from "./components/leads/AddLeadPage"
 import { LeadDetailPage } from "./components/leads/LeadDetailPage"
 import { WorkingCalendarPage } from "./components/admin/WorkingCalendarPage"
+import { DirectoryPage } from "./components/directory/DirectoryPage"
 
 // Auth Guard to protect routes
 function AuthGuard() {
@@ -117,6 +118,14 @@ export default function App() {
                 <Route path="leads/:leadId" element={<LeadDetailPage />} />
                 {/* Who may edit is decided per lead by the server (can_edit). */}
                 <Route path="leads/:leadId/edit" element={<AddLeadPage />} />
+              </Route>
+
+              {/* My Accounts / My OEMs — private lists, by role */}
+              <Route element={<RoleGuard role="ACCOUNT_MANAGER" />}>
+                <Route path="accounts" element={<DirectoryPage kind="accounts" />} />
+              </Route>
+              <Route element={<RoleGuard role="PRE_SALES" />}>
+                <Route path="oems" element={<DirectoryPage kind="oems" />} />
               </Route>
 
               {/* Feedback Loop — Feedback is open to every authenticated
