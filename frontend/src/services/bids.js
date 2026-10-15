@@ -4,10 +4,19 @@ import { openReceipt } from './emd'
 const BASE = '/api/v1'
 
 // ── Create Bid ───────────────────────────────────────────────────────────────
-export async function createBid(payload) {
+// mainDoc ({ file, name }) makes it a multipart request: the tender's JSON in
+// "data" plus its main document, stored by the server in the same request.
+export async function createBid(payload, mainDoc) {
+  let body = JSON.stringify(payload)
+  if (mainDoc) {
+    body = new FormData()
+    body.set('data', JSON.stringify(payload))
+    body.set('doc_name', mainDoc.name)
+    body.set('file', mainDoc.file, mainDoc.file.name)
+  }
   const res = await apiFetch(`${BASE}/bids`, {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body,
   })
   const data = await res.json()
   return { ok: res.ok, status: res.status, ...data }
@@ -518,3 +527,41 @@ export async function openShortfallDoc(bidId, url) {
   if (!m || m[1] !== bidId) throw new Error('Not a shortfall document link')
   return openReceipt(url)
 }
+
+// ── Tender documents (Docs tab) ──────────────────────────────────────────────
+async function docJson(res) {
+  const data = await res.json().catch(() => ({}))
+  return { ok: res.ok, status: res.status, ...data, message: data.error?.message || data.message }
+}
+
+export async function listTenderDocs(bidId) {
+  return docJson(await apiFetch(`${BASE}/bids/${bidId}/documents`))
+}
+
+export async function uploadTenderDoc(bidId, name, file) {
+  const body = new FormData()
+  body.set('name', name)
+  body.set('file', file, file.name)
+  return docJson(await apiFetch(`${BASE}/bids/${bidId}/documents`, { method: 'POST', body }))
+}
+
+// Rename and/or replace: pass { name } and/or { file }.
+export async function updateTenderDoc(bidId, docId, { name, file }) {
+  const body = new FormData()
+  if (name !== undefined) body.set('name', name)
+  if (file) body.set('file', file, file.name)
+  return docJson(await apiFetch(`${BASE}/bids/${bidId}/documents/${docId}`, { method: 'PATCH', body }))
+}
+
+export async function deleteTenderDoc(bidId, docId) {
+  return docJson(await apiFetch(`${BASE}/bids/${bidId}/documents/${docId}`, { method: 'DELETE' }))
+}
+
+// The file goes through apiFetch (it carries the bearer token), so previews and
+// downloads work from a blob, never from a bare URL.
+export async function fetchTenderDocBlob(bidId, docId, inline = false) {
+  const res = await apiFetch(`${BASE}/bids/${bidId}/documents/${docId}/file${inline ? '?inline=1' : ''}`)
+  if (!res.ok) throw new Error(res.status === 404 ? 'The file is missing from storage' : 'Could not load the document')
+  return res.blob()
+}
+

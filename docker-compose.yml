@@ -60,12 +60,15 @@ services:
       - ./leads-assets:/app/uploads/leads
       # EMD payment/refund receipts: one folder per tender.
       - ./emd-assets:/app/uploads/emd
+      # Tender documents (RFP, ATC, ...): one folder per tender, <tender>/<Name>/<file>.
+      - ./tender-assets:/app/uploads/tenders
     environment:
       - SERVER_PORT=8081
       - GIN_MODE=release
       - UPLOAD_DIR=/app/uploads/feedback
       - LEADS_UPLOAD_DIR=/app/uploads/leads
       - EMD_UPLOAD_DIR=/app/uploads/emd
+      - TENDER_DOCS_UPLOAD_DIR=/app/uploads/tenders
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_USER=postgres

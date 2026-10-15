@@ -140,7 +140,7 @@ func main() {
 	// Initialize bid module
 	bidRepository := bidRepo.NewPostgresBidRepository(dbPool)
 	bidSvc := bidService.NewBidService(bidRepository, alertSvc, systemlogSvc)
-	bidHdlr := bidHandler.NewBidHandler(bidSvc, cfg.EMDUploadDir)
+	bidHdlr := bidHandler.NewBidHandler(bidSvc, cfg.EMDUploadDir, cfg.TenderDocsUploadDir, bidRepo.NewDocsRepo(dbPool))
 	bidImportHdlr := bidHandler.NewBulkImportHandler(dbPool)
 	bidHandler.RegisterBidRoutes(v1, bidHdlr, bidImportHdlr, authMiddleware)
 

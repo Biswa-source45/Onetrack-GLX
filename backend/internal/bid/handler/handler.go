@@ -1,29 +1,71 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 	"github.com/jackc/pgx/v5"
 	"github.com/onetrack/backend/internal/bid/domain"
+	"github.com/onetrack/backend/internal/bid/repository"
 	"github.com/onetrack/backend/internal/platform/response"
 )
 
 type BidHandler struct {
 	svc          domain.BidService
 	emdUploadDir string
+	docsDir      string
+	docs         *repository.DocsRepo
 }
 
-func NewBidHandler(svc domain.BidService, emdUploadDir string) *BidHandler {
-	return &BidHandler{svc: svc, emdUploadDir: emdUploadDir}
+func NewBidHandler(svc domain.BidService, emdUploadDir, docsDir string, docs *repository.DocsRepo) *BidHandler {
+	return &BidHandler{svc: svc, emdUploadDir: emdUploadDir, docsDir: docsDir, docs: docs}
 }
 
+// CreateBid takes JSON, or multipart/form-data with the same JSON in "data" plus
+// the tender's main document ("file" + "doc_name"). The document is validated
+// before the tender exists, and if storing it fails the tender is removed again,
+// so a tender created from the Add page never lacks the document it promised.
 func (h *BidHandler) CreateBid(c *gin.Context) {
 	var req domain.CreateBidRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	var docFH *multipart.FileHeader
+	var docName string
+	if strings.HasPrefix(c.ContentType(), "multipart/") {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxTenderDocBytes+(1<<20))
+		if err := json.Unmarshal([]byte(c.PostForm("data")), &req); err != nil {
+			response.BadRequest(c, "invalid tender payload", nil)
+			return
+		}
+		if err := binding.Validator.ValidateStruct(&req); err != nil {
+			response.BadRequest(c, err.Error(), nil)
+			return
+		}
+		if docName = cleanDocName(c.PostForm("doc_name")); docName == "" {
+			response.BadRequest(c, "Main document name is required (e.g. RFP)", nil)
+			return
+		}
+		var err error
+		if docFH, err = c.FormFile("file"); err != nil {
+			response.BadRequest(c, "Main document file is required (PDF, DOCX or TXT)", nil)
+			return
+		}
+		f, _, err := readTenderDoc(docFH)
+		if err != nil {
+			response.BadRequest(c, err.Error(), nil)
+			return
+		}
+		f.Close()
+	} else if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error(), nil)
 		return
 	}
@@ -41,6 +83,24 @@ func (h *BidHandler) CreateBid(c *gin.Context) {
 		}
 		response.InternalError(c, err.Error())
 		return
+	}
+
+	if docFH != nil {
+		doc, err := h.storeNewDoc(c, bid.ID, bid.Title, docName, docFH)
+		if err != nil {
+			// Roll the tender back and drop any folder, so nothing half-made remains.
+			ctx := c.Request.Context()
+			folder, _ := h.docs.Folder(ctx, bid.ID)
+			if derr := h.docs.DiscardTender(ctx, bid.ID); derr != nil {
+				log.Printf("[tender-docs] could not roll back tender %s: %v", bid.ID, derr)
+			}
+			if folder != "" {
+				_ = os.RemoveAll(filepath.Join(h.docsDir, folder))
+			}
+			response.InternalError(c, "Could not store the main document, so the tender was not created: "+err.Error())
+			return
+		}
+		h.logDocEvent(c, bid.ID, "DOCUMENT_UPLOADED", fmt.Sprintf("Document added: %s (%s)", doc.Name, doc.OriginalName))
 	}
 
 	response.Success(c, http.StatusCreated, "Bid workspace created successfully", bid)
@@ -520,6 +580,8 @@ func (h *BidHandler) PermanentDeleteBid(c *gin.Context) {
 	actorID := c.GetString("user_id")
 	rolesVal, _ := c.Get("roles")
 	actorRoles, _ := rolesVal.([]string)
+	// Read before the delete: the row (and its folder name) is gone afterwards.
+	docsFolder, _ := h.docs.Folder(c.Request.Context(), id)
 	if err := h.svc.PermanentDeleteBid(c.Request.Context(), id, actorID, actorRoles); err != nil {
 		var pae *domain.PendingApprovalError
 		if errors.As(err, &pae) {
@@ -532,6 +594,12 @@ func (h *BidHandler) PermanentDeleteBid(c *gin.Context) {
 		}
 		response.NotFound(c, "Bid not found")
 		return
+	}
+	// ponytail: only this direct path cleans the folder; a delete that went through
+	// approval, and the 15-day bin sweep, leave it as a harmless orphan. Add a
+	// sweep only if disk use ever matters.
+	if docsFolder != "" {
+		_ = os.RemoveAll(filepath.Join(h.docsDir, docsFolder))
 	}
 	response.Success(c, http.StatusOK, "Bid permanently deleted", nil)
 }

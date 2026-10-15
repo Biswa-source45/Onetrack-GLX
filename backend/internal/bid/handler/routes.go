@@ -61,6 +61,13 @@ func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, importHandl
 		bids.PATCH("/:id/contacts/:cid", authMiddleware.RequirePermission("bid.edit"), handler.UpdateContact)
 		bids.DELETE("/:id/contacts/:cid", authMiddleware.RequirePermission("bid.edit"), handler.DeleteContact)
 
+		// Tender documents (RFP, ATC, ...): the Docs tab. Preview and download share the file route.
+		bids.GET("/:id/documents", authMiddleware.RequirePermission("bid.view"), handler.ListDocuments)
+		bids.POST("/:id/documents", authMiddleware.RequirePermission("bid.edit"), handler.UploadDocument)
+		bids.PATCH("/:id/documents/:docId", authMiddleware.RequirePermission("bid.edit"), handler.UpdateDocument)
+		bids.DELETE("/:id/documents/:docId", authMiddleware.RequirePermission("bid.edit"), handler.DeleteDocument)
+		bids.GET("/:id/documents/:docId/file", authMiddleware.RequirePermission("bid.view"), handler.GetDocumentFile)
+
 		// Technical Evaluation document shortfall: the documents the team adds for a round.
 		bids.POST("/:id/shortfall/upload", authMiddleware.RequirePermission("bid.edit"), handler.UploadShortfallDoc)
 		bids.GET("/:id/shortfall/file/:filename", authMiddleware.RequirePermission("bid.view"), handler.GetShortfallFile)

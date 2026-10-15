@@ -25,6 +25,9 @@ type Config struct {
 	// EMDUploadDir holds EMD payment/refund receipts, one folder per tender.
 	// Bind-mounted to ./emd-assets in docker-compose.yml.
 	EMDUploadDir string
+	// TenderDocsUploadDir holds each tender's documents (RFP, ATC, ...), one
+	// folder per tender. Bind-mounted to ./tender-assets in docker-compose.yml.
+	TenderDocsUploadDir string
 	// AppBaseURL is the public frontend origin (e.g. http://192.168.1.10),
 	// used to turn alert deep links into clickable email buttons. Empty
 	// leaves emails without the button.
@@ -120,6 +123,8 @@ func Load() (*Config, error) {
 		LeadsUploadDir: getEnv("LEADS_UPLOAD_DIR", "./uploads/leads"),
 		EMDUploadDir:   getEnv("EMD_UPLOAD_DIR", "./uploads/emd"),
 		AppBaseURL:     getEnv("APP_BASE_URL", ""),
+
+		TenderDocsUploadDir: getEnv("TENDER_DOCS_UPLOAD_DIR", "./uploads/tenders"),
 
 		CalendarSchedulerEnabled: getEnv("CALENDAR_SCHEDULER_ENABLED", "false") == "true",
 		GoogleCalendarAPIKey:     getEnv("GOOGLE_CALENDAR_API_KEY", ""),

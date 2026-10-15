@@ -1,1 +1,4 @@
 graphify-out/graph.json merge=graphify
+
+# Windows batch files run on the Windows host: keep CRLF whatever the checkout.
+*.bat text eol=crlf

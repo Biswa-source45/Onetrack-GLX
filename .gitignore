@@ -30,6 +30,9 @@ backend/uploads/
 # EMD payment/refund receipts — bind-mounted host folder, user-uploaded content.
 /emd-assets/
 
+# Tender documents (RFP, ATC, ...) — bind-mounted host folder, user-uploaded content.
+/tender-assets/
+
 # Build output / compiled binaries — built from source by the Dockerfiles, never versioned.
 backend/bin/
 /frontend/dist/

@@ -1308,6 +1308,26 @@ curl -X POST "http://<server-ip>/api/v1/bids/bulk-import?dry_run=false&format=gb
 
 **Errors:** `400` bad `format`, missing/oversized/unreadable file, unknown owner · `500` `import rolled back: ...` (nothing written)
 
+### 6.16 Tender documents (RFP, ATC, ...)
+
+Named documents attached to a tender; the **Docs** tab in the app. Allowed files, checked by the file's actual content, not its name: **PDF**, **DOCX**, **TXT**, max 25 MB each. Everything else is rejected with `400`.
+
+| Method | Path | Access | Purpose |
+|---|---|---|---|
+| `GET` | `/bids/:id/documents` | `bid.view` | List documents |
+| `POST` | `/bids/:id/documents` | `bid.edit` | Add one: `multipart/form-data` fields `name` (required, max 60 chars) and `file` |
+| `PATCH` | `/bids/:id/documents/:docId` | `bid.edit` | Rename (`name`) and/or replace the file (`file`); at least one is required |
+| `DELETE` | `/bids/:id/documents/:docId` | `bid.edit` | Delete the document and its file |
+| `GET` | `/bids/:id/documents/:docId/file` | `bid.view` | Download; add `?inline=1` to display in the browser (preview) |
+
+**Document object:** `{ "id", "bid_id", "name", "original_name", "content_type", "size_bytes", "uploaded_by", "uploaded_by_name", "created_at", "updated_at" }`
+
+**Main document at creation:** `POST /bids` also accepts `multipart/form-data` with the tender JSON in `data`, plus `doc_name` and `file`. The file is validated before the tender exists, and if it cannot be stored the tender is not created. Plain JSON still works and simply creates the tender without a document.
+
+Every add, rename, replace and delete is written to the tender's history as `DOCUMENT_UPLOADED`, `DOCUMENT_UPDATED` or `DOCUMENT_DELETED`.
+
+Stored at `<TENDER_DOCS_UPLOAD_DIR>/<tender-title-slug>-<hex>/<Document Name>/<random>_<name>` (Docker host: `./tender-assets/...`). The folder name is fixed at the first upload, so editing the tender title later does not move files. Permanently deleting a tender removes its folder.
+
 ---
 
 ## 7. Leads — `/api/v1/leads`

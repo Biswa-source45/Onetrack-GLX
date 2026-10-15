@@ -89,12 +89,30 @@ Watchtower on the host polls GHCR every 60 seconds and pulls automatically
 (`docker-compose.yml`), so in the common case you just wait. To deploy immediately
 instead of waiting:
 
-```bash
-# On the host
-cd /path/to/onetrack
-docker compose pull
-docker compose up -d
-```
+The Windows host is driven by `HOST_START.bat` (started silently by `start_silent.vbs`; source in
+`host/HOST_START.bat`). It needs no git. Every 30 minutes, and at every start, it:
+
+1. fetches the latest `docker-compose.yml` from the GitHub repo and swaps it in when it is valid
+   and different (the old copy is kept as `docker-compose.yml.bak`; a failed download keeps the
+   current file),
+2. creates the upload folders (`feedback-assets`, `leads-assets`, `emd-assets`, `tender-assets`)
+   next to it if missing,
+3. runs `docker compose pull` and `docker compose up -d`.
+
+So a release that changes volumes or settings reaches the host on its own within about 30
+minutes of the push to `main`; nobody copies files or creates folders by hand. Progress is
+written to `onetrack_sync.log`. To apply a release immediately, run `HOST_START.bat` again, or
+`docker compose pull` and `docker compose up -d` in the host folder.
+
+**Why this matters beyond Watchtower:** Watchtower swaps in the new image but re-creates the
+container from its *old* settings, so a new volume (like `./tender-assets`) only takes effect once
+`docker compose up -d` runs against the updated `docker-compose.yml`. Until then, uploads would
+land inside the container and be lost at the next update.
+
+**One-time bootstrap for this release:** copy `host/HOST_START.bat` over the host's
+`HOST_START.bat` (the script cannot replace itself while running), then run it. On that first run
+it also copies any lead documents and EMD receipts that were saved inside the backend container
+out to `leads-assets` and `emd-assets` before the new mounts take over.
 
 ## 5. Verify migrations actually ran
 
@@ -181,10 +199,12 @@ If something is wrong after deploying:
 
 ## Separate item: moving the whole app to a different host machine
 
-Feedback ticket screenshots/photos live in `./feedback-assets/`, bind-mounted into the backend
-container (`docker-compose.yml`) rather than kept in a Docker-managed named volume. That means
-they're plain files sitting next to `docker-compose.yml` — copying the whole project directory to
-a new machine and running `docker compose up` brings every uploaded image with it, no extra step.
+Uploaded files live in plain host folders next to `docker-compose.yml`, bind-mounted into the
+backend container (`docker-compose.yml`) rather than kept in a Docker-managed named volume:
+`./feedback-assets/` (ticket screenshots), `./leads-assets/` (lead documents), `./emd-assets/`
+(EMD receipts) and `./tender-assets/` (tender documents: RFP, ATC, ... as
+`<tender>/<Document Name>/<file>`). Copying the whole project directory to a new machine and
+running `HOST_START.bat` brings every uploaded file with it, no extra step.
 
 **This does not apply to the database.** Postgres still uses a named volume (`postgres_data`),
 which lives inside Docker's own storage and does *not* travel with a folder copy. Moving hosts

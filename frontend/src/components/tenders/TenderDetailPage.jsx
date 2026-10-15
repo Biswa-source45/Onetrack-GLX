@@ -45,6 +45,7 @@ import { DynamicStageWorkspace, checkStageState } from './StageWorkspaces'
 import { resolveProductOem } from '../../lib/oem'
 import { ShortfallHistoryCard } from './DocShortfall'
 import { ContactsTab } from './ContactsTab'
+import { DocsTab } from './DocsTab'
 import { triggerRedZoneNotification, getTenderWorkingDeadline } from '../../services/calendar'
 
 // Module scope (not runtime-dependent) so the URL-backed tab state below can
@@ -53,6 +54,7 @@ const TABS = [
   { id: 'overview', label: 'Overview', icon: FileText },
   { id: 'stages', label: `Stage Lifecycle (${WORKFLOW_STAGES_ORDERED.length})`, icon: Layers },
   { id: 'checklist', label: 'Checklist', icon: CheckSquare },
+  { id: 'docs', label: 'Docs', icon: FileText },
   { id: 'history', label: 'Stage History', icon: History },
   { id: 'contacts', label: 'Contacts', icon: Contact },
   { id: 'members', label: 'Members', icon: Users },
@@ -426,6 +428,10 @@ function getEventTypeBadge(type) {
       return { label: 'Permanently Deleted', class: 'bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300 border-red-200' }
     case 'OUTCOME_RECORDED':
       return { label: 'Bid Result / Outcome', class: 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200' }
+    case 'DOCUMENT_UPLOADED':
+    case 'DOCUMENT_UPDATED':
+    case 'DOCUMENT_DELETED':
+      return { label: 'Documents', class: 'bg-lime-100 text-lime-800 dark:bg-lime-950/60 dark:text-lime-300 border-lime-200' }
     case 'MEMBER_ADDED':
     case 'MEMBER_REMOVED':
       return { label: 'Team Change', class: 'bg-violet-100 text-violet-800 dark:bg-violet-950/60 dark:text-violet-300 border-violet-200' }
@@ -781,7 +787,8 @@ function StageHistoryTab({ bidId, bid }) {
 
   // Filter history
   const filteredHistory = history.filter(item => {
-    if (filterType !== 'ALL' && item.event_type !== filterType) return false
+    if (filterType === 'DOCUMENTS') { if (!String(item.event_type).startsWith('DOCUMENT_')) return false }
+    else if (filterType !== 'ALL' && item.event_type !== filterType) return false
     if (selectedStageFilter && item.to_stage !== selectedStageFilter && item.from_stage !== selectedStageFilter) return false
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
@@ -900,6 +907,7 @@ function StageHistoryTab({ bidId, bid }) {
           { id: 'PRICING', label: 'Pricing & Quotes' },
           { id: 'CHECKLIST', label: 'Checklist Audit' },
           { id: 'ALERT', label: 'Alerts & Mail' },
+          { id: 'DOCUMENTS', label: 'Documents' },
           { id: 'OUTCOME', label: 'Bid Outcomes' }
         ].map(cat => (
           <button
@@ -2884,6 +2892,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
           )}
           {activeTab === 'stages' && <StageSectionsTab bid={bid} onRefresh={loadBid} onAdvance={() => setShowTransition(true)} searchParams={searchParams} setSearchParams={setSearchParams} />}
           {activeTab === 'checklist' && <ChecklistTab bid={bid} onRefresh={loadBid}/>}
+          {activeTab === 'docs' && <DocsTab bid={bid}/>}
           {activeTab === 'history' && <StageHistoryTab bidId={bid.id} bid={bid} />}
           {activeTab === 'contacts' && <ContactsTab bid={bid} onRefresh={loadBid}/>}
           {activeTab === 'members' && <MembersTab bid={bid} onRefresh={loadBid}/>}

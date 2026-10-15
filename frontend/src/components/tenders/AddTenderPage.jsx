@@ -19,7 +19,15 @@ import {
   ArrowRight,
   ArrowLeft,
   Shuffle,
+  FileUp,
 } from "lucide-react";
+import {
+  ACCEPTED_TENDER_DOCS,
+  DOC_NAME_PRESETS,
+  MAX_DOC_NAME,
+  checkTenderDoc,
+  formatBytes,
+} from "../../lib/tenderDocs";
 import { toast } from "sonner";
 import {
   ALERT_NOTE_COLORS,
@@ -128,6 +136,10 @@ export function AddTenderPage() {
     emd_payable_at: "",
   });
 
+  // The tender's main document (RFP etc.) — required, uploaded with the tender.
+  const [docName, setDocName] = useState("RFP");
+  const [docFile, setDocFile] = useState(null);
+
   // Dynamic checklists seed input list split for Bidder and OEM
   const [bidderChecklists, setBidderChecklists] = useState([]);
   const [oemChecklists, setOemChecklists] = useState([]);
@@ -190,6 +202,10 @@ export function AddTenderPage() {
       // The Account Manager decides which EMD route to go with, later, in
       // Primary Review.
       Object.assign(e, validateEmd(form, emdOnlineOn, emdDdOn));
+      if (!docName.trim()) e.main_doc = "Name the main document (e.g. RFP)";
+      else if (!docFile) e.main_doc = "Attach the tender's main document";
+      else e.main_doc = checkTenderDoc(docFile) || undefined;
+      if (!e.main_doc) delete e.main_doc;
     } else if (currentStep === 2) {
       if (!form.bid_owner_id && !currentUser?.id)
         e.bid_owner_id = "Bid owner is required";
@@ -220,6 +236,17 @@ export function AddTenderPage() {
     if (Object.keys(e).length > 0) {
       setErrors(e);
       toast.error("Please resolve validation errors");
+      return;
+    }
+
+    // The document lives on step 1; send the user back to it rather than
+    // creating a tender without its main document.
+    const docErr = validateStep(1).main_doc;
+    if (docErr) {
+      setErrors((er) => ({ ...er, main_doc: docErr }));
+      setDirection(-1);
+      setStep(1);
+      toast.error(docErr);
       return;
     }
 
@@ -284,7 +311,7 @@ export function AddTenderPage() {
         if (payload[k] === "" || payload[k] === undefined) delete payload[k];
       });
 
-      const res = await createBid(payload);
+      const res = await createBid(payload, { file: docFile, name: docName.trim() });
       if (res.ok) {
         // Field Memory: make the values just typed available as suggestions
         // right away, without waiting for a refetch of each field's list.
@@ -597,6 +624,64 @@ export function AddTenderPage() {
                           className={inputCls(errors.tender_link)}
                         />
                       </Field>
+
+                      {/* Main tender document — required; the rest of the
+                        tender's documents are managed from its Docs tab. */}
+                      <div className="md:col-span-2 space-y-2 rounded-lg border border-border bg-muted/20 p-3">
+                        <div>
+                          <p className="text-xs font-medium text-foreground">
+                            Main tender document <span className="text-destructive">*</span>
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">
+                            The tender's main document (RFP, bid document…). PDF, DOCX or TXT, up to 25 MB.
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[220px_1fr]">
+                          <FieldMemoryInput
+                            fieldKey="tender_doc_name"
+                            presetOptions={DOC_NAME_PRESETS}
+                            value={docName}
+                            onChange={(v) => { setDocName(v.slice(0, MAX_DOC_NAME)); setErrors((e) => ({ ...e, main_doc: undefined })); }}
+                            placeholder="Document name, e.g. RFP"
+                            aria-label="Main document name"
+                            className={inputCls(errors.main_doc && !docName.trim())}
+                          />
+                          <label className="relative flex h-9 cursor-pointer items-center gap-2 rounded-md border border-dashed border-input bg-background px-3 text-xs hover:border-primary/50 focus-within:ring-2 focus-within:ring-ring">
+                            <FileUp className="size-3.5 shrink-0 text-primary" aria-hidden />
+                            <span className="truncate" title={docFile?.name}>
+                              {docFile ? `${docFile.name} (${formatBytes(docFile.size)})` : "Choose file (PDF, DOCX or TXT)"}
+                            </span>
+                            <input
+                              type="file"
+                              accept={ACCEPTED_TENDER_DOCS}
+                              aria-label="Main document file"
+                              className="sr-only"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0] || null;
+                                e.target.value = "";
+                                if (!f) return;
+                                const bad = checkTenderDoc(f);
+                                if (bad) { toast.error(bad); return; }
+                                setDocFile(f);
+                                setErrors((er) => ({ ...er, main_doc: undefined }));
+                              }}
+                            />
+                            {docFile && (
+                              <button
+                                type="button"
+                                aria-label="Remove main document"
+                                onClick={(e) => { e.preventDefault(); setDocFile(null); }}
+                                className="ml-auto rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                              >
+                                <X className="size-3.5" />
+                              </button>
+                            )}
+                          </label>
+                        </div>
+                        {errors.main_doc && (
+                          <p role="alert" className="text-xs font-medium text-destructive">{errors.main_doc}</p>
+                        )}
+                      </div>
 
                       {/* Bid Type (BID / BID_TO_RA) */}
                       <Field label="Bid Type" error={errors.bid_type} required>
