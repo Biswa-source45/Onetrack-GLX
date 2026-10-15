@@ -14,6 +14,7 @@ import {
   getFinEvalStatusVal, getPoRecvStatusVal, getBidResultVal,
 } from '../../lib/tenderFormat'
 import { SHEET_COLUMNS } from '../../lib/sheetColumns'
+import { isHttpUrl } from '../../lib/tenderSpec'
 import { statusStyle } from '../../services/bids'
 import { readMasterSheetDrill } from '../../lib/masterSheetDrill'
 import { downloadExcel } from '../../lib/excelExport'
@@ -38,7 +39,7 @@ const PILLS = [
 // names come from lib/sheetColumns.js (shared with the editable "All Tenders" sheet and both exports),
 // so the views never show different data or a different layout for the same tender.
 const RENDER = [
-  { key: 'title', label: 'Tender Title', minWidth: 240, sticky: true,
+  { key: 'title', label: 'Tender Title', minWidth: 240,
     render: (b) => b.title },
   { key: 'created_at', label: 'Created At', minWidth: 160,
     render: (b) => formatDateTime(b.created_at) },
@@ -51,7 +52,7 @@ const RENDER = [
   { key: 'platform', label: 'Platform', minWidth: 90,
     render: (b) => b.portal_source ?? '—' },
   { key: 'account_name', label: 'Account Name', minWidth: 170,
-    render: (b) => b.organization_name ?? '—' },
+    render: (b) => b.organization_name || '—' },
   { key: 'department', label: 'Department / Ministry', minWidth: 170,
     render: (b) => b.department_name ?? '—' },
   { key: 'location', label: 'Location', minWidth: 130,
@@ -111,8 +112,10 @@ const RENDER = [
 const COLUMNS = SHEET_COLUMNS.map((sc) => {
   const def = RENDER.find((r) => r.key === sc.key)
   if (!def) throw new Error(`MasterSheetPage: no renderer for sheet column "${sc.key}"`)
-  return { ...def, label: sc.label, minWidth: sc.minWidth }
+  return { ...def, label: sc.label, minWidth: sc.minWidth, hint: sc.hint }
 })
+// The first column stays pinned while the sheet scrolls sideways.
+COLUMNS[0].sticky = true
 
 function StatusPill({ status }) {
   const s = statusStyle(status)
@@ -302,6 +305,8 @@ export function MasterSheetPage() {
   }
 
   const rows = drillId ? drillBids : bids
+  // As wide as the busiest visible row needs (none when no row has a pill), so names stay aligned.
+  const pillSlotMax = rows.reduce((m, r) => Math.max(m, (r.is_imported ? 1 : 0) + (r.derived_status === 'ACTIVE' ? 1 : 0)), 0)
   const rowsLoading = drillId ? drillLoading : loadingFirst
 
   return (
@@ -377,6 +382,9 @@ export function MasterSheetPage() {
                   className={`p-3 border-r border-border ${c.sticky ? 'sticky left-0 z-30 bg-[color-mix(in_srgb,var(--muted)_90%,var(--card))]' : ''}`}
                 >
                   {c.label}
+                  {c.hint && (
+                    <span className="block text-[10px] font-medium normal-case tracking-normal text-primary/80">{c.hint}</span>
+                  )}
                 </th>
               ))}
             </tr>
@@ -398,11 +406,28 @@ export function MasterSheetPage() {
                     }`}
                   >
                     {c.key === 'title' ? (
-                      <div className="flex items-center gap-1.5">
-                        {bid.is_imported && <ImportedPill compact />}
-                        {bid.derived_status === 'ACTIVE' && <InProgressPill compact />}
-                        <span className="truncate hover:underline">{c.render(bid)}</span>
+                      <span className="truncate hover:underline">{c.render(bid)}</span>
+                    ) : c.key === 'account_name' ? (
+                      <div className="flex items-center gap-2">
+                        {pillSlotMax > 0 && (
+                          <span className="flex shrink-0 items-center gap-1" style={{ minWidth: pillSlotMax * 26 + (pillSlotMax - 1) * 4 }}>
+                            {bid.is_imported && <ImportedPill compact />}
+                            {bid.derived_status === 'ACTIVE' && <InProgressPill compact />}
+                          </span>
+                        )}
+                        <span className="truncate">{c.render(bid)}</span>
                       </div>
+                    ) : c.key === 'bid_id' && isHttpUrl(bid.tender_link) && (bid.gem_bid_no || bid.bid_no) ? (
+                      <a
+                        href={bid.tender_link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        title={`Open the tender page: ${bid.tender_link}`}
+                        className="underline decoration-dotted underline-offset-2 hover:decoration-solid"
+                      >
+                        {c.render(bid)} ↗
+                      </a>
                     ) : (
                       c.render(bid)
                     )}

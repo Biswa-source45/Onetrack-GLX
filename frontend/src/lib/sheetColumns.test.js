@@ -8,10 +8,18 @@ const keys = (list) => list.map((c) => c.key)
 const labels = (list) => list.map((c) => c.label)
 
 test('the first columns are exactly the agreed order and names', () => {
-  assert.deepEqual(labels(SHEET_COLUMNS).slice(0, 10), [
-    'Tender Title', 'Status', 'Account Name', 'Department / Ministry', 'Location',
-    'Bid Number / RFP Number', 'High-Level Scope', 'End Date', 'Estimated Tender Value (₹)', 'EMD Amount (₹)',
+  assert.deepEqual(labels(SHEET_COLUMNS).slice(0, 9), [
+    'Account Name', 'End Date', 'Bid Number / RFP Number', 'Department / Ministry', 'Location',
+    'High-Level Scope', 'Estimated Tender Value (₹)', 'EMD Amount (₹)', 'Tender Title',
   ])
+  // everything else keeps its earlier order, right after the nine
+  assert.deepEqual(keys(SHEET_COLUMNS).slice(9, 12), ['status', 'category', 'platform'])
+})
+
+test('the bid number column tells the user it opens the tender page', () => {
+  const bid = SHEET_COLUMNS.find((c) => c.key === 'bid_id')
+  assert.match(bid.hint, /click the number/i)
+  assert.equal(SHEET_COLUMNS.filter((c) => c.hint).length, 1)
 })
 
 test('every column appears once, with a name and a width', () => {

@@ -49,6 +49,7 @@ import {
   Layers,
   Globe,
   Info,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -104,6 +105,7 @@ import {
 import { StatusTag } from "../../lib/tenderDisplay";
 import { downloadExcel } from "../../lib/excelExport";
 import { EDITABLE_SHEET_COLUMNS } from "../../lib/sheetColumns";
+import { isHttpUrl } from "../../lib/tenderSpec";
 import { ExportSuccessDialog } from "./ExportSuccessDialog";
 import { TodoBlocks } from "./TodoBlocks";
 
@@ -604,6 +606,10 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
   // truth via meta.*_count).
   const clientFilters = { isOwnedView, currentUser, portalSourceFilter };
   const effectiveBids = bids.filter((bid) => matchesClientFilters(bid, clientFilters));
+  // Account Name cell: status dot, then the pill icons, then the name. The pill area is as wide as the
+  // busiest visible row needs (and absent when none has a pill), so names stay aligned without a big gap.
+  const pillCount = (b) => (b.is_imported ? 1 : 0) + (b.derived_status === "ACTIVE" ? 1 : 0);
+  const pillSlotMax = effectiveBids.reduce((m, b) => Math.max(m, pillCount(b)), 0);
 
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState(null);
@@ -1856,12 +1862,17 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                             key={c.key}
                             style={{ minWidth: c.minWidth }}
                             className={
-                              c.key === "title"
+                              c.key === EDITABLE_SHEET_COLUMNS[0].key
                                 ? "p-3 border-r border-border sticky left-0 bg-[color-mix(in_srgb,var(--muted)_40%,var(--card))] z-20 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)]"
                                 : "p-3 border-r border-border"
                             }
                           >
                             {c.label}
+                            {c.hint && (
+                              <span className="block text-[10px] font-medium normal-case tracking-normal text-primary/80">
+                                {c.hint}
+                              </span>
+                            )}
                           </th>
                         ))}
                         {inBin && (
@@ -1894,26 +1905,9 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                                           navigate(`/dashboard/tenders/${bid.id}`);
                                                         }
                                                       }}
-                                                      className={`p-3 border-r border-border min-w-[240px] truncate max-w-sm sticky left-0 bg-card group-hover/row:bg-[color-mix(in_srgb,var(--muted)_30%,var(--card))] z-10 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)] ${isReadOnly ? "font-semibold text-foreground hover:text-primary hover:underline cursor-pointer" : ""}`}
+                                                      className={`p-3 border-r border-border min-w-[240px] truncate max-w-sm ${isReadOnly ? "font-semibold text-foreground hover:text-primary hover:underline cursor-pointer" : ""}`}
                                                     >
                                                       <div className="flex items-center gap-2.5 w-full">
-                                                        {bid.is_imported && <ImportedPill compact />}
-                                                        {bid.derived_status === "ACTIVE" && <InProgressPill compact />}
-                                                        {bid.bid_status === "ACTIVE" ? (
-                                                          <span
-                                                            className="relative flex size-2 shrink-0"
-                                                            title="Active"
-                                                          >
-                                                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-                                                            <span className="relative inline-flex rounded-full size-2 bg-emerald-500"></span>
-                                                          </span>
-                                                        ) : (
-                                                          <span
-                                                            className={`size-2 rounded-full shrink-0 ${statusStyle(bid.bid_status).dot}`}
-                                                            title={bid.bid_status}
-                                                          />
-                                                        )}
-
                                                         {!isReadOnly ? (
                                                           <input
                                                             type="text"
@@ -1986,6 +1980,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                           bid_id: (
                         <td key="bid_id" className="p-3 border-r border-border font-mono text-primary font-medium">
                                                       {!isReadOnly ? (
+                                                        <div className="flex items-center gap-1.5">
                                                         <input
                                                           type="text"
                                                           value={bid[bidIdField] || ""}
@@ -2009,6 +2004,31 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                                           className="w-full bg-transparent border-none focus:outline-none focus:ring-1 focus:ring-primary px-1 py-0.5 text-xs text-primary font-medium rounded font-mono"
                                                           placeholder="Bid Number / RFP Number"
                                                         />
+                                                        {isHttpUrl(bid.tender_link) && (
+                                                          <a
+                                                            href={bid.tender_link}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            title={`Open the tender page: ${bid.tender_link}`}
+                                                            aria-label="Open the tender page"
+                                                            className="shrink-0 text-primary hover:text-primary/70"
+                                                          >
+                                                            <ExternalLink className="size-3.5" />
+                                                          </a>
+                                                        )}
+                                                        </div>
+                                                      ) : isHttpUrl(bid.tender_link) && (bid.gem_bid_no || bid.bid_no) ? (
+                                                        <a
+                                                          href={bid.tender_link}
+                                                          target="_blank"
+                                                          rel="noopener noreferrer"
+                                                          onClick={(e) => e.stopPropagation()}
+                                                          title={`Open the tender page: ${bid.tender_link}`}
+                                                          className="inline-flex items-center gap-1 underline decoration-dotted underline-offset-2 hover:decoration-solid"
+                                                        >
+                                                          {bid.gem_bid_no ?? bid.bid_no}
+                                                          <ExternalLink className="size-3 shrink-0" />
+                                                        </a>
                                                       ) : (
                                                         (bid.gem_bid_no ?? bid.bid_no ?? "—")
                                                       )}
@@ -2053,7 +2073,29 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                                     </td>
                           ),
                           account_name: (
-                        <td key="account_name" className="p-3 border-r border-border truncate max-w-xs">
+                        <td key="account_name" className="p-3 border-r border-border truncate max-w-[26rem] sticky left-0 bg-card group-hover/row:bg-[color-mix(in_srgb,var(--muted)_30%,var(--card))] z-10 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)]">
+                                                      <div className="flex items-center gap-2 w-full">
+                                                        {bid.bid_status === "ACTIVE" ? (
+                                                          <span
+                                                            className="relative flex size-2 shrink-0"
+                                                            title="Active"
+                                                          >
+                                                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                                                            <span className="relative inline-flex rounded-full size-2 bg-emerald-500"></span>
+                                                          </span>
+                                                        ) : (
+                                                          <span
+                                                            className={`size-2 rounded-full shrink-0 ${statusStyle(bid.bid_status).dot}`}
+                                                            title={bid.bid_status}
+                                                          />
+                                                        )}
+                 {pillSlotMax > 0 && (
+                   <span className="flex shrink-0 items-center gap-1" style={{ minWidth: pillSlotMax * 26 + (pillSlotMax - 1) * 4 }}>
+                     {bid.is_imported && <ImportedPill compact />}
+                     {bid.derived_status === "ACTIVE" && <InProgressPill compact />}
+                   </span>
+                 )}
+                                                      <div className="min-w-0 flex-1 truncate" title={bid.organization_name || undefined}>
                                                       {!isReadOnly ? (
                                                         <input
                                                           type="text"
@@ -2079,9 +2121,11 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                                           placeholder="Account Name"
                                                         />
                                                       ) : (
-                                                        (bid.organization_name ?? "—")
+                                                        (bid.organization_name || "—")
                                                       )}
-                                                    </td>
+                                                      </div>
+                                                      </div>
+</td>
                           ),
                           scope: (
                         <td key="scope" className="p-3 border-r border-border truncate max-w-xs">

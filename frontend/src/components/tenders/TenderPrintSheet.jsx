@@ -169,10 +169,18 @@ export function TenderPrintSheet({ bid, onDone }) {
                       <td colSpan={6} className={`${td} text-right text-slate-600`}>Total before buyback (incl. GST)</td>
                       <td className={`${td} text-right tabular-nums`}>{inr(calc.grandTotalBeforeBuyback)}</td>
                     </tr>
-                    <tr>
-                      <td colSpan={6} className={`${td} text-right text-slate-600`}>Less: Buyback{calc.buybackItem ? ` — ${calc.buybackItem}` : ''}</td>
-                      <td className={`${td} text-right tabular-nums`}>− {inr(calc.buybackValue)}</td>
-                    </tr>
+                    {calc.buybackLines.map(l => (
+                      <tr key={l.id}>
+                        <td colSpan={6} className={`${td} text-right text-slate-600`}>Less: Buyback — {l.product || 'Item'} ({l.qty} × {inr(l.unitPrice)})</td>
+                        <td className={`${td} text-right tabular-nums`}>− {inr(l.total)}</td>
+                      </tr>
+                    ))}
+                    {calc.buybackLines.length > 1 && (
+                      <tr>
+                        <td colSpan={6} className={`${td} text-right text-slate-600`}>Total buyback</td>
+                        <td className={`${td} text-right tabular-nums`}>− {inr(calc.buybackValue)}</td>
+                      </tr>
+                    )}
                   </>
                 )}
                 <tr className="bg-slate-100">

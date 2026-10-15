@@ -1,17 +1,19 @@
 // The one list that decides which columns the tender sheet views show, in which order and under which
 // name: the editable "All Tenders" sheet, the read-only Master Sheet and both Excel exports all follow it,
 // so they cannot drift apart. `masterOnly` columns exist only on the read-only Master Sheet.
+// `hint` is a short line shown under the column name on screen (never in an export).
+// The first column stays pinned while the sheet scrolls sideways.
 export const SHEET_COLUMNS = [
-  { key: 'title', label: 'Tender Title', minWidth: 240 },
-  { key: 'status', label: 'Status', minWidth: 120 },
-  { key: 'account_name', label: 'Account Name', minWidth: 180 },
+  { key: 'account_name', label: 'Account Name', minWidth: 260 },
+  { key: 'end_date', label: 'End Date', minWidth: 180 },
+  { key: 'bid_id', label: 'Bid Number / RFP Number', minWidth: 190, hint: 'Click the number to open the tender page' },
   { key: 'department', label: 'Department / Ministry', minWidth: 200 },
   { key: 'location', label: 'Location', minWidth: 140 },
-  { key: 'bid_id', label: 'Bid Number / RFP Number', minWidth: 190 },
   { key: 'scope', label: 'High-Level Scope', minWidth: 240 },
-  { key: 'end_date', label: 'End Date', minWidth: 180 },
   { key: 'estimated_value', label: 'Estimated Tender Value (₹)', minWidth: 180 },
   { key: 'emd', label: 'EMD Amount (₹)', minWidth: 140 },
+  { key: 'title', label: 'Tender Title', minWidth: 240 },
+  { key: 'status', label: 'Status', minWidth: 120 },
   { key: 'category', label: 'Category', minWidth: 120 },
   { key: 'platform', label: 'Platform', minWidth: 135 },
   { key: 'quantity', label: 'Quantity', minWidth: 90 },

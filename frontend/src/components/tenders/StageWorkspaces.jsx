@@ -33,6 +33,7 @@ import { addContact } from '../../services/contacts'
 import { oemRowIds, parseContactText } from '../../lib/contacts'
 import { RaiseShortfallDialog, ShortfallPanel, ShortfallHistory } from './DocShortfall'
 import { addRound, awaitingReeval, lastRound, openRound, patchRound, shortfallRounds } from '../../lib/docShortfall'
+import { buybackLines, buybackTotal, buybackSummary, buybackDraft, newBuybackLine, validateBuybackDraft } from '../../lib/buyback'
 import { ChecklistTab } from './ChecklistTab'
 import { PricingSuggestionHint } from './PricingSuggestionHint'
 import { logStageMicroEvent } from '../../services/auditLogger'
@@ -2304,8 +2305,8 @@ export function computeL1PricingSummary(pricingData, fallbackMarginPct = 2.45) {
   // profit above stay as quoted. grandGlobxTotal is the NET figure because it
   // is what every downstream consumer (approval snapshot, Bid Submission's
   // quoted price, print sheet) treats as the final bid value.
-  const buyback = pricingData?.buyback
-  const buybackValue = buyback?.enabled ? Math.max(Number(buyback.value) || 0, 0) : 0
+  const bbLines = buybackLines(pricingData?.buyback)
+  const buybackValue = buybackTotal(bbLines)
 
   return {
     l1Quote,
@@ -2313,7 +2314,8 @@ export function computeL1PricingSummary(pricingData, fallbackMarginPct = 2.45) {
       items, grandBaseCost, grandSellingExclGst, grandGstAmount,
       grandTotalBeforeBuyback: grandGlobxTotal,
       buybackValue,
-      buybackItem: buybackValue > 0 ? (buyback.item || '').trim() : '',
+      buybackLines: bbLines,
+      buybackItem: buybackSummary(bbLines),
       grandGlobxTotal: grandGlobxTotal - buybackValue,
       grandTotalProfit, effectiveMarginPct,
     },
@@ -2358,7 +2360,8 @@ const PRICING_DEFAULTS = {
   reminders: [], // [{ sentAt, sentBy }]
   marginPct: 2.45,
   // Tenders that take old equipment back: value is deducted from the total.
-  buyback: { enabled: false, item: '', value: '' },
+  // items: [{ id, product, qty, unitPrice }]; the buyback value is the sum of qty x unitPrice.
+  buyback: { enabled: false, items: [] },
 }
 
 // ── Stage 4: Pricing Request ────────────────────────────────────────────────
@@ -2622,15 +2625,20 @@ export function Stage4Workspace({ bid, onRefresh }) {
     const grandGlobxTotal = calc.grandGlobxTotal
     const effectiveMargin = calc.effectiveMarginPct.toFixed(2)
     const hasBuyback = calc.buybackValue > 0
+    const bbCell = 'padding: 8px 10px; text-align: right; color: #475569; font-size: 12px; border-right: 1px solid #e2e8f0;'
     const buybackRowsHtml = hasBuyback ? `
               <tr style="background-color: #ffffff; border-top: 2px solid #cbd5e1;">
-                <td colspan="8" style="padding: 8px 10px; text-align: right; color: #475569; font-size: 12px; border-right: 1px solid #e2e8f0;">Total before buyback (incl. GST)</td>
+                <td colspan="8" style="${bbCell}">Total before buyback (incl. GST)</td>
                 <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #334155;">${fmtMoneyFull(calc.grandTotalBeforeBuyback)}</td>
-              </tr>
+              </tr>${calc.buybackLines.map(l => `
               <tr style="background-color: #ffffff;">
-                <td colspan="8" style="padding: 8px 10px; text-align: right; color: #475569; font-size: 12px; border-right: 1px solid #e2e8f0;">Less: Buyback${calc.buybackItem ? ` — ${escHtml(calc.buybackItem)}` : ''}</td>
-                <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #be123c;">− ${fmtMoneyFull(calc.buybackValue)}</td>
-              </tr>` : ''
+                <td colspan="8" style="${bbCell}">Less: Buyback — ${escHtml(l.product || 'Item')} (${l.qty} × ${fmtMoneyFull(l.unitPrice)})</td>
+                <td style="padding: 8px 10px; text-align: right; font-family: monospace; color: #be123c;">− ${fmtMoneyFull(l.total)}</td>
+              </tr>`).join('')}${calc.buybackLines.length > 1 ? `
+              <tr style="background-color: #ffffff;">
+                <td colspan="8" style="${bbCell} font-weight: 700;">Total buyback</td>
+                <td style="padding: 8px 10px; text-align: right; font-family: monospace; font-weight: 700; color: #be123c;">− ${fmtMoneyFull(calc.buybackValue)}</td>
+              </tr>` : ''}` : ''
 
     return `
       <div style="margin-top: 14px; margin-bottom: 14px; border: 1px solid #c7d2fe; border-radius: 10px; overflow: hidden; background-color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
@@ -2879,14 +2887,18 @@ export function Stage4Workspace({ bid, onRefresh }) {
   const canEditBuyback = !isReadOnly || canApprovePricing
   const savedBuyback = pricingData.buyback || PRICING_DEFAULTS.buyback
   const [buybackOn, setBuybackOn] = useState(!!savedBuyback.enabled)
-  const [buybackItem, setBuybackItem] = useState(savedBuyback.item || '')
-  const [buybackValue, setBuybackValue] = useState(savedBuyback.value === '' || savedBuyback.value == null ? '' : String(savedBuyback.value))
+  const [bbItems, setBbItems] = useState(() => buybackDraft(savedBuyback))
   // Resync the draft when the saved sheet changes (refresh / another session).
+  const savedBuybackKey = JSON.stringify(savedBuyback)
   useEffect(() => {
     setBuybackOn(!!savedBuyback.enabled)
-    setBuybackItem(savedBuyback.item || '')
-    setBuybackValue(savedBuyback.value === '' || savedBuyback.value == null ? '' : String(savedBuyback.value))
-  }, [savedBuyback.enabled, savedBuyback.item, savedBuyback.value])
+    setBbItems(buybackDraft(savedBuyback))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedBuybackKey])
+  const setBbField = (id, field, value) => setBbItems(rows => rows.map(r => r.id === id ? { ...r, [field]: value } : r))
+  const draftTotal = buybackTotal(buybackLines({ enabled: true, items: bbItems }))
+  const bbSig = (rows) => JSON.stringify(rows.map(r => [String(r.product).trim(), Number(r.qty) || 0, Number(r.unitPrice) || 0]))
+  const buybackDirty = buybackOn && (!savedBuyback.enabled || bbSig(bbItems) !== bbSig(buybackDraft(savedBuyback)))
 
   // Net total can't go negative: a buyback larger than what we're offering
   // means a margin was lowered (or the value mistyped) after it was saved.
@@ -2911,20 +2923,22 @@ export function Stage4Workspace({ bid, onRefresh }) {
   }
 
   const handleSaveBuyback = async () => {
-    const item = buybackItem.trim()
-    const value = Number(buybackValue)
-    if (!item) { toast.error('Describe what is being taken back (e.g. "Old laptops — 50 units")'); return }
-    if (!Number.isFinite(value) || value <= 0) { toast.error('Enter a buyback value greater than 0'); return }
-    if (l1Calculations && value > l1Calculations.grandTotalBeforeBuyback) {
+    const problem = validateBuybackDraft(bbItems)
+    if (problem) { toast.error(problem); return }
+    const items = bbItems.map(r => ({ id: r.id, product: r.product.trim(), qty: Number(r.qty), unitPrice: Number(r.unitPrice) }))
+    const lines = buybackLines({ enabled: true, items })
+    const total = buybackTotal(lines)
+    if (l1Calculations && total > l1Calculations.grandTotalBeforeBuyback) {
       toast.error(`Buyback can't exceed the total before buyback (${fmtMoneyFull(l1Calculations.grandTotalBeforeBuyback)})`)
       return
     }
-    await persistBuyback({ enabled: true, item, value }, `Buyback set: ${item} — ${fmtMoneyFull(value)} deducted from the offered total`)
+    await persistBuyback({ enabled: true, items }, `Buyback set: ${buybackSummary(lines)} — ${fmtMoneyFull(total)} deducted from the offered total`)
     toast.success('Buyback saved')
   }
 
   const handleToggleBuyback = async (on) => {
     setBuybackOn(on)
+    if (on && bbItems.length === 0) setBbItems([newBuybackLine()])
     // Turning it off removes it from the total straight away; the typed
     // details stay on the sheet so turning it back on restores them.
     if (!on && savedBuyback.enabled) {
@@ -3165,20 +3179,87 @@ export function Stage4Workspace({ bid, onRefresh }) {
           </div>
 
           {buybackOn && (
-            <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr_auto] gap-3 items-end pt-1">
-              <div className="space-y-1.5">
-                <Label className="text-xs">What is being taken back? *</Label>
-                <Input value={buybackItem} onChange={e => setBuybackItem(e.target.value)} disabled={!canEditBuyback}
-                  placeholder="e.g. Old laptops — 50 units" className="text-xs h-8" />
+            <div className="space-y-3 pt-1">
+              <div className="overflow-x-auto rounded-lg border border-border">
+                <table className="w-full min-w-[640px] border-collapse text-xs">
+                  <colgroup>
+                    <col className="w-10" /><col /><col className="w-24" /><col className="w-36" /><col className="w-40" /><col className="w-12" />
+                  </colgroup>
+                  <thead>
+                    <tr className="border-b border-border bg-muted/40 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      <th scope="col" className="p-2 text-center">#</th>
+                      <th scope="col" className="p-2 text-left">Product *</th>
+                      <th scope="col" className="p-2 text-right">Qty *</th>
+                      <th scope="col" className="p-2 text-right">Unit price (₹) *</th>
+                      <th scope="col" className="p-2 text-right">Line total (₹)</th>
+                      <th scope="col" className="p-2"><span className="sr-only">Remove</span></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {bbItems.map((r, i) => {
+                      const lineTotal = (Number(r.qty) || 0) * (Number(r.unitPrice) || 0)
+                      return (
+                        <tr key={r.id}>
+                          <td className="p-2 text-center text-muted-foreground tabular-nums">{i + 1}</td>
+                          <td className="p-1.5">
+                            <Input value={r.product} onChange={e => setBbField(r.id, 'product', e.target.value)} disabled={!canEditBuyback}
+                              placeholder="e.g. Desktop CPU" aria-label={`Buyback product ${i + 1}`} className="h-8 text-xs" />
+                          </td>
+                          <td className="p-1.5">
+                            <Input type="number" min="1" step="1" value={r.qty} onChange={e => setBbField(r.id, 'qty', e.target.value)} disabled={!canEditBuyback}
+                              aria-label={`Buyback quantity ${i + 1}`} className="h-8 text-right text-xs tabular-nums" />
+                          </td>
+                          <td className="p-1.5">
+                            <Input type="number" min="0" step="any" value={r.unitPrice} onChange={e => setBbField(r.id, 'unitPrice', e.target.value)} disabled={!canEditBuyback}
+                              placeholder="0.00" aria-label={`Buyback unit price ${i + 1}`} className="h-8 text-right text-xs tabular-nums" />
+                          </td>
+                          <td className="p-2 text-right font-mono font-semibold tabular-nums">{fmtMoneyFull(lineTotal)}</td>
+                          <td className="p-1 text-center">
+                            <Button type="button" size="icon" variant="ghost" disabled={!canEditBuyback} aria-label={`Remove buyback line ${i + 1}`}
+                              onClick={() => setBbItems(rows => rows.filter(x => x.id !== r.id))} className="size-8 text-muted-foreground hover:text-rose-600">
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    <tr>
+                      <td colSpan={6} className="p-1.5">
+                        <Button type="button" size="sm" variant="ghost" disabled={!canEditBuyback} onClick={() => setBbItems(rows => [...rows, newBuybackLine()])} className="h-8 gap-1 text-xs text-primary">
+                          <Plus className="size-3.5" /> Add buyback product
+                        </Button>
+                      </td>
+                    </tr>
+                  </tbody>
+                  <tfoot className="border-t-2 border-border bg-muted/20">
+                    {l1Calculations && (
+                      <tr>
+                        <td colSpan={4} className="p-2 text-right text-muted-foreground">Total before buyback (incl. GST)</td>
+                        <td className="p-2 text-right font-mono tabular-nums">{fmtMoneyFull(l1Calculations.grandTotalBeforeBuyback)}</td>
+                        <td />
+                      </tr>
+                    )}
+                    <tr>
+                      <td colSpan={4} className="p-2 text-right text-muted-foreground">Total buyback</td>
+                      <td className="p-2 text-right font-mono font-bold tabular-nums text-rose-600 dark:text-rose-400" data-testid="buyback-draft-total">− {fmtMoneyFull(draftTotal)}</td>
+                      <td />
+                    </tr>
+                    {l1Calculations && (
+                      <tr className="border-t border-border">
+                        <td colSpan={4} className="p-2 text-right text-[11px] font-bold uppercase tracking-wider">Final offered value</td>
+                        <td className="p-2 text-right font-mono font-extrabold tabular-nums" data-testid="buyback-final-total">{fmtMoneyFull(l1Calculations.grandTotalBeforeBuyback - draftTotal)}</td>
+                        <td />
+                      </tr>
+                    )}
+                  </tfoot>
+                </table>
               </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Buyback Value (₹) *</Label>
-                <Input type="number" min="0" step="any" value={buybackValue} onChange={e => setBuybackValue(e.target.value)} disabled={!canEditBuyback}
-                  placeholder="Total value" className="text-xs h-8" />
+              <div className="flex items-center justify-end gap-3">
+                {buybackDirty && <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400">Not saved yet</span>}
+                <Button size="sm" onClick={handleSaveBuyback} disabled={!canEditBuyback} className="h-8 text-xs bg-violet-600 hover:bg-violet-700 text-white">
+                  {savedBuyback.enabled ? 'Update Buyback' : 'Save Buyback'}
+                </Button>
               </div>
-              <Button size="sm" onClick={handleSaveBuyback} disabled={!canEditBuyback} className="h-8 text-xs bg-violet-600 hover:bg-violet-700 text-white">
-                {savedBuyback.enabled ? 'Update Buyback' : 'Save Buyback'}
-              </Button>
             </div>
           )}
 
@@ -3261,12 +3342,20 @@ export function Stage4Workspace({ bid, onRefresh }) {
                       <td colSpan={9} className="border border-border p-2 text-right text-muted-foreground uppercase tracking-wider">Total Before Buyback (Incl. GST):</td>
                       <td className="border border-border p-2 text-right font-mono font-bold text-foreground">{fmtMoneyFull(l1Calculations.grandTotalBeforeBuyback)}</td>
                     </tr>
-                    <tr className="text-xs">
-                      <td colSpan={9} className="border border-border p-2 text-right text-muted-foreground uppercase tracking-wider">
-                        Less: Buyback{l1Calculations.buybackItem ? <span className="normal-case tracking-normal"> — {l1Calculations.buybackItem}</span> : null}
-                      </td>
-                      <td className="border border-border p-2 text-right font-mono font-bold text-rose-600 dark:text-rose-400">− {fmtMoneyFull(l1Calculations.buybackValue)}</td>
-                    </tr>
+                    {l1Calculations.buybackLines.map(l => (
+                      <tr key={l.id} className="text-xs">
+                        <td colSpan={9} className="border border-border p-2 text-right text-muted-foreground tracking-wider">
+                          Less: Buyback — {l.product || 'Item'} ({l.qty} × {fmtMoneyFull(l.unitPrice)})
+                        </td>
+                        <td className="border border-border p-2 text-right font-mono font-bold text-rose-600 dark:text-rose-400">− {fmtMoneyFull(l.total)}</td>
+                      </tr>
+                    ))}
+                    {l1Calculations.buybackLines.length > 1 && (
+                      <tr className="text-xs">
+                        <td colSpan={9} className="border border-border p-2 text-right text-muted-foreground uppercase tracking-wider">Total Buyback:</td>
+                        <td className="border border-border p-2 text-right font-mono font-bold text-rose-600 dark:text-rose-400">− {fmtMoneyFull(l1Calculations.buybackValue)}</td>
+                      </tr>
+                    )}
                   </>
                 )}
                 <tr className="bg-muted/40 font-bold border-t-2 border-border text-xs">
@@ -4493,6 +4582,97 @@ export function Stage10Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
   const [status, setStatus] = useState('QUALIFIED')
   const [disqualifyReason, setDisqualifyReason] = useState('')
+
+  // Document shortfall: instead of disqualifying us the customer may ask for missing
+  // documents within a deadline. Rounds live in bid.doc_shortfall; the bid service
+  // blocks qualifying while a round is open and lets only the chosen approver approve.
+  const { user: currentUser, isAdmin } = usePermissions()
+  const [showRaise, setShowRaise] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const ds = bid?.doc_shortfall && typeof bid.doc_shortfall === 'object' ? bid.doc_shortfall : null
+  // A server older than this screen has no doc_shortfall at all and would drop every save
+  // while still answering OK, so the shortfall controls stay off until it is updated.
+  const supported = !!bid && 'doc_shortfall' in bid
+  const busyRef = useRef(false)
+  const revRef = useRef(0)
+  revRef.current = ds?.rev || 0
+
+  // Everyone on the tender works on the same shortfall, so keep this view current: check
+  // for a newer revision when the tab regains focus and every 20 seconds, and reload only
+  // when it changed (a failed check is ignored, it must never disturb the page).
+  useEffect(() => {
+    if (!supported || !bid?.id) return undefined
+    const check = async () => {
+      if (document.hidden || busyRef.current) return
+      try {
+        const res = await getBid(bid.id)
+        if (res.ok && (res.data?.doc_shortfall?.rev || 0) !== revRef.current && !busyRef.current) onRefresh()
+      } catch { /* try again on the next tick */ }
+    }
+    const timer = setInterval(check, 20000)
+    window.addEventListener('focus', check)
+    return () => { clearInterval(timer); window.removeEventListener('focus', check) }
+  }, [supported, bid?.id, onRefresh])
+  const round = openRound(ds)
+  const last = lastRound(ds)
+  const reeval = awaitingReeval(ds)
+  const actorName = currentUser?.full_name || currentUser?.username || ''
+  const canRaise = !round && bid?.stage_completions?.TECHNICAL_EVALUATION !== true && !['WON', 'LOST', 'CANCELLED', 'CLOSED', 'ARCHIVED'].includes(bid?.bid_status)
+  const team = () => [bid?.bid_owner?.id, bid?.account_manager?.id, bid?.reporting_manager?.id, bid?.presales?.id]
+
+  // ponytail: whole-object save like post_bid; the bid team writes it one after the other.
+  // Each save carries the next revision; the server refuses it (409) when someone saved in between.
+  const saveShortfall = async (next, { ok, log, notify, extra } = {}) => {
+    if (busyRef.current) return false
+    busyRef.current = true
+    setBusy(true)
+    try {
+      const res = await updateBid(bid.id, { doc_shortfall: JSON.stringify({ ...next, rev: (ds?.rev || 0) + 1, updatedAt: new Date().toISOString() }), ...extra })
+      if (res.status === 409) {
+        toast.error('Someone else just changed this document shortfall. It has been reloaded, please repeat your action.')
+        await onRefresh()
+        return false
+      }
+      if (!res.ok) { toast.error(res.error?.message || 'Failed to save'); return false }
+      if (ok) toast.success(ok)
+      if (log) logStageInteraction(bid.id, 'TECHNICAL_EVALUATION', log)
+      if (notify) {
+        ;[...new Set(notify.ids)].filter(id => id && id !== currentUser?.id).forEach(id =>
+          createAlert({ user_id: id, bid_id: bid.id, created_by: currentUser?.id, type: notify.type, link: stageLink(bid.id, 'TECHNICAL_EVALUATION'), title: notify.title, message: notify.html }).catch(() => {}))
+      }
+      // Wait for the reload so a quick second action starts from what was just saved, not a stale copy.
+      await onRefresh()
+      return true
+    } finally { busyRef.current = false; setBusy(false) }
+  }
+
+  const raise = async ({ deadline, note, docs }) => {
+    const next = addRound(ds || {}, { deadline, note, docs, by: actorName, byId: currentUser?.id })
+    const r = next.rounds.at(-1)
+    const names = r.docs.map(d => d.name).join(', ')
+    if (await saveShortfall(next, {
+      ok: 'Document shortfall recorded',
+      log: `Technical evaluation: the customer asked for ${r.docs.length} document(s) by ${fmtDateTime(r.deadline)} (shortfall round ${r.n}): ${names}`,
+      notify: { ids: team(), type: 'ACTION_REQUIRED', title: `Document shortfall: ${bid.title}`,
+        html: `<p>The customer asked for missing documents on <strong>${escHtml(bid.title)}</strong>, due ${escHtml(fmtDateTime(r.deadline))}: ${escHtml(names)}. Open the Technical Evaluation stage to add them.</p>` },
+    })) setShowRaise(false)
+  }
+
+  // We cannot get the documents: the bid is lost, and the round records why.
+  const markLost = async (reason) => {
+    const lostRound = patchRound(ds, round.n, { outcome: 'DISQUALIFIED', lostAt: new Date().toISOString(), lostBy: actorName, lostReason: reason })
+    const ok = await saveShortfall(lostRound, {
+      ok: 'Bid marked as Lost',
+      log: `Document shortfall round ${round.n}: documents could not be provided, bid lost (${reason})`,
+      extra: {
+        technical_result: 'DISQUALIFIED',
+        disqualification_reason: `Document shortfall not met: ${reason}`,
+        stage_completions: { ...(bid?.stage_completions || {}), TECHNICAL_EVALUATION: true },
+        stage_remarks: { ...(bid?.stage_remarks || {}), TECHNICAL_EVALUATION: `[Completed]: Document shortfall not met: ${reason}` },
+      },
+    })
+    return ok
+  }
 
   const handleResult = async (remarks) => {
     // The re-evaluation answers the last shortfall round, if there was one.
