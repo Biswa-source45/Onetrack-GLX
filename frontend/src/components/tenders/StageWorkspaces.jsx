@@ -35,6 +35,7 @@ import { RaiseShortfallDialog, ShortfallPanel, ShortfallHistory } from './DocSho
 import { addRound, awaitingReeval, lastRound, openRound, patchRound, shortfallRounds } from '../../lib/docShortfall'
 import { buybackLines, buybackTotal, buybackSummary, buybackDraft, newBuybackLine, validateBuybackDraft } from '../../lib/buyback'
 import { ChecklistTab } from './ChecklistTab'
+import { ChecklistReview } from './ChecklistReview'
 import { PricingSuggestionHint } from './PricingSuggestionHint'
 import { logStageMicroEvent } from '../../services/auditLogger'
 import { useBidStore } from '../../store/useBidStore'
@@ -1694,8 +1695,8 @@ export function Stage3Workspace({ bid, onRefresh }) {
       fromStage: 'OEM_AUTHORIZATION_REQUEST',
       toStage: 'OEM_AUTHORIZATION_REQUEST',
       eventType: 'OEM',
-      transitionReason: `Synced OEM rows with Primary Review: ${added.length} added, ${removed} duplicate/unconfirmed removed`,
-      details: { added },
+      transitionReason: `Synced OEM rows with Primary Review: ${newRows.length} added`,
+      details: { added: missing },
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bid.primary_review, bid.id, oems, dismissedNames, isEditing])
@@ -5094,12 +5095,18 @@ export function Stage12Workspace({ bid, onRefresh }) {
       return
     }
     try {
+      // The server owns the refund record and refuses to change one that was already refunded. Ask it first,
+      // so a refunded EMD is never shown as pending here while its record still says "Refunded".
+      const reset = await updateEmdRefund(bid.id, { refund_status: 'Pending' }).catch(() => null)
+      if (reset && !reset.ok && /already been refunded/i.test(reset.error?.message || reset.message || '')) {
+        toast.error('This EMD was already refunded and is locked, so its return cannot be undone here.')
+        return
+      }
       const res = await updateBid(bid.id, {
         emd_returned: false,
         emd_returned_date: null,
       })
       if (res.ok) {
-        await updateEmdRefund(bid.id, { refund_status: 'Pending' }).catch(() => {})
         setEmdReturned(false)
         logStageMicroEvent(bid.id, {
           fromStage: 'AWARD_HANDOVER',
@@ -5329,7 +5336,7 @@ export function Stage12Workspace({ bid, onRefresh }) {
                     <input
                       type="checkbox"
                       checked={emdReturned}
-                      onChange={handleEmdCheckboxClick}
+                      readOnly
                       onClick={handleEmdCheckboxClick}
                       aria-label="EMD Returned by Procuring Authority"
                       className="rounded size-4 mt-0.5 text-primary cursor-pointer"
@@ -5430,12 +5437,18 @@ export function EmdReturnWorkspace({ bid, onRefresh }) {
       return
     }
     try {
+      // The server owns the refund record and refuses to change one that was already refunded. Ask it first,
+      // so a refunded EMD is never shown as pending here while its record still says "Refunded".
+      const reset = await updateEmdRefund(bid.id, { refund_status: 'Pending' }).catch(() => null)
+      if (reset && !reset.ok && /already been refunded/i.test(reset.error?.message || reset.message || '')) {
+        toast.error('This EMD was already refunded and is locked, so its return cannot be undone here.')
+        return
+      }
       const res = await updateBid(bid.id, {
         emd_returned: false,
         emd_returned_date: null,
       })
       if (res.ok) {
-        await updateEmdRefund(bid.id, { refund_status: 'Pending' }).catch(() => {})
         setEmdReturned(false)
         logStageMicroEvent(bid.id, {
           fromStage: 'AWARD_HANDOVER',
@@ -5502,7 +5515,7 @@ export function EmdReturnWorkspace({ bid, onRefresh }) {
           <input
             type="checkbox"
             checked={emdReturned}
-            onChange={handleEmdCheckboxClick}
+            readOnly
             onClick={handleEmdCheckboxClick}
             aria-label="EMD Returned by Procuring Authority"
             className="rounded size-4 mt-0.5 text-primary cursor-pointer"
