@@ -182,11 +182,12 @@ export function EmdDetailsPage() {
       const isExempt = b.emd_exempted || b.emd_not_applicable || (Array.isArray(b.emd_exemption_types) && b.emd_exemption_types.length > 0)
       const isReady = Boolean(b.emd_ready)
       const isReturned = Boolean(b.emd_returned || emd.refund_status === 'Refunded')
+      const isPaid = ['Paid', 'Verified', 'Released', 'Refunded'].includes(emd.status)
       const isPre = isPreSubmission(b)
       const isActive = isActivePipeline(b)
 
       // Payment Mode
-      const paymentMode = emd.payment_mode || b.emd_type || (isExempt ? 'Exempted' : (b.emd_ready ? 'Online' : '—'))
+      const paymentMode = emd.payment_mode || b.emd_type || (isExempt ? 'Exempted' : '—')
 
       // Who will give payment / Depositor Name & Dept
       const depositor = emd.depositor_name
@@ -202,7 +203,7 @@ export function EmdDetailsPage() {
       const paymentDate = emd.payment_date || b.emd_ready_date || null
 
       // Payment Reference / UTR
-      const paymentRef = emd.payment_reference || (isReady ? (b.gem_bid_no ? `UTR-${b.gem_bid_no.slice(-6)}` : 'Recorded') : '—')
+      const paymentRef = emd.payment_reference || '—'
 
       // MD Approval Status
       const mdStatus = emd.status || (isReady ? 'MD Approved' : (isExempt ? 'Exempted' : 'Pending MD Approval'))
@@ -226,7 +227,7 @@ export function EmdDetailsPage() {
       const actualRefundDate = emd.actual_refund_date || b.emd_returned_date || null
 
       // Refund Reference / UTR
-      const refundRef = emd.refund_reference_no || (isReturned ? 'Settled to Bank' : '—')
+      const refundRef = emd.refund_reference_no || '—'
 
       return {
         ...b,
@@ -235,6 +236,7 @@ export function EmdDetailsPage() {
         isExempt,
         isReady,
         isReturned,
+        isPaid,
         isPre,
         isActive,
         paymentMode,
@@ -278,8 +280,8 @@ export function EmdDetailsPage() {
     let exempted = 0
 
     for (const b of enrichedBids) {
-      const isRet = b.isReturned || b.refund_status === 'Refunded'
-      const isAwaiting = !isRet && !b.isExempt && (b.refund_status === 'Initiated' || b.refund_status === 'Pending' || (b.isReady && !b.isPre))
+      const isRet = b.isReturned || b.refundStatus === 'Refunded'
+      const isAwaiting = !isRet && !b.isExempt && (b.refundStatus === 'Initiated' || b.refundStatus === 'Pending' || (b.isReady && !b.isPre))
 
       if (isRet) returned++
       if (isAwaiting) awaiting++
@@ -302,10 +304,10 @@ export function EmdDetailsPage() {
     for (const b of enrichedBids) {
       if (b.isExempt) continue
       const amt = Number(b.payment_amount) || Number(b.emd_amount) || 0
-      const refAmt = Number(b.refund_amount) || (b.isReturned || b.refund_status === 'Refunded' ? amt : 0)
+      const refAmt = Number(b.refund_amount) || (b.isReturned || b.refundStatus === 'Refunded' ? amt : 0)
 
-      const isRet = b.isReturned || b.refund_status === 'Refunded'
-      const isDisbursed = b.isReady || b.isPaid || isRet || b.refund_status === 'Initiated'
+      const isRet = b.isReturned || b.refundStatus === 'Refunded'
+      const isDisbursed = b.isReady || b.isPaid || isRet || b.refundStatus === 'Initiated'
 
       if (isDisbursed) {
         disbursedSum += amt
@@ -348,8 +350,8 @@ export function EmdDetailsPage() {
   // ── Filter & Sort Logic ───────────────────────────────────────────────────
   const filteredBids = useMemo(() => {
     return enrichedBids.filter((b) => {
-      const isRet = b.isReturned || b.refund_status === 'Refunded'
-      const isAwaiting = !isRet && !b.isExempt && (b.refund_status === 'Initiated' || b.refund_status === 'Pending' || (b.isReady && !b.isPre))
+      const isRet = b.isReturned || b.refundStatus === 'Refunded'
+      const isAwaiting = !isRet && !b.isExempt && (b.refundStatus === 'Initiated' || b.refundStatus === 'Pending' || (b.isReady && !b.isPre))
 
       // 1. Pill Filter
       if (activePill === 'returned' && !isRet) return false
