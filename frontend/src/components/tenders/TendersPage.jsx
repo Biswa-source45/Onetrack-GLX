@@ -1899,13 +1899,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                         const cells = {
                           title: (
                         <td key="title"
-                                                      onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        if (isReadOnly && hasPermission("bid.view")) {
-                                                          navigate(`/dashboard/tenders/${bid.id}`);
-                                                        }
-                                                      }}
-                                                      className={`p-3 border-r border-border min-w-[240px] truncate max-w-sm ${isReadOnly ? "font-semibold text-foreground hover:text-primary hover:underline cursor-pointer" : ""}`}
+                                                      className="p-3 border-r border-border min-w-[240px] truncate max-w-sm"
                                                     >
                                                       <div className="flex items-center gap-2.5 w-full">
                                                         {!isReadOnly ? (
@@ -2073,7 +2067,16 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                                     </td>
                           ),
                           account_name: (
-                        <td key="account_name" className="p-3 border-r border-border truncate max-w-[26rem] sticky left-0 bg-card group-hover/row:bg-[color-mix(in_srgb,var(--muted)_30%,var(--card))] z-10 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)]">
+                        <td key="account_name"
+                                                      // Account Name is the first column, so it is the one that opens the tender.
+                                                      onClick={() => {
+                                                        if (isReadOnly && hasPermission("bid.view")) {
+                                                          navigate(`/dashboard/tenders/${bid.id}`);
+                                                        }
+                                                      }}
+                                                      title={isReadOnly ? "Open this tender" : undefined}
+                                                      className={`p-3 border-r border-border truncate max-w-[26rem] sticky left-0 bg-card group-hover/row:bg-[color-mix(in_srgb,var(--muted)_30%,var(--card))] z-10 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)] ${isReadOnly ? "font-semibold text-foreground hover:text-primary hover:underline cursor-pointer" : ""}`}
+                                                    >
                                                       <div className="flex items-center gap-2 w-full">
                                                         {bid.bid_status === "ACTIVE" ? (
                                                           <span

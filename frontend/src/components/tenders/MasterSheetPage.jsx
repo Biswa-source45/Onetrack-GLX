@@ -405,9 +405,7 @@ export function MasterSheetPage() {
                       c.sticky ? 'sticky left-0 z-10 bg-card font-semibold text-foreground' : ''
                     }`}
                   >
-                    {c.key === 'title' ? (
-                      <span className="truncate hover:underline">{c.render(bid)}</span>
-                    ) : c.key === 'account_name' ? (
+                    {c.key === 'account_name' ? (
                       <div className="flex items-center gap-2">
                         {pillSlotMax > 0 && (
                           <span className="flex shrink-0 items-center gap-1" style={{ minWidth: pillSlotMax * 26 + (pillSlotMax - 1) * 4 }}>
@@ -415,7 +413,8 @@ export function MasterSheetPage() {
                             {bid.derived_status === 'ACTIVE' && <InProgressPill compact />}
                           </span>
                         )}
-                        <span className="truncate">{c.render(bid)}</span>
+                        {/* The first column is the link to the tender (the whole row opens it too). */}
+                        <span className="truncate hover:text-primary hover:underline">{c.render(bid)}</span>
                       </div>
                     ) : c.key === 'bid_id' && isHttpUrl(bid.tender_link) && (bid.gem_bid_no || bid.bid_no) ? (
                       <a
