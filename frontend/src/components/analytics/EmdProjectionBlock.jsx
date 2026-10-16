@@ -1,20 +1,14 @@
-import React, { useState, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import {
   Calendar,
-  TrendingUp,
   Clock,
-  AlertTriangle,
   ArrowUpRight,
   CheckCircle2,
-  Layers,
   FileText,
   ChevronRight,
   ExternalLink,
-  HelpCircle,
   AlertCircle,
   IndianRupee,
-  ShieldCheck,
-  Building2,
   CalendarDays,
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'

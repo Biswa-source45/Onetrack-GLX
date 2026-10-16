@@ -8,6 +8,7 @@ import { listBids, listAllBids } from '../../services/bids'
 import { ImportedPill } from './ImportedPill'
 import { InProgressPill } from './InProgressPill'
 import { usePermissions } from '../../hooks/usePermissions'
+import { canViewEmd } from '../../lib/emdAccess'
 import {
   formatAmount, formatEmdExemption, formatDate,
   formatDateTime, getTargetMonthDisplay, getSubmissionStatusVal,
@@ -205,7 +206,7 @@ function StatusPill({ status }) {
  */
 export function MasterSheetPage() {
   const navigate = useNavigate()
-  const { hasPermission } = usePermissions()
+  const { hasPermission, hasRole } = usePermissions()
   const { drillId } = useParams()
 
   const [bids, setBids] = useState([])
@@ -399,7 +400,7 @@ export function MasterSheetPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {drillInfo?.title?.toLowerCase().includes('emd') && (
+          {drillInfo?.title?.toLowerCase().includes('emd') && canViewEmd(hasRole) && (
             <Button
               variant="outline"
               size="sm"
