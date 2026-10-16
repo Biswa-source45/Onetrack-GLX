@@ -35,7 +35,7 @@ import { formatCurrency } from '../lib/tenderFormat'
 import { StageBadge, StatusBadge } from '../lib/tenderDisplay'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
-import { computePipelineSummary, getEffectiveStage } from '../lib/pipelineMetrics'
+import { computePipelineSummary, getEffectiveStage, isSubmitted } from '../lib/pipelineMetrics'
 import { openMasterSheetDrill } from '../lib/masterSheetDrill'
 import { expandRoles } from '../lib/roles'
 import { PipelineKpiBand } from './analytics/PipelineKpiBand'
@@ -60,6 +60,7 @@ const NAV_ITEMS = [
       { id: 'tenders-owned', label: 'Owned Tenders', icon: UserCheck, path: '/dashboard/tenders/owned' }
     ]
   },
+  { id: 'emd-details', label: 'EMD Details', icon: ShieldCheck, permission: 'bid.view', path: '/dashboard/emd-details' },
   { id: 'leads',      label: 'Leads',            icon: Target,          permission: 'lead.view' },
   // Private per-person lists: Account Managers keep their accounts, Pre-Sales their OEMs.
   { id: 'accounts',   label: 'My Accounts',      icon: Building2,       permission: null, role: 'ACCOUNT_MANAGER' },
@@ -374,34 +375,38 @@ export function OverviewPanel() {
   const pipelineSummary = computePipelineSummary(filteredBids, lastUpdated ? lastUpdated.getTime() : null)
   const totalParticipatedValue = pipelineSummary.totalPipelineValue
 
-  // EMD is counted as deposited ONLY if not exempted/not-applicable, amount > 0, and bid reached/passed EMD_PROCESSING stage (or emd_ready/emd_returned is true)
+  // EMD is counted as deposited ONLY if not exempted/not-applicable, amount > 0,
+  // and bid reached/passed submission or emd_ready/emd_returned is true
+  const isBidSubmitted = (b) => isSubmitted(b) || [
+    'GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION',
+    'AWARD_HANDOVER', 'WON'
+  ].includes(b.workflow_stage)
+
   const emdDepositedBids = filteredBids.filter(b => {
     if (b.emd_exempted || b.emd_not_applicable || !b.emd_amount || Number(b.emd_amount) <= 0) return false
-    if (b.emd_ready || b.emd_returned) return true
-    const postEmdStages = [
-      'EMD_PROCESSING', 'INTERNAL_APPROVAL',
-      'GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION',
-      'AWARD_HANDOVER', 'WON', 'LOST'
-    ]
-    return postEmdStages.includes(b.workflow_stage)
+    if (b.emd_returned) return true
+    if (isBidSubmitted(b)) return true
+    // If sitting in post-EMD stages with emd_ready confirmed
+    if (b.emd_ready && b.workflow_stage !== 'EMD_PROCESSING') return true
+    return false
   })
 
   const totalEMDDeposited = emdDepositedBids.reduce((sum, b) => sum + Number(b.emd_amount || 0), 0)
 
-  const totalEMDReturned = emdDepositedBids
-    .filter(b => b.emd_returned)
-    .reduce((sum, b) => sum + Number(b.emd_amount || 0), 0)
-
-  const pendingEMDReturn = Math.max(0, totalEMDDeposited - totalEMDReturned)
-
-  // Same buckets as the two sums above, kept as arrays for the drill-down dialog.
   const emdReturnedBids = emdDepositedBids.filter(b => b.emd_returned)
-  const emdPendingBids  = emdDepositedBids.filter(b => !b.emd_returned)
+  const totalEMDReturned = emdReturnedBids.reduce((sum, b) => sum + Number(b.emd_amount || 0), 0)
+
+  // Pending refund: tenders whose EMD was deposited and submitted/concluded, awaiting refund from authority
+  const emdPendingBids = emdDepositedBids.filter(b => {
+    if (b.emd_returned) return false
+    return isBidSubmitted(b) || ['LOST', 'CLOSED'].includes(b.workflow_stage) || ['LOST', 'CLOSED'].includes(b.bid_status)
+  })
+  const pendingEMDReturn = emdPendingBids.reduce((sum, b) => sum + Number(b.emd_amount || 0), 0)
 
   // Finance-specific: tenders sitting in EMD Processing right now — the
   // deposit still needs to be arranged, separate from "already deposited."
   const emdProcessingBids = filteredBids.filter(b =>
-    b.workflow_stage === 'EMD_PROCESSING' && !b.emd_exempted && !b.emd_not_applicable
+    b.workflow_stage === 'EMD_PROCESSING' && !b.emd_exempted && !b.emd_not_applicable && !b.emd_ready
   )
   const emdProcessingValue = emdProcessingBids.reduce((sum, b) => sum + Number(b.emd_amount || 0), 0)
 
@@ -1745,6 +1750,8 @@ export default function Dashboard() {
     ? 'analytics'
     : location.pathname.includes('/leads')
     ? 'leads'
+    : location.pathname.includes('/emd-details')
+    ? 'emd-details'
     : location.pathname.includes('/tenders')
     ? 'tenders'
     : location.pathname.includes('/alerts')

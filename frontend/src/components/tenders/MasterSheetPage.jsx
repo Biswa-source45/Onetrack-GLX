@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
-import { Download, Loader2, RefreshCw, LayoutList, ArrowLeft, SearchX } from 'lucide-react'
+import { Download, Loader2, RefreshCw, LayoutList, ArrowLeft, SearchX, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -331,6 +331,17 @@ export function MasterSheetPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {drillInfo?.title?.toLowerCase().includes('emd') && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate('/dashboard/emd-details')}
+              className="gap-1.5 text-primary border-primary/30 hover:bg-primary/5"
+            >
+              <ShieldCheck className="size-3.5" />
+              Open in EMD Register
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting || (drillId && drillBids.length === 0)} className="gap-1.5">
             {exporting ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
             Export as Excel

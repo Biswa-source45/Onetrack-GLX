@@ -20,7 +20,7 @@ import { EmdApprovalDialog } from './EmdApprovalDialog'
 import { EmdAuditDialog } from './EmdAuditDialog'
 
 // ── Interactive In-App Receipt / Proof Viewer Modal ─────────────────────────
-function ReceiptPreviewModal({ open, onClose, url, title }) {
+export function ReceiptPreviewModal({ open, onClose, url, title }) {
   const [blobUrl, setBlobUrl] = useState('')
   const [loadingDoc, setLoadingDoc] = useState(true)
   const [docError, setDocError] = useState(false)

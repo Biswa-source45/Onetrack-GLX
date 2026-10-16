@@ -16,6 +16,7 @@ import {
   recordEmdPayment, verifyEmdPayment, updateEmdRefund, uploadEmdReceipt,
   EMD_STATUS_CONFIG, REFUND_STATUS_CONFIG, safeReceiptUrl, openReceipt, fmtMoney
 } from '../../services/emd'
+import { updateBid } from '../../services/bids'
 import { usePermissions } from '../../hooks/usePermissions'
 
 const SECTIONS = [
@@ -89,11 +90,12 @@ function ReceiptUpload({ label, view, url, onOpen, uploading, disabled, onUpload
   )
 }
 
-export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
+export function EmdDetailsDialog({ open, onClose, bid, onSuccess, initialSection = 'basic' }) {
   const { hasRole } = usePermissions()
-  const canEdit = hasRole('FINANCE') || hasRole('ADMIN') || hasRole('SUPER_ADMIN')
+  const canEdit = hasRole('FINANCE') || hasRole('FINANCE_MANAGER') || hasRole('FINANCE_EXECUTIVE') ||
+                  hasRole('MANAGING_DIRECTOR') || hasRole('ADMIN') || hasRole('SUPER_ADMIN')
 
-  const [activeSection, setActiveSection] = useState('basic')
+  const [activeSection, setActiveSection] = useState(initialSection)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [emd, setEmd] = useState(null)
@@ -277,9 +279,10 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
 
   useEffect(() => {
     if (open) {
+      setActiveSection(initialSection || 'basic')
       loadData()
     }
-  }, [open, bid?.id])
+  }, [open, bid?.id, initialSection])
 
   if (!open) return null
 
@@ -610,6 +613,14 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
         refund_receipt_url: refReceiptUrl || undefined,
       })
       if (res.ok) {
+        if (refStatus === 'Refunded' || refStatus === 'Released') {
+          await updateBid(bid.id, {
+            emd_returned: true,
+            emd_returned_date: refActualDate ? new Date(refActualDate).toISOString() : new Date().toISOString()
+          }).catch(() => {})
+        } else if (bid?.emd_returned) {
+          await updateBid(bid.id, { emd_returned: false, emd_returned_date: null }).catch(() => {})
+        }
         toast.success('EMD Release / Refund tracking updated!')
         setEmd(res.data)
         onSuccess?.()
@@ -785,7 +796,7 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
                   <div>
                     <p className="font-semibold">View-Only Mode</p>
                     <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5">
-                      Only Super Admin, Admin, and Finance Manager (FM) are authorized to add or edit EMD details. Other roles have view-only access.
+                      Only Managing Director (MD), Super Admin, Admin, and Finance are authorized to add or edit EMD details. All other roles have view-only access.
                     </p>
                   </div>
                 </div>

@@ -729,7 +729,7 @@ func (s *bidService) UpdateEMDRefund(ctx context.Context, bidID string, req *dom
 	op, err := s.mutateEMD(ctx, bidID, actorID, actorRoles, func(tx domain.EMDTx, op *emdOp) (*domain.TenderEMDAuditLog, error) {
 		emd := op.emd
 		switch emd.Status {
-		case domain.EMDStatusPaid, domain.EMDStatusVerified, domain.EMDStatusReleased:
+		case domain.EMDStatusPaid, domain.EMDStatusVerified, domain.EMDStatusReleased, domain.EMDStatusRefunded:
 		default:
 			return nil, emdInvalid("refund can only be tracked once the EMD is paid (status: %s)", emd.Status)
 		}

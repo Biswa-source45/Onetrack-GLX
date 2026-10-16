@@ -12,6 +12,7 @@ import { TendersPage } from "./components/tenders/TendersPage"
 import { MasterSheetPage } from "./components/tenders/MasterSheetPage"
 import { AddTenderPage } from "./components/tenders/AddTenderPage"
 import { TenderDetailPage } from "./components/tenders/TenderDetailPage"
+import { EmdDetailsPage } from "./components/tenders/EmdDetailsPage"
 import { UserManagement } from "./components/admin/UserManagement"
 import { BulkImportPage } from "./components/admin/BulkImportPage"
 import { AlertsPage } from "./components/alerts/AlertsPage"
@@ -106,6 +107,7 @@ export default function App() {
                 <Route path="tenders/master" element={<MasterSheetPage />} />
                 <Route path="tenders/master/:drillId" element={<MasterSheetPage />} />
                 <Route path="tenders/:bidId" element={<TenderDetailPage />} />
+                <Route path="emd-details" element={<EmdDetailsPage />} />
                 <Route path="alerts" element={<AlertsPage />} />
               </Route>
 
