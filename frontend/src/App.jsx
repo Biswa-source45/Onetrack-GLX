@@ -156,8 +156,10 @@ export default function App() {
               <Route element={<RoleGuard role="SUPER_ADMIN" />}>
                 <Route path="bulk-import" element={<BulkImportPage />} />
                 <Route path="system-logs" element={<SystemLogsPage />} />
-                <Route path="settings" element={<SettingsPage />} />
               </Route>
+
+              {/* Settings: every user (account + preferences); the platform tab inside is Super Admin only. */}
+              <Route path="settings" element={<SettingsPage />} />
 
               {/* Working Calendar — Section 20 Admin UI */}
               <Route element={<PermissionGuard permission="calendar.view" />}>

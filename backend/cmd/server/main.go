@@ -25,6 +25,7 @@ import (
 	feedbackService "github.com/onetrack/backend/internal/feedback/service"
 	leadHandler "github.com/onetrack/backend/internal/lead/handler"
 	"github.com/onetrack/backend/internal/directory"
+	"github.com/onetrack/backend/internal/preferences"
 	leadRepo "github.com/onetrack/backend/internal/lead/repository"
 	calendarHandler "github.com/onetrack/backend/internal/calendar/handler"
 	calendarRepo "github.com/onetrack/backend/internal/calendar/repository"
@@ -158,6 +159,8 @@ func main() {
 
 	// My Accounts (Account Managers) and My OEMs (Pre-Sales): private per-owner lists with contacts.
 	directory.RegisterRoutes(v1, directory.NewHandler(directory.NewRepo(dbPool)), authMiddleware)
+	// Each user's own display choices (e.g. Tenders as sheet or cards).
+	preferences.RegisterRoutes(v1, preferences.NewHandler(dbPool), authMiddleware)
 	// Initialize Working Calendar, Google Sync & 72-Hour Deadline Engine
 	calendarRepository := calendarRepo.NewPostgresCalendarRepository(dbPool)
 	calendarSvc := calendarService.NewWorkingCalendarService(calendarRepository, alertSvc, systemlogSvc)

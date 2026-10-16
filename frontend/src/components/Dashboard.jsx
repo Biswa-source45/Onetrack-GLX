@@ -19,6 +19,8 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 
 import { authService, tokenStorage } from '../services/auth'
 import { getMyProfile, updateUserProfile } from '../services/users'
+import { getPreferences } from '../services/preferences'
+import { useBidStore } from '../store/useBidStore'
 import { getAlerts } from '../services/alerts'
 import { getOpenTicketCount } from '../services/tickets'
 import { usePermissions } from '../hooks/usePermissions'
@@ -84,7 +86,8 @@ const NAV_ITEMS = [
   { id: 'users',      label: 'Users',            managementLabel: 'User Management', icon: Users, permission: 'user.view' },
   { id: 'system-logs', label: 'System Logs',     icon: ScrollText,      permission: null, role: 'SUPER_ADMIN', path: '/dashboard/system-logs' },
   { id: 'bulk-import', label: 'Bulk Import',     icon: FileSpreadsheet, permission: null, role: 'SUPER_ADMIN', path: '/dashboard/bulk-import' },
-  { id: 'settings',    label: 'Settings',        icon: Settings,        permission: null, role: 'SUPER_ADMIN', path: '/dashboard/settings' },
+  // Everyone has Settings (their account and preferences); the platform tab inside is Super Admin only.
+  { id: 'settings',    label: 'Settings',        icon: Settings,        permission: null, path: '/dashboard/settings' },
   { id: 'working-calendar', label: 'Working Calendar', icon: Calendar,  permission: 'calendar.view', path: '/dashboard/working-calendar' },
 ]
 
@@ -1701,6 +1704,16 @@ export default function Dashboard() {
         localStorage.setItem('onetrack_user', JSON.stringify(fullProfile))
       }
     }).catch(() => {})
+
+    // This user's own display choices (e.g. Tenders as sheet or cards).
+    getPreferences().then((res) => {
+      if (res.ok) useBidStore.getState().applyPreferences(res.data)
+    }).catch(() => {})
+
+    // Settings > Account saves the profile into storage; refresh the header from it.
+    const refreshUser = () => setUser(tokenStorage.getUser())
+    window.addEventListener('onetrack_user_updated', refreshUser)
+    return () => window.removeEventListener('onetrack_user_updated', refreshUser)
   }, [])
 
   async function handleLogout() {

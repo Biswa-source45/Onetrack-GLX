@@ -55,7 +55,10 @@ export const useBidStore = create((set, get) => ({
   inBin: false,
   searchInput: '',
   debouncedSearch: '',
-  viewMode: 'cards',
+  // 'sheets' | 'cards'. Sheets unless the user chose otherwise in Settings > Preferences
+  // (applyPreferences below); the toggle on the Tenders page still switches it for the session.
+  viewMode: 'sheets',
+  preferences: {},
   // Quick end-date filter: '' | 'today' | 'week' | 'month'
   endDateFilter: '',
   // Quick To-Dos tab: todoMode lists only live, not-yet-closed tenders closest
@@ -149,6 +152,11 @@ export const useBidStore = create((set, get) => ({
   },
 
   setViewMode: (viewMode) => set({ viewMode }),
+
+  // The signed-in user's saved choices (GET /preferences). Also puts the Tenders page
+  // into the view they picked; a user who never picked gets the sheet.
+  applyPreferences: (preferences) =>
+    set({ preferences, viewMode: preferences?.tenders_view === 'cards' ? 'cards' : 'sheets' }),
 
   // Bumped on every loadBids call so an in-flight request can tell, once it
   // resolves, whether a newer filter change has already superseded it — two
