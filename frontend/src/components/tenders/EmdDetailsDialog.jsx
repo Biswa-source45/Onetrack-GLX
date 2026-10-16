@@ -16,7 +16,6 @@ import {
   recordEmdPayment, verifyEmdPayment, updateEmdRefund, uploadEmdReceipt,
   EMD_STATUS_CONFIG, REFUND_STATUS_CONFIG, safeReceiptUrl, openReceipt, fmtMoney
 } from '../../services/emd'
-import { updateBid } from '../../services/bids'
 import { usePermissions } from '../../hooks/usePermissions'
 import { canViewEmd, canEditEmd } from '../../lib/emdAccess'
 
@@ -614,14 +613,6 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess, initialSection
         refund_receipt_url: refReceiptUrl || undefined,
       })
       if (res.ok) {
-        if (refStatus === 'Refunded' || refStatus === 'Released') {
-          await updateBid(bid.id, {
-            emd_returned: true,
-            emd_returned_date: refActualDate ? new Date(refActualDate).toISOString() : new Date().toISOString()
-          }).catch(() => { })
-        } else if (bid?.emd_returned) {
-          await updateBid(bid.id, { emd_returned: false, emd_returned_date: null }).catch(() => { })
-        }
         toast.success('EMD Release / Refund tracking updated!')
         setEmd(res.data)
         onSuccess?.()
@@ -675,7 +666,7 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess, initialSection
           <div>
             <h3 className="text-base font-bold text-foreground">Access Restricted</h3>
             <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-              EMD Details (view and edit) can only be accessed by <strong className="text-foreground">Managing Director (MD)</strong>, <strong className="text-foreground">Finance</strong>, and <strong className="text-foreground">Account Manager</strong> roles.
+              EMD Details can only be opened by <strong className="text-foreground">Managing Director (MD)</strong>, <strong className="text-foreground">Finance</strong> and <strong className="text-foreground">Account Manager</strong> roles. Only MD/Admin and Finance can make changes.
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={onClose} className="mt-2 text-xs">
