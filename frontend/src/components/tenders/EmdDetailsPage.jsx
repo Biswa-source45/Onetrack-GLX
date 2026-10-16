@@ -1,29 +1,18 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
-import { useNavigate, Link, useLocation } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
-  ShieldCheck, IndianRupee, Landmark, Search, Filter, Download,
-  RefreshCw, ChevronDown, ChevronRight, Clock, Calendar, CheckCircle2,
-  AlertCircle, AlertTriangle, XCircle, FileText, ExternalLink,
-  Copy, Check, Layers, Eye, Pencil, ArrowUpRight, Building2,
-  User, Wallet, Receipt, FileSpreadsheet, Sparkles, RotateCcw,
-  Info, ChevronLeft, ArrowUpDown, ArrowLeft, SearchX
+  ShieldCheck, Search, Download, RefreshCw, ChevronRight, Clock, CheckCircle2,
+  Copy, Check, Eye, Pencil, Wallet, Receipt, RotateCcw, ChevronLeft
 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent } from '@/components/ui/card'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 import { listAllBids } from '../../services/bids'
-import { getEmdDetails, EMD_STATUS_CONFIG, REFUND_STATUS_CONFIG, fmtMoney } from '../../services/emd'
-import {
-  formatCurrency, formatAmount, formatDate, formatDateTime,
-  formatEmdExemption, getBidEndDate, getTargetMonthDisplay
-} from '../../lib/tenderFormat'
-import { StageBadge, StatusBadge } from '../../lib/tenderDisplay'
+import { getEmdDetails } from '../../services/emd'
+import { formatAmount, formatDate, formatDateTime, formatEmdExemption } from '../../lib/tenderFormat'
+import { StageBadge } from '../../lib/tenderDisplay'
 import { usePermissions } from '../../hooks/usePermissions'
 import { canViewEmd, canEditEmd } from '../../lib/emdAccess'
 import { downloadExcel } from '../../lib/excelExport'
@@ -89,7 +78,7 @@ function CopyButton({ text, label = 'Copy' }) {
 // ── Master EMD Details Page Component ─────────────────────────────────────────
 export function EmdDetailsPage() {
   const navigate = useNavigate()
-  const { hasRole, hasPermission } = usePermissions()
+  const { hasRole } = usePermissions()
 
   // Restriction: Only Managing Director (MD), Finance, and Account Manager can see and access EMD details.
   // All other roles are strictly restricted.
@@ -101,7 +90,10 @@ export function EmdDetailsPage() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [emdDetailsCache, setEmdDetailsCache] = useState({})
-  const [expandedBidIds, setExpandedBidIds] = useState(new Set())
+  // The fetcher below is an effect dependency, so it must stay the same function across renders: it reads
+  // the cache and the requests already on their way through refs.
+  const emdCacheRef = useRef({})
+  const emdInflightRef = useRef(new Set())
 
   // Dialogs
   const [activeDialogBid, setActiveDialogBid] = useState(null)
@@ -143,39 +135,31 @@ export function EmdDetailsPage() {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [])
+  }, [canAccess])
 
   useEffect(() => {
     loadData()
   }, [loadData])
 
-  // Pre-fetch single EMD details on expand
-  const fetchSingleEmdDetails = useCallback(async (bidId) => {
-    if (emdDetailsCache[bidId]) return emdDetailsCache[bidId]
+  // EMD details of one tender, fetched once and cached. A request already on its way is not repeated, and
+  // `force` refetches (after the dialog saved a change) instead of returning the stale copy.
+  const fetchSingleEmdDetails = useCallback(async (bidId, force = false) => {
+    if (!force && (emdCacheRef.current[bidId] || emdInflightRef.current.has(bidId))) return emdCacheRef.current[bidId]
+    emdInflightRef.current.add(bidId)
     try {
       const res = await getEmdDetails(bidId)
       if (res.ok && res.data) {
+        emdCacheRef.current[bidId] = res.data
         setEmdDetailsCache((prev) => ({ ...prev, [bidId]: res.data }))
         return res.data
       }
     } catch {
       // ignore
+    } finally {
+      emdInflightRef.current.delete(bidId)
     }
     return null
-  }, [emdDetailsCache])
-
-  const toggleRowExpand = (bidId) => {
-    setExpandedBidIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(bidId)) {
-        next.delete(bidId)
-      } else {
-        next.add(bidId)
-        fetchSingleEmdDetails(bidId)
-      }
-      return next
-    })
-  }
+  }, [])
 
   const handleOpenDialog = (bid, section = 'basic') => {
     setActiveDialogBid(bid)
@@ -184,7 +168,7 @@ export function EmdDetailsPage() {
 
   const handleDialogSuccess = () => {
     if (activeDialogBid?.id) {
-      fetchSingleEmdDetails(activeDialogBid.id)
+      fetchSingleEmdDetails(activeDialogBid.id, true)
     }
     loadData(true)
   }
@@ -590,11 +574,9 @@ export function EmdDetailsPage() {
   // Pre-fetch single EMD details in background for current page
   useEffect(() => {
     paginatedRows.forEach((b) => {
-      if (!emdDetailsCache[b.id] && isEmdRequired(b)) {
-        fetchSingleEmdDetails(b.id)
-      }
+      if (isEmdRequired(b)) fetchSingleEmdDetails(b.id)
     })
-  }, [paginatedRows, emdDetailsCache, fetchSingleEmdDetails])
+  }, [paginatedRows, fetchSingleEmdDetails])
 
   if (!canAccess) {
     return (
@@ -660,7 +642,7 @@ export function EmdDetailsPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => loadData(true)}
+            onClick={() => { emdCacheRef.current = {}; setEmdDetailsCache({}); loadData(true) }}
             disabled={loading || refreshing}
             className="gap-1.5 text-xs font-semibold"
           >
@@ -748,7 +730,7 @@ export function EmdDetailsPage() {
           tabIndex={0}
           onClick={() => {
             setActivePill('awaiting')
-            setStageFilter('ALL')
+            setSelectedStage('all')
             setSearchTerm('LOST')
             setCurrentPage(1)
           }}
@@ -973,7 +955,6 @@ export function EmdDetailsPage() {
               </tr>
             ) : (
               paginatedRows.map((b) => {
-                const isExpanded = expandedBidIds.has(b.id)
                 return (
                   <React.Fragment key={b.id}>
                     <tr
