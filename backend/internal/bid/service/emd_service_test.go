@@ -576,3 +576,39 @@ func TestChecklist_ValidatesPriorityAndStatus(t *testing.T) {
 	_, err = s.svc.UpdateChecklist(ctx, "bid-123", "c1", &domain.UpdateChecklistRequest{Priority: strPtr("low")})
 	wantErr(t, err, domain.ErrValidation, "priority is case sensitive")
 }
+
+func TestEMD_TriggerReturnOnLost(t *testing.T) {
+	s := newEMDTestSetup()
+	ctx := context.Background()
+
+	// 1. Live tender with EMD amount 50000
+	s.svc.TriggerEMDReturnOnLost(ctx, "bid-123", "actor-1", "Lost to L1 bidder")
+	if s.repo.emd == nil {
+		t.Fatal("expected emd record to be initialized")
+	}
+	if s.repo.emd.RefundStatus != domain.RefundStatusInitiated {
+		t.Fatalf("expected refund status %q, got %q", domain.RefundStatusInitiated, s.repo.emd.RefundStatus)
+	}
+	if s.repo.emd.RefundAmount == nil || *s.repo.emd.RefundAmount != 50000 {
+		t.Fatalf("expected refund amount 50000, got %v", s.repo.emd.RefundAmount)
+	}
+	if s.repo.emd.RefundRemarks == nil || !strings.Contains(*s.repo.emd.RefundRemarks, "Lost to L1 bidder") {
+		t.Fatalf("expected remarks to mention reason, got %v", s.repo.emd.RefundRemarks)
+	}
+
+	// 2. Exempted tender: must not trigger refund
+	s2 := newEMDTestSetup()
+	s2.repo.bid.EMDExempted = true
+	s2.svc.TriggerEMDReturnOnLost(ctx, "bid-123", "actor-1", "Lost")
+	if s2.repo.emd != nil && s2.repo.emd.RefundStatus == domain.RefundStatusInitiated {
+		t.Fatal("exempted tender should not have triggered EMD return")
+	}
+
+	// 3. Already returned tender: must not overwrite
+	s3 := newEMDTestSetup()
+	s3.repo.bid.EMDReturned = true
+	s3.svc.TriggerEMDReturnOnLost(ctx, "bid-123", "actor-1", "Lost")
+	if s3.repo.emd != nil && s3.repo.emd.RefundStatus == domain.RefundStatusInitiated {
+		t.Fatal("already returned tender should not be re-initiated")
+	}
+}

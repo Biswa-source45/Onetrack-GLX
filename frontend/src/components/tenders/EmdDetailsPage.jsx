@@ -90,10 +90,12 @@ export function EmdDetailsPage() {
   const navigate = useNavigate()
   const { hasRole, hasPermission } = usePermissions()
 
-  // Restriction: Only Managing Director (MD) and Finance can add or edit EMD details.
-  // All other users have view-only access.
-  const canManage = hasRole('FINANCE') || hasRole('FINANCE_MANAGER') || hasRole('FINANCE_EXECUTIVE') ||
-                    hasRole('MANAGING_DIRECTOR') || hasRole('ADMIN') || hasRole('SUPER_ADMIN')
+  // Restriction: Only Managing Director (MD), Finance, and Account Manager can see and access EMD details.
+  // All other roles are strictly restricted.
+  const canAccess = hasRole('FINANCE') || hasRole('FINANCE_MANAGER') || hasRole('FINANCE_EXECUTIVE') ||
+    hasRole('MANAGING_DIRECTOR') || hasRole('ADMIN') || hasRole('SUPER_ADMIN') ||
+    hasRole('ACCOUNT_MANAGER') || hasRole('SALES_MANAGER') || hasRole('ACCOUNTS_MANAGER')
+  const canManage = canAccess
 
   // State
   const [bids, setBids] = useState([])
@@ -124,6 +126,7 @@ export function EmdDetailsPage() {
 
   // ── Load Bids ──────────────────────────────────────────────────────────────
   const loadData = useCallback(async (isRefresh = false) => {
+    if (!canAccess) return
     if (isRefresh) setRefreshing(true)
     else setLoading(true)
 
@@ -275,6 +278,13 @@ export function EmdDetailsPage() {
     })
   }, [bids, emdDetailsCache])
 
+  function formatInr(val) {
+    if (!val || isNaN(val) || val <= 0) return '₹0'
+    if (val >= 10000000) return `₹${(val / 10000000).toFixed(2)} Cr`
+    if (val >= 100000) return `₹${(val / 100000).toFixed(2)} L`
+    return `₹${Math.round(val).toLocaleString('en-IN')}`
+  }
+
   // ── Counts for Filter Pills ───────────────────────────────────────────────
   const counts = useMemo(() => {
     let total = enrichedBids.length
@@ -285,14 +295,61 @@ export function EmdDetailsPage() {
     let exempted = 0
 
     for (const b of enrichedBids) {
-      if (b.isReturned) returned++
-      if (b.isReady && !b.isReturned && !b.isPre) awaiting++
+      const isRet = b.isReturned || b.refund_status === 'Refunded'
+      const isAwaiting = !isRet && !b.isExempt && (b.refund_status === 'Initiated' || b.refund_status === 'Pending' || (b.isReady && !b.isPre))
+
+      if (isRet) returned++
+      if (isAwaiting) awaiting++
       if (b.isReady) ready++
       if (b.isReq && b.isActive && b.isPre && !b.isReady) needsArrangement++
       if (b.isExempt) exempted++
     }
 
     return { total, returned, awaiting, ready, needsArrangement, exempted }
+  }, [enrichedBids])
+
+  // ── Financial Reconciliation Summary Metrics ─────────────────────────────
+  const financialMetrics = useMemo(() => {
+    let disbursedSum = 0
+    let recoveredSum = 0
+    let outstandingSum = 0
+    let lostPendingCount = 0
+    let lostPendingSum = 0
+
+    for (const b of enrichedBids) {
+      if (b.isExempt) continue
+      const amt = Number(b.payment_amount) || Number(b.emd_amount) || 0
+      const refAmt = Number(b.refund_amount) || (b.isReturned || b.refund_status === 'Refunded' ? amt : 0)
+
+      const isRet = b.isReturned || b.refund_status === 'Refunded'
+      const isDisbursed = b.isReady || b.isPaid || isRet || b.refund_status === 'Initiated'
+
+      if (isDisbursed) {
+        disbursedSum += amt
+      }
+      if (isRet) {
+        recoveredSum += refAmt
+      } else if (isDisbursed) {
+        outstandingSum += Math.max(0, amt - refAmt)
+      }
+
+      const isLost = b.bid_status === 'LOST' || b.workflow_stage === 'LOST' || b.bid_outcome === 'LOST' || b.technical_result === 'DISQUALIFIED'
+      if (isLost && !isRet && (isDisbursed || amt > 0)) {
+        lostPendingCount++
+        lostPendingSum += Math.max(0, amt - refAmt)
+      }
+    }
+
+    const recoveryRate = disbursedSum > 0 ? Math.round((recoveredSum / disbursedSum) * 100) : 100
+
+    return {
+      disbursedSum,
+      recoveredSum,
+      outstandingSum,
+      lostPendingCount,
+      lostPendingSum,
+      recoveryRate,
+    }
   }, [enrichedBids])
 
   // ── Filter Pills Definition ───────────────────────────────────────────────
@@ -308,9 +365,12 @@ export function EmdDetailsPage() {
   // ── Filter & Sort Logic ───────────────────────────────────────────────────
   const filteredBids = useMemo(() => {
     return enrichedBids.filter((b) => {
+      const isRet = b.isReturned || b.refund_status === 'Refunded'
+      const isAwaiting = !isRet && !b.isExempt && (b.refund_status === 'Initiated' || b.refund_status === 'Pending' || (b.isReady && !b.isPre))
+
       // 1. Pill Filter
-      if (activePill === 'returned' && !b.isReturned) return false
-      if (activePill === 'awaiting' && (!b.isReady || b.isReturned || b.isPre)) return false
+      if (activePill === 'returned' && !isRet) return false
+      if (activePill === 'awaiting' && !isAwaiting) return false
       if (activePill === 'ready' && !b.isReady) return false
       if (activePill === 'needs_arrangement' && (!b.isReq || !b.isActive || !b.isPre || b.isReady)) return false
       if (activePill === 'exempted' && !b.isExempt) return false
@@ -509,10 +569,10 @@ export function EmdDetailsPage() {
       ])
 
       const stamp = new Date().toISOString().slice(0, 10)
-      const filename = `EMD_Details_Register_${activePill}_${stamp}.xlsx`
+      const filename = `EMD_Master_Sheet_Reconciliation_${activePill}_${stamp}.xlsx`
 
       await downloadExcel({
-        sheetName: 'EMD Register',
+        sheetName: 'EMD Master Sheet',
         headers,
         rows,
         filename,
@@ -537,6 +597,27 @@ export function EmdDetailsPage() {
     })
   }, [paginatedRows, emdDetailsCache, fetchSingleEmdDetails])
 
+  if (!canAccess) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-6 bg-background">
+        <div className="max-w-md w-full p-8 rounded-2xl border border-border bg-card text-center space-y-4 shadow-sm">
+          <div className="size-16 rounded-full bg-rose-100 dark:bg-rose-950/50 flex items-center justify-center mx-auto text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-800">
+            <ShieldCheck className="size-8" />
+          </div>
+          <div className="space-y-1.5">
+            <h2 className="text-lg font-bold text-foreground">Access Restricted</h2>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              The EMD Details page is strictly restricted to <strong className="text-foreground">Managing Director (MD)</strong>, <strong className="text-foreground">Finance</strong>, and <strong className="text-foreground">Account Manager</strong>.
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => navigate('/dashboard')} className="mt-2 text-xs">
+            Return to Dashboard
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex-1 overflow-y-auto bg-background p-4 sm:p-6 lg:p-8 space-y-4">
       {/* ── Top Header (Matches Master Sheet Layout) ──────────────────────── */}
@@ -550,26 +631,26 @@ export function EmdDetailsPage() {
               <div className="flex items-center gap-2">
                 <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
                   {activePill === 'returned'
-                    ? 'EMD Returned'
+                    ? 'EMD Returned · Master Sheet'
                     : activePill === 'awaiting'
-                    ? 'EMD Awaiting Refund'
-                    : activePill === 'ready'
-                    ? 'EMD Ready & Prepared'
-                    : activePill === 'needs_arrangement'
-                    ? 'EMD Needs Arrangement'
-                    : 'EMD Details Register'}
+                      ? 'EMD Awaiting Refund · Reconciliation'
+                      : activePill === 'ready'
+                        ? 'EMD Ready & Prepared'
+                        : activePill === 'needs_arrangement'
+                          ? 'EMD Needs Arrangement'
+                          : 'EMD Details · Master Sheet'}
                 </h1>
               </div>
               <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
                 {activePill === 'returned'
                   ? 'Tenders whose EMD has been refunded'
                   : activePill === 'awaiting'
-                  ? 'Submitted tenders with deposited EMD awaiting return from procuring authority'
-                  : activePill === 'ready'
-                  ? 'Tenders where EMD payment / bank guarantee has been prepared & confirmed'
-                  : activePill === 'needs_arrangement'
-                  ? 'Active pipeline tenders requiring EMD funds / BG arrangement before deadline'
-                  : 'Full tracking of EMD readiness, depositor, payment modes, MD approvals, and return status'}
+                    ? 'Submitted tenders with deposited EMD awaiting return from procuring authority'
+                    : activePill === 'ready'
+                      ? 'Tenders where EMD payment / bank guarantee has been prepared & confirmed'
+                      : activePill === 'needs_arrangement'
+                        ? 'Active pipeline tenders requiring EMD funds / BG arrangement before deadline'
+                        : 'Master financial reconciliation of EMD deposits, readiness, payments, MD sign-offs, and refund recovery'}
                 {' '}· <strong className="text-foreground">{filteredBids.length} tenders</strong>
               </p>
             </div>
@@ -596,8 +677,99 @@ export function EmdDetailsPage() {
             className="gap-1.5 text-xs font-semibold shadow-xs"
           >
             <Download className="size-3.5" />
-            Export as Excel
+            Export to Excel
           </Button>
+        </div>
+      </div>
+
+      {/* ── Financial Reconciliation Summary Cards ───────────────────────── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* Card 1: Total Disbursed */}
+        <div className="bg-card border border-border/80 rounded-xl p-3.5 shadow-2xs hover:border-primary/40 transition-colors">
+          <div className="flex items-center justify-between text-muted-foreground mb-1.5">
+            <span className="text-[11px] font-semibold tracking-wide uppercase">Total EMD Disbursed</span>
+            <div className="p-1.5 rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400">
+              <Wallet className="size-4" />
+            </div>
+          </div>
+          <div className="text-xl sm:text-2xl font-bold text-foreground">
+            {formatInr(financialMetrics.disbursedSum)}
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            Capital deposited across tenders
+          </p>
+        </div>
+
+        {/* Card 2: Total Recovered */}
+        <div className="bg-card border border-border/80 rounded-xl p-3.5 shadow-2xs hover:border-emerald-500/40 transition-colors">
+          <div className="flex items-center justify-between text-muted-foreground mb-1.5">
+            <span className="text-[11px] font-semibold tracking-wide uppercase">Total EMD Recovered</span>
+            <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400">
+              <CheckCircle2 className="size-4" />
+            </div>
+          </div>
+          <div className="text-xl sm:text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+            {formatInr(financialMetrics.recoveredSum)}
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            <span className="font-semibold text-emerald-700 dark:text-emerald-300">{financialMetrics.recoveryRate}%</span> recovered back to accounts
+          </p>
+        </div>
+
+        {/* Card 3: Outstanding in Recovery */}
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            setActivePill('awaiting')
+            setCurrentPage(1)
+          }}
+          className={`bg-card border rounded-xl p-3.5 shadow-2xs cursor-pointer transition-all ${activePill === 'awaiting'
+            ? 'border-indigo-500 ring-2 ring-indigo-500/20 bg-indigo-50/20 dark:bg-indigo-950/20'
+            : 'border-border/80 hover:border-indigo-400/60 hover:bg-muted/30'
+            }`}
+        >
+          <div className="flex items-center justify-between text-muted-foreground mb-1.5">
+            <span className="text-[11px] font-semibold tracking-wide uppercase">Outstanding in Recovery</span>
+            <div className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-400">
+              <Clock className="size-4" />
+            </div>
+          </div>
+          <div className="text-xl sm:text-2xl font-bold text-indigo-600 dark:text-indigo-400">
+            {formatInr(financialMetrics.outstandingSum)}
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            <span className="font-semibold text-foreground">{counts.awaiting} tenders</span> awaiting authority return
+          </p>
+        </div>
+
+        {/* Card 4: Lost Tenders Pending Refund */}
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            setActivePill('awaiting')
+            setStageFilter('ALL')
+            setSearchTerm('LOST')
+            setCurrentPage(1)
+          }}
+          className={`bg-card border rounded-xl p-3.5 shadow-2xs cursor-pointer transition-all ${searchTerm === 'LOST'
+            ? 'border-rose-500 ring-2 ring-rose-500/20 bg-rose-50/20 dark:bg-rose-950/20'
+            : 'border-border/80 hover:border-rose-400/60 hover:bg-muted/30'
+            }`}
+        >
+          <div className="flex items-center justify-between text-muted-foreground mb-1.5">
+            <span className="text-[11px] font-semibold tracking-wide uppercase">Lost Bids In Recovery</span>
+            <div className="p-1.5 rounded-lg bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400">
+              <RotateCcw className="size-4" />
+            </div>
+          </div>
+          <div className="text-xl sm:text-2xl font-bold text-rose-600 dark:text-rose-400">
+            {formatInr(financialMetrics.lostPendingSum)}
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            <span className="font-semibold text-foreground">{financialMetrics.lostPendingCount} lost bids</span> (auto-initiated)
+          </p>
         </div>
       </div>
 
@@ -612,16 +784,14 @@ export function EmdDetailsPage() {
                 setActivePill(pill.key)
                 setCurrentPage(1)
               }}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-colors ${
-                active
-                  ? 'bg-primary text-primary-foreground shadow-xs'
-                  : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'
-              }`}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-colors ${active
+                ? 'bg-primary text-primary-foreground shadow-xs'
+                : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'
+                }`}
             >
               <span>{pill.label}</span>
-              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                active ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-background text-foreground'
-              }`}>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${active ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-background text-foreground'
+                }`}>
                 {pill.count}
               </span>
             </button>

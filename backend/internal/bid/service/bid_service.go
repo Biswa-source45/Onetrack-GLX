@@ -1285,6 +1285,7 @@ func (s *bidService) applyUpdate(ctx context.Context, id string, req *domain.Upd
 				TransitionedBy:   actorID,
 			})
 			_ = s.repo.UpdateStage(ctx, id, "LOST", "LOST")
+			s.TriggerEMDReturnOnLost(ctx, id, actorID, reason)
 		}
 	}
 
@@ -1344,6 +1345,12 @@ func (s *bidService) applyUpdate(ctx context.Context, id string, req *domain.Upd
 
 	if err := s.repo.Update(ctx, id, req); err != nil {
 		return err
+	}
+
+	if (req.BidStatus != nil && *req.BidStatus == "LOST" && bid.BidStatus != "LOST") ||
+		(req.WorkflowStage != nil && *req.WorkflowStage == "LOST" && bid.WorkflowStage != "LOST") ||
+		(req.BidOutcome != nil && *req.BidOutcome == "LOST" && (bid.BidOutcome == nil || *bid.BidOutcome != "LOST")) {
+		s.TriggerEMDReturnOnLost(ctx, id, actorID, "Bid status updated to LOST")
 	}
 
 	// ponytail: best effort — an open row left behind is harmless, every EMD
@@ -2063,6 +2070,14 @@ func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain
 		return nil, fmt.Errorf("update stage: %w", err)
 	}
 
+	if req.TargetStage == domain.StageLost {
+		reasonText := "Stage transitioned to LOST"
+		if req.Reason != nil && *req.Reason != "" {
+			reasonText = *req.Reason
+		}
+		s.TriggerEMDReturnOnLost(ctx, id, actorID, reasonText)
+	}
+
 	// NOTE: stage_completions is intentionally NOT modified here.
 	// Each stage's completion status is managed atomically via PATCH /bids/:id
 	// from the frontend CompleteStageModal. Mixing workflow_stage transitions
@@ -2261,6 +2276,14 @@ func (s *bidService) RecordOutcome(ctx context.Context, id string, req *domain.R
 		return err
 	}
 	s.logAction(ctx, id, bid.Title, "OUTCOME_RECORDED", actorID, outcomeLogText(req.BidOutcome, req.OutcomeReason))
+
+	if req.BidOutcome == domain.OutcomeLost || req.BidOutcome == "LOST" {
+		reason := "Bid outcome marked as LOST"
+		if req.OutcomeReason != nil && *req.OutcomeReason != "" {
+			reason = *req.OutcomeReason
+		}
+		s.TriggerEMDReturnOnLost(ctx, id, actorID, reason)
+	}
 	return nil
 }
 
