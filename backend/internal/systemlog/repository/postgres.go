@@ -86,7 +86,7 @@ var logSources = []logSource{
 	{
 		// Every later step on a lead: edits and the approval workflow.
 		category: domain.CategoryLead,
-		from:     "leads.lead_events t JOIN leads.leads l ON l.id = t.lead_id", actor: "t.actor_id",
+		from:     "leads.lead_events t JOIN leads.leads l ON l.id = t.lead_id LEFT JOIN auth.users tg ON tg.id = t.target_id", actor: "t.actor_id",
 		cols: `'LEAD', 'LEAD_' || t.event_type,
 		       CASE t.event_type
 		           WHEN 'EDITED' THEN 'Edited lead'
@@ -95,6 +95,14 @@ var logSources = []logSource{
 		           WHEN 'SENT_BACK' THEN 'Sent lead back for changes'
 		           WHEN 'GO' THEN 'Marked lead as Go'
 		           WHEN 'NO_GO' THEN 'Marked lead as No-Go'
+		           WHEN 'PUBLISHED' THEN 'Published lead (RFP details added)'
+		           WHEN 'PREBID_START' THEN 'Started prebid queries, sheet to ' || COALESCE(tg.full_name, tg.username, 'Pre-Sales')
+		           WHEN 'PREBID_SEND_PM' THEN 'Sent prebid sheet to ' || COALESCE(tg.full_name, tg.username, 'Pre-Sales')
+		           WHEN 'PREBID_SEND_DM' THEN 'Sent prebid sheet to ' || COALESCE(tg.full_name, tg.username, 'the Delivery Manager')
+		           WHEN 'PREBID_SEND_BM' THEN 'Sent prebid sheet to ' || COALESCE(tg.full_name, tg.username, 'the Bid Manager')
+		           WHEN 'PREBID_RETURN' THEN 'Returned prebid sheet to the Account Manager'
+		           WHEN 'PREBID_MARK_SENT' THEN 'Marked prebid queries as sent to the customer'
+		           WHEN 'PREBID_CLOSE' THEN 'Closed prebid queries'
 		           ELSE t.event_type
 		       END || ': ' || COALESCE(NULLIF(l.title, ''), l.account_name) || COALESCE(' — ' || NULLIF(t.note, ''), ''),
 		       NULL::jsonb, NULL::uuid, NULL::uuid, ''`,

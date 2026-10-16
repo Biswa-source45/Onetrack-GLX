@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ChevronLeft,
   Building2,
@@ -13,10 +13,13 @@ import {
   Pencil,
   Image as ImageIcon,
   Upload,
+  MessagesSquare,
+  Megaphone,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,6 +37,8 @@ import { emptyDocs, formatBytes, toUploadItems, uploadAll, validateDocs } from "
 import { LeadDocumentPicker } from "./LeadDocumentPicker";
 import { LeadStageBadge, LeadStatusBadge, LeadTypeBadge } from "./leadBadges";
 import { LeadWorkflow } from "./LeadWorkflow";
+import { PrebidPanel } from "./PrebidPanel";
+import { PublishLeadDialog } from "./PublishLeadDialog";
 
 function Panel({ icon: Icon, title, children }) {
   return (
@@ -78,6 +83,7 @@ function emdSummary(d) {
 export function LeadDetailPage() {
   const { leadId } = useParams();
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
   const { hasPermission } = usePermissions();
   const canEdit = hasPermission("lead.create");
 
@@ -90,6 +96,7 @@ export function LeadDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [confirmDeleteLead, setConfirmDeleteLead] = useState(false);
   const [deletingLead, setDeletingLead] = useState(false);
+  const [publishing, setPublishing] = useState(false);
 
   const fetchLead = useCallback(
     () =>
@@ -200,6 +207,9 @@ export function LeadDetailPage() {
   const d = lead.published_details || {};
   const isPublished = lead.publish_status === "PUBLISHED";
   const documents = lead.documents ?? [];
+  // The open tab lives in the URL (?tab=prebid), so a link or a refresh keeps it. Prebid only exists on a published lead.
+  const tab = isPublished && params.get("tab") === "prebid" ? "prebid" : "details";
+  const prebidYourTurn = (lead.prebid?.actions?.length ?? 0) > 0 || (lead.prebid?.editable?.length ?? 0) > 0;
   const groups = documents.reduce((acc, doc) => {
     const key = doc.category || "General";
     (acc[key] ||= []).push(doc);
@@ -223,6 +233,12 @@ export function LeadDetailPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {lead.can_publish && (
+            <Button size="sm" className="gap-1.5" onClick={() => setPublishing(true)}>
+              <Megaphone className="size-3.5" />
+              Publish Lead
+            </Button>
+          )}
           {lead.can_edit && (
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate(`/dashboard/leads/${lead.id}/edit`)}>
               <Pencil className="size-3.5" />
@@ -242,6 +258,33 @@ export function LeadDetailPage() {
           there first) passes nothing, so reload to show where it stands. */}
       <LeadWorkflow lead={lead} onChanged={(updated) => (updated ? setLead(updated) : load())} />
 
+      {!isPublished && lead.stage !== "NO_GO" && (
+        <div className="flex items-start gap-3 rounded-xl border border-dashed border-primary/40 bg-primary/5 px-4 py-3">
+          <Megaphone className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+          <div>
+            <p className="text-sm font-semibold text-foreground">This lead is unpublished</p>
+            <p className="text-xs text-muted-foreground">
+              When the RFP comes out, publish the lead to add its tender details and documents. Prebid queries open after that.
+              {!lead.can_publish && " Only someone who can edit this lead at its current stage can publish it."}
+            </p>
+          </div>
+        </div>
+      )}
+      <PublishLeadDialog lead={lead} open={publishing} onOpenChange={setPublishing} onPublished={load} />
+
+      <Tabs value={tab} onValueChange={(t) => setParams(t === "details" ? {} : { tab: t }, { replace: true })} className="gap-5">
+        <TabsList variant="line" className="h-auto w-full justify-start gap-1 border-b border-border/60 p-0">
+          <TabsTrigger value="details" className="flex-none px-4 py-2 text-sm">Lead Details</TabsTrigger>
+          {isPublished && (
+            <TabsTrigger value="prebid" className="flex-none gap-2 px-4 py-2 text-sm">
+              <MessagesSquare className="size-3.5" aria-hidden />
+              Prebid Queries
+              {prebidYourTurn && <span className="rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">Your turn</span>}
+            </TabsTrigger>
+          )}
+        </TabsList>
+
+      <TabsContent value="details" className="space-y-6">
       <Panel icon={Building2} title="Lead Details">
         <Facts
           items={[
@@ -371,6 +414,16 @@ export function LeadDetailPage() {
           ]}
         />
       </Panel>
+      </TabsContent>
+
+      {isPublished && (
+        <TabsContent value="prebid">
+          <section className="rounded-xl border border-border bg-card p-5 shadow-sm">
+            <PrebidPanel lead={lead} setLead={setLead} reload={load} />
+          </section>
+        </TabsContent>
+      )}
+      </Tabs>
 
       <AlertDialog open={confirmDeleteLead} onOpenChange={(open) => !open && !deletingLead && setConfirmDeleteLead(false)}>
         <AlertDialogContent>

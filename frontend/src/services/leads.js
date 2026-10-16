@@ -34,6 +34,31 @@ export async function transitionLead(id, payload) {
   return json(await apiFetch(`${BASE}/${id}/transition`, { method: 'POST', body: JSON.stringify(payload) }))
 }
 
+// Converts an unpublished lead to a published one: { title, published_details }. One way only; the lead's
+// own can_publish says whether the current user may. RFP documents go up afterwards, one request each.
+export async function publishLead(id, payload) {
+  return json(await apiFetch(`${BASE}/${id}/publish`, { method: 'POST', body: JSON.stringify(payload) }))
+}
+
+// Prebid queries. A step is { action, assignee_id?, note? } and answers with the
+// updated lead; the lead's own prebid.actions says which actions the user may send.
+export async function prebidTransition(id, payload) {
+  return json(await apiFetch(`${BASE}/${id}/prebid/transition`, { method: 'POST', body: JSON.stringify(payload) }))
+}
+
+export async function addPrebidItem(id) {
+  return json(await apiFetch(`${BASE}/${id}/prebid/items`, { method: 'POST' }))
+}
+
+// One or more cells of a row: { query: '...' }. Answers with the saved row.
+export async function updatePrebidItem(id, itemId, fields) {
+  return json(await apiFetch(`${BASE}/${id}/prebid/items/${itemId}`, { method: 'PATCH', body: JSON.stringify(fields) }))
+}
+
+export async function deletePrebidItem(id, itemId) {
+  return json(await apiFetch(`${BASE}/${id}/prebid/items/${itemId}`, { method: 'DELETE' }))
+}
+
 // One file per request — keeps each request small (nginx/server limits) and
 // lets the UI show which file failed instead of failing the whole batch.
 // category: '' for a bulk upload, the typed label ("RFP") for a categorised one.

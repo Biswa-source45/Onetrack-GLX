@@ -56,7 +56,11 @@ type Lead struct {
 	AllowedActions []string     `json:"allowed_actions"`
 	CanEdit        bool         `json:"can_edit"`
 	CanDelete      bool         `json:"can_delete"`
-	CreatedAt      time.Time    `json:"created_at"`
+	CanPublish     bool         `json:"can_publish"`
+	// Prebid query round — see prebid.go. Stage and Assignee come with the
+	// list too (for the badge); Items and the caller's rights only on detail.
+	Prebid    PrebidState `json:"prebid"`
+	CreatedAt time.Time   `json:"created_at"`
 	UpdatedAt      time.Time    `json:"updated_at"`
 }
 
@@ -134,18 +138,7 @@ func (r *CreateLeadRequest) Normalize() error {
 		r.PublishedDetails = nil
 		return nil
 	}
-	if r.Title == nil {
-		return fmt.Errorf("%w: tender title is required for a published lead", ErrValidation)
-	}
-	if len(r.PublishedDetails) > 0 && string(r.PublishedDetails) != "null" {
-		var obj map[string]any
-		if err := json.Unmarshal(r.PublishedDetails, &obj); err != nil {
-			return fmt.Errorf("%w: published details must be a JSON object", ErrValidation)
-		}
-	} else {
-		r.PublishedDetails = nil
-	}
-	return nil
+	return checkPublished(r.Title, &r.PublishedDetails)
 }
 
 // FolderSlug turns a lead's display name into a filesystem-safe folder stem:

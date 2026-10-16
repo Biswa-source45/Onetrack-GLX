@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { listLeads } from "../../services/leads";
 import { usePermissions } from "../../hooks/usePermissions";
 import { formatCurrency, formatDate } from "../../lib/tenderFormat";
-import { LeadStageBadge, LeadStatusBadge, LeadTypeBadge } from "./leadBadges";
+import { LeadStageBadge, LeadStatusBadge, LeadTypeBadge, PrebidBadge } from "./leadBadges";
 
 const STATUS_FILTERS = [
   { value: "", label: "All" },
@@ -208,7 +208,7 @@ export function LeadsPage() {
                             {[l.title ? l.account_name : null, l.department_name, l.location].filter(Boolean).join(", ") || "No department or location"}
                           </p>
                         </td>
-                        <td className="px-4 py-3"><span className="flex flex-wrap gap-1.5"><LeadStageBadge stage={l.stage} /><LeadStatusBadge status={l.publish_status} /></span></td>
+                        <td className="px-4 py-3"><span className="flex flex-wrap gap-1.5"><LeadStageBadge stage={l.stage} /><LeadStatusBadge status={l.publish_status} /><PrebidBadge stage={l.prebid?.stage} /></span></td>
                         <td className="px-4 py-3"><LeadTypeBadge type={l.lead_type} /></td>
                         <td className="px-4 py-3 text-muted-foreground">{l.category || "Not set"}</td>
                         <td className={`px-4 py-3 text-right tabular-nums ${l.estimated_value != null ? "text-foreground" : "text-muted-foreground"}`}>{l.estimated_value != null ? formatCurrency(l.estimated_value) : "Not set"}</td>

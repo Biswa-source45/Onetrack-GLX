@@ -10,7 +10,6 @@ import {
   Loader2,
   Megaphone,
   EyeOff,
-  ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -18,22 +17,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { FieldMemoryInput } from "@/components/ui/field-memory-input";
+import { Field } from "../tenders/tenderFormParts";
+import { TenderDetailsFields } from "./TenderDetailsFields";
 import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from "@/components/ui/dropdown-menu";
-import { EmdBgSection, Field, ProductsTable } from "../tenders/tenderFormParts";
-import {
-  BID_TYPES,
   SCOPE_TYPES,
   STANDARD_CATEGORY_OPTIONS,
-  STANDARD_PORTAL_SOURCES,
   inputCls,
-  validateEmd,
 } from "../../lib/tenderSpec";
 import { emptyDocs, toUploadItems, uploadAll, validateDocs } from "../../lib/leadDocs";
+import { PUBLISHED_BLANK, blankProducts, buildPublishedDetails, validatePublished } from "../../lib/leadPublish";
 import { LeadDocumentPicker } from "./LeadDocumentPicker";
 import { UserSelect } from "./UserSelect";
 import { createLead, getLead, updateLead } from "../../services/leads";
@@ -135,31 +127,12 @@ export function AddLeadPage() {
     scope_type: "",
     category: "",
     estimated_value: "",
-    // Published only: tender Section 1 fields not already captured above.
-    title: "",
-    gem_bid_no: "",
-    start_date: "",
-    end_date: "",
-    portal_source: "GeM",
-    bid_type: "BID",
-    quantity: "",
-    emd_amount: "",
-    emd_not_applicable: false,
-    emd_exemption_types: [],
-    emd_exemption_reason: "",
-    emd_bank_name: "",
-    emd_account_number: "",
-    emd_ifsc_code: "",
-    emd_branch: "",
-    emd_beneficiary: "",
-    emd_payable_at: "",
-    bg_required: false,
-    bg_rate: "",
-    bg_duration_months: "",
+    // Published only: the tender details (lib/leadPublish.js), not already captured above.
+    ...PUBLISHED_BLANK,
     lead_owner_id: currentUser?.id ?? "",
     reporting_manager_id: "",
   });
-  const [products, setProducts] = useState([{ id: 1, product: "", description: "", qty: "", oem: "" }]);
+  const [products, setProducts] = useState(blankProducts());
   const [emdOnlineOn, setEmdOnlineOn] = useState(false);
   const [emdDdOn, setEmdDdOn] = useState(false);
   const [docs, setDocs] = useState(emptyDocs);
@@ -203,8 +176,7 @@ export function AddLeadPage() {
     if (form.estimated_value && Number(form.estimated_value) < 0) e.estimated_value = "Cannot be negative";
     if (!form.lead_owner_id) e.lead_owner_id = "Lead owner is required";
     if (isPublished) {
-      if (!form.title.trim()) e.title = "Tender title is required";
-      Object.assign(e, validateEmd(form, emdOnlineOn, emdDdOn));
+      Object.assign(e, validatePublished(form, emdOnlineOn, emdDdOn));
       const docError = editing ? "" : validateDocs(docs);
       if (docError) e.docs = docError;
     }
@@ -230,34 +202,7 @@ export function AddLeadPage() {
     };
     if (isPublished) {
       payload.title = form.title.trim();
-      // Same keys as the tender create payload, so a later Lead -> Bid
-      // conversion can pass these straight through.
-      payload.published_details = {
-        gem_bid_no: text(form.gem_bid_no),
-        start_date: form.start_date || undefined,
-        end_date: form.end_date ? new Date(form.end_date).toISOString() : undefined,
-        portal_source: text(form.portal_source),
-        bid_type: form.bid_type,
-        quantity: num(form.quantity),
-        requested_products: products
-          .filter((p) => p.product.trim() || p.description.trim())
-          .map(({ product, description, qty, oem }) => ({ product, description, qty, oem })),
-        emd_not_applicable: form.emd_not_applicable,
-        emd_amount: num(form.emd_amount),
-        emd_online: emdOnlineOn,
-        emd_bank_name: text(form.emd_bank_name),
-        emd_account_number: text(form.emd_account_number),
-        emd_ifsc_code: text(form.emd_ifsc_code),
-        emd_branch: text(form.emd_branch),
-        emd_dd: emdDdOn,
-        emd_beneficiary: text(form.emd_beneficiary),
-        emd_payable_at: text(form.emd_payable_at),
-        emd_exemption_types: form.emd_exemption_types,
-        emd_exemption_reason: text(form.emd_exemption_reason),
-        bg_required: form.bg_required,
-        bg_rate: form.bg_required ? num(form.bg_rate) : undefined,
-        bg_duration_months: form.bg_required ? num(form.bg_duration_months) : undefined,
-      };
+      payload.published_details = buildPublishedDetails(form, products, emdOnlineOn, emdDdOn);
     }
     return payload;
   }
@@ -356,37 +301,44 @@ export function AddLeadPage() {
         </p>
       </div>
 
-      {/* Lead status: drives which sections appear below. */}
-      <section aria-labelledby="lead-status-label" className="space-y-2">
-        <p id="lead-status-label" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Lead Status <span className="font-bold text-destructive">*</span>
+      {editing ? (
+        <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          Status: <span className="font-semibold text-foreground">{isPublished ? "Published" : "Unpublished"}</span>.{" "}
+          {isPublished ? "A published lead cannot go back to unpublished." : "When the RFP comes out, use Publish Lead on the lead page to add its tender details."}
         </p>
-        <div role="radiogroup" aria-labelledby="lead-status-label" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {STATUS_OPTIONS.map((o) => {
-            const active = form.publish_status === o.value;
-            return (
-              <button
-                key={o.value}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                onClick={() => set("publish_status", o.value)}
-                className={`flex items-start gap-3 rounded-xl border p-4 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.99]
-                  ${active ? "border-primary bg-primary/5 ring-1 ring-primary" : errors.publish_status ? "border-destructive bg-card" : "border-border bg-card hover:border-primary/40"}`}
-              >
-                <span className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
-                  <o.icon className="size-4" aria-hidden />
-                </span>
-                <span className="space-y-0.5">
-                  <span className="block text-sm font-semibold text-foreground">{o.label}</span>
-                  <span className="block text-xs text-muted-foreground">{o.hint}</span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        {errors.publish_status && <p className="text-xs font-medium text-destructive">{errors.publish_status}</p>}
-      </section>
+      ) : (
+        // Lead status: drives which sections appear below.
+        <section aria-labelledby="lead-status-label" className="space-y-2">
+          <p id="lead-status-label" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Lead Status <span className="font-bold text-destructive">*</span>
+          </p>
+          <div role="radiogroup" aria-labelledby="lead-status-label" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {STATUS_OPTIONS.map((o) => {
+              const active = form.publish_status === o.value;
+              return (
+                <button
+                  key={o.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => set("publish_status", o.value)}
+                  className={`flex items-start gap-3 rounded-xl border p-4 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.99]
+                    ${active ? "border-primary bg-primary/5 ring-1 ring-primary" : errors.publish_status ? "border-destructive bg-card" : "border-border bg-card hover:border-primary/40"}`}
+                >
+                  <span className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+                    <o.icon className="size-4" aria-hidden />
+                  </span>
+                  <span className="space-y-0.5">
+                    <span className="block text-sm font-semibold text-foreground">{o.label}</span>
+                    <span className="block text-xs text-muted-foreground">{o.hint}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {errors.publish_status && <p className="text-xs font-medium text-destructive">{errors.publish_status}</p>}
+        </section>
+      )}
 
       <Panel icon={Building2} title="Lead Details">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -426,53 +378,14 @@ export function AddLeadPage() {
         {isPublished && (
           <motion.div key="published" {...reveal} className="space-y-6">
             <Panel icon={FileText} title="Tender Details">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="sm:col-span-2">
-                  <Field label="Tender Title" required error={errors.title}>
-                    <FieldMemoryInput fieldKey="title" value={form.title} onChange={(v) => set("title", v)} placeholder="e.g. Supply and Implementation of Enterprise Firewall" className={inputCls(errors.title)} aria-label="Tender title" />
-                  </Field>
-                </div>
-                <Field label="BID Number / RFP Number">
-                  <Input value={form.gem_bid_no} onChange={(e) => set("gem_bid_no", e.target.value)} placeholder="e.g. GEM/2026/B/87654" className={inputCls()} aria-label="Bid or RFP number" />
-                </Field>
-                <Field label="Portal Source">
-                  <FieldMemoryInput fieldKey="portal_source" presetOptions={STANDARD_PORTAL_SOURCES} maxSuggestions={10} value={form.portal_source} onChange={(v) => set("portal_source", v)} placeholder="GeM, Private, RTC, CPPP, eProcure" className={inputCls()} aria-label="Portal source" />
-                </Field>
-                <Field label="Start Date">
-                  <Input type="date" value={form.start_date} onChange={(e) => set("start_date", e.target.value)} className={inputCls()} aria-label="Start date" />
-                </Field>
-                <Field label="End Date">
-                  <Input type="datetime-local" value={form.end_date} onChange={(e) => set("end_date", e.target.value)} className={inputCls()} aria-label="End date" />
-                </Field>
-                <Field label="Bid Type">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button type="button" variant="outline" size="sm" className="h-9 w-full justify-between border-input bg-background text-sm font-normal text-foreground hover:bg-muted/50" aria-label="Bid type">
-                        {form.bid_type === "BID_TO_RA" ? "BID to RA" : "BID"}
-                        <ChevronDown className="ml-auto size-3.5 text-muted-foreground" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent className="w-[220px]">
-                      {BID_TYPES.map((t) => (
-                        <DropdownMenuItem key={t} onSelect={() => set("bid_type", t)}>
-                          {t === "BID_TO_RA" ? "BID to RA" : "BID"}
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </Field>
-                <Field label="Quantity">
-                  <Input type="number" min="1" inputMode="numeric" value={form.quantity} onChange={(e) => set("quantity", e.target.value)} placeholder="e.g. 100" className={inputCls()} aria-label="Quantity" />
-                </Field>
-              </div>
-
-              <ProductsTable products={products} setProducts={setProducts} />
-              <EmdBgSection
+              <TenderDetailsFields
                 form={form}
                 set={set}
                 setForm={setForm}
                 errors={errors}
                 setErrors={setErrors}
+                products={products}
+                setProducts={setProducts}
                 emdOnlineOn={emdOnlineOn}
                 setEmdOnlineOn={setEmdOnlineOn}
                 emdDdOn={emdDdOn}

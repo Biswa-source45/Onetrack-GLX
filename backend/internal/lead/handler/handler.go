@@ -48,10 +48,17 @@ func RegisterLeadRoutes(rg *gin.RouterGroup, h *LeadHandler, auth *middleware.Au
 		// not by a blanket permission: seeing the lead is the only precondition.
 		leads.PUT("/:id", auth.RequirePermission("lead.view"), h.Update)
 		leads.POST("/:id/transition", auth.RequirePermission("lead.view"), h.Transition)
+		leads.POST("/:id/publish", auth.RequirePermission("lead.view"), h.Publish)
 		leads.DELETE("/:id", auth.RequirePermission("lead.view"), h.Delete)
 		leads.POST("/:id/documents", auth.RequirePermission("lead.create"), h.UploadDocument)
 		leads.GET("/:id/documents/:docId", auth.RequirePermission("lead.view"), h.DownloadDocument)
 		leads.DELETE("/:id/documents/:docId", auth.RequirePermission("lead.create"), h.DeleteDocument)
+		// Prebid queries: like the approval workflow, who may do what is decided per
+		// lead and per stage in domain/prebid.go — seeing the lead is the precondition.
+		leads.POST("/:id/prebid/transition", auth.RequirePermission("lead.view"), h.PrebidTransition)
+		leads.POST("/:id/prebid/items", auth.RequirePermission("lead.view"), h.AddPrebidItem)
+		leads.PATCH("/:id/prebid/items/:itemId", auth.RequirePermission("lead.view"), h.UpdatePrebidItem)
+		leads.DELETE("/:id/prebid/items/:itemId", auth.RequirePermission("lead.view"), h.DeletePrebidItem)
 	}
 }
 

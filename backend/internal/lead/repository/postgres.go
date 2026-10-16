@@ -55,19 +55,21 @@ const leadSelect = `
 		l.folder_name,
 		(SELECT COUNT(*) FROM leads.lead_documents d WHERE d.lead_id = l.id),
 		l.created_at, l.updated_at,
-		l.stage, l.approver_id, COALESCE(a.full_name, a.username, '')
+		l.stage, l.approver_id, COALESCE(a.full_name, a.username, ''),
+		l.prebid_stage, l.prebid_assignee_id, COALESCE(pa.full_name, pa.username, ''), l.prebid_sent_at
 	FROM leads.leads l
 	LEFT JOIN auth.users o ON o.id = l.lead_owner_id
 	LEFT JOIN auth.users m ON m.id = l.reporting_manager_id
 	LEFT JOIN auth.users c ON c.id = l.created_by
 	LEFT JOIN auth.users a ON a.id = l.approver_id
+	LEFT JOIN auth.users pa ON pa.id = l.prebid_assignee_id
 `
 
 func scanLead(row pgx.Row) (*domain.Lead, error) {
 	var l domain.Lead
 	var details []byte
-	var managerID, approverID *string
-	var managerName, approverName string
+	var managerID, approverID, prebidAssigneeID *string
+	var managerName, approverName, prebidAssigneeName string
 	if err := row.Scan(&l.ID, &l.PublishStatus, &l.LeadType, &l.AccountName, &l.DepartmentName, &l.Location,
 		&l.HighLevelScope, &l.ExpectedDate, &l.ScopeType, &l.Category,
 		&l.EstimatedValue, &l.Title, &details,
@@ -75,8 +77,12 @@ func scanLead(row pgx.Row) (*domain.Lead, error) {
 		&managerID, &managerName,
 		&l.CreatedBy.ID, &l.CreatedBy.FullName,
 		&l.FolderName, &l.DocumentCount, &l.CreatedAt, &l.UpdatedAt,
-		&l.Stage, &approverID, &approverName); err != nil {
+		&l.Stage, &approverID, &approverName,
+		&l.Prebid.Stage, &prebidAssigneeID, &prebidAssigneeName, &l.Prebid.SentAt); err != nil {
 		return nil, err
+	}
+	if prebidAssigneeID != nil {
+		l.Prebid.Assignee = &domain.UserSummary{ID: *prebidAssigneeID, FullName: prebidAssigneeName}
 	}
 	if details != nil {
 		l.PublishedDetails = details
@@ -144,9 +150,11 @@ func (r *Repo) Get(ctx context.Context, id string) (*domain.Lead, error) {
 
 	evRows, err := r.pool.Query(ctx, `
 		SELECT e.id, COALESCE(e.actor_id::text, ''), COALESCE(u.full_name, u.username, 'Deleted user'),
-			e.event_type, e.note, e.created_at
+			e.event_type, e.note, e.created_at,
+			e.target_id, COALESCE(tg.full_name, tg.username, '')
 		FROM leads.lead_events e
 		LEFT JOIN auth.users u ON u.id = e.actor_id
+		LEFT JOIN auth.users tg ON tg.id = e.target_id
 		WHERE e.lead_id = $1
 		ORDER BY e.created_at, e.id
 	`, l.ID)
@@ -157,12 +165,22 @@ func (r *Repo) Get(ctx context.Context, id string) (*domain.Lead, error) {
 	l.Events = []domain.Event{}
 	for evRows.Next() {
 		var e domain.Event
-		if err := evRows.Scan(&e.ID, &e.Actor.ID, &e.Actor.FullName, &e.EventType, &e.Note, &e.CreatedAt); err != nil {
+		var targetID *string
+		var targetName string
+		if err := evRows.Scan(&e.ID, &e.Actor.ID, &e.Actor.FullName, &e.EventType, &e.Note, &e.CreatedAt,
+			&targetID, &targetName); err != nil {
 			return nil, err
+		}
+		if targetID != nil {
+			e.Target = &domain.UserSummary{ID: *targetID, FullName: targetName}
 		}
 		l.Events = append(l.Events, e)
 	}
-	return l, evRows.Err()
+	if err := evRows.Err(); err != nil {
+		return nil, err
+	}
+	l.Prebid.Items, err = r.prebidItems(ctx, l.ID)
+	return l, err
 }
 
 // Update rewrites the lead's editable details and records the edit.
@@ -212,6 +230,33 @@ func (r *Repo) Transition(ctx context.Context, id, from, to, eventType, actorID 
 		INSERT INTO leads.lead_events (lead_id, actor_id, event_type, note)
 		SELECT id, $5, $6, $7 FROM upd
 	`, id, from, to, approverID, actorID, eventType, note)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: this lead was just changed by someone else — reload the page", domain.ErrValidation)
+	}
+	return nil
+}
+
+// Publish turns an unpublished lead into a published one with its tender details,
+// and records the step, atomically. The "AND publish_status = 'UNPUBLISHED'" guard
+// makes two people publishing at once safe: the second finds nothing to update.
+func (r *Repo) Publish(ctx context.Context, id string, title *string, details []byte, actorID string) error {
+	var d any
+	if details != nil {
+		d = string(details)
+	}
+	tag, err := r.pool.Exec(ctx, `
+		WITH upd AS (
+			UPDATE leads.leads
+			SET publish_status = 'PUBLISHED', title = $2, published_details = $3::jsonb, updated_at = NOW()
+			WHERE id::text = $1 AND publish_status = 'UNPUBLISHED'
+			RETURNING id
+		)
+		INSERT INTO leads.lead_events (lead_id, actor_id, event_type)
+		SELECT id, $4, $5 FROM upd
+	`, id, title, d, actorID, domain.EventPublished)
 	if err != nil {
 		return err
 	}

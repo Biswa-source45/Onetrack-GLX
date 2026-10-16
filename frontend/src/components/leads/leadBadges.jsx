@@ -28,6 +28,28 @@ const STAGES = {
   NO_GO: ["No-Go", "border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300"],
 };
 
+// Where the prebid query sheet is. Nothing is shown before it starts.
+const PREBID = {
+  WITH_PM: "With Pre-Sales", WITH_DM: "With Delivery", WITH_BM: "With Bid Manager",
+  WITH_AM: "With Account Mgr", SENT: "Sent to Customer", CLOSED: "Closed",
+};
+
+export function PrebidBadge({ stage }) {
+  if (!PREBID[stage]) return null;
+  const done = stage === "CLOSED";
+  return (
+    <span
+      title="Prebid queries"
+      className={`inline-flex items-center whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] font-medium
+        ${done
+          ? "border-border bg-muted text-muted-foreground"
+          : "border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300"}`}
+    >
+      Prebid: {PREBID[stage]}
+    </span>
+  );
+}
+
 export function LeadStageBadge({ stage }) {
   const [label, cls] = STAGES[stage] ?? [stage, "border-border bg-muted text-muted-foreground"];
   return <span className={`inline-flex items-center whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] font-medium ${cls}`}>{label}</span>;

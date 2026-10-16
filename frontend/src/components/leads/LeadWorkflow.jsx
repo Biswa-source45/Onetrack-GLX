@@ -72,7 +72,11 @@ const EVENT_LABELS = {
   GO: "marked the lead as Go",
   NO_GO: "cancelled the lead (No-Go)",
   EDITED: "edited the lead details",
+  PUBLISHED: "published the lead and added its tender details",
 };
+
+// Prebid steps have their own activity cards on the Prebid Queries tab; this card is the approval only.
+const isPrebid = (e) => e.event_type.startsWith("PREBID_");
 
 function statusLine(lead) {
   const rm = lead.reporting_manager?.full_name;
@@ -110,7 +114,7 @@ export function LeadWorkflow({ lead, onChanged }) {
   const cfg = action && ACTIONS[action];
   const stepIndex = STEPS.findIndex((s) => s.stage === lead.stage);
   const cancelled = lead.stage === "NO_GO";
-  const lastNote = [...(lead.events ?? [])].reverse().find((e) => e.note && e.event_type !== "EDITED");
+  const lastNote = [...(lead.events ?? [])].reverse().find((e) => e.note && e.event_type !== "EDITED" && !isPrebid(e));
 
   function open(a) {
     setAction(a);
@@ -186,9 +190,9 @@ export function LeadWorkflow({ lead, onChanged }) {
         </p>
       )}
 
-      {lead.events?.length > 0 && (
+      {lead.events?.some((e) => !isPrebid(e)) && (
         <ul className="space-y-1.5 border-t border-border/60 pt-3 text-xs text-muted-foreground">
-          {lead.events.map((e) => (
+          {lead.events.filter((e) => !isPrebid(e)).map((e) => (
             <li key={e.id} className="flex flex-wrap gap-x-1.5">
               <span className="font-medium text-foreground">{e.actor.full_name}</span>
               <span>{EVENT_LABELS[e.event_type] ?? e.event_type}</span>

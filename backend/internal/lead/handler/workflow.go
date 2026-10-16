@@ -29,6 +29,9 @@ func (h *LeadHandler) forActor(l *domain.Lead, a domain.Actor) {
 	l.AllowedActions = l.ActionsFor(a)
 	l.CanEdit = l.EditableBy(a)
 	l.CanDelete = l.DeletableBy(a)
+	l.CanPublish = l.PublishNext(a) == nil
+	l.Prebid.Actions = l.PrebidActionsFor(a)
+	l.Prebid.Editable = l.PrebidEditableFields(a)
 }
 
 // fail maps the lead module's sentinel errors onto HTTP responses.
@@ -67,6 +70,12 @@ func (h *LeadHandler) Update(c *gin.Context) {
 	}
 	if err := req.Normalize(); err != nil {
 		fail(c, err)
+		return
+	}
+	// Editing never changes the status: publishing has its own step (Publish), which records it and
+	// tells people; and un-publishing would silently drop the tender details.
+	if req.PublishStatus != lead.PublishStatus {
+		fail(c, fmt.Errorf("%w: a lead's status cannot be changed by editing — use Publish Lead", domain.ErrValidation))
 		return
 	}
 	if err := h.repo.Update(ctx, id, &req, actor.ID); err != nil {
@@ -270,14 +279,7 @@ func (h *LeadHandler) notifyCreated(l *domain.Lead, actorID string) {
 }
 
 func (h *LeadHandler) notifyTransition(l *domain.Lead, action, actorID, note string) {
-	actorName := "Someone"
-	for i := len(l.Events) - 1; i >= 0; i-- {
-		if l.Events[i].Actor.ID == actorID {
-			actorName = l.Events[i].Actor.FullName
-			break
-		}
-	}
-	actorName = html.EscapeString(actorName)
+	actorName := html.EscapeString(eventActorName(l, actorID))
 	name := leadName(l)
 	withNote := func(label, text string) string {
 		if note == "" {

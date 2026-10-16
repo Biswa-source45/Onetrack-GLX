@@ -60,6 +60,8 @@ type Event struct {
 	Actor     UserSummary `json:"actor"`
 	EventType string      `json:"event_type"`
 	Note      *string     `json:"note"`
+	// Target is who a prebid handoff went to; nil for every other step.
+	Target    *UserSummary `json:"target"`
 	CreatedAt time.Time   `json:"created_at"`
 }
 
