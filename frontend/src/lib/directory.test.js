@@ -1,7 +1,7 @@
 // Run: node --test frontend/src/lib/directory.test.js
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { KINDS, validateEntry, validateDirectoryContact, filterEntries, entryPayload, contactPayload } from './directory.js'
+import { KINDS, validateEntry, validateDirectoryContact, filterEntries, entryPayload, contactPayload, splitList } from './directory.js'
 
 test('both lists are configured with their own wording and path', () => {
   assert.equal(KINDS.accounts.path, '/dashboard/accounts')
@@ -21,6 +21,14 @@ test('validateEntry: name is required, website must be http(s) when given', () =
 test('payloads are trimmed and the email lower-cased', () => {
   assert.deepEqual(entryPayload({ name: ' IIM ', sector: ' Institute ', extra: 'x' }), { name: 'IIM', sector: 'Institute', location: '', website: '', notes: '' })
   assert.equal(contactPayload({ name: ' A ', email: ' A@B.IN ' }).email, 'a@b.in')
+})
+
+test('OEM categories: comma-separated, trimmed, no blanks or repeats', () => {
+  assert.deepEqual(splitList(' Hardware,  security , ,HARDWARE, Network '), ['Hardware', 'security', 'Network'])
+  assert.deepEqual(splitList(''), [])
+  assert.equal(entryPayload({ name: 'Dell', sector: 'Hardware ,Security,, Network' }).sector, 'Hardware, Security, Network')
+  assert.equal(KINDS.oems.multi, true)
+  assert.equal(KINDS.accounts.sectorLabel, 'Department')
 })
 
 test('validateDirectoryContact: field rules and duplicates inside the record', () => {

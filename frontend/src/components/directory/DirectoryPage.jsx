@@ -12,7 +12,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import {
-  KINDS, blankContact, blankEntry, contactPayload, entryPayload, filterEntries, validateDirectoryContact, validateEntry,
+  KINDS, blankContact, blankEntry, contactPayload, entryPayload, filterEntries, splitList, validateDirectoryContact, validateEntry,
 } from '../../lib/directory'
 import {
   addContact, createEntry, deleteContact, deleteEntry, getEntry, listEntries, updateContact, updateEntry,
@@ -20,6 +20,21 @@ import {
 
 const fmtDate = (v) => (v ? new Date(v).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—')
 const errText = (res, fallback) => res?.error?.message || fallback
+// The department (accounts) or the comma-separated categories (OEMs), as a list of tags.
+const tagsOf = (cfg, sector) => (cfg.multi ? splitList(sector) : splitList(sector).length ? [String(sector).trim()] : [])
+
+function Tags({ tags, className = '' }) {
+  if (!tags.length) return <span className="font-normal text-muted-foreground">—</span>
+  return (
+    <span className={`flex flex-wrap gap-1.5 ${className}`}>
+      {tags.map((t) => (
+        <span key={t} className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/50 px-2.5 py-0.5 text-xs font-medium text-foreground">
+          <Tag className="size-3" aria-hidden="true" />{t}
+        </span>
+      ))}
+    </span>
+  )
+}
 const initials = (name) => String(name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase()
 
 /** My Accounts / My OEMs: the list, and one record (with its contacts) opened via ?open=<id>. */
@@ -50,12 +65,12 @@ function EntryFields({ cfg, value, errors, disabled, onChange, idPrefix, autoFoc
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       <div className="sm:col-span-2">
-        <Field id={`${idPrefix}-name`} label={`${cfg.one === 'OEM' ? 'OEM' : 'Account'} name *`} error={errors.name}>
+        <Field id={`${idPrefix}-name`} label={`${cfg.one === 'OEM' ? 'OEM' : 'Account'} Name *`} error={errors.name}>
           <Input id={`${idPrefix}-name`} value={value.name} onChange={set('name')} disabled={disabled} maxLength={200} autoFocus={autoFocus} aria-invalid={!!errors.name} />
         </Field>
       </div>
       <Field id={`${idPrefix}-sector`} label={cfg.sectorLabel} hint={cfg.sectorHint}>
-        <Input id={`${idPrefix}-sector`} value={value.sector} onChange={set('sector')} disabled={disabled} maxLength={100} />
+        <Input id={`${idPrefix}-sector`} value={value.sector} onChange={set('sector')} disabled={disabled} maxLength={300} placeholder={cfg.multi ? 'Hardware, Security, Network' : ''} />
       </Field>
       <Field id={`${idPrefix}-location`} label="Location">
         <Input id={`${idPrefix}-location`} value={value.location} onChange={set('location')} disabled={disabled} maxLength={200} />
@@ -111,7 +126,7 @@ function List({ kind, cfg, onOpen }) {
       {entries && entries.length > 0 && (
         <div className="relative max-w-sm">
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, type or location" aria-label={`Search ${cfg.label}`} className="pl-9" />
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Search name, ${cfg.sectorLabel.toLowerCase()} or location`} aria-label={`Search ${cfg.label}`} className="pl-9" />
         </div>
       )}
 
@@ -155,7 +170,7 @@ function List({ kind, cfg, onOpen }) {
                       {e.name}
                     </button>
                   </td>
-                  <td className="p-3 text-muted-foreground">{e.sector || '—'}</td>
+                  <td className="p-3 text-muted-foreground"><Tags tags={tagsOf(cfg, e.sector)} /></td>
                   <td className="p-3 text-muted-foreground">{e.location || '—'}</td>
                   <td className="p-3 text-right tabular-nums">{e.contact_count}</td>
                   <td className="p-3 text-right text-muted-foreground tabular-nums">{fmtDate(e.updated_at)}</td>
@@ -303,7 +318,7 @@ function Detail({ kind, cfg, id, onBack }) {
           <div className="min-w-0 space-y-2">
             <h1 className="truncate text-2xl font-bold font-heading leading-tight">{entry.name}</h1>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-muted-foreground">
-              {entry.sector && <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-2.5 py-0.5 text-xs font-medium text-foreground"><Tag className="size-3" aria-hidden="true" />{entry.sector}</span>}
+              {entry.sector && <Tags tags={tagsOf(cfg, entry.sector)} />}
               {entry.location && <span className="inline-flex items-center gap-1.5"><MapPin className="size-3.5" aria-hidden="true" />{entry.location}</span>}
               {entry.website && (
                 <a href={entry.website} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-primary hover:underline">
@@ -348,7 +363,7 @@ function Detail({ kind, cfg, id, onBack }) {
             <dl className="mt-4 grid gap-x-6 gap-y-4 text-sm sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-1">
               <div>
                 <dt className="text-xs text-muted-foreground">{cfg.sectorLabel}</dt>
-                <dd className="mt-0.5 font-medium">{entry.sector || <span className="font-normal text-muted-foreground">Not set</span>}</dd>
+                <dd className="mt-0.5 font-medium">{entry.sector ? <Tags tags={tagsOf(cfg, entry.sector)} /> : <span className="font-normal text-muted-foreground">Not set</span>}</dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">Location</dt>

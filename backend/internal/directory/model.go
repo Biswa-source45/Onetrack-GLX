@@ -102,7 +102,7 @@ func (in *EntryInput) Normalize() error {
 	for _, c := range []struct {
 		label, v string
 		max      int
-	}{{"Name", in.Name, 200}, {"Sector", in.Sector, 100}, {"Location", in.Location, 200}, {"Website", in.Website, 300}, {"Notes", in.Notes, 2000}} {
+	}{{"Name", in.Name, 200}, {"Department / category", in.Sector, 300}, {"Location", in.Location, 200}, {"Website", in.Website, 300}, {"Notes", in.Notes, 2000}} {
 		if err := tooLong(c.label, c.v, c.max); err != nil {
 			return err
 		}

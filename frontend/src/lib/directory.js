@@ -7,12 +7,14 @@ export const KINDS = {
   accounts: {
     label: 'My Accounts', plural: 'accounts', one: 'account', Add: 'Add account', path: '/dashboard/accounts',
     blurb: 'The accounts you manage, with the people to talk to at each. Only you can see this list.',
-    sectorLabel: 'Type / sector', sectorHint: 'e.g. IIT, IIM, Institution, PSU', hasWebsite: false,
+    // The server column is still called "sector"; for accounts it holds the department.
+    sectorLabel: 'Department', sectorHint: 'e.g. IT Department, Procurement, Computer Science', hasWebsite: false, multi: false,
   },
   oems: {
     label: 'My OEMs', plural: 'OEMs', one: 'OEM', Add: 'Add OEM', path: '/dashboard/oems',
     blurb: 'The OEMs you work with, with their contacts. Only you can see this list.',
-    sectorLabel: 'Category', sectorHint: 'e.g. Servers, Networking, Software', hasWebsite: true,
+    // Several categories in one field, separated by commas.
+    sectorLabel: 'Category', sectorHint: 'Separate with commas, e.g. Hardware, Security, Network, Software', hasWebsite: true, multi: true,
   },
 }
 
@@ -21,9 +23,20 @@ export const blankContact = () => ({ name: '', designation: '', email: '', phone
 
 const str = (v) => String(v ?? '').trim()
 
+/** "Hardware,  security , Hardware" -> ['Hardware', 'security']: trimmed, no blanks, no repeats (case-insensitive). */
+export function splitList(v) {
+  const seen = new Set()
+  return String(v ?? '').split(',').map((s) => s.trim()).filter((s) => {
+    const k = s.toLowerCase()
+    if (!s || seen.has(k)) return false
+    seen.add(k)
+    return true
+  })
+}
+
 /** The record as it is sent: trimmed, only the fields the server stores. */
 export const entryPayload = (e) => ({
-  name: str(e.name), sector: str(e.sector), location: str(e.location), website: str(e.website), notes: str(e.notes),
+  name: str(e.name), sector: splitList(e.sector).join(', '), location: str(e.location), website: str(e.website), notes: str(e.notes),
 })
 
 export const contactPayload = (c) => ({
