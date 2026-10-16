@@ -6,15 +6,16 @@ import {
   Users, LayoutDashboard, Menu, X, ChevronRight,
   FileText, TrendingUp, Activity, BarChart2, ShieldCheck, Bell,
   Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Pencil,
-  FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass, ScrollText, Settings, Target, ListChecks, Building2, Factory } from 'lucide-react'
+  FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass, ScrollText, Settings, Target, ListChecks, Building2, Factory
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { toBlob } from 'html-to-image'
 
-import { Button }    from '@/components/ui/button'
-import { Input }     from '@/components/ui/input'
-import { Label }     from '@/components/ui/label'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
-import { Badge }     from '@/components/ui/badge'
+import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 
 import { authService, tokenStorage } from '../services/auth'
@@ -28,16 +29,16 @@ import { RouteErrorBoundary } from './RouteErrorBoundary'
 import { useFeedbackDraftStore } from '../store/useFeedbackDraftStore'
 import { guessFeedbackCategory } from '../lib/feedbackCategoryMap'
 import { UserManagement } from './admin/UserManagement'
-import { UserAvatar }     from './admin/UserAvatar'
-import { RoleBadge }      from './admin/RoleBadge'
-import { TendersPage }    from './tenders/TendersPage'
-import { listAllBids }   from '../services/bids'
+import { UserAvatar } from './admin/UserAvatar'
+import { RoleBadge } from './admin/RoleBadge'
+import { TendersPage } from './tenders/TendersPage'
+import { listAllBids } from '../services/bids'
 import { getTenderPerformanceMatrix } from '../services/bids'
 import { formatCurrency } from '../lib/tenderFormat'
 import { StageBadge, StatusBadge } from '../lib/tenderDisplay'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
-import { computePipelineSummary, getEffectiveStage } from '../lib/pipelineMetrics'
+import { computePipelineSummary, getEffectiveStage, isSubmitted } from '../lib/pipelineMetrics'
 import { openMasterSheetDrill } from '../lib/masterSheetDrill'
 import { expandRoles } from '../lib/roles'
 import { PipelineKpiBand } from './analytics/PipelineKpiBand'
@@ -50,11 +51,11 @@ import {
 
 // ── Navigation items (each gated by a permission check) ──────────────────────
 const NAV_ITEMS = [
-  { id: 'overview',   label: 'Overview',        icon: LayoutDashboard, permission: null },
-  { 
-    id: 'tenders',    
-    label: 'Tenders',          
-    icon: FileText,        
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard, permission: null },
+  {
+    id: 'tenders',
+    label: 'Tenders',
+    icon: FileText,
     permission: 'bid.view',
     children: [
       { id: 'tenders-all', label: 'All Tenders', icon: Layers, path: '/dashboard/tenders' },
@@ -62,10 +63,21 @@ const NAV_ITEMS = [
       { id: 'tenders-owned', label: 'Owned Tenders', icon: UserCheck, path: '/dashboard/tenders/owned' }
     ]
   },
-  { id: 'leads',      label: 'Leads',            icon: Target,          permission: 'lead.view' },
+  {
+    id: 'emd-details',
+    label: 'EMD Details',
+    icon: ShieldCheck,
+    roles: [
+      'FINANCE', 'FINANCE_MANAGER', 'FINANCE_EXECUTIVE',
+      'MANAGING_DIRECTOR', 'ADMIN', 'SUPER_ADMIN',
+      'ACCOUNT_MANAGER', 'SALES_MANAGER', 'ACCOUNTS_MANAGER'
+    ],
+    path: '/dashboard/emd-details'
+  },
+  { id: 'leads', label: 'Leads', icon: Target, permission: 'lead.view' },
   // Private per-person lists: Account Managers keep their accounts, Pre-Sales their OEMs.
-  { id: 'accounts',   label: 'My Accounts',      icon: Building2,       permission: null, role: 'ACCOUNT_MANAGER' },
-  { id: 'oems',       label: 'My OEMs',          icon: Factory,         permission: null, role: 'PRE_SALES' },
+  { id: 'accounts', label: 'My Accounts', icon: Building2, permission: null, role: 'ACCOUNT_MANAGER' },
+  { id: 'oems', label: 'My OEMs', icon: Factory, permission: null, role: 'PRE_SALES' },
   {
     id: 'analytics',
     label: 'Analytics',
@@ -78,7 +90,7 @@ const NAV_ITEMS = [
       { id: 'analytics-matrix', label: 'Owner Matrix', icon: Users, path: '/dashboard/analytics/performance-matrix' }
     ]
   },
-  { id: 'alerts',     label: 'Alerts',           icon: Bell,            permission: 'bid.view' },
+  { id: 'alerts', label: 'Alerts', icon: Bell, permission: 'bid.view' },
   // Feedback (submit) and Tickets (triage) are mutually exclusive: Super
   // Admin is who Feedback Loop notifies, not who it collects from.
   { id: 'feedback',   label: 'Feedback',         icon: MessageSquarePlus, permission: null, excludeRole: 'SUPER_ADMIN' },
@@ -110,10 +122,10 @@ function isChildActive(child, pathname) {
 // ── Force Password Change Guard ───────────────────────────────────────────────
 function ForcePasswordChangeGuard({ onDone }) {
   const [currentPassword, setCurrentPassword] = useState('')
-  const [newPassword,     setNewPassword]     = useState('')
+  const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [showNew,  setShowNew]  = useState(false)
-  const [loading,  setLoading]  = useState(false)
+  const [showNew, setShowNew] = useState(false)
+  const [loading, setLoading] = useState(false)
   const [fieldErrors, setFieldErrors] = useState({})
 
   async function handleSubmit(e) {
@@ -231,9 +243,9 @@ export function OverviewPanel() {
   const [lastUpdated, setLastUpdated] = useState(null)
 
   // Tender Performance Matrix (real-time, dedicated endpoint)
-  const [perfMatrix, setPerfMatrix]         = useState([])
-  const [matrixLoading, setMatrixLoading]   = useState(true)
-  const [matrixError, setMatrixError]       = useState(null)
+  const [perfMatrix, setPerfMatrix] = useState([])
+  const [matrixLoading, setMatrixLoading] = useState(true)
+  const [matrixError, setMatrixError] = useState(null)
   const [lastMatrixRefresh, setLastMatrixRefresh] = useState(null)
 
   // Custom Analytics Filters
@@ -328,9 +340,9 @@ export function OverviewPanel() {
 
   // BI Metrics Calculation
   const totalBids = filteredBids.length
-  
-  const submittedBids = filteredBids.filter(b => 
-    b.submission_done || 
+
+  const submittedBids = filteredBids.filter(b =>
+    b.submission_done ||
     ['GEM_SUBMISSION', 'GE_M_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER'].includes(b.workflow_stage) ||
     b.submission_status === 'SUBMITTED' ||
     b.bid_status === 'SUBMITTED'
@@ -338,19 +350,19 @@ export function OverviewPanel() {
 
   const notSubmittedBids = Math.max(0, totalBids - submittedBids)
 
-  const techEvalBids = filteredBids.filter(b => 
+  const techEvalBids = filteredBids.filter(b =>
     b.workflow_stage === 'TECHNICAL_EVALUATION' || b.bid_status === 'TECHNICAL_EVALUATION' || b.has_tech_eval
   ).length
 
-  const finEvalBids = filteredBids.filter(b => 
+  const finEvalBids = filteredBids.filter(b =>
     b.workflow_stage === 'FINANCIAL_EVALUATION'
   ).length
 
-  const wonBids = filteredBids.filter(b => 
+  const wonBids = filteredBids.filter(b =>
     b.bid_status === 'WON' || b.bid_outcome === 'WON' || b.workflow_stage === 'WON'
   ).length
 
-  const lostBids = filteredBids.filter(b => 
+  const lostBids = filteredBids.filter(b =>
     b.bid_status === 'LOST' || b.bid_outcome === 'LOST' || b.workflow_stage === 'LOST' || b.technical_result === 'DISQUALIFIED'
   ).length
 
@@ -377,34 +389,38 @@ export function OverviewPanel() {
   const pipelineSummary = computePipelineSummary(filteredBids, lastUpdated ? lastUpdated.getTime() : null)
   const totalParticipatedValue = pipelineSummary.totalPipelineValue
 
-  // EMD is counted as deposited ONLY if not exempted/not-applicable, amount > 0, and bid reached/passed EMD_PROCESSING stage (or emd_ready/emd_returned is true)
+  // EMD is counted as deposited ONLY if not exempted/not-applicable, amount > 0,
+  // and bid reached/passed submission or emd_ready/emd_returned is true
+  const isBidSubmitted = (b) => isSubmitted(b) || [
+    'GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION',
+    'AWARD_HANDOVER', 'WON'
+  ].includes(b.workflow_stage)
+
   const emdDepositedBids = filteredBids.filter(b => {
     if (b.emd_exempted || b.emd_not_applicable || !b.emd_amount || Number(b.emd_amount) <= 0) return false
-    if (b.emd_ready || b.emd_returned) return true
-    const postEmdStages = [
-      'EMD_PROCESSING', 'INTERNAL_APPROVAL',
-      'GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION',
-      'AWARD_HANDOVER', 'WON', 'LOST'
-    ]
-    return postEmdStages.includes(b.workflow_stage)
+    if (b.emd_returned) return true
+    if (isBidSubmitted(b)) return true
+    // If sitting in post-EMD stages with emd_ready confirmed
+    if (b.emd_ready && b.workflow_stage !== 'EMD_PROCESSING') return true
+    return false
   })
 
   const totalEMDDeposited = emdDepositedBids.reduce((sum, b) => sum + Number(b.emd_amount || 0), 0)
 
-  const totalEMDReturned = emdDepositedBids
-    .filter(b => b.emd_returned)
-    .reduce((sum, b) => sum + Number(b.emd_amount || 0), 0)
-
-  const pendingEMDReturn = Math.max(0, totalEMDDeposited - totalEMDReturned)
-
-  // Same buckets as the two sums above, kept as arrays for the drill-down dialog.
   const emdReturnedBids = emdDepositedBids.filter(b => b.emd_returned)
-  const emdPendingBids  = emdDepositedBids.filter(b => !b.emd_returned)
+  const totalEMDReturned = emdReturnedBids.reduce((sum, b) => sum + Number(b.emd_amount || 0), 0)
+
+  // Pending refund: tenders whose EMD was deposited and submitted/concluded, awaiting refund from authority
+  const emdPendingBids = emdDepositedBids.filter(b => {
+    if (b.emd_returned) return false
+    return isBidSubmitted(b) || ['LOST', 'CLOSED'].includes(b.workflow_stage) || ['LOST', 'CLOSED'].includes(b.bid_status)
+  })
+  const pendingEMDReturn = emdPendingBids.reduce((sum, b) => sum + Number(b.emd_amount || 0), 0)
 
   // Finance-specific: tenders sitting in EMD Processing right now — the
   // deposit still needs to be arranged, separate from "already deposited."
   const emdProcessingBids = filteredBids.filter(b =>
-    b.workflow_stage === 'EMD_PROCESSING' && !b.emd_exempted && !b.emd_not_applicable
+    b.workflow_stage === 'EMD_PROCESSING' && !b.emd_exempted && !b.emd_not_applicable && !b.emd_ready
   )
   const emdProcessingValue = emdProcessingBids.reduce((sum, b) => sum + Number(b.emd_amount || 0), 0)
 
@@ -430,17 +446,17 @@ export function OverviewPanel() {
   const uniqueExecs = Array.from(new Set(bids.map(b => b.bid_owner?.full_name || b.bid_owner?.username).filter(Boolean)))
 
   const headerStats = [
-    { label:'Total Tenders',     value: totalBids,         icon: Layers,       color:'text-violet-600', bg:'bg-violet-50',  border:'border-violet-200', onClick: () => navigate('/dashboard/tenders') },
+    { label: 'Total Tenders', value: totalBids, icon: Layers, color: 'text-violet-600', bg: 'bg-violet-50', border: 'border-violet-200', onClick: () => navigate('/dashboard/tenders') },
     // Cumulative "how many did we submit this year" — it counts won and lost
     // tenders too, so no single status filter matches it. Left unclickable
     // rather than linking to a list showing a different number.
-    { label:'Submitted',         value: submittedBids,     icon: CheckCircle,  color:'text-emerald-600',bg:'bg-emerald-50', border:'border-emerald-200' },
-    { label:'Tech Eval',         value: techEvalBids,      icon: FileText,     color:'text-blue-600',   bg:'bg-blue-50',    border:'border-blue-200', onClick: () => navigate('/dashboard/tenders?status=TECHNICAL_EVALUATION') },
-    { label:'Financial Eval',    value: finEvalBids,       icon: IndianRupee,  color:'text-indigo-600', bg:'bg-indigo-50',  border:'border-indigo-200', onClick: () => navigate('/dashboard/tenders?stage=FINANCIAL_EVALUATION') },
-    { label:'Won Bids',          value: wonBids,           icon: Award,        color:'text-sky-600',    bg:'bg-sky-50',     border:'border-sky-200', onClick: () => navigate('/dashboard/tenders?status=WON') },
-    { label:'Lost Bids',         value: lostBids,          icon: XCircle,      color:'text-orange-600', bg:'bg-orange-50',  border:'border-orange-200', onClick: () => navigate('/dashboard/tenders?status=LOST') },
-    { label:'Cancelled',         value: cancelledBids,     icon: Ban,          color:'text-red-600',    bg:'bg-red-50',     border:'border-red-200', onClick: () => navigate('/dashboard/tenders?status=CANCELLED') },
-    { label:'Closed (No Bid)',   value: closedBids,        icon: Archive,      color:'text-zinc-600',   bg:'bg-zinc-100',   border:'border-zinc-300', onClick: () => navigate('/dashboard/tenders?status=CLOSED') },
+    { label: 'Submitted', value: submittedBids, icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-200' },
+    { label: 'Tech Eval', value: techEvalBids, icon: FileText, color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-200', onClick: () => navigate('/dashboard/tenders?status=TECHNICAL_EVALUATION') },
+    { label: 'Financial Eval', value: finEvalBids, icon: IndianRupee, color: 'text-indigo-600', bg: 'bg-indigo-50', border: 'border-indigo-200', onClick: () => navigate('/dashboard/tenders?stage=FINANCIAL_EVALUATION') },
+    { label: 'Won Bids', value: wonBids, icon: Award, color: 'text-sky-600', bg: 'bg-sky-50', border: 'border-sky-200', onClick: () => navigate('/dashboard/tenders?status=WON') },
+    { label: 'Lost Bids', value: lostBids, icon: XCircle, color: 'text-orange-600', bg: 'bg-orange-50', border: 'border-orange-200', onClick: () => navigate('/dashboard/tenders?status=LOST') },
+    { label: 'Cancelled', value: cancelledBids, icon: Ban, color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', onClick: () => navigate('/dashboard/tenders?status=CANCELLED') },
+    { label: 'Closed (No Bid)', value: closedBids, icon: Archive, color: 'text-zinc-600', bg: 'bg-zinc-100', border: 'border-zinc-300', onClick: () => navigate('/dashboard/tenders?status=CLOSED') },
   ]
 
   // Win rate is won / actually-bid. Tenders closed without ever being bid were
@@ -466,8 +482,8 @@ export function OverviewPanel() {
             {isFinance
               ? 'EMD deposits, refunds, and what still needs to come back.'
               : isManagement
-              ? 'Real-time enterprise tender analytics, stage distribution & performance matrix.'
-              : 'Operational tender workspace overview & quick activity panel.'}
+                ? 'Real-time enterprise tender analytics, stage distribution & performance matrix.'
+                : 'Operational tender workspace overview & quick activity panel.'}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -662,616 +678,615 @@ export function OverviewPanel() {
           </Dialog>
         </>
       ) : (
-      /* ── MANAGEMENT ONLY BI ANALYTICS SUITE ──────────────────────────────── */
-      isManagement ? (
-        <>
-          {/* 8-Card Enterprise Analytics Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-            {headerStats.map((s, i) => (
-              <motion.div key={s.label}
-                onClick={s.onClick}
-                initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
-                className={`rounded-xl border ${s.border} p-3.5 bg-card hover:shadow-md transition-all group ${s.onClick ? 'cursor-pointer' : ''}`}>
-                <div className="flex items-center justify-between mb-2">
-                  <div className={`size-8 rounded-lg ${s.bg} flex items-center justify-center group-hover:scale-105 transition-transform`}>
-                    <s.icon className={`size-4 ${s.color}`}/>
+        /* ── MANAGEMENT ONLY BI ANALYTICS SUITE ──────────────────────────────── */
+        isManagement ? (
+          <>
+            {/* 8-Card Enterprise Analytics Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+              {headerStats.map((s, i) => (
+                <motion.div key={s.label}
+                  onClick={s.onClick}
+                  initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
+                  className={`rounded-xl border ${s.border} p-3.5 bg-card hover:shadow-md transition-all group ${s.onClick ? 'cursor-pointer' : ''}`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className={`size-8 rounded-lg ${s.bg} flex items-center justify-center group-hover:scale-105 transition-transform`}>
+                      <s.icon className={`size-4 ${s.color}`} />
+                    </div>
                   </div>
-                </div>
-                <p className={`text-2xl font-extrabold font-heading tracking-tight ${s.color}`}>{s.value}</p>
-                <p className="text-[11px] font-medium text-muted-foreground mt-0.5 truncate group-hover:text-foreground">{s.label}</p>
-              </motion.div>
-            ))}
-          </div>
-
-          {/* Analytics & Filtration Toolbar */}
-          <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-xs">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <Filter className="size-4 text-primary" />
-                <span className="text-xs font-semibold uppercase tracking-wider text-foreground">BI Analytics Filtration</span>
-              </div>
-              {(startDateFilter || endDateFilter || executiveFilter || searchQuery) && (
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => { setStartDateFilter(''); setEndDateFilter(''); setExecutiveFilter(''); setSearchQuery(''); }}
-                  className="text-xs text-muted-foreground hover:text-foreground h-7"
-                >
-                  Clear Filters
-                </Button>
-              )}
+                  <p className={`text-2xl font-extrabold font-heading tracking-tight ${s.color}`}>{s.value}</p>
+                  <p className="text-[11px] font-medium text-muted-foreground mt-0.5 truncate group-hover:text-foreground">{s.label}</p>
+                </motion.div>
+              ))}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <div>
-                <Label className="text-[11px] text-muted-foreground mb-1 block">Start Date</Label>
-                <Input
-                  type="date"
-                  value={startDateFilter}
-                  onChange={e => setStartDateFilter(e.target.value)}
-                  className="h-8 text-xs pr-2"
-                />
+            {/* Analytics & Filtration Toolbar */}
+            <div className="bg-card border border-border rounded-xl p-4 space-y-3 shadow-xs">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <Filter className="size-4 text-primary" />
+                  <span className="text-xs font-semibold uppercase tracking-wider text-foreground">BI Analytics Filtration</span>
+                </div>
+                {(startDateFilter || endDateFilter || executiveFilter || searchQuery) && (
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => { setStartDateFilter(''); setEndDateFilter(''); setExecutiveFilter(''); setSearchQuery(''); }}
+                    className="text-xs text-muted-foreground hover:text-foreground h-7"
+                  >
+                    Clear Filters
+                  </Button>
+                )}
               </div>
 
-              <div>
-                <Label className="text-[11px] text-muted-foreground mb-1 block">End Date</Label>
-                <Input
-                  type="date"
-                  value={endDateFilter}
-                  onChange={e => setEndDateFilter(e.target.value)}
-                  className="h-8 text-xs pr-2"
-                />
-              </div>
-
-              <div>
-                <Label className="text-[11px] text-muted-foreground mb-1 block">Bid Executive (Owner)</Label>
-                <select
-                  value={executiveFilter}
-                  onChange={e => setExecutiveFilter(e.target.value)}
-                  className="w-full h-8 text-xs rounded-md border border-input bg-background px-2.5 py-1 text-foreground shadow-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                >
-                  <option value="">All Executives</option>
-                  {uniqueExecs.map(name => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <Label className="text-[11px] text-muted-foreground mb-1 block">Search Tender / Bid No</Label>
-                <div className="relative">
-                  <Search className="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div>
+                  <Label className="text-[11px] text-muted-foreground mb-1 block">Start Date</Label>
                   <Input
-                    type="text"
-                    placeholder="Search title, organisation..."
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
-                    className="h-8 text-xs pl-8"
+                    type="date"
+                    value={startDateFilter}
+                    onChange={e => setStartDateFilter(e.target.value)}
+                    className="h-8 text-xs pr-2"
                   />
                 </div>
+
+                <div>
+                  <Label className="text-[11px] text-muted-foreground mb-1 block">End Date</Label>
+                  <Input
+                    type="date"
+                    value={endDateFilter}
+                    onChange={e => setEndDateFilter(e.target.value)}
+                    className="h-8 text-xs pr-2"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-[11px] text-muted-foreground mb-1 block">Bid Executive (Owner)</Label>
+                  <select
+                    value={executiveFilter}
+                    onChange={e => setExecutiveFilter(e.target.value)}
+                    className="w-full h-8 text-xs rounded-md border border-input bg-background px-2.5 py-1 text-foreground shadow-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                  >
+                    <option value="">All Executives</option>
+                    {uniqueExecs.map(name => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <Label className="text-[11px] text-muted-foreground mb-1 block">Search Tender / Bid No</Label>
+                  <div className="relative">
+                    <Search className="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      type="text"
+                      placeholder="Search title, organisation..."
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      className="h-8 text-xs pl-8"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* VISUAL ANALYTICS GRAPHS GRID */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-            {/* Stage Pipeline Funnel Bar Chart */}
-            <div className="lg:col-span-2 bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-heading font-semibold text-base text-foreground flex items-center gap-2">
-                    <BarChart2 className="size-4 text-primary" /> Tender Stage Funnel Distribution
-                  </h3>
-                  <p className="text-xs text-muted-foreground">Volume and estimated value of tenders progressing across workflow stages</p>
+            {/* VISUAL ANALYTICS GRAPHS GRID */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+              {/* Stage Pipeline Funnel Bar Chart */}
+              <div className="lg:col-span-2 bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-heading font-semibold text-base text-foreground flex items-center gap-2">
+                      <BarChart2 className="size-4 text-primary" /> Tender Stage Funnel Distribution
+                    </h3>
+                    <p className="text-xs text-muted-foreground">Volume and estimated value of tenders progressing across workflow stages</p>
+                  </div>
+                  <Badge variant="outline" className="text-xs font-mono">{totalBids} Total Tenders</Badge>
                 </div>
-                <Badge variant="outline" className="text-xs font-mono">{totalBids} Total Tenders</Badge>
-              </div>
 
-              <div className="space-y-3 pt-1">
-                {stageFunnelData.map((stg) => (
-                  <div key={stg.label} className="space-y-1.5">
-                    <div className="flex items-center justify-between text-xs font-medium">
-                      <span className="text-foreground truncate max-w-[280px]">{stg.label}</span>
-                      <div className="flex items-center gap-3">
-                        <span className="font-semibold text-foreground font-mono">{stg.count} bids ({stg.pct}%)</span>
-                        <span className="text-muted-foreground text-[11px] font-mono">{formatCurrency(stg.val)}</span>
+                <div className="space-y-3 pt-1">
+                  {stageFunnelData.map((stg) => (
+                    <div key={stg.label} className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs font-medium">
+                        <span className="text-foreground truncate max-w-[280px]">{stg.label}</span>
+                        <div className="flex items-center gap-3">
+                          <span className="font-semibold text-foreground font-mono">{stg.count} bids ({stg.pct}%)</span>
+                          <span className="text-muted-foreground text-[11px] font-mono">{formatCurrency(stg.val)}</span>
+                        </div>
+                      </div>
+                      <div className="h-3 w-full bg-muted/40 rounded-full overflow-hidden p-0.5 border border-border/40">
+                        <motion.div
+                          initial={{ width: 0 }}
+                          animate={{ width: `${stg.pct}%` }}
+                          transition={{ duration: 0.6, ease: 'easeOut' }}
+                          className={`h-full rounded-full bg-gradient-to-r ${stg.barGradient}`}
+                        />
                       </div>
                     </div>
-                    <div className="h-3 w-full bg-muted/40 rounded-full overflow-hidden p-0.5 border border-border/40">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: `${stg.pct}%` }}
-                        transition={{ duration: 0.6, ease: 'easeOut' }}
-                        className={`h-full rounded-full bg-gradient-to-r ${stg.barGradient}`}
+                  ))}
+                </div>
+              </div>
+
+              {/* Win/Loss Conversion Ring Chart */}
+              <div className="bg-card border border-border rounded-xl p-5 flex flex-col justify-between space-y-4 shadow-xs">
+                <div>
+                  <h3 className="font-heading font-semibold text-base text-foreground flex items-center gap-2">
+                    <TrendingUp className="size-4 text-emerald-500" /> Win / Loss Conversion
+                  </h3>
+                  <p className="text-xs text-muted-foreground">Overall conversion rate across active portfolio</p>
+                </div>
+
+                {/* Visual Ring Gauge */}
+                <div className="flex flex-col items-center justify-center my-2 space-y-2">
+                  <div className="relative size-36 flex items-center justify-center">
+                    <svg className="size-full -rotate-90" viewBox="0 0 36 36">
+                      <path
+                        className="text-muted/30"
+                        strokeWidth="3.8"
+                        stroke="currentColor"
+                        fill="none"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                       />
+                      <motion.path
+                        initial={{ strokeDasharray: '0, 100' }}
+                        animate={{ strokeDasharray: `${overallWinRate}, 100` }}
+                        transition={{ duration: 1, ease: 'easeOut' }}
+                        className="text-teal-500"
+                        strokeWidth="3.8"
+                        strokeDasharray="0, 100"
+                        strokeLinecap="round"
+                        stroke="currentColor"
+                        fill="none"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+                      <span className="text-2xl font-extrabold font-heading text-teal-600">{overallWinRate}%</span>
+                      <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Win Rate</span>
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
+                </div>
 
-            {/* Win/Loss Conversion Ring Chart */}
-            <div className="bg-card border border-border rounded-xl p-5 flex flex-col justify-between space-y-4 shadow-xs">
-              <div>
-                <h3 className="font-heading font-semibold text-base text-foreground flex items-center gap-2">
-                  <TrendingUp className="size-4 text-emerald-500" /> Win / Loss Conversion
-                </h3>
-                <p className="text-xs text-muted-foreground">Overall conversion rate across active portfolio</p>
-              </div>
+                {/* Breakdown Legend */}
+                <div className="space-y-2 text-xs border-t border-border pt-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="size-2.5 rounded-full bg-teal-500" />
+                      <span className="text-muted-foreground">Won Bids</span>
+                    </div>
+                    <span className="font-bold text-teal-600 font-mono">{wonBids} ({totalBids > 0 ? ((wonBids / totalBids) * 100).toFixed(0) : 0}%)</span>
+                  </div>
 
-              {/* Visual Ring Gauge */}
-              <div className="flex flex-col items-center justify-center my-2 space-y-2">
-                <div className="relative size-36 flex items-center justify-center">
-                  <svg className="size-full -rotate-90" viewBox="0 0 36 36">
-                    <path
-                      className="text-muted/30"
-                      strokeWidth="3.8"
-                      stroke="currentColor"
-                      fill="none"
-                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                    />
-                    <motion.path
-                      initial={{ strokeDasharray: '0, 100' }}
-                      animate={{ strokeDasharray: `${overallWinRate}, 100` }}
-                      transition={{ duration: 1, ease: 'easeOut' }}
-                      className="text-teal-500"
-                      strokeWidth="3.8"
-                      strokeDasharray="0, 100"
-                      strokeLinecap="round"
-                      stroke="currentColor"
-                      fill="none"
-                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                    />
-                  </svg>
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                    <span className="text-2xl font-extrabold font-heading text-teal-600">{overallWinRate}%</span>
-                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Win Rate</span>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="size-2.5 rounded-full bg-rose-500" />
+                      <span className="text-muted-foreground">Lost Bids</span>
+                    </div>
+                    <span className="font-bold text-orange-600 font-mono">{lostBids} ({totalBids > 0 ? ((lostBids / totalBids) * 100).toFixed(0) : 0}%)</span>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="size-2.5 rounded-full bg-violet-500" />
+                      <span className="text-muted-foreground">Active / Pending</span>
+                    </div>
+                    <span className="font-bold text-violet-600 font-mono">{Math.max(0, totalBids - wonBids - lostBids)}</span>
                   </div>
                 </div>
               </div>
+            </div>
 
-              {/* Breakdown Legend */}
-              <div className="space-y-2 text-xs border-t border-border pt-3">
+            {/* Financial BI Metrics Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+              <div className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="size-2.5 rounded-full bg-teal-500" />
-                    <span className="text-muted-foreground">Won Bids</span>
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total Participated Value</span>
+                  <div className="size-8 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center">
+                    <IndianRupee className="size-4 text-indigo-600" />
                   </div>
-                  <span className="font-bold text-teal-600 font-mono">{wonBids} ({totalBids > 0 ? ((wonBids/totalBids)*100).toFixed(0) : 0}%)</span>
                 </div>
+                <div>
+                  <p className="text-2xl font-bold font-heading text-indigo-600">{formatCurrency(totalParticipatedValue)}</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Value of all tenders pursued — excludes cancelled & no-bid</p>
+                </div>
+              </div>
 
+              <div className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="size-2.5 rounded-full bg-rose-500" />
-                    <span className="text-muted-foreground">Lost Bids</span>
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total Won Order Value</span>
+                  <div className="size-8 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center">
+                    <IndianRupee className="size-4 text-emerald-600" />
                   </div>
-                  <span className="font-bold text-orange-600 font-mono">{lostBids} ({totalBids > 0 ? ((lostBids/totalBids)*100).toFixed(0) : 0}%)</span>
                 </div>
+                <div>
+                  <p className="text-2xl font-bold font-heading text-emerald-600">{formatCurrency(totalWonValue)}</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Sum of won bid contract values</p>
+                </div>
+              </div>
 
+              <div className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="size-2.5 rounded-full bg-violet-500" />
-                    <span className="text-muted-foreground">Active / Pending</span>
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">EMD Deposited</span>
+                  <div className="size-8 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center">
+                    <IndianRupee className="size-4 text-blue-600" />
                   </div>
-                  <span className="font-bold text-violet-600 font-mono">{Math.max(0, totalBids - wonBids - lostBids)}</span>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold font-heading text-blue-600">{formatCurrency(totalEMDDeposited)}</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Total EMD amount submitted across tenders</p>
                 </div>
               </div>
-            </div>
-          </div>
 
-          {/* Financial BI Metrics Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            <div className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total Participated Value</span>
-                <div className="size-8 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center">
-                  <IndianRupee className="size-4 text-indigo-600" />
+              <button type="button"
+                onClick={() => setEmdDrill({ title: 'EMD Returned', subtitle: 'Tenders whose EMD has been refunded', bids: emdReturnedBids })}
+                className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2 w-full text-left cursor-pointer hover:border-primary/40 hover:shadow-md transition-all">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">EMD Returned</span>
+                  <div className="size-8 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center">
+                    <CheckCircle className="size-4 text-teal-600" />
+                  </div>
                 </div>
-              </div>
-              <div>
-                <p className="text-2xl font-bold font-heading text-indigo-600">{formatCurrency(totalParticipatedValue)}</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">Value of all tenders pursued — excludes cancelled & no-bid</p>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total Won Order Value</span>
-                <div className="size-8 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center">
-                  <IndianRupee className="size-4 text-emerald-600" />
+                <div>
+                  <p className="text-2xl font-bold font-heading text-teal-600">{formatCurrency(totalEMDReturned)}</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">EMD successfully refunded back</p>
                 </div>
-              </div>
-              <div>
-                <p className="text-2xl font-bold font-heading text-emerald-600">{formatCurrency(totalWonValue)}</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">Sum of won bid contract values</p>
-              </div>
-            </div>
+              </button>
 
-            <div className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">EMD Deposited</span>
-                <div className="size-8 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center">
-                  <IndianRupee className="size-4 text-blue-600" />
+              <button type="button"
+                onClick={() => setEmdDrill({ title: 'EMD Pending Refund', subtitle: 'Tenders whose EMD has not been refunded yet', bids: emdPendingBids })}
+                className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2 w-full text-left cursor-pointer hover:border-primary/40 hover:shadow-md transition-all">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">EMD Pending Refund</span>
+                  <div className="size-8 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-center">
+                    <Clock className="size-4 text-amber-600" />
+                  </div>
                 </div>
-              </div>
-              <div>
-                <p className="text-2xl font-bold font-heading text-blue-600">{formatCurrency(totalEMDDeposited)}</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">Total EMD amount submitted across tenders</p>
-              </div>
-            </div>
-
-            <button type="button"
-              onClick={() => setEmdDrill({ title: 'EMD Returned', subtitle: 'Tenders whose EMD has been refunded', bids: emdReturnedBids })}
-              className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2 w-full text-left cursor-pointer hover:border-primary/40 hover:shadow-md transition-all">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">EMD Returned</span>
-                <div className="size-8 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center">
-                  <CheckCircle className="size-4 text-teal-600" />
+                <div>
+                  <p className="text-2xl font-bold font-heading text-amber-600">{formatCurrency(pendingEMDReturn)}</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Outstanding EMD awaiting refund</p>
                 </div>
-              </div>
-              <div>
-                <p className="text-2xl font-bold font-heading text-teal-600">{formatCurrency(totalEMDReturned)}</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">EMD successfully refunded back</p>
-              </div>
-            </button>
-
-            <button type="button"
-              onClick={() => setEmdDrill({ title: 'EMD Pending Refund', subtitle: 'Tenders whose EMD has not been refunded yet', bids: emdPendingBids })}
-              className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-2 w-full text-left cursor-pointer hover:border-primary/40 hover:shadow-md transition-all">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">EMD Pending Refund</span>
-                <div className="size-8 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-center">
-                  <Clock className="size-4 text-amber-600" />
-                </div>
-              </div>
-              <div>
-                <p className="text-2xl font-bold font-heading text-amber-600">{formatCurrency(pendingEMDReturn)}</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">Outstanding EMD awaiting refund</p>
-              </div>
-            </button>
-          </div>
-
-          {/* EMD Capital Projection & Pending Analysis Block */}
-          <EmdProjectionBlock bids={filteredBids} navigate={navigate} />
-
-          {/* Pipeline Overview — condensed version of the Analytics tab's Pipeline
-              Summary, so the two pages read as one system. Full charts (stage
-              exposure, category, top 10, milestone arc) stay Analytics-only. */}
-          <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <h3 className="font-heading font-semibold text-base text-foreground flex items-center gap-2">
-                <TrendingUp className="size-4 text-primary" />
-                Pipeline Overview
-              </h3>
-              <button onClick={() => navigate('/dashboard/analytics/tenders')} className="text-xs text-primary hover:underline flex items-center gap-1">
-                View full Analytics <ChevronRight className="size-3.5" />
               </button>
             </div>
 
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <PipelineKpiBand
-                label="Total Pipeline ₹"
-                value={formatCurrency(pipelineSummary.totalPipelineValue)}
-                tone="navy"
-                explain="Value of every tender we chose to pursue — excludes cancelled tenders and ones we never bid on. Click to see the tenders."
-                onClick={() => openMasterSheetDrill(navigate, { title: 'Total Pipeline', subtitle: 'Every tender we chose to pursue', bids: pipelineSummary.totalPipelineBids })}
-              />
-              <PipelineKpiBand
-                label="Active Pipeline ₹"
-                value={formatCurrency(pipelineSummary.activePipelineValue)}
-                tone="blue"
-                explain={`Value of the ${pipelineSummary.activeBids.length} tenders still unresolved right now. Click to see the tenders.`}
-                onClick={() => openMasterSheetDrill(navigate, { title: 'Active Pipeline', subtitle: 'Tenders still unresolved right now', bids: pipelineSummary.activeBids })}
-              />
-              <PipelineKpiBand
-                label="Submitted Pipeline ₹"
-                value={formatCurrency(pipelineSummary.submittedPipelineValue)}
-                tone="brightBlue"
-                explain="Cumulative value of every tender we actually filed a bid for, won or lost (cancelled tenders are excluded) — can exceed Total Pipeline. Click to see the tenders."
-                onClick={() => openMasterSheetDrill(navigate, { title: 'Submitted Pipeline', subtitle: 'Every tender we actually filed a bid for', bids: pipelineSummary.submittedBidsList })}
-              />
-              <PipelineKpiBand
-                label="PO Value Won ₹"
-                value={formatCurrency(pipelineSummary.wonVal)}
-                tone="emerald"
-                explain="Contract value of tenders actually awarded to us — uses a different value field than Total Won Order Value above (adds quoted_price), matching the Analytics tab exactly. Click to see the tenders."
-                onClick={() => openMasterSheetDrill(navigate, { title: 'PO Value Won', subtitle: 'Tenders actually awarded to us', bids: pipelineSummary.wonBids })}
-              />
-            </div>
-            <p className="text-[10px] text-muted-foreground -mt-1">
-              PO Value Won above uses a different value field than "Total Won Order Value" in the cards above — hover its ⓘ for details.
-            </p>
+            {/* EMD Capital Projection & Pending Analysis Block */}
+            <EmdProjectionBlock bids={filteredBids} navigate={navigate} />
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Compact Tender Aging donut */}
-              <div className="border border-border rounded-lg p-3.5">
-                <p className="text-xs font-semibold text-foreground mb-2">Tender Aging (Active Only)</p>
-                {pipelineSummary.activeBids.length === 0 ? (
-                  <div className="h-[140px] flex items-center justify-center text-xs text-muted-foreground">No unresolved tenders</div>
-                ) : (
-                  <div className="flex items-center gap-3">
-                    <div className="h-[140px] w-[140px] shrink-0">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <RechartsTooltip
-                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px', color: '#fff' }}
-                            formatter={(val, name, props) => [`${props.payload.count} tenders · ${formatCurrency(val)}`, name]}
-                          />
-                          <Pie
-                            data={pipelineSummary.agingBuckets}
-                            cx="50%" cy="50%" innerRadius={32} outerRadius={60} paddingAngle={2}
-                            dataKey="count" nameKey="label"
-                            onMouseEnter={(_, i) => setDashAgingIndex(i)}
-                            onMouseLeave={() => setDashAgingIndex(null)}
-                            onClick={(entry) => entry.bids.length > 0 && openMasterSheetDrill(navigate, { title: `Tender Aging — ${entry.label}`, subtitle: 'Unresolved tenders in this age bucket', bids: entry.bids })}
+            {/* Pipeline Overview — condensed version of the Analytics tab's Pipeline
+              Summary, so the two pages read as one system. Full charts (stage
+              exposure, category, top 10, milestone arc) stay Analytics-only. */}
+            <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <h3 className="font-heading font-semibold text-base text-foreground flex items-center gap-2">
+                  <TrendingUp className="size-4 text-primary" />
+                  Pipeline Overview
+                </h3>
+                <button onClick={() => navigate('/dashboard/analytics/tenders')} className="text-xs text-primary hover:underline flex items-center gap-1">
+                  View full Analytics <ChevronRight className="size-3.5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <PipelineKpiBand
+                  label="Total Pipeline ₹"
+                  value={formatCurrency(pipelineSummary.totalPipelineValue)}
+                  tone="navy"
+                  explain="Value of every tender we chose to pursue — excludes cancelled tenders and ones we never bid on. Click to see the tenders."
+                  onClick={() => openMasterSheetDrill(navigate, { title: 'Total Pipeline', subtitle: 'Every tender we chose to pursue', bids: pipelineSummary.totalPipelineBids })}
+                />
+                <PipelineKpiBand
+                  label="Active Pipeline ₹"
+                  value={formatCurrency(pipelineSummary.activePipelineValue)}
+                  tone="blue"
+                  explain={`Value of the ${pipelineSummary.activeBids.length} tenders still unresolved right now. Click to see the tenders.`}
+                  onClick={() => openMasterSheetDrill(navigate, { title: 'Active Pipeline', subtitle: 'Tenders still unresolved right now', bids: pipelineSummary.activeBids })}
+                />
+                <PipelineKpiBand
+                  label="Submitted Pipeline ₹"
+                  value={formatCurrency(pipelineSummary.submittedPipelineValue)}
+                  tone="brightBlue"
+                  explain="Cumulative value of every tender we actually filed a bid for, won or lost (cancelled tenders are excluded) — can exceed Total Pipeline. Click to see the tenders."
+                  onClick={() => openMasterSheetDrill(navigate, { title: 'Submitted Pipeline', subtitle: 'Every tender we actually filed a bid for', bids: pipelineSummary.submittedBidsList })}
+                />
+                <PipelineKpiBand
+                  label="PO Value Won ₹"
+                  value={formatCurrency(pipelineSummary.wonVal)}
+                  tone="emerald"
+                  explain="Contract value of tenders actually awarded to us — uses a different value field than Total Won Order Value above (adds quoted_price), matching the Analytics tab exactly. Click to see the tenders."
+                  onClick={() => openMasterSheetDrill(navigate, { title: 'PO Value Won', subtitle: 'Tenders actually awarded to us', bids: pipelineSummary.wonBids })}
+                />
+              </div>
+              <p className="text-[10px] text-muted-foreground -mt-1">
+                PO Value Won above uses a different value field than "Total Won Order Value" in the cards above — hover its ⓘ for details.
+              </p>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Compact Tender Aging donut */}
+                <div className="border border-border rounded-lg p-3.5">
+                  <p className="text-xs font-semibold text-foreground mb-2">Tender Aging (Active Only)</p>
+                  {pipelineSummary.activeBids.length === 0 ? (
+                    <div className="h-[140px] flex items-center justify-center text-xs text-muted-foreground">No unresolved tenders</div>
+                  ) : (
+                    <div className="flex items-center gap-3">
+                      <div className="h-[140px] w-[140px] shrink-0">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <RechartsTooltip
+                              contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px', color: '#fff' }}
+                              formatter={(val, name, props) => [`${props.payload.count} tenders · ${formatCurrency(val)}`, name]}
+                            />
+                            <Pie
+                              data={pipelineSummary.agingBuckets}
+                              cx="50%" cy="50%" innerRadius={32} outerRadius={60} paddingAngle={2}
+                              dataKey="count" nameKey="label"
+                              onMouseEnter={(_, i) => setDashAgingIndex(i)}
+                              onMouseLeave={() => setDashAgingIndex(null)}
+                              onClick={(entry) => entry.bids.length > 0 && openMasterSheetDrill(navigate, { title: `Tender Aging — ${entry.label}`, subtitle: 'Unresolved tenders in this age bucket', bids: entry.bids })}
+                            >
+                              {pipelineSummary.agingBuckets.map((entry, index) => (
+                                <Cell key={index} fill={entry.fill} stroke="var(--card)" strokeWidth={2} fillOpacity={dimOtherSlices(index, dashAgingIndex)} />
+                              ))}
+                            </Pie>
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div className="space-y-1 flex-1 min-w-0">
+                        {pipelineSummary.agingBuckets.map((bucket) => (
+                          <button
+                            type="button" key={bucket.key}
+                            disabled={bucket.bids.length === 0}
+                            onClick={() => openMasterSheetDrill(navigate, { title: `Tender Aging — ${bucket.label}`, subtitle: 'Unresolved tenders in this age bucket', bids: bucket.bids })}
+                            className={`w-full flex items-center justify-between text-left text-[11px] px-1.5 py-1 rounded ${bucket.bids.length === 0 ? 'opacity-50' : 'hover:bg-muted/50 cursor-pointer'}`}
                           >
-                            {pipelineSummary.agingBuckets.map((entry, index) => (
-                              <Cell key={index} fill={entry.fill} stroke="var(--card)" strokeWidth={2} fillOpacity={dimOtherSlices(index, dashAgingIndex)} />
-                            ))}
-                          </Pie>
-                        </PieChart>
-                      </ResponsiveContainer>
+                            <span className="flex items-center gap-1.5 truncate">
+                              <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: bucket.fill }} />
+                              {bucket.label}
+                            </span>
+                            <span className="font-mono text-muted-foreground shrink-0">{bucket.count}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <div className="space-y-1 flex-1 min-w-0">
-                      {pipelineSummary.agingBuckets.map((bucket) => (
-                        <button
-                          type="button" key={bucket.key}
-                          disabled={bucket.bids.length === 0}
-                          onClick={() => openMasterSheetDrill(navigate, { title: `Tender Aging — ${bucket.label}`, subtitle: 'Unresolved tenders in this age bucket', bids: bucket.bids })}
-                          className={`w-full flex items-center justify-between text-left text-[11px] px-1.5 py-1 rounded ${bucket.bids.length === 0 ? 'opacity-50' : 'hover:bg-muted/50 cursor-pointer'}`}
-                        >
-                          <span className="flex items-center gap-1.5 truncate">
-                            <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: bucket.fill }} />
-                            {bucket.label}
-                          </span>
-                          <span className="font-mono text-muted-foreground shrink-0">{bucket.count}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Compact Monthly Creation volume */}
-              <div className="border border-border rounded-lg p-3.5">
-                <p className="text-xs font-semibold text-foreground mb-2">Monthly Creation Volume</p>
-                {pipelineSummary.monthlyTrend.length === 0 ? (
-                  <div className="h-[140px] flex items-center justify-center text-xs text-muted-foreground">No data yet</div>
-                ) : (
-                  <div className="h-[140px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={pipelineSummary.monthlyTrend} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                        <XAxis dataKey="month" tick={{ fontSize: 10 }} />
-                        <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
-                        <RechartsTooltip
-                          contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px', color: '#fff' }}
-                          formatter={(val) => [`${val} tenders`, 'Created']}
-                        />
-                        <Bar dataKey="count" fill="#6366f1" radius={[3, 3, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <Dialog open={!!emdDrill} onOpenChange={(o) => !o && setEmdDrill(null)}>
-            <DialogContent className="sm:max-w-3xl">
-              <DialogHeader>
-                <div className="flex items-start justify-between gap-3 pr-6">
-                  <div>
-                    <DialogTitle>{emdDrill?.title}</DialogTitle>
-                    <DialogDescription>{emdDrill?.bids.length ?? 0} tender(s) — {emdDrill?.subtitle}</DialogDescription>
-                  </div>
-                  {emdDrill && emdDrill.bids.length > 0 && (
-                    <Button
-                      variant="outline" size="sm" className="gap-1.5 shrink-0"
-                      onClick={() => { openMasterSheetDrill(navigate, emdDrill); setEmdDrill(null) }}
-                    >
-                      <FileSpreadsheet className="size-3.5" />
-                      See Full Data
-                    </Button>
                   )}
                 </div>
-              </DialogHeader>
-              {emdDrill && emdDrill.bids.length === 0 ? (
-                <div className="py-10 text-center text-muted-foreground">
-                  <Archive className="size-8 mx-auto opacity-40 mb-2" />
-                  <p className="text-sm">No tenders in this bucket yet.</p>
-                </div>
-              ) : (
-                <div className="max-h-[60vh] overflow-y-auto -mx-2 px-2">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Title</TableHead>
-                        <TableHead>GeM / Bid No</TableHead>
-                        <TableHead>Organization</TableHead>
-                        <TableHead>Owner</TableHead>
-                        <TableHead>EMD Amount</TableHead>
-                        <TableHead>Stage</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {emdDrill?.bids.map((b) => (
-                        <TableRow key={b.id} className="cursor-pointer hover:bg-muted/40"
-                          onClick={() => { setEmdDrill(null); navigate(`/dashboard/tenders/${b.id}`) }}>
-                          <TableCell className="font-medium text-foreground max-w-[220px] truncate">{b.title}</TableCell>
-                          <TableCell className="font-mono text-xs">{b.gem_bid_no || b.bid_no || '—'}</TableCell>
-                          <TableCell className="max-w-[160px] truncate">{b.organization_name || '—'}</TableCell>
-                          <TableCell>{b.bid_owner?.full_name || b.bid_owner?.username || '—'}</TableCell>
-                          <TableCell className="font-mono">{formatCurrency(b.emd_amount)}</TableCell>
-                          <TableCell>{b.workflow_stage ? <StageBadge stage={b.workflow_stage} /> : <StatusBadge status={b.bid_status} />}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </DialogContent>
-          </Dialog>
 
-          {/* Tender Owner Performance Matrix (Management BI) — Real-time from backend */}
-          <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <div>
-                <h3 className="font-heading font-semibold text-base text-foreground flex items-center gap-2">
-                  <UserCheck className="size-4 text-primary" />
-                  Tender Owner Performance Matrix
-                </h3>
-                <p className="text-xs text-muted-foreground">
-                  Real-time tender lifecycle metrics per owner — all roles (Admin, Super Admin, Manager, Bid Executive)
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                {lastMatrixRefresh && (
-                  <span className="text-[11px] text-muted-foreground font-mono">
-                    Updated {lastMatrixRefresh.toLocaleTimeString()}
-                  </span>
-                )}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={fetchMatrix}
-                  disabled={matrixLoading}
-                  className="gap-1.5 text-xs h-7"
-                >
-                  <RefreshCw className={`size-3 ${matrixLoading ? 'animate-spin' : ''}`} />
-                  Refresh
-                </Button>
-                <Badge variant="secondary" className="text-xs font-mono">
-                  {perfMatrix.length} Owner{perfMatrix.length !== 1 ? 's' : ''}
-                </Badge>
+                {/* Compact Monthly Creation volume */}
+                <div className="border border-border rounded-lg p-3.5">
+                  <p className="text-xs font-semibold text-foreground mb-2">Monthly Creation Volume</p>
+                  {pipelineSummary.monthlyTrend.length === 0 ? (
+                    <div className="h-[140px] flex items-center justify-center text-xs text-muted-foreground">No data yet</div>
+                  ) : (
+                    <div className="h-[140px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={pipelineSummary.monthlyTrend} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                          <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+                          <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+                          <RechartsTooltip
+                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px', color: '#fff' }}
+                            formatter={(val) => [`${val} tenders`, 'Created']}
+                          />
+                          <Bar dataKey="count" fill="#6366f1" radius={[3, 3, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
-            {matrixError ? (
-              <div className="flex items-center gap-2 text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-3">
-                <XCircle className="size-4 shrink-0" />
-                {matrixError}
+            <Dialog open={!!emdDrill} onOpenChange={(o) => !o && setEmdDrill(null)}>
+              <DialogContent className="sm:max-w-3xl">
+                <DialogHeader>
+                  <div className="flex items-start justify-between gap-3 pr-6">
+                    <div>
+                      <DialogTitle>{emdDrill?.title}</DialogTitle>
+                      <DialogDescription>{emdDrill?.bids.length ?? 0} tender(s) — {emdDrill?.subtitle}</DialogDescription>
+                    </div>
+                    {emdDrill && emdDrill.bids.length > 0 && (
+                      <Button
+                        variant="outline" size="sm" className="gap-1.5 shrink-0"
+                        onClick={() => { openMasterSheetDrill(navigate, emdDrill); setEmdDrill(null) }}
+                      >
+                        <FileSpreadsheet className="size-3.5" />
+                        See Full Data
+                      </Button>
+                    )}
+                  </div>
+                </DialogHeader>
+                {emdDrill && emdDrill.bids.length === 0 ? (
+                  <div className="py-10 text-center text-muted-foreground">
+                    <Archive className="size-8 mx-auto opacity-40 mb-2" />
+                    <p className="text-sm">No tenders in this bucket yet.</p>
+                  </div>
+                ) : (
+                  <div className="max-h-[60vh] overflow-y-auto -mx-2 px-2">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Title</TableHead>
+                          <TableHead>GeM / Bid No</TableHead>
+                          <TableHead>Organization</TableHead>
+                          <TableHead>Owner</TableHead>
+                          <TableHead>EMD Amount</TableHead>
+                          <TableHead>Stage</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {emdDrill?.bids.map((b) => (
+                          <TableRow key={b.id} className="cursor-pointer hover:bg-muted/40"
+                            onClick={() => { setEmdDrill(null); navigate(`/dashboard/tenders/${b.id}`) }}>
+                            <TableCell className="font-medium text-foreground max-w-[220px] truncate">{b.title}</TableCell>
+                            <TableCell className="font-mono text-xs">{b.gem_bid_no || b.bid_no || '—'}</TableCell>
+                            <TableCell className="max-w-[160px] truncate">{b.organization_name || '—'}</TableCell>
+                            <TableCell>{b.bid_owner?.full_name || b.bid_owner?.username || '—'}</TableCell>
+                            <TableCell className="font-mono">{formatCurrency(b.emd_amount)}</TableCell>
+                            <TableCell>{b.workflow_stage ? <StageBadge stage={b.workflow_stage} /> : <StatusBadge status={b.bid_status} />}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </DialogContent>
+            </Dialog>
+
+            {/* Tender Owner Performance Matrix (Management BI) — Real-time from backend */}
+            <div className="bg-card border border-border rounded-xl p-5 space-y-4 shadow-xs">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <h3 className="font-heading font-semibold text-base text-foreground flex items-center gap-2">
+                    <UserCheck className="size-4 text-primary" />
+                    Tender Owner Performance Matrix
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    Real-time tender lifecycle metrics per owner — all roles (Admin, Super Admin, Manager, Bid Executive)
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {lastMatrixRefresh && (
+                    <span className="text-[11px] text-muted-foreground font-mono">
+                      Updated {lastMatrixRefresh.toLocaleTimeString()}
+                    </span>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={fetchMatrix}
+                    disabled={matrixLoading}
+                    className="gap-1.5 text-xs h-7"
+                  >
+                    <RefreshCw className={`size-3 ${matrixLoading ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </Button>
+                  <Badge variant="secondary" className="text-xs font-mono">
+                    {perfMatrix.length} Owner{perfMatrix.length !== 1 ? 's' : ''}
+                  </Badge>
+                </div>
               </div>
-            ) : matrixLoading && perfMatrix.length === 0 ? (
-              <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground text-xs">
-                <Loader2 className="size-4 animate-spin text-primary" /> Loading performance matrix...
-              </div>
-            ) : perfMatrix.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-6">No tender owners found yet.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/30 text-muted-foreground uppercase font-semibold text-[10px] tracking-wider">
-                      <th className="py-2.5 px-3">Tender Owner</th>
-                      <th className="py-2.5 px-2 text-center">Role</th>
-                      <th className="py-2.5 px-3 text-center font-bold text-foreground">Total</th>
-                      <th className="py-2.5 px-3 text-center">Active</th>
-                      <th className="py-2.5 px-3 text-center">Submitted</th>
-                      <th className="py-2.5 px-3 text-center">Tech Eval</th>
-                      <th className="py-2.5 px-3 text-center">Fin Eval</th>
-                      <th className="py-2.5 px-3 text-center">Award</th>
-                      <th className="py-2.5 px-3 text-center">Won</th>
-                      <th className="py-2.5 px-3 text-center">Lost</th>
-                      <th className="py-2.5 px-3 text-center">Cancelled</th>
-                      <th className="py-2.5 px-3 text-right">Win Rate</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/60">
-                    {perfMatrix.map((st) => {
-                      const winRate = st.total > 0 ? ((st.won / st.total) * 100).toFixed(1) : '0.0'
-                      const roleColor = {
-                        SUPER_ADMIN: 'bg-violet-50 text-violet-700 border-violet-200',
-                        ADMIN:       'bg-blue-50 text-blue-700 border-blue-200',
-                        MANAGER:     'bg-indigo-50 text-indigo-700 border-indigo-200',
-                        ACCOUNT_MANAGER: 'bg-rose-50 text-rose-700 border-rose-200',
-                        BID_EXECUTIVE: 'bg-teal-50 text-teal-700 border-teal-200',
-                        FINANCE:     'bg-amber-50 text-amber-700 border-amber-200',
-                        PRE_SALES:   'bg-emerald-50 text-emerald-700 border-emerald-200',
-                      }[st.role] || 'bg-slate-50 text-slate-600 border-slate-200'
-                      const roleLabel = {
-                        SUPER_ADMIN: 'Super Admin',
-                        ADMIN: 'Admin',
-                        MANAGER: 'Manager',
-                        ACCOUNT_MANAGER: 'Account Mgr',
-                        BID_EXECUTIVE: 'Bid Exec',
-                        FINANCE: 'Finance',
-                        PRE_SALES: 'Pre-Sales',
-                      }[st.role] || (st.role || 'User')
-                      return (
-                        <motion.tr
-                          key={st.user_id}
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          className="hover:bg-muted/20 transition-colors"
-                        >
-                          <td className="py-3 px-3 font-semibold text-foreground">
-                            <div className="flex items-center gap-2">
-                              <UserAvatar fullName={st.full_name} username={st.username} size="xs" />
-                              <div className="min-w-0">
-                                <p className="font-semibold text-foreground text-xs truncate max-w-[140px]">{st.full_name || st.username}</p>
-                                <p className="text-[10px] text-muted-foreground font-mono truncate max-w-[140px]">@{st.username}</p>
+
+              {matrixError ? (
+                <div className="flex items-center gap-2 text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-3">
+                  <XCircle className="size-4 shrink-0" />
+                  {matrixError}
+                </div>
+              ) : matrixLoading && perfMatrix.length === 0 ? (
+                <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground text-xs">
+                  <Loader2 className="size-4 animate-spin text-primary" /> Loading performance matrix...
+                </div>
+              ) : perfMatrix.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-6">No tender owners found yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/30 text-muted-foreground uppercase font-semibold text-[10px] tracking-wider">
+                        <th className="py-2.5 px-3">Tender Owner</th>
+                        <th className="py-2.5 px-2 text-center">Role</th>
+                        <th className="py-2.5 px-3 text-center font-bold text-foreground">Total</th>
+                        <th className="py-2.5 px-3 text-center">Active</th>
+                        <th className="py-2.5 px-3 text-center">Submitted</th>
+                        <th className="py-2.5 px-3 text-center">Tech Eval</th>
+                        <th className="py-2.5 px-3 text-center">Fin Eval</th>
+                        <th className="py-2.5 px-3 text-center">Award</th>
+                        <th className="py-2.5 px-3 text-center">Won</th>
+                        <th className="py-2.5 px-3 text-center">Lost</th>
+                        <th className="py-2.5 px-3 text-center">Cancelled</th>
+                        <th className="py-2.5 px-3 text-right">Win Rate</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/60">
+                      {perfMatrix.map((st) => {
+                        const winRate = st.total > 0 ? ((st.won / st.total) * 100).toFixed(1) : '0.0'
+                        const roleColor = {
+                          SUPER_ADMIN: 'bg-violet-50 text-violet-700 border-violet-200',
+                          ADMIN: 'bg-blue-50 text-blue-700 border-blue-200',
+                          MANAGER: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+                          ACCOUNT_MANAGER: 'bg-rose-50 text-rose-700 border-rose-200',
+                          BID_EXECUTIVE: 'bg-teal-50 text-teal-700 border-teal-200',
+                          FINANCE: 'bg-amber-50 text-amber-700 border-amber-200',
+                          PRE_SALES: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                        }[st.role] || 'bg-slate-50 text-slate-600 border-slate-200'
+                        const roleLabel = {
+                          SUPER_ADMIN: 'Super Admin',
+                          ADMIN: 'Admin',
+                          MANAGER: 'Manager',
+                          ACCOUNT_MANAGER: 'Account Mgr',
+                          BID_EXECUTIVE: 'Bid Exec',
+                          FINANCE: 'Finance',
+                          PRE_SALES: 'Pre-Sales',
+                        }[st.role] || (st.role || 'User')
+                        return (
+                          <motion.tr
+                            key={st.user_id}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            className="hover:bg-muted/20 transition-colors"
+                          >
+                            <td className="py-3 px-3 font-semibold text-foreground">
+                              <div className="flex items-center gap-2">
+                                <UserAvatar fullName={st.full_name} username={st.username} size="xs" />
+                                <div className="min-w-0">
+                                  <p className="font-semibold text-foreground text-xs truncate max-w-[140px]">{st.full_name || st.username}</p>
+                                  <p className="text-[10px] text-muted-foreground font-mono truncate max-w-[140px]">@{st.username}</p>
+                                </div>
                               </div>
-                            </div>
-                          </td>
-                          <td className="py-3 px-2 text-center">
-                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap ${roleColor}`}>
-                              {roleLabel}
-                            </span>
-                          </td>
-                          <td className="py-3 px-3 text-center font-bold text-foreground text-sm">{st.total}</td>
-                          <td className="py-3 px-3 text-center text-blue-600 font-medium">{st.active}</td>
-                          <td className="py-3 px-3 text-center text-lime-600 font-medium">{st.submitted}</td>
-                          <td className="py-3 px-3 text-center text-teal-600 font-medium">{st.tech_eval}</td>
-                          <td className="py-3 px-3 text-center text-cyan-600 font-medium">{st.fin_eval}</td>
-                          <td className="py-3 px-3 text-center text-emerald-600 font-medium">{st.award}</td>
-                          <td className="py-3 px-3 text-center text-teal-700 font-bold">{st.won}</td>
-                          <td className="py-3 px-3 text-center text-orange-600 font-medium">{st.lost}</td>
-                          <td className="py-3 px-3 text-center text-slate-500 font-medium">{st.cancelled}</td>
-                          <td className="py-3 px-3 text-right">
-                            <Badge
-                              variant="outline"
-                              className={`font-mono text-[11px] ${
-                                Number(winRate) >= 50
+                            </td>
+                            <td className="py-3 px-2 text-center">
+                              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap ${roleColor}`}>
+                                {roleLabel}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-center font-bold text-foreground text-sm">{st.total}</td>
+                            <td className="py-3 px-3 text-center text-blue-600 font-medium">{st.active}</td>
+                            <td className="py-3 px-3 text-center text-lime-600 font-medium">{st.submitted}</td>
+                            <td className="py-3 px-3 text-center text-teal-600 font-medium">{st.tech_eval}</td>
+                            <td className="py-3 px-3 text-center text-cyan-600 font-medium">{st.fin_eval}</td>
+                            <td className="py-3 px-3 text-center text-emerald-600 font-medium">{st.award}</td>
+                            <td className="py-3 px-3 text-center text-teal-700 font-bold">{st.won}</td>
+                            <td className="py-3 px-3 text-center text-orange-600 font-medium">{st.lost}</td>
+                            <td className="py-3 px-3 text-center text-slate-500 font-medium">{st.cancelled}</td>
+                            <td className="py-3 px-3 text-right">
+                              <Badge
+                                variant="outline"
+                                className={`font-mono text-[11px] ${Number(winRate) >= 50
                                   ? 'border-emerald-300 text-emerald-700 bg-emerald-50'
                                   : Number(winRate) > 0
-                                  ? 'border-amber-300 text-amber-700 bg-amber-50'
-                                  : 'border-slate-300 text-slate-600 bg-slate-50'
-                              }`}
-                            >
-                              {winRate}%
-                            </Badge>
-                          </td>
-                        </motion.tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                                    ? 'border-amber-300 text-amber-700 bg-amber-50'
+                                    : 'border-slate-300 text-slate-600 bg-slate-50'
+                                  }`}
+                              >
+                                {winRate}%
+                              </Badge>
+                            </td>
+                          </motion.tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          /* ── NON-MANAGEMENT, NON-FINANCE OPERATIONAL OVERVIEW (Bid Exec, Pre-Sales, etc) ──── */
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="rounded-xl border border-border bg-card p-4 space-y-1">
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Active Tenders</span>
+              <p className="text-2xl font-bold font-heading text-primary">{totalBids}</p>
+            </div>
+            <div className="rounded-xl border border-border bg-card p-4 space-y-1">
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Submissions Done</span>
+              <p className="text-2xl font-bold font-heading text-emerald-600">{submittedBids}</p>
+            </div>
+            <div className="rounded-xl border border-border bg-card p-4 space-y-1">
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Under Evaluation</span>
+              <p className="text-2xl font-bold font-heading text-blue-600">{techEvalBids + finEvalBids}</p>
+            </div>
+            <div className="rounded-xl border border-border bg-card p-4 space-y-1">
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Won Tenders</span>
+              <p className="text-2xl font-bold font-heading text-teal-600">{wonBids}</p>
+            </div>
           </div>
-        </>
-      ) : (
-        /* ── NON-MANAGEMENT, NON-FINANCE OPERATIONAL OVERVIEW (Bid Exec, Pre-Sales, etc) ──── */
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="rounded-xl border border-border bg-card p-4 space-y-1">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Active Tenders</span>
-            <p className="text-2xl font-bold font-heading text-primary">{totalBids}</p>
-          </div>
-          <div className="rounded-xl border border-border bg-card p-4 space-y-1">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Submissions Done</span>
-            <p className="text-2xl font-bold font-heading text-emerald-600">{submittedBids}</p>
-          </div>
-          <div className="rounded-xl border border-border bg-card p-4 space-y-1">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Under Evaluation</span>
-            <p className="text-2xl font-bold font-heading text-blue-600">{techEvalBids + finEvalBids}</p>
-          </div>
-          <div className="rounded-xl border border-border bg-card p-4 space-y-1">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Won Tenders</span>
-            <p className="text-2xl font-bold font-heading text-teal-600">{wonBids}</p>
-          </div>
-        </div>
-      ))}
+        ))}
 
       {/* Quick Actions & Recent Tenders Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -1323,20 +1338,20 @@ export function OverviewPanel() {
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Quick Actions</p>
           <div className="space-y-2">
             {[
-              { label:'View All Tenders', icon:FileText, action: () => navigate('/dashboard/tenders'), perm:'bid.view' },
-              { label:'Manage Users',     icon:Users,    action: () => navigate('/dashboard/users'),   perm:'user.view' },
-              { label:'My Profile & Security', icon:Key, action: () => onOpenProfile?.(), perm: null },
+              { label: 'View All Tenders', icon: FileText, action: () => navigate('/dashboard/tenders'), perm: 'bid.view' },
+              { label: 'Manage Users', icon: Users, action: () => navigate('/dashboard/users'), perm: 'user.view' },
+              { label: 'My Profile & Security', icon: Key, action: () => onOpenProfile?.(), perm: null },
             ].filter(a => a.perm === null || user?.permissions?.includes(a.perm)).map(a => (
               <button key={a.label}
                 onClick={a.action}
                 className="w-full flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/55 hover:border-primary/30 transition-all text-left group">
                 <div className="flex items-center gap-3">
                   <div className="size-8 rounded-md bg-primary/10 flex items-center justify-center">
-                    <a.icon className="size-4 text-primary"/>
+                    <a.icon className="size-4 text-primary" />
                   </div>
                   <span className="text-xs font-semibold text-foreground">{a.label}</span>
                 </div>
-                <ChevronRight className="size-4 text-muted-foreground group-hover:text-primary transition-colors"/>
+                <ChevronRight className="size-4 text-muted-foreground group-hover:text-primary transition-colors" />
               </button>
             ))}
           </div>
@@ -1362,11 +1377,11 @@ export function OverviewPanel() {
 // ── User Profile Modal ────────────────────────────────────────────────────────
 function UserProfileModal({ user, open, onClose, onOpenPasswordChange, onUpdateUser }) {
   const [isEditing, setIsEditing] = useState(false)
-  const [fullName, setFullName]     = useState('')
-  const [email, setEmail]         = useState('')
-  const [phone, setPhone]         = useState('')
+  const [fullName, setFullName] = useState('')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
   const [department, setDepartment] = useState('')
-  const [saving, setSaving]       = useState(false)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     if (user) {
@@ -1385,9 +1400,9 @@ function UserProfileModal({ user, open, onClose, onOpenPasswordChange, onUpdateU
     setSaving(true)
     try {
       const payload = {
-        full_name:  fullName.trim(),
-        email:      email.trim(),
-        phone:      phone.trim(),
+        full_name: fullName.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
         department: department.trim(),
       }
       const res = await updateUserProfile(user.id, payload)
@@ -1465,7 +1480,7 @@ function UserProfileModal({ user, open, onClose, onOpenPasswordChange, onUpdateU
             {isEditing ? (
               <form onSubmit={handleSaveProfile} className="space-y-4">
                 <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Edit Profile Information</h4>
-                
+
                 <div className="space-y-1.5">
                   <Label htmlFor="upm-fullname">Full Name</Label>
                   <Input
@@ -1607,10 +1622,10 @@ export default function Dashboard() {
   const [showProfileModal, setShowProfileModal] = useState(false)
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [currentPassword, setCurrentPassword] = useState('')
-  const [newPassword,     setNewPassword]     = useState('')
+  const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [showPassCurrent, setShowPassCurrent] = useState(false)
-  const [showPassNew,     setShowPassNew]     = useState(false)
+  const [showPassNew, setShowPassNew] = useState(false)
   const [isChangingPassword, setIsChangingPassword] = useState(false)
   const [showSuccessDialog, setShowSuccessDialog] = useState(false)
   const [unreadAlertsCount, setUnreadAlertsCount] = useState(0)
@@ -1757,30 +1772,32 @@ export default function Dashboard() {
   const activeSection = location.pathname.includes('/analytics')
     ? 'analytics'
     : location.pathname.includes('/leads')
-    ? 'leads'
-    : location.pathname.includes('/tenders')
-    ? 'tenders'
-    : location.pathname.includes('/alerts')
-    ? 'alerts'
-    : location.pathname.includes('/tickets')
-    ? 'tickets'
-    : location.pathname.includes('/feedback')
-    ? 'feedback'
-    : location.pathname.includes('/users')
-    ? 'users'
-    : location.pathname.includes('/system-logs')
-    ? 'system-logs'
-    : location.pathname.includes('/bulk-import')
-    ? 'bulk-import'
-    : location.pathname.includes('/settings')
-    ? 'settings'
-    : location.pathname.includes('/working-calendar')
-    ? 'working-calendar'
-    : location.pathname.includes('/dashboard/accounts')
-    ? 'accounts'
-    : location.pathname.includes('/dashboard/oems')
-    ? 'oems'
-    : 'overview'
+      ? 'leads'
+      : location.pathname.includes('/emd-details')
+        ? 'emd-details'
+        : location.pathname.includes('/tenders')
+          ? 'tenders'
+          : location.pathname.includes('/alerts')
+            ? 'alerts'
+            : location.pathname.includes('/tickets')
+              ? 'tickets'
+              : location.pathname.includes('/feedback')
+                ? 'feedback'
+                : location.pathname.includes('/users')
+                  ? 'users'
+                  : location.pathname.includes('/system-logs')
+                    ? 'system-logs'
+                    : location.pathname.includes('/bulk-import')
+                      ? 'bulk-import'
+                      : location.pathname.includes('/settings')
+                        ? 'settings'
+                        : location.pathname.includes('/working-calendar')
+                          ? 'working-calendar'
+                          : location.pathname.includes('/dashboard/accounts')
+                            ? 'accounts'
+                            : location.pathname.includes('/dashboard/oems')
+                              ? 'oems'
+                              : 'overview'
 
   // Roles that run the system see management-facing wording; everyone else
   // sees the plain noun (they can view the directory, not administer it).
@@ -1789,8 +1806,9 @@ export default function Dashboard() {
   // Build nav items visible to this user
   const visibleNavItems = NAV_ITEMS
     .filter((item) =>
-      (item.permission === null || hasPermission(item.permission)) &&
+      (item.permission === null || item.permission === undefined || hasPermission(item.permission)) &&
       (!item.role || hasRole(item.role)) &&
+      (!item.roles || item.roles.some(hasRole)) &&
       (!item.excludeRole || !hasRole(item.excludeRole))
     )
     .map((item) =>

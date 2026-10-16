@@ -257,6 +257,9 @@ func (s *bidService) mutateEMD(ctx context.Context, bidID, actorID string, roles
 		if err != nil {
 			return err
 		}
+		if entry == nil {
+			return nil
+		}
 		op.emd.UpdatedBy = &actorID
 		if err := tx.Save(ctx, op.emd); err != nil {
 			return err
@@ -728,6 +731,9 @@ func (s *bidService) UpdateEMDRefund(ctx context.Context, bidID string, req *dom
 
 	op, err := s.mutateEMD(ctx, bidID, actorID, actorRoles, func(tx domain.EMDTx, op *emdOp) (*domain.TenderEMDAuditLog, error) {
 		emd := op.emd
+		if emd.Status == domain.EMDStatusRefunded || emd.RefundStatus == domain.RefundStatusRefunded {
+			return nil, emdInvalid("EMD has already been refunded and cannot be modified")
+		}
 		switch emd.Status {
 		case domain.EMDStatusPaid, domain.EMDStatusVerified, domain.EMDStatusReleased:
 		default:
@@ -856,4 +862,84 @@ func (s *bidService) enrichEMDResponse(ctx context.Context, emd *domain.TenderEM
 	resp.MDDecidedBy = lookup(emd.MDDecidedBy)
 	resp.VerifiedBy = lookup(emd.VerifiedBy)
 	return resp
+}
+
+// TriggerEMDReturnOnLost automatically initiates an EMD return request when a tender
+// is marked as LOST (or disqualified). If the tender does not require an EMD or the EMD
+// is already returned/released, this is a no-op.
+func (s *bidService) TriggerEMDReturnOnLost(ctx context.Context, bidID, actorID, reason string) {
+	bid, err := s.repo.GetByID(ctx, bidID)
+	if err != nil || bid == nil {
+		return
+	}
+	// No EMD needed or already returned
+	if emdNotRequired(bid) || bid.EMDReturned {
+		return
+	}
+	// Must have an EMD amount > 0 or EMD was marked ready
+	amt := emdAmount(bid)
+	if amt <= 0 && !bid.EMDReady {
+		return
+	}
+
+	actorRoles := []string{"ADMIN", "FINANCE"}
+	autoRemark := "Automated EMD return request triggered: Bid marked as LOST"
+	if strings.TrimSpace(reason) != "" {
+		autoRemark = fmt.Sprintf("Automated EMD return request triggered: %s", strings.TrimSpace(reason))
+	}
+
+	op, err := s.mutateEMD(ctx, bidID, actorID, actorRoles, func(tx domain.EMDTx, op *emdOp) (*domain.TenderEMDAuditLog, error) {
+		emd := op.emd
+		// If already refunded, released, or already initiated, don't overwrite
+		if emd.RefundStatus == domain.RefundStatusRefunded ||
+			emd.RefundStatus == domain.RefundStatusReleased ||
+			emd.RefundStatus == domain.RefundStatusInitiated {
+			return nil, nil
+		}
+
+		paid := emd.EMDAmount
+		if emd.PaymentAmount != nil && *emd.PaymentAmount > 0 {
+			paid = *emd.PaymentAmount
+		}
+		if paid <= 0 && amt > 0 {
+			paid = amt
+		}
+		if emd.RefundAmount == nil || *emd.RefundAmount <= 0 {
+			emd.RefundAmount = &paid
+		}
+
+		// Ensure status is at least Paid if it was still Pending so refund can be tracked
+		if emd.Status == domain.EMDStatusPending || emd.Status == "" {
+			emd.Status = domain.EMDStatusPaid
+		}
+		emd.RefundStatus = domain.RefundStatusInitiated
+		emd.RefundRemarks = &autoRemark
+		emd.RefundUpdatedAt = &op.now
+		emd.RefundUpdatedBy = &actorID
+
+		return &domain.TenderEMDAuditLog{
+			Action:  domain.EMDActionRefundUpdated,
+			Remarks: &autoRemark,
+		}, nil
+	})
+	if err != nil || op == nil {
+		return
+	}
+
+	// Add event in stage history for timeline audit trail
+	s.emdStageEvent(ctx, op, domain.StageAwardHandover, "EMD_RETURN_TRIGGERED", autoRemark)
+
+	// Send Alert to Finance role and tender stakeholders
+	if s.alertSvc != nil {
+		bidIdCopy := bidID
+		_ = s.alertSvc.CreateAlert(ctx, &alertDomain.Alert{
+			TargetRole: "FINANCE",
+			BidID:      &bidIdCopy,
+			CreatedBy:  &actorID,
+			Type:       "EMD_RETURN_REQUEST",
+			Title:      fmt.Sprintf("EMD Return Requested (Bid Lost): %s", bid.Title),
+			Message:    fmt.Sprintf("<p>Tender '<b>%s</b>' has been marked as <b>LOST</b>.</p><p>An automated EMD return request has been initiated for <b>₹%.2f</b>. Please follow up with the procuring authority for refund reconciliation.</p>", html.EscapeString(bid.Title), amt),
+			Link:       "/dashboard/emd-details?pill=awaiting",
+		})
+	}
 }

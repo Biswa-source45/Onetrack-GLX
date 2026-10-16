@@ -30,7 +30,16 @@ function isActivePipeline(b) {
   const terminal = ['CANCELLED', 'CLOSED', 'LOST']
   if (terminal.includes(b.workflow_stage)) return false
   if (terminal.includes(b.bid_status)) return false
-  if (b.bid_outcome === 'LOST') return false
+  if (b.bid_outcome === 'LOST' || b.bid_outcome === 'CANCELLED') return false
+  return true
+}
+
+// Checks if a tender is in pre-submission stage (requiring EMD arrangement)
+function isPreSubmission(b) {
+  if (b.submission_done) return false
+  if (b.submission_status === 'SUBMITTED' || b.bid_status === 'SUBMITTED') return false
+  const submittedStages = ['GEM_SUBMISSION', 'TECHNICAL_EVALUATION', 'FINANCIAL_EVALUATION', 'AWARD_HANDOVER', 'WON']
+  if (submittedStages.includes(b.workflow_stage)) return false
   return true
 }
 
@@ -136,52 +145,67 @@ export function EmdProjectionBlock({ bids = [], navigate }) {
     return periods[selectedFilter] || periods.this_month
   }, [selectedFilter, selectedCustomMonth, periods])
 
+  // Pre-submission active pipeline requiring EMD
+  const preSubmissionEmdBids = useMemo(() => {
+    return bids.filter((b) => isActivePipeline(b) && isPreSubmission(b) && isEmdRequired(b) && Number(b.emd_amount) > 0)
+  }, [bids])
+
   // 1. Projected Bids for the active period
   const projectedBids = useMemo(() => {
-    return bids.filter((b) => {
-      if (!isActivePipeline(b)) return false
-      if (!isEmdRequired(b)) return false
-      const amount = Number(b.emd_amount)
-      if (!amount || amount <= 0) return false
-
+    return preSubmissionEmdBids.filter((b) => {
       const deadline = getTenderDeadline(b)
-      if (!deadline) return false
+      if (!deadline) {
+        return selectedFilter === 'this_month'
+      }
       const dt = new Date(deadline)
-      if (isNaN(dt.getTime())) return false
+      if (isNaN(dt.getTime())) return selectedFilter === 'this_month'
 
+      if (selectedFilter === 'this_month') {
+        // Current month includes active tenders due in or by this month (current active workload)
+        return dt <= activePeriod.end
+      }
+      if (selectedFilter === 'this_week') {
+        return dt <= activePeriod.end && dt >= activePeriod.start
+      }
       return dt >= activePeriod.start && dt <= activePeriod.end
     }).sort((a, b) => {
       const da = new Date(getTenderDeadline(a) || 0)
       const db = new Date(getTenderDeadline(b) || 0)
       return da - db
     })
-  }, [bids, activePeriod])
+  }, [preSubmissionEmdBids, selectedFilter, activePeriod])
 
   const projectedTotalAmount = useMemo(() => {
     return projectedBids.reduce((sum, b) => sum + Number(b.emd_amount || 0), 0)
   }, [projectedBids])
 
-  // Readiness breakdown within the projection
-  const readyBids = useMemo(() => projectedBids.filter((b) => b.emd_ready || b.emd_returned), [projectedBids])
-  const pendingPrepBids = useMemo(() => projectedBids.filter((b) => !b.emd_ready && !b.emd_returned), [projectedBids])
+  // Readiness breakdown: evaluates readiness across all active pipeline tenders needing EMD
+  // (or within the projection if a future period is explicitly selected with tenders)
+  const readinessScopeBids = useMemo(() => {
+    if (selectedFilter !== 'this_month' && selectedFilter !== 'this_week' && projectedBids.length > 0) {
+      return projectedBids
+    }
+    return preSubmissionEmdBids
+  }, [selectedFilter, projectedBids, preSubmissionEmdBids])
+
+  const readyBids = useMemo(() => readinessScopeBids.filter((b) => b.emd_ready || b.emd_returned), [readinessScopeBids])
+  const pendingPrepBids = useMemo(() => readinessScopeBids.filter((b) => !b.emd_ready && !b.emd_returned), [readinessScopeBids])
   const readyTotal = useMemo(() => readyBids.reduce((s, b) => s + Number(b.emd_amount || 0), 0), [readyBids])
   const pendingPrepTotal = useMemo(() => pendingPrepBids.reduce((s, b) => s + Number(b.emd_amount || 0), 0), [pendingPrepBids])
+  const readinessTotalVal = readyTotal + pendingPrepTotal
+  const readinessValuePct = readinessTotalVal > 0 ? Math.round((readyTotal / readinessTotalVal) * 100) : 0
 
   // Calculation of This Week's numbers to display context when viewing This Month
   const thisWeekBids = useMemo(() => {
     const p = periods.this_week
-    return bids.filter((b) => {
-      if (!isActivePipeline(b)) return false
-      if (!isEmdRequired(b)) return false
-      const amount = Number(b.emd_amount)
-      if (!amount || amount <= 0) return false
+    return preSubmissionEmdBids.filter((b) => {
       const deadline = getTenderDeadline(b)
       if (!deadline) return false
       const dt = new Date(deadline)
       if (isNaN(dt.getTime())) return false
       return dt >= p.start && dt <= p.end
     })
-  }, [bids, periods])
+  }, [preSubmissionEmdBids, periods])
 
   const thisWeekTotal = useMemo(() => {
     return thisWeekBids.reduce((sum, b) => sum + Number(b.emd_amount || 0), 0)
@@ -192,6 +216,7 @@ export function EmdProjectionBlock({ bids = [], navigate }) {
   const incompleteBids = useMemo(() => {
     return bids.filter((b) => {
       if (!isActivePipeline(b)) return false
+      if (!isPreSubmission(b)) return false
       if (!isEmdRequired(b)) return false
       const amount = Number(b.emd_amount)
       const deadline = getTenderDeadline(b)
@@ -203,14 +228,8 @@ export function EmdProjectionBlock({ bids = [], navigate }) {
 
   // 3. Total Pending Pipeline EMD across all active tenders awaiting deposit
   const allPendingPipelineBids = useMemo(() => {
-    return bids.filter((b) => {
-      if (!isActivePipeline(b)) return false
-      if (!isEmdRequired(b)) return false
-      const amount = Number(b.emd_amount)
-      if (!amount || amount <= 0) return false
-      return !b.emd_ready && !b.emd_returned
-    })
-  }, [bids])
+    return preSubmissionEmdBids.filter((b) => !b.emd_ready && !b.emd_returned)
+  }, [preSubmissionEmdBids])
 
   const allPendingPipelineTotal = useMemo(() => {
     return allPendingPipelineBids.reduce((s, b) => s + Number(b.emd_amount || 0), 0)
@@ -234,7 +253,7 @@ export function EmdProjectionBlock({ bids = [], navigate }) {
     const map = new Map()
 
     bids.forEach((b) => {
-      if (!isActivePipeline(b)) return
+      if (!isActivePipeline(b) || !isPreSubmission(b)) return
       if (!isEmdRequired(b)) return
       const amount = Number(b.emd_amount)
       if (!amount || amount <= 0) return
@@ -294,7 +313,7 @@ export function EmdProjectionBlock({ bids = [], navigate }) {
 
     // Check if bids have any future tenders beyond next month
     bids.forEach((b) => {
-      if (!isActivePipeline(b)) return
+      if (!isActivePipeline(b) || !isPreSubmission(b)) return
       if (!isEmdRequired(b)) return
       const amount = Number(b.emd_amount)
       if (!amount || amount <= 0) return
@@ -468,8 +487,8 @@ export function EmdProjectionBlock({ bids = [], navigate }) {
                 Deposit Readiness
               </span>
               <span className="text-[10px] text-muted-foreground font-mono">
-                {projectedBids.length > 0
-                  ? `${Math.round((readyBids.length / projectedBids.length) * 100)}% Ready`
+                {readinessTotalVal > 0
+                  ? `${readinessValuePct}% Ready`
                   : '0%'}
               </span>
             </div>
@@ -480,7 +499,7 @@ export function EmdProjectionBlock({ bids = [], navigate }) {
                 <span
                   onClick={() =>
                     readyBids.length > 0 &&
-                    handleDrilldown('EMD Ready for Deposit', `Tenders in ${activePeriod.label} with EMD marked ready`, readyBids)
+                    handleDrilldown('EMD Ready for Deposit', `Tenders with EMD marked ready`, readyBids)
                   }
                   className={`font-semibold font-mono text-teal-600 dark:text-teal-400 ${
                     readyBids.length > 0 ? 'cursor-pointer hover:underline' : ''
@@ -494,7 +513,7 @@ export function EmdProjectionBlock({ bids = [], navigate }) {
                 <span
                   onClick={() =>
                     pendingPrepBids.length > 0 &&
-                    handleDrilldown('EMD Pending Arrangement', `Tenders in ${activePeriod.label} awaiting EMD preparation`, pendingPrepBids)
+                    handleDrilldown('EMD Pending Arrangement', `Tenders awaiting EMD preparation`, pendingPrepBids)
                   }
                   className={`font-semibold font-mono text-amber-600 dark:text-amber-400 ${
                     pendingPrepBids.length > 0 ? 'cursor-pointer hover:underline' : ''
@@ -587,7 +606,7 @@ export function EmdProjectionBlock({ bids = [], navigate }) {
                 <div className="mt-2 pt-2 border-t border-border/60 text-[10px] text-muted-foreground flex items-center justify-between">
                   <span>Outside {activePeriod.label}:</span>
                   <span className="font-mono font-medium text-foreground/80">
-                    +{formatCurrency(allPendingPipelineTotal - projectedTotalAmount)} ({allPendingPipelineBids.length - projectedBids.length} other dates)
+                    +{formatCurrency(allPendingPipelineTotal - projectedTotalAmount)} ({Math.max(0, allPendingPipelineBids.length - projectedBids.length)} other dates)
                   </span>
                 </div>
               )}

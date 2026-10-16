@@ -12,6 +12,7 @@ import { TendersPage } from "./components/tenders/TendersPage"
 import { MasterSheetPage } from "./components/tenders/MasterSheetPage"
 import { AddTenderPage } from "./components/tenders/AddTenderPage"
 import { TenderDetailPage } from "./components/tenders/TenderDetailPage"
+import { EmdDetailsPage } from "./components/tenders/EmdDetailsPage"
 import { UserManagement } from "./components/admin/UserManagement"
 import { BulkImportPage } from "./components/admin/BulkImportPage"
 import { AlertsPage } from "./components/alerts/AlertsPage"
@@ -49,8 +50,11 @@ function PermissionGuard({ permission, fallback = "/dashboard" }) {
 
 // Role Guard for routes gated on an exact role rather than a permission.
 // Unlike hasPermission, this does not let ADMIN inherit SUPER_ADMIN routes.
-function RoleGuard({ role, fallback = "/dashboard" }) {
+function RoleGuard({ role, roles, fallback = "/dashboard" }) {
   const { hasRole } = usePermissions()
+  if (roles && Array.isArray(roles)) {
+    return roles.some(hasRole) ? <Outlet /> : <Navigate to={fallback} replace />
+  }
   return hasRole(role) ? <Outlet /> : <Navigate to={fallback} replace />
 }
 
@@ -107,6 +111,11 @@ export default function App() {
                 <Route path="tenders/master/:drillId" element={<MasterSheetPage />} />
                 <Route path="tenders/:bidId" element={<TenderDetailPage />} />
                 <Route path="alerts" element={<AlertsPage />} />
+              </Route>
+
+              {/* EMD Details — strictly restricted to MD, Finance, and Account Manager */}
+              <Route element={<RoleGuard roles={['FINANCE', 'FINANCE_MANAGER', 'FINANCE_EXECUTIVE', 'MANAGING_DIRECTOR', 'ADMIN', 'SUPER_ADMIN', 'ACCOUNT_MANAGER', 'SALES_MANAGER', 'ACCOUNTS_MANAGER']} />}>
+                <Route path="emd-details" element={<EmdDetailsPage />} />
               </Route>
 
               {/* Leads — own permissions, independent of tenders */}

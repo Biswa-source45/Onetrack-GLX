@@ -226,6 +226,7 @@ type BidService interface {
 	VerifyEMDPayment(ctx context.Context, bidID string, req *VerifyEMDPaymentRequest, actorID string, actorRoles []string) (*TenderEMDResponse, error)
 	UpdateEMDRefund(ctx context.Context, bidID string, req *UpdateEMDRefundRequest, actorID string, actorRoles []string) (*TenderEMDResponse, error)
 	GetEMDAuditLogs(ctx context.Context, bidID string) ([]TenderEMDAuditLog, error)
+	TriggerEMDReturnOnLost(ctx context.Context, bidID string, actorID string, reason string)
 }
 
 type TransitionResult struct {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
-import { Download, Loader2, RefreshCw, LayoutList, ArrowLeft, SearchX } from 'lucide-react'
+import { Download, Loader2, RefreshCw, LayoutList, ArrowLeft, SearchX, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -39,74 +39,142 @@ const PILLS = [
 // names come from lib/sheetColumns.js (shared with the editable "All Tenders" sheet and both exports),
 // so the views never show different data or a different layout for the same tender.
 const RENDER = [
-  { key: 'title', label: 'Tender Title', minWidth: 240,
-    render: (b) => b.title },
-  { key: 'created_at', label: 'Created At', minWidth: 160,
-    render: (b) => formatDateTime(b.created_at) },
-  { key: 'status', label: 'Status', minWidth: 110,
-    render: (b) => <StatusPill status={b.bid_status} />, exportValue: (b) => b.bid_status ?? '' },
-  { key: 'category', label: 'Category', minWidth: 110,
-    render: (b) => b.category ?? '—' },
-  { key: 'bid_id', label: 'Bid ID', minWidth: 140, mono: true,
-    render: (b) => b.gem_bid_no ?? b.bid_no ?? '—' },
-  { key: 'platform', label: 'Platform', minWidth: 90,
-    render: (b) => b.portal_source ?? '—' },
-  { key: 'account_name', label: 'Account Name', minWidth: 170,
-    render: (b) => b.organization_name || '—' },
-  { key: 'department', label: 'Department / Ministry', minWidth: 170,
-    render: (b) => b.department_name ?? '—' },
-  { key: 'location', label: 'Location', minWidth: 130,
-    render: (b) => b.location ?? '—' },
-  { key: 'account_manager', label: 'Account Manager', minWidth: 150,
-    render: (b) => b.account_manager?.full_name ?? '—' },
-  { key: 'scope', label: 'High Level Scope', minWidth: 220,
-    render: (b) => b.high_level_scope ?? '—' },
-  { key: 'quantity', label: 'Quantity', minWidth: 80,
-    render: (b) => b.quantity ?? '—' },
-  { key: 'scope_type', label: 'Scope Type', minWidth: 120,
-    render: (b) => b.scope_type ?? '—' },
-  { key: 'emd', label: 'EMD Amount (₹)', minWidth: 100,
-    render: (b) => formatAmount(b.emd_amount), exportValue: (b) => b.emd_amount ?? '' },
-  { key: 'no_emd', label: 'No EMD', minWidth: 80,
-    render: (b) => (b.emd_not_applicable ? 'Yes' : 'No') },
-  { key: 'emd_exemption', label: 'EMD Exemption', minWidth: 120,
-    render: (b) => formatEmdExemption(b) },
-  { key: 'bg_rate', label: 'BG Rate (%)', minWidth: 100,
-    render: (b) => (b.bg_rate != null ? `${b.bg_rate}%` : '—') },
-  { key: 'target_month', label: 'Target Month', minWidth: 130,
-    render: (b) => getTargetMonthDisplay(b) },
-  { key: 'start_date', label: 'Start Date', minWidth: 120,
-    render: (b) => formatDate(b.opening_date || b.start_date) },
-  { key: 'end_date', label: 'End Date', minWidth: 170,
-    render: (b) => formatDateTime(b.closing_date || b.end_date) },
-  { key: 'estimated_value', label: 'Estimated Tender Value (₹)', minWidth: 130,
-    render: (b) => formatAmount(b.estimated_value), exportValue: (b) => b.estimated_value ?? '' },
-  { key: 'globx_total', label: 'GlobX Total (₹)', minWidth: 130,
-    render: (b) => formatAmount(b.quoted_price), exportValue: (b) => b.quoted_price ?? '' },
-  { key: 'tech_eval', label: 'Tech Eval', minWidth: 110,
-    render: (b) => (b.technical_result === 'QUALIFIED' ? 'Qualified' : b.technical_result === 'DISQUALIFIED' ? 'Disqualified' : 'Pending') },
-  { key: 'submission_status', label: 'Submission Status', minWidth: 130,
-    render: (b) => getSubmissionStatusVal(b) },
-  { key: 'fin_eval', label: 'Fin Eval Status', minWidth: 140,
-    render: (b) => getFinEvalStatusVal(b) },
-  { key: 'po_received', label: 'PO Received', minWidth: 130,
-    render: (b) => getPoRecvStatusVal(b) },
-  { key: 'po_date', label: 'PO Received Date', minWidth: 130,
-    render: (b) => formatDate(b.po_received_date) },
-  { key: 'emd_ready_date', label: 'EMD Ready Date', minWidth: 130,
-    render: (b) => formatDate(b.emd_ready_date) },
-  { key: 'bg_issued_date', label: 'BG Issued Date', minWidth: 130,
-    render: (b) => formatDate(b.bg_discharged_date) },
-  { key: 'delivery_date', label: 'Delivery/Work Complete Date', minWidth: 150,
-    render: (b) => formatDate(b.delivery_complete_date) },
-  { key: 'our_rank', label: 'Our Rank', minWidth: 90, mono: true,
-    render: (b) => b.our_rank ?? '—' },
-  { key: 'result', label: 'Result', minWidth: 130,
-    render: (b) => getBidResultVal(b) },
-  { key: 'owner', label: 'Owner', minWidth: 120,
-    render: (b) => b.bid_owner?.full_name ?? '—' },
-  { key: 'remarks', label: 'Remarks', minWidth: 220,
-    render: (b) => b.remarks ?? '—' },
+  {
+    key: 'title', label: 'Tender Title', minWidth: 240,
+    render: (b) => b.title
+  },
+  {
+    key: 'created_at', label: 'Created At', minWidth: 160,
+    render: (b) => formatDateTime(b.created_at)
+  },
+  {
+    key: 'status', label: 'Status', minWidth: 110,
+    render: (b) => <StatusPill status={b.bid_status} />, exportValue: (b) => b.bid_status ?? ''
+  },
+  {
+    key: 'category', label: 'Category', minWidth: 110,
+    render: (b) => b.category ?? '—'
+  },
+  {
+    key: 'bid_id', label: 'Bid ID', minWidth: 140, mono: true,
+    render: (b) => b.gem_bid_no ?? b.bid_no ?? '—'
+  },
+  {
+    key: 'platform', label: 'Platform', minWidth: 90,
+    render: (b) => b.portal_source ?? '—'
+  },
+  {
+    key: 'account_name', label: 'Account Name', minWidth: 170,
+    render: (b) => b.organization_name || '—'
+  },
+  {
+    key: 'department', label: 'Department / Ministry', minWidth: 170,
+    render: (b) => b.department_name ?? '—'
+  },
+  {
+    key: 'location', label: 'Location', minWidth: 130,
+    render: (b) => b.location ?? '—'
+  },
+  {
+    key: 'account_manager', label: 'Account Manager', minWidth: 150,
+    render: (b) => b.account_manager?.full_name ?? '—'
+  },
+  {
+    key: 'scope', label: 'High Level Scope', minWidth: 220,
+    render: (b) => b.high_level_scope ?? '—'
+  },
+  {
+    key: 'quantity', label: 'Quantity', minWidth: 80,
+    render: (b) => b.quantity ?? '—'
+  },
+  {
+    key: 'scope_type', label: 'Scope Type', minWidth: 120,
+    render: (b) => b.scope_type ?? '—'
+  },
+  {
+    key: 'emd', label: 'EMD Amount (₹)', minWidth: 100,
+    render: (b) => formatAmount(b.emd_amount), exportValue: (b) => b.emd_amount ?? ''
+  },
+  {
+    key: 'no_emd', label: 'No EMD', minWidth: 80,
+    render: (b) => (b.emd_not_applicable ? 'Yes' : 'No')
+  },
+  {
+    key: 'emd_exemption', label: 'EMD Exemption', minWidth: 120,
+    render: (b) => formatEmdExemption(b)
+  },
+  {
+    key: 'bg_rate', label: 'BG Rate (%)', minWidth: 100,
+    render: (b) => (b.bg_rate != null ? `${b.bg_rate}%` : '—')
+  },
+  {
+    key: 'target_month', label: 'Target Month', minWidth: 130,
+    render: (b) => getTargetMonthDisplay(b)
+  },
+  {
+    key: 'start_date', label: 'Start Date', minWidth: 120,
+    render: (b) => formatDate(b.opening_date || b.start_date)
+  },
+  {
+    key: 'end_date', label: 'End Date', minWidth: 170,
+    render: (b) => formatDateTime(b.closing_date || b.end_date)
+  },
+  {
+    key: 'estimated_value', label: 'Estimated Tender Value (₹)', minWidth: 130,
+    render: (b) => formatAmount(b.estimated_value), exportValue: (b) => b.estimated_value ?? ''
+  },
+  {
+    key: 'globx_total', label: 'GlobX Total (₹)', minWidth: 130,
+    render: (b) => formatAmount(b.quoted_price), exportValue: (b) => b.quoted_price ?? ''
+  },
+  {
+    key: 'tech_eval', label: 'Tech Eval', minWidth: 110,
+    render: (b) => (b.technical_result === 'QUALIFIED' ? 'Qualified' : b.technical_result === 'DISQUALIFIED' ? 'Disqualified' : 'Pending')
+  },
+  {
+    key: 'submission_status', label: 'Submission Status', minWidth: 130,
+    render: (b) => getSubmissionStatusVal(b)
+  },
+  {
+    key: 'fin_eval', label: 'Fin Eval Status', minWidth: 140,
+    render: (b) => getFinEvalStatusVal(b)
+  },
+  {
+    key: 'po_received', label: 'PO Received', minWidth: 130,
+    render: (b) => getPoRecvStatusVal(b)
+  },
+  {
+    key: 'po_date', label: 'PO Received Date', minWidth: 130,
+    render: (b) => formatDate(b.po_received_date)
+  },
+  {
+    key: 'emd_ready_date', label: 'EMD Ready Date', minWidth: 130,
+    render: (b) => formatDate(b.emd_ready_date)
+  },
+  {
+    key: 'bg_issued_date', label: 'BG Issued Date', minWidth: 130,
+    render: (b) => formatDate(b.bg_discharged_date)
+  },
+  {
+    key: 'delivery_date', label: 'Delivery/Work Complete Date', minWidth: 150,
+    render: (b) => formatDate(b.delivery_complete_date)
+  },
+  {
+    key: 'our_rank', label: 'Our Rank', minWidth: 90, mono: true,
+    render: (b) => b.our_rank ?? '—'
+  },
+  {
+    key: 'result', label: 'Result', minWidth: 130,
+    render: (b) => getBidResultVal(b)
+  },
+  {
+    key: 'owner', label: 'Owner', minWidth: 120,
+    render: (b) => b.bid_owner?.full_name ?? '—'
+  },
+  {
+    key: 'remarks', label: 'Remarks', minWidth: 220,
+    render: (b) => b.remarks ?? '—'
+  },
 ]
 
 const COLUMNS = SHEET_COLUMNS.map((sc) => {
@@ -258,7 +326,7 @@ export function MasterSheetPage() {
     setExporting(true)
     const toastId = toast.loading(
       drillId ? `Exporting ${drillInfo?.title || 'filtered'} tenders…` :
-      pillFilter ? `Exporting ${PILLS.find(p => p.key === pillFilter)?.label} tenders…` : 'Exporting all tenders…'
+        pillFilter ? `Exporting ${PILLS.find(p => p.key === pillFilter)?.label} tenders…` : 'Exporting all tenders…'
     )
     try {
       const rows = drillId ? drillBids : await (async () => {
@@ -327,10 +395,21 @@ export function MasterSheetPage() {
             {drillId
               ? `${drillInfo?.subtitle || 'Filtered set of tenders'} · ${drillLoading ? 'loading…' : `${drillBids.length} tender${drillBids.length !== 1 ? 's' : ''}`}`
               : <>Every tender, one continuous sheet — scroll for more, no pages.
-                 {meta.total != null && ` ${bids.length} of ${meta.total} loaded.`}</>}
+                {meta.total != null && ` ${bids.length} of ${meta.total} loaded.`}</>}
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {drillInfo?.title?.toLowerCase().includes('emd') && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate('/dashboard/emd-details')}
+              className="gap-1.5 text-primary border-primary/30 hover:bg-primary/5"
+            >
+              <ShieldCheck className="size-3.5" />
+              Open in EMD Register
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting || (drillId && drillBids.length === 0)} className="gap-1.5">
             {exporting ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
             Export as Excel
@@ -345,11 +424,10 @@ export function MasterSheetPage() {
             <button
               key={p.key || 'total'}
               onClick={() => setPillFilter(p.key)}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
-                pillFilter === p.key
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${pillFilter === p.key
                   ? 'bg-primary text-primary-foreground border-primary'
                   : 'bg-card text-foreground border-border hover:border-primary/40'
-              }`}
+                }`}
             >
               {p.label}
               <span className={`ml-1.5 ${pillFilter === p.key ? 'opacity-80' : 'text-muted-foreground'}`}>
@@ -394,16 +472,14 @@ export function MasterSheetPage() {
               <tr
                 key={bid.id}
                 onClick={() => hasPermission('bid.view') && navigate(`/dashboard/tenders/${bid.id}`)}
-                className={`hover:bg-muted/30 transition-colors whitespace-nowrap align-middle cursor-pointer ${
-                  ['CANCELLED', 'ARCHIVED', 'LOST', 'CLOSED'].includes(bid.bid_status) ? 'text-muted-foreground/85' : ''
-                }`}
+                className={`hover:bg-muted/30 transition-colors whitespace-nowrap align-middle cursor-pointer ${['CANCELLED', 'ARCHIVED', 'LOST', 'CLOSED'].includes(bid.bid_status) ? 'text-muted-foreground/85' : ''
+                  }`}
               >
                 {COLUMNS.map((c) => (
                   <td
                     key={c.key}
-                    className={`p-3 border-r border-border truncate max-w-xs ${c.mono ? 'font-mono text-primary' : ''} ${
-                      c.sticky ? 'sticky left-0 z-10 bg-card font-semibold text-foreground' : ''
-                    }`}
+                    className={`p-3 border-r border-border truncate max-w-xs ${c.mono ? 'font-mono text-primary' : ''} ${c.sticky ? 'sticky left-0 z-10 bg-card font-semibold text-foreground' : ''
+                      }`}
                   >
                     {c.key === 'account_name' ? (
                       <div className="flex items-center gap-2">

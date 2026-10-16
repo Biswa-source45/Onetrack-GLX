@@ -16,6 +16,7 @@ import {
   recordEmdPayment, verifyEmdPayment, updateEmdRefund, uploadEmdReceipt,
   EMD_STATUS_CONFIG, REFUND_STATUS_CONFIG, safeReceiptUrl, openReceipt, fmtMoney
 } from '../../services/emd'
+import { updateBid } from '../../services/bids'
 import { usePermissions } from '../../hooks/usePermissions'
 
 const SECTIONS = [
@@ -89,11 +90,14 @@ function ReceiptUpload({ label, view, url, onOpen, uploading, disabled, onUpload
   )
 }
 
-export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
+export function EmdDetailsDialog({ open, onClose, bid, onSuccess, initialSection = 'basic' }) {
   const { hasRole } = usePermissions()
-  const canEdit = hasRole('FINANCE') || hasRole('ADMIN') || hasRole('SUPER_ADMIN')
+  const canAccess = hasRole('FINANCE') || hasRole('FINANCE_MANAGER') || hasRole('FINANCE_EXECUTIVE') ||
+    hasRole('MANAGING_DIRECTOR') || hasRole('ADMIN') || hasRole('SUPER_ADMIN') ||
+    hasRole('ACCOUNT_MANAGER') || hasRole('SALES_MANAGER') || hasRole('ACCOUNTS_MANAGER')
+  const canEdit = canAccess
 
-  const [activeSection, setActiveSection] = useState('basic')
+  const [activeSection, setActiveSection] = useState(initialSection)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [emd, setEmd] = useState(null)
@@ -190,7 +194,7 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
   }
 
   const loadData = async () => {
-    if (!bid?.id) return
+    if (!bid?.id || !canAccess) return
     setLoading(true)
     try {
       const res = await getEmdDetails(bid.id)
@@ -277,9 +281,10 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
 
   useEffect(() => {
     if (open) {
+      setActiveSection(initialSection || 'basic')
       loadData()
     }
-  }, [open, bid?.id])
+  }, [open, bid?.id, initialSection])
 
   if (!open) return null
 
@@ -610,6 +615,14 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
         refund_receipt_url: refReceiptUrl || undefined,
       })
       if (res.ok) {
+        if (refStatus === 'Refunded' || refStatus === 'Released') {
+          await updateBid(bid.id, {
+            emd_returned: true,
+            emd_returned_date: refActualDate ? new Date(refActualDate).toISOString() : new Date().toISOString()
+          }).catch(() => { })
+        } else if (bid?.emd_returned) {
+          await updateBid(bid.id, { emd_returned: false, emd_returned_date: null }).catch(() => { })
+        }
         toast.success('EMD Release / Refund tracking updated!')
         setEmd(res.data)
         onSuccess?.()
@@ -649,6 +662,29 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
       if (type === 'payment') setUploadingReceipt(false)
       else setUploadingRefundReceipt(false)
     }
+  }
+
+  if (!open) return null
+
+  if (!canAccess) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+        <div className="w-full max-w-md bg-card border border-border rounded-2xl p-6 text-center shadow-xl space-y-4">
+          <div className="size-14 rounded-full bg-rose-100 dark:bg-rose-950/50 text-rose-600 flex items-center justify-center mx-auto border border-rose-300 dark:border-rose-800">
+            <ShieldCheck className="size-7" />
+          </div>
+          <div>
+            <h3 className="text-base font-bold text-foreground">Access Restricted</h3>
+            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+              EMD Details (view and edit) can only be accessed by <strong className="text-foreground">Managing Director (MD)</strong>, <strong className="text-foreground">Finance</strong>, and <strong className="text-foreground">Account Manager</strong> roles.
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={onClose} className="mt-2 text-xs">
+            Close
+          </Button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -716,21 +752,19 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
                   key={sec.id}
                   type="button"
                   onClick={() => setActiveSection(sec.id)}
-                  className={`group relative flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs transition-all duration-150 whitespace-nowrap shrink-0 ${
-                    isActive
-                      ? 'bg-background text-foreground shadow-xs font-semibold ring-1 ring-border/80 dark:ring-border'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-background/50 font-medium'
-                  }`}
+                  className={`group relative flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs transition-all duration-150 whitespace-nowrap shrink-0 ${isActive
+                    ? 'bg-background text-foreground shadow-xs font-semibold ring-1 ring-border/80 dark:ring-border'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-background/50 font-medium'
+                    }`}
                 >
                   {/* Step Number / Completed Check Badge */}
                   <span
-                    className={`flex items-center justify-center size-5 rounded-full text-[10px] font-bold transition-all shrink-0 ${
-                      isActive
-                        ? 'bg-primary text-primary-foreground shadow-xs'
-                        : isCompleted
+                    className={`flex items-center justify-center size-5 rounded-full text-[10px] font-bold transition-all shrink-0 ${isActive
+                      ? 'bg-primary text-primary-foreground shadow-xs'
+                      : isCompleted
                         ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-semibold'
                         : 'bg-muted text-muted-foreground group-hover:bg-muted/80'
-                    }`}
+                      }`}
                   >
                     {isCompleted && !isActive ? (
                       <Check className="size-3 stroke-[2.5]" />
@@ -742,13 +776,12 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
                   {/* Icon & Label */}
                   <span className="flex items-center gap-1.5">
                     <Icon
-                      className={`size-3.5 transition-colors shrink-0 ${
-                        isActive
-                          ? 'text-primary'
-                          : isCompleted
+                      className={`size-3.5 transition-colors shrink-0 ${isActive
+                        ? 'text-primary'
+                        : isCompleted
                           ? 'text-emerald-600 dark:text-emerald-400'
                           : 'text-muted-foreground group-hover:text-foreground'
-                      }`}
+                        }`}
                     />
                     <span className="tracking-tight">
                       <span className="hidden sm:inline">{sec.label}</span>
@@ -785,526 +818,523 @@ export function EmdDetailsDialog({ open, onClose, bid, onSuccess }) {
                   <div>
                     <p className="font-semibold">View-Only Mode</p>
                     <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5">
-                      Only Super Admin, Admin, and Finance Manager (FM) are authorized to add or edit EMD details. Other roles have view-only access.
+                      Only Managing Director (MD), Super Admin, Admin, and Finance are authorized to add or edit EMD details. All other roles have view-only access.
                     </p>
                   </div>
                 </div>
               )}
               <AnimatePresence mode="wait">
-              {/* ── SECTION 1: BASIC EMD INFORMATION ── */}
-              {activeSection === 'basic' && (
-                <motion.form
-                  key="sec-basic"
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  onSubmit={handleSaveBasic}
-                  className="space-y-4 max-w-2xl"
-                >
-                  <div className="p-3.5 rounded-xl bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900 text-xs text-blue-900 dark:text-blue-300">
-                    <p className="font-semibold flex items-center gap-1.5">
-                      <FileText className="size-4" /> Finance Manager Re-verification
-                    </p>
-                    <p className="text-[11px] mt-1 text-blue-700 dark:text-blue-400">
-                      Verify EMD terms against tender schedule. Once confirmed, submit this record for MD Approval.
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">EMD Amount (₹) — set on the tender</Label>
-                      <Input
-                        type="number"
-                        disabled
-                        value={basicAmount}
-                        readOnly
-                        className="text-xs font-mono font-medium"
-                      />
+                {/* ── SECTION 1: BASIC EMD INFORMATION ── */}
+                {activeSection === 'basic' && (
+                  <motion.form
+                    key="sec-basic"
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    onSubmit={handleSaveBasic}
+                    className="space-y-4 max-w-2xl"
+                  >
+                    <div className="p-3.5 rounded-xl bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900 text-xs text-blue-900 dark:text-blue-300">
+                      <p className="font-semibold flex items-center gap-1.5">
+                        <FileText className="size-4" /> Finance Manager Re-verification
+                      </p>
+                      <p className="text-[11px] mt-1 text-blue-700 dark:text-blue-400">
+                        Verify EMD terms against tender schedule. Once confirmed, submit this record for MD Approval.
+                      </p>
                     </div>
 
-                    {fld({ label: 'EMD Due / Submission Date *', type: 'date', req: true, v: basicDueDate, set: setBasicDueDate })}
-                    {fld({ label: 'EMD Reference Number *', type: 'text', req: true, v: basicRefNo, set: setBasicRefNo, ph: 'e.g. GEM/2026/B/881923', cls: 'text-xs font-mono' })}
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">EMD Status</Label>
-                      <div className="h-9 flex items-center text-xs font-semibold">{emd?.status || 'Pending'}</div>
-                    </div>
-                  </div>
-
-                  {fld({ label: 'EMD Purpose / Description *', type: 'text', req: true, v: basicPurpose, set: setBasicPurpose, ph: 'e.g. Bid Security for High-Performance Compute Cluster' })}
-
-                  {fld({ label: 'Finance Remarks / Clarifications', area: true, v: basicRemarks, set: setBasicRemarks, ph: 'Notes on exemption eligibility, DD details, or bank instructions...', cls: 'text-xs min-h-[75px]' })}
-
-                  {canEdit && (
-                    <div className="flex items-center justify-between pt-3 border-t border-border">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        disabled={saving}
-                        onClick={handleSubmitMDApproval}
-                        className="gap-1.5 text-xs font-semibold bg-orange-600 hover:bg-orange-700 text-white"
-                      >
-                        <Clock className="size-3.5" />
-                        Submit for MD Approval
-                      </Button>
-
-                      <Button type="submit" size="sm" disabled={saving} className="gap-1.5 text-xs font-semibold">
-                        {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-                        Save Basic Details
-                      </Button>
-                    </div>
-                  )}
-                </motion.form>
-              )}
-
-              {/* ── SECTION 2: MD APPROVAL GATE ── */}
-              {activeSection === 'approval' && (
-                <motion.div
-                  key="sec-approval"
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  className="space-y-4 max-w-2xl"
-                >
-                  <div className="p-4 rounded-xl border border-border bg-card space-y-3">
-                    <div className="flex items-center justify-between pb-3 border-b border-border/60">
-                      <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Current Approval Status</span>
-                      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${EMD_STATUS_CONFIG[emd?.status]?.color || 'bg-muted'}`}>
-                        <span className={`size-2 rounded-full ${EMD_STATUS_CONFIG[emd?.status]?.dot || 'bg-gray-400'}`} />
-                        {emd?.status || 'Pending'}
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                      <div>
-                        <span className="text-muted-foreground block text-[11px]">Submitted for Approval By:</span>
-                        <span className="font-semibold text-foreground">
-                          {emd?.md_submitted_by ? `${emd.md_submitted_by.full_name} (${emd.md_submitted_by.role || 'FM'})` : 'Not submitted yet'}
-                        </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold">EMD Amount (₹) — set on the tender</Label>
+                        <Input
+                          type="number"
+                          disabled
+                          value={basicAmount}
+                          readOnly
+                          className="text-xs font-mono font-medium"
+                        />
                       </div>
-                      <div>
-                        <span className="text-muted-foreground block text-[11px]">Submission Date &amp; Time:</span>
-                        <span className="font-medium text-foreground">
-                          {emd?.md_submitted_at ? fmtDate(emd.md_submitted_at) : '—'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground block text-[11px]">Executive Decided By:</span>
-                        <span className="font-semibold text-foreground">
-                          {emd?.md_decided_by ? `${emd.md_decided_by.full_name} (${emd.md_decided_by.role || 'MD'})` : 'Awaiting MD Decision'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground block text-[11px]">Decision Date &amp; Time:</span>
-                        <span className="font-medium text-foreground">
-                          {emd?.md_decided_at ? fmtDate(emd.md_decided_at) : '—'}
-                        </span>
+
+                      {fld({ label: 'EMD Due / Submission Date *', type: 'date', req: true, v: basicDueDate, set: setBasicDueDate })}
+                      {fld({ label: 'EMD Reference Number *', type: 'text', req: true, v: basicRefNo, set: setBasicRefNo, ph: 'e.g. GEM/2026/B/881923', cls: 'text-xs font-mono' })}
+
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold">EMD Status</Label>
+                        <div className="h-9 flex items-center text-xs font-semibold">{emd?.status || 'Pending'}</div>
                       </div>
                     </div>
 
-                    {emd?.md_decision_remarks && (
-                      <div className="mt-3 p-3 rounded-lg bg-muted/40 border border-border/60 text-xs">
-                        <span className="text-muted-foreground font-semibold block text-[11px] mb-1">Managing Director Remarks:</span>
-                        <p className="text-foreground italic">"{emd.md_decision_remarks}"</p>
+                    {fld({ label: 'EMD Purpose / Description *', type: 'text', req: true, v: basicPurpose, set: setBasicPurpose, ph: 'e.g. Bid Security for High-Performance Compute Cluster' })}
+
+                    {fld({ label: 'Finance Remarks / Clarifications', area: true, v: basicRemarks, set: setBasicRemarks, ph: 'Notes on exemption eligibility, DD details, or bank instructions...', cls: 'text-xs min-h-[75px]' })}
+
+                    {canEdit && (
+                      <div className="flex items-center justify-between pt-3 border-t border-border">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          disabled={saving}
+                          onClick={handleSubmitMDApproval}
+                          className="gap-1.5 text-xs font-semibold bg-orange-600 hover:bg-orange-700 text-white"
+                        >
+                          <Clock className="size-3.5" />
+                          Submit for MD Approval
+                        </Button>
+
+                        <Button type="submit" size="sm" disabled={saving} className="gap-1.5 text-xs font-semibold">
+                          {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+                          Save Basic Details
+                        </Button>
                       </div>
                     )}
-                  </div>
+                  </motion.form>
+                )}
 
-                  {emd?.status === 'Pending MD Approval' && (
-                    <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900 text-xs text-amber-900 dark:text-amber-300 flex items-center gap-2">
-                      <Clock className="size-4 shrink-0 text-amber-600 animate-pulse" />
-                      <span>This tender EMD is currently pending executive review by the Managing Director / Super Admin.</span>
-                    </div>
-                  )}
-
-                  {emd?.is_md_approved && (
-                    <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900 text-xs text-emerald-900 dark:text-emerald-300 flex items-center gap-2">
-                      <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
-                      <span>EMD has been officially MD Approved / Paid! Payment details and depositor information recorded directly.</span>
-                    </div>
-                  )}
-
-                  {emd?.status === 'Rejected' && (
-                    <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900 text-xs text-rose-900 dark:text-rose-300 flex items-center gap-2">
-                      <AlertCircle className="size-4 shrink-0 text-rose-600" />
-                      <span>EMD was rejected by the MD. Finance can correct the details in Section 1 and re-submit for MD Approval.</span>
-                    </div>
-                  )}
-
-                  {(emd?.status === 'Pending' || emd?.status === 'Rejected') && canEdit && (
-                    <div className="pt-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={saving}
-                        onClick={handleSubmitMDApproval}
-                        className="gap-1.5 text-xs font-semibold bg-orange-600 hover:bg-orange-700 text-white"
-                      >
-                        <Clock className="size-3.5" />
-                        {emd.status === 'Rejected' ? 'Re-submit for MD Approval' : 'Submit for MD Approval Now'}
-                      </Button>
-                    </div>
-                  )}
-                </motion.div>
-              )}
-
-              {/* ── SECTION 3: PAYMENT DETAILS ── */}
-              {activeSection === 'payment' && (
-                <motion.form
-                  key="sec-payment"
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  onSubmit={handleProceedToDepositor}
-                  className="space-y-4 max-w-2xl"
-                >
-                  {/* Mode Selector Tabs */}
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold">Payment Mode *</Label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {['Online', 'Cheque', 'Challan'].map((m) => (
-                        <button
-                          key={m}
-                          type="button"
-                          disabled={!canEdit}
-                          onClick={() => setPaymentMode(m)}
-                          className={`p-2.5 rounded-xl border text-xs font-bold text-center transition-all ${
-                            paymentMode === m
-                              ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary/20 shadow-xs'
-                              : 'border-border bg-card text-muted-foreground hover:bg-muted/40'
-                          }`}
-                        >
-                          {m}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs font-semibold">Payment Amount (₹) *</Label>
-                        {targetEmdAmount > 0 && (
-                          <span className="text-[11px] font-medium text-muted-foreground">
-                            Required: <span className="font-semibold text-foreground font-mono">{fmtMoney(targetEmdAmount)}</span>
-                          </span>
-                        )}
+                {/* ── SECTION 2: MD APPROVAL GATE ── */}
+                {activeSection === 'approval' && (
+                  <motion.div
+                    key="sec-approval"
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="space-y-4 max-w-2xl"
+                  >
+                    <div className="p-4 rounded-xl border border-border bg-card space-y-3">
+                      <div className="flex items-center justify-between pb-3 border-b border-border/60">
+                        <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Current Approval Status</span>
+                        <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${EMD_STATUS_CONFIG[emd?.status]?.color || 'bg-muted'}`}>
+                          <span className={`size-2 rounded-full ${EMD_STATUS_CONFIG[emd?.status]?.dot || 'bg-gray-400'}`} />
+                          {emd?.status || 'Pending'}
+                        </span>
                       </div>
-                      <Input
-                        type="number"
-                        min="1"
-                        step="0.01"
-                        required
-                        disabled={!canEdit}
-                        value={paymentAmount}
-                        onChange={(e) => setPaymentAmount(e.target.value)}
-                        placeholder={targetEmdAmount > 0 ? String(targetEmdAmount) : "50000"}
-                        className={`text-xs font-mono font-medium transition-colors ${
-                          isPaymentMismatched
-                            ? 'border-rose-500 ring-1 ring-rose-500/40 focus-visible:ring-rose-500 bg-rose-50/10'
-                            : isPaymentExact
-                            ? 'border-emerald-500 ring-1 ring-emerald-500/40 focus-visible:ring-emerald-500 bg-emerald-50/10'
-                            : ''
-                        }`}
-                      />
-                      {targetEmdAmount > 0 && (
-                        <div className="text-[11px] pt-0.5 space-y-1">
-                          {isPaymentLess && (
-                            <p className="text-rose-600 dark:text-rose-400 flex items-center gap-1 font-medium">
-                              <AlertCircle className="size-3.5 shrink-0" />
-                              Amount is less than required EMD ({fmtMoney(targetEmdAmount)}). It will not submit.
-                            </p>
-                          )}
-                          {isPaymentGreater && (
-                            <p className="text-rose-600 dark:text-rose-400 flex items-center gap-1 font-medium">
-                              <AlertCircle className="size-3.5 shrink-0" />
-                              Amount is greater than required EMD ({fmtMoney(targetEmdAmount)}). It will not submit.
-                            </p>
-                          )}
-                          {isPaymentExact && (
-                            <p className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
-                              <CheckCircle2 className="size-3.5 shrink-0" />
-                              Payment matches required EMD amount exactly ({fmtMoney(targetEmdAmount)}).
-                            </p>
-                          )}
-                          {canEdit && isPaymentMismatched && (
-                            <button
-                              type="button"
-                              onClick={() => setPaymentAmount(String(targetEmdAmount))}
-                              className="text-[11px] text-primary hover:underline font-semibold block"
-                            >
-                              Auto-fill required amount ({fmtMoney(targetEmdAmount)})
-                            </button>
-                          )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                        <div>
+                          <span className="text-muted-foreground block text-[11px]">Submitted for Approval By:</span>
+                          <span className="font-semibold text-foreground">
+                            {emd?.md_submitted_by ? `${emd.md_submitted_by.full_name} (${emd.md_submitted_by.role || 'FM'})` : 'Not submitted yet'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground block text-[11px]">Submission Date &amp; Time:</span>
+                          <span className="font-medium text-foreground">
+                            {emd?.md_submitted_at ? fmtDate(emd.md_submitted_at) : '—'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground block text-[11px]">Executive Decided By:</span>
+                          <span className="font-semibold text-foreground">
+                            {emd?.md_decided_by ? `${emd.md_decided_by.full_name} (${emd.md_decided_by.role || 'MD'})` : 'Awaiting MD Decision'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground block text-[11px]">Decision Date &amp; Time:</span>
+                          <span className="font-medium text-foreground">
+                            {emd?.md_decided_at ? fmtDate(emd.md_decided_at) : '—'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {emd?.md_decision_remarks && (
+                        <div className="mt-3 p-3 rounded-lg bg-muted/40 border border-border/60 text-xs">
+                          <span className="text-muted-foreground font-semibold block text-[11px] mb-1">Managing Director Remarks:</span>
+                          <p className="text-foreground italic">"{emd.md_decision_remarks}"</p>
                         </div>
                       )}
                     </div>
 
-                    {fld({ label: 'Payment Date *', type: 'date', req: true, v: paymentDate, set: setPaymentDate })}
-                  </div>
+                    {emd?.status === 'Pending MD Approval' && (
+                      <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900 text-xs text-amber-900 dark:text-amber-300 flex items-center gap-2">
+                        <Clock className="size-4 shrink-0 text-amber-600 animate-pulse" />
+                        <span>This tender EMD is currently pending executive review by the Managing Director / Super Admin.</span>
+                      </div>
+                    )}
 
-                  {/* Dynamic Fields: ONLINE / CHEQUE / CHALLAN */}
-                  {mode && (
-                    <div className={`p-4 rounded-xl border ${mode.box} space-y-3`}>
-                      <h4 className={`text-xs font-bold uppercase tracking-wider ${mode.h}`}>
-                        {mode.title}
-                      </h4>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {mode.fields.map((f) => fld({ sm: true, ...f }))}
+                    {emd?.is_md_approved && (
+                      <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900 text-xs text-emerald-900 dark:text-emerald-300 flex items-center gap-2">
+                        <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
+                        <span>EMD has been officially MD Approved / Paid! Payment details and depositor information recorded directly.</span>
+                      </div>
+                    )}
+
+                    {emd?.status === 'Rejected' && (
+                      <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900 text-xs text-rose-900 dark:text-rose-300 flex items-center gap-2">
+                        <AlertCircle className="size-4 shrink-0 text-rose-600" />
+                        <span>EMD was rejected by the MD. Finance can correct the details in Section 1 and re-submit for MD Approval.</span>
+                      </div>
+                    )}
+
+                    {(emd?.status === 'Pending' || emd?.status === 'Rejected') && canEdit && (
+                      <div className="pt-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={saving}
+                          onClick={handleSubmitMDApproval}
+                          className="gap-1.5 text-xs font-semibold bg-orange-600 hover:bg-orange-700 text-white"
+                        >
+                          <Clock className="size-3.5" />
+                          {emd.status === 'Rejected' ? 'Re-submit for MD Approval' : 'Submit for MD Approval Now'}
+                        </Button>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+
+                {/* ── SECTION 3: PAYMENT DETAILS ── */}
+                {activeSection === 'payment' && (
+                  <motion.form
+                    key="sec-payment"
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    onSubmit={handleProceedToDepositor}
+                    className="space-y-4 max-w-2xl"
+                  >
+                    {/* Mode Selector Tabs */}
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold">Payment Mode *</Label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {['Online', 'Cheque', 'Challan'].map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            disabled={!canEdit}
+                            onClick={() => setPaymentMode(m)}
+                            className={`p-2.5 rounded-xl border text-xs font-bold text-center transition-all ${paymentMode === m
+                              ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary/20 shadow-xs'
+                              : 'border-border bg-card text-muted-foreground hover:bg-muted/40'
+                              }`}
+                          >
+                            {m}
+                          </button>
+                        ))}
                       </div>
                     </div>
-                  )}
 
-                  {/* Receipt Upload / View */}
-                  <ReceiptUpload
-                    label="Payment Receipt / Scanned Proof"
-                    view="View Uploaded Receipt"
-                    url={paymentReceiptUrl}
-                    onOpen={handleOpenReceipt}
-                    uploading={uploadingReceipt}
-                    disabled={!canEdit}
-                    onUpload={(e) => handleReceiptUpload(e, 'payment')}
-                  />
-
-                  {canEdit && (
-                    <div className="flex justify-end pt-3 border-t border-border">
-                      <Button
-                        type="submit"
-                        size="sm"
-                        disabled={isPaymentMismatched}
-                        title={isPaymentMismatched ? 'Payment amount must match required EMD amount' : 'Proceed to Depositor Info'}
-                        className="gap-1.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm disabled:opacity-50"
-                      >
-                        Next Step: Depositor Info
-                        <ArrowRight className="size-3.5" />
-                      </Button>
-                    </div>
-                  )}
-                </motion.form>
-              )}
-
-              {/* ── SECTION 4: DEPOSITOR / PERSON DETAILS ── */}
-              {activeSection === 'depositor' && (
-                <motion.form
-                  key="sec-depositor"
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  onSubmit={handleSavePayment}
-                  className="space-y-4 max-w-2xl"
-                >
-                  {isPaymentMismatched && (
-                    <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 text-xs flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <AlertCircle className="size-4 shrink-0" />
-                        <span>Payment amount in Step 3 does not match required EMD ({fmtMoney(targetEmdAmount)}). Submission is blocked.</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs font-semibold">Payment Amount (₹) *</Label>
+                          {targetEmdAmount > 0 && (
+                            <span className="text-[11px] font-medium text-muted-foreground">
+                              Required: <span className="font-semibold text-foreground font-mono">{fmtMoney(targetEmdAmount)}</span>
+                            </span>
+                          )}
+                        </div>
+                        <Input
+                          type="number"
+                          min="1"
+                          step="0.01"
+                          required
+                          disabled={!canEdit}
+                          value={paymentAmount}
+                          onChange={(e) => setPaymentAmount(e.target.value)}
+                          placeholder={targetEmdAmount > 0 ? String(targetEmdAmount) : "50000"}
+                          className={`text-xs font-mono font-medium transition-colors ${isPaymentMismatched
+                            ? 'border-rose-500 ring-1 ring-rose-500/40 focus-visible:ring-rose-500 bg-rose-50/10'
+                            : isPaymentExact
+                              ? 'border-emerald-500 ring-1 ring-emerald-500/40 focus-visible:ring-emerald-500 bg-emerald-50/10'
+                              : ''
+                            }`}
+                        />
+                        {targetEmdAmount > 0 && (
+                          <div className="text-[11px] pt-0.5 space-y-1">
+                            {isPaymentLess && (
+                              <p className="text-rose-600 dark:text-rose-400 flex items-center gap-1 font-medium">
+                                <AlertCircle className="size-3.5 shrink-0" />
+                                Amount is less than required EMD ({fmtMoney(targetEmdAmount)}). It will not submit.
+                              </p>
+                            )}
+                            {isPaymentGreater && (
+                              <p className="text-rose-600 dark:text-rose-400 flex items-center gap-1 font-medium">
+                                <AlertCircle className="size-3.5 shrink-0" />
+                                Amount is greater than required EMD ({fmtMoney(targetEmdAmount)}). It will not submit.
+                              </p>
+                            )}
+                            {isPaymentExact && (
+                              <p className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
+                                <CheckCircle2 className="size-3.5 shrink-0" />
+                                Payment matches required EMD amount exactly ({fmtMoney(targetEmdAmount)}).
+                              </p>
+                            )}
+                            {canEdit && isPaymentMismatched && (
+                              <button
+                                type="button"
+                                onClick={() => setPaymentAmount(String(targetEmdAmount))}
+                                className="text-[11px] text-primary hover:underline font-semibold block"
+                              >
+                                Auto-fill required amount ({fmtMoney(targetEmdAmount)})
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setActiveSection('payment')}
-                        className="text-xs h-7 border-rose-300 hover:bg-rose-50"
-                      >
-                        Correct Amount
-                      </Button>
+
+                      {fld({ label: 'Payment Date *', type: 'date', req: true, v: paymentDate, set: setPaymentDate })}
                     </div>
-                  )}
 
-                  <div className="p-3.5 rounded-xl bg-purple-50/60 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-900 text-xs text-purple-900 dark:text-purple-300">
-                    <p className="font-semibold flex items-center gap-1.5">
-                      <User className="size-4" /> Depositor &amp; Person Responsible
-                    </p>
-                    <p className="text-[11px] mt-1 text-purple-700 dark:text-purple-400">
-                      Identifies the exact employee who physically deposited or electronically processed the EMD transaction.
-                    </p>
-                  </div>
+                    {/* Dynamic Fields: ONLINE / CHEQUE / CHALLAN */}
+                    {mode && (
+                      <div className={`p-4 rounded-xl border ${mode.box} space-y-3`}>
+                        <h4 className={`text-xs font-bold uppercase tracking-wider ${mode.h}`}>
+                          {mode.title}
+                        </h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {mode.fields.map((f) => fld({ sm: true, ...f }))}
+                        </div>
+                      </div>
+                    )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {fld({ label: 'Person Name *', req: true, v: depName, set: setDepName, ph: 'e.g. Rahul Kumar', cls: 'text-xs font-medium' })}
-                    {fld({ label: 'Employee ID (Recommended)', v: depEmpId, set: setDepEmpId, ph: 'e.g. GLX-082', cls: 'text-xs font-mono' })}
-                    {fld({ label: 'Department *', req: true, v: depDept, set: setDepDept, ph: 'Finance & Accounts' })}
-                    {fld({ label: 'Designation', v: depDesignation, set: setDepDesignation, ph: 'Senior Finance Executive' })}
-                    {fld({ label: 'Contact Number', type: 'tel', v: depContact, set: setDepContact, ph: '+91 98765 43210' })}
-                    {fld({ label: 'Email ID', type: 'email', v: depEmail, set: setDepEmail, ph: 'rahul.k@globx.co.in' })}
-                    {fld({ label: 'Deposit / Submission Date *', type: 'date', req: true, v: depDate, set: setDepDate, wrap: 'sm:col-span-2' })}
-                  </div>
+                    {/* Receipt Upload / View */}
+                    <ReceiptUpload
+                      label="Payment Receipt / Scanned Proof"
+                      view="View Uploaded Receipt"
+                      url={paymentReceiptUrl}
+                      onOpen={handleOpenReceipt}
+                      uploading={uploadingReceipt}
+                      disabled={!canEdit}
+                      onUpload={(e) => handleReceiptUpload(e, 'payment')}
+                    />
 
-                  {fld({ label: 'Depositor Remarks (Optional)', area: true, v: depRemarks, set: setDepRemarks, ph: 'Bank counter details, slip number, or processing notes...', cls: 'text-xs min-h-[70px]' })}
+                    {canEdit && (
+                      <div className="flex justify-end pt-3 border-t border-border">
+                        <Button
+                          type="submit"
+                          size="sm"
+                          disabled={isPaymentMismatched}
+                          title={isPaymentMismatched ? 'Payment amount must match required EMD amount' : 'Proceed to Depositor Info'}
+                          className="gap-1.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm disabled:opacity-50"
+                        >
+                          Next Step: Depositor Info
+                          <ArrowRight className="size-3.5" />
+                        </Button>
+                      </div>
+                    )}
+                  </motion.form>
+                )}
 
-                  {canEdit && (
-                    <div className="flex items-center justify-between pt-4 border-t border-border">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setActiveSection('payment')}
-                        className="gap-1.5 text-xs font-semibold"
-                      >
-                        <ArrowLeft className="size-3.5" />
-                        Back to Payment Details
-                      </Button>
+                {/* ── SECTION 4: DEPOSITOR / PERSON DETAILS ── */}
+                {activeSection === 'depositor' && (
+                  <motion.form
+                    key="sec-depositor"
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    onSubmit={handleSavePayment}
+                    className="space-y-4 max-w-2xl"
+                  >
+                    {isPaymentMismatched && (
+                      <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-400 text-xs flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <AlertCircle className="size-4 shrink-0" />
+                          <span>Payment amount in Step 3 does not match required EMD ({fmtMoney(targetEmdAmount)}). Submission is blocked.</span>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setActiveSection('payment')}
+                          className="text-xs h-7 border-rose-300 hover:bg-rose-50"
+                        >
+                          Correct Amount
+                        </Button>
+                      </div>
+                    )}
 
-                      <Button
-                        type="submit"
-                        size="sm"
-                        disabled={saving || isPaymentMismatched}
-                        title={isPaymentMismatched ? 'Payment amount in Step 3 must match required EMD amount' : 'Record and save payment'}
-                        className="gap-1.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm disabled:opacity-50"
-                      >
-                        {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-                        Record &amp; Save Payment Details
-                      </Button>
+                    <div className="p-3.5 rounded-xl bg-purple-50/60 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-900 text-xs text-purple-900 dark:text-purple-300">
+                      <p className="font-semibold flex items-center gap-1.5">
+                        <User className="size-4" /> Depositor &amp; Person Responsible
+                      </p>
+                      <p className="text-[11px] mt-1 text-purple-700 dark:text-purple-400">
+                        Identifies the exact employee who physically deposited or electronically processed the EMD transaction.
+                      </p>
                     </div>
-                  )}
-                </motion.form>
-              )}
 
-              {/* ── SECTION 5: VERIFICATION ── */}
-              {activeSection === 'verification' && (
-                <motion.div
-                  key="sec-verification"
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  className="space-y-4 max-w-2xl"
-                >
-                  <div className="p-3.5 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-900 text-xs text-indigo-900 dark:text-indigo-300">
-                    <p className="font-semibold flex items-center gap-1.5">
-                      <ShieldCheck className="size-4" /> Finance Payment Verification
-                    </p>
-                    <p className="text-[11px] mt-1 text-indigo-700 dark:text-indigo-400">
-                      Re-verify that the payment has cleared GlobX's bank/portal ledger and receipts match the required tender terms.
-                    </p>
-                  </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {fld({ label: 'Person Name *', req: true, v: depName, set: setDepName, ph: 'e.g. Rahul Kumar', cls: 'text-xs font-medium' })}
+                      {fld({ label: 'Employee ID (Recommended)', v: depEmpId, set: setDepEmpId, ph: 'e.g. GLX-082', cls: 'text-xs font-mono' })}
+                      {fld({ label: 'Department *', req: true, v: depDept, set: setDepDept, ph: 'Finance & Accounts' })}
+                      {fld({ label: 'Designation', v: depDesignation, set: setDepDesignation, ph: 'Senior Finance Executive' })}
+                      {fld({ label: 'Contact Number', type: 'tel', v: depContact, set: setDepContact, ph: '+91 98765 43210' })}
+                      {fld({ label: 'Email ID', type: 'email', v: depEmail, set: setDepEmail, ph: 'rahul.k@globx.co.in' })}
+                      {fld({ label: 'Deposit / Submission Date *', type: 'date', req: true, v: depDate, set: setDepDate, wrap: 'sm:col-span-2' })}
+                    </div>
 
-                  <div className="p-4 rounded-xl border border-border bg-card space-y-3">
-                    <div className="flex justify-between items-center pb-2 border-b border-border/60 text-xs">
-                      <span className="text-muted-foreground font-semibold">Current Verification Status:</span>
-                      <Badge
-                        variant="outline"
-                        className={`text-xs font-bold ${
-                          verStatus === 'Verified'
+                    {fld({ label: 'Depositor Remarks (Optional)', area: true, v: depRemarks, set: setDepRemarks, ph: 'Bank counter details, slip number, or processing notes...', cls: 'text-xs min-h-[70px]' })}
+
+                    {canEdit && (
+                      <div className="flex items-center justify-between pt-4 border-t border-border">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setActiveSection('payment')}
+                          className="gap-1.5 text-xs font-semibold"
+                        >
+                          <ArrowLeft className="size-3.5" />
+                          Back to Payment Details
+                        </Button>
+
+                        <Button
+                          type="submit"
+                          size="sm"
+                          disabled={saving || isPaymentMismatched}
+                          title={isPaymentMismatched ? 'Payment amount in Step 3 must match required EMD amount' : 'Record and save payment'}
+                          className="gap-1.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm disabled:opacity-50"
+                        >
+                          {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+                          Record &amp; Save Payment Details
+                        </Button>
+                      </div>
+                    )}
+                  </motion.form>
+                )}
+
+                {/* ── SECTION 5: VERIFICATION ── */}
+                {activeSection === 'verification' && (
+                  <motion.div
+                    key="sec-verification"
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="space-y-4 max-w-2xl"
+                  >
+                    <div className="p-3.5 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-900 text-xs text-indigo-900 dark:text-indigo-300">
+                      <p className="font-semibold flex items-center gap-1.5">
+                        <ShieldCheck className="size-4" /> Finance Payment Verification
+                      </p>
+                      <p className="text-[11px] mt-1 text-indigo-700 dark:text-indigo-400">
+                        Re-verify that the payment has cleared GlobX's bank/portal ledger and receipts match the required tender terms.
+                      </p>
+                    </div>
+
+                    <div className="p-4 rounded-xl border border-border bg-card space-y-3">
+                      <div className="flex justify-between items-center pb-2 border-b border-border/60 text-xs">
+                        <span className="text-muted-foreground font-semibold">Current Verification Status:</span>
+                        <Badge
+                          variant="outline"
+                          className={`text-xs font-bold ${verStatus === 'Verified'
                             ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                             : verStatus === 'Rejected'
-                            ? 'bg-rose-50 text-rose-700 border-rose-200'
-                            : 'bg-amber-50 text-amber-700 border-amber-200'
-                        }`}
-                      >
-                        {verStatus}
-                      </Badge>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                      <div>
-                        <span className="text-muted-foreground block text-[11px]">Verified By:</span>
-                        <span className="font-semibold text-foreground">
-                          {emd?.verified_by ? `${emd.verified_by.full_name} (${emd.verified_by.role || 'FM'})` : 'Pending'}
-                        </span>
+                              ? 'bg-rose-50 text-rose-700 border-rose-200'
+                              : 'bg-amber-50 text-amber-700 border-amber-200'
+                            }`}
+                        >
+                          {verStatus}
+                        </Badge>
                       </div>
-                      <div>
-                        <span className="text-muted-foreground block text-[11px]">Verified At:</span>
-                        <span className="font-medium text-foreground">
-                          {emd?.verified_at ? fmtDate(emd.verified_at) : '—'}
-                        </span>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <span className="text-muted-foreground block text-[11px]">Verified By:</span>
+                          <span className="font-semibold text-foreground">
+                            {emd?.verified_by ? `${emd.verified_by.full_name} (${emd.verified_by.role || 'FM'})` : 'Pending'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground block text-[11px]">Verified At:</span>
+                          <span className="font-medium text-foreground">
+                            {emd?.verified_at ? fmtDate(emd.verified_at) : '—'}
+                          </span>
+                        </div>
                       </div>
+
+                      {fld({ label: 'Verification Remarks / Audit Notes', area: true, wrap: 'pt-2', v: verRemarks, set: setVerRemarks, ph: 'Confirm bank statement match, challan stamp check, or reason if rejected...', cls: 'text-xs min-h-[75px]' })}
                     </div>
 
-                    {fld({ label: 'Verification Remarks / Audit Notes', area: true, wrap: 'pt-2', v: verRemarks, set: setVerRemarks, ph: 'Confirm bank statement match, challan stamp check, or reason if rejected...', cls: 'text-xs min-h-[75px]' })}
-                  </div>
+                    {canEdit && (
+                      <div className="flex items-center justify-end gap-2 pt-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={saving || !emd?.payment_amount}
+                          onClick={() => handleVerify('Rejected')}
+                          className="gap-1.5 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50"
+                        >
+                          <X className="size-3.5" />
+                          Reject Verification
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={saving || !emd?.payment_amount}
+                          onClick={() => handleVerify('Verified')}
+                          className="gap-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white"
+                        >
+                          <CheckCircle2 className="size-3.5" />
+                          Mark as Verified
+                        </Button>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
 
-                  {canEdit && (
-                    <div className="flex items-center justify-end gap-2 pt-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={saving || !emd?.payment_amount}
-                        onClick={() => handleVerify('Rejected')}
-                        className="gap-1.5 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50"
-                      >
-                        <X className="size-3.5" />
-                        Reject Verification
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={saving || !emd?.payment_amount}
-                        onClick={() => handleVerify('Verified')}
-                        className="gap-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white"
-                      >
-                        <CheckCircle2 className="size-3.5" />
-                        Mark as Verified
-                      </Button>
+                {/* ── SECTION 6: RELEASE / REFUND TRACKING ── */}
+                {activeSection === 'refund' && (
+                  <motion.form
+                    key="sec-refund"
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    onSubmit={handleSaveRefund}
+                    className="space-y-4 max-w-2xl"
+                  >
+                    <div className="p-3.5 rounded-xl bg-teal-50/60 dark:bg-teal-950/20 border border-teal-200 dark:border-teal-900 text-xs text-teal-900 dark:text-teal-300">
+                      <p className="font-semibold flex items-center gap-1.5">
+                        <ArrowRight className="size-4" /> Maturity, Release &amp; Refund Monitoring
+                      </p>
+                      <p className="text-[11px] mt-1 text-teal-700 dark:text-teal-400">
+                        Track the return of the EMD after tender completion or PO receipt. Actual Refund Date and UTR are strictly recorded on refund receipt.
+                      </p>
                     </div>
-                  )}
-                </motion.div>
-              )}
 
-              {/* ── SECTION 6: RELEASE / REFUND TRACKING ── */}
-              {activeSection === 'refund' && (
-                <motion.form
-                  key="sec-refund"
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  onSubmit={handleSaveRefund}
-                  className="space-y-4 max-w-2xl"
-                >
-                  <div className="p-3.5 rounded-xl bg-teal-50/60 dark:bg-teal-950/20 border border-teal-200 dark:border-teal-900 text-xs text-teal-900 dark:text-teal-300">
-                    <p className="font-semibold flex items-center gap-1.5">
-                      <ArrowRight className="size-4" /> Maturity, Release &amp; Refund Monitoring
-                    </p>
-                    <p className="text-[11px] mt-1 text-teal-700 dark:text-teal-400">
-                      Track the return of the EMD after tender completion or PO receipt. Actual Refund Date and UTR are strictly recorded on refund receipt.
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {fld({ label: 'EMD Release/Refund Status *', opts: Object.keys(REFUND_STATUS_CONFIG), v: refStatus, set: setRefStatus })}
-                    {fld({ label: 'Refund Mode', opts: [['Online', 'Online Transfer / RTGS'], ['Cheque', 'Cheque Return'], ['Portal Auto-Credit', 'GeM Portal Auto-Credit']], v: refMode, set: setRefMode })}
-                    {fld({ label: 'Expected Refund Date (Recommended)', type: 'date', v: refExpectedDate, set: setRefExpectedDate })}
-                    {fld({
-                      label: <><span>Actual Refund Date</span>{refStatus === 'Refunded' && <span className="text-rose-500 text-[10px]">Mandatory</span>}</>,
-                      lcls: 'flex items-center justify-between',
-                      type: 'date', req: refStatus === 'Refunded', v: refActualDate, set: setRefActualDate,
-                    })}
-                    {fld({ label: 'Refund Amount (₹)', type: 'number', min: '1', step: '0.01', v: refAmount, set: setRefAmount, ph: '50000', cls: 'text-xs font-mono font-medium' })}
-                    {fld({ label: 'Refund Reference Number', v: refRefNo, set: setRefRefNo, ph: 'REF-REFUND-991', cls: 'text-xs font-mono' })}
-                    {fld({
-                      label: <><span>Refund Transaction / UTR Number</span>{refStatus === 'Refunded' && refMode === 'Online' && (
-                        <span className="text-rose-500 text-[10px]">Mandatory for Online</span>
-                      )}</>,
-                      lcls: 'flex items-center justify-between', wrap: 'sm:col-span-2',
-                      req: refStatus === 'Refunded' && refMode === 'Online', v: refUtr, set: setRefUtr, ph: 'e.g. CMS1882949102', cls: 'text-xs font-mono',
-                    })}
-                  </div>
-
-                  {fld({ label: 'Refund Remarks (Optional)', area: true, v: refRemarks, set: setRefRemarks, ph: 'e.g. Bank credit received in HDFC account on tender closure...', cls: 'text-xs min-h-[70px]' })}
-
-                  {/* Refund Proof Upload */}
-                  <ReceiptUpload
-                    label="Refund Proof / Bank Statement Receipt"
-                    view="View Refund Proof"
-                    url={refReceiptUrl}
-                    onOpen={handleOpenReceipt}
-                    uploading={uploadingRefundReceipt}
-                    disabled={!canEdit}
-                    onUpload={(e) => handleReceiptUpload(e, 'refund')}
-                  />
-
-                  {canEdit && (
-                    <div className="flex justify-end pt-3 border-t border-border">
-                      <Button type="submit" size="sm" disabled={saving} className="gap-1.5 text-xs font-semibold">
-                        {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-                        Save Release / Refund Information
-                      </Button>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {fld({ label: 'EMD Release/Refund Status *', opts: Object.keys(REFUND_STATUS_CONFIG), v: refStatus, set: setRefStatus })}
+                      {fld({ label: 'Refund Mode', opts: [['Online', 'Online Transfer / RTGS'], ['Cheque', 'Cheque Return'], ['Portal Auto-Credit', 'GeM Portal Auto-Credit']], v: refMode, set: setRefMode })}
+                      {fld({ label: 'Expected Refund Date (Recommended)', type: 'date', v: refExpectedDate, set: setRefExpectedDate })}
+                      {fld({
+                        label: <><span>Actual Refund Date</span>{refStatus === 'Refunded' && <span className="text-rose-500 text-[10px]">Mandatory</span>}</>,
+                        lcls: 'flex items-center justify-between',
+                        type: 'date', req: refStatus === 'Refunded', v: refActualDate, set: setRefActualDate,
+                      })}
+                      {fld({ label: 'Refund Amount (₹)', type: 'number', min: '1', step: '0.01', v: refAmount, set: setRefAmount, ph: '50000', cls: 'text-xs font-mono font-medium' })}
+                      {fld({ label: 'Refund Reference Number', v: refRefNo, set: setRefRefNo, ph: 'REF-REFUND-991', cls: 'text-xs font-mono' })}
+                      {fld({
+                        label: <><span>Refund Transaction / UTR Number</span>{refStatus === 'Refunded' && refMode === 'Online' && (
+                          <span className="text-rose-500 text-[10px]">Mandatory for Online</span>
+                        )}</>,
+                        lcls: 'flex items-center justify-between', wrap: 'sm:col-span-2',
+                        req: refStatus === 'Refunded' && refMode === 'Online', v: refUtr, set: setRefUtr, ph: 'e.g. CMS1882949102', cls: 'text-xs font-mono',
+                      })}
                     </div>
-                  )}
-                </motion.form>
-              )}
-            </AnimatePresence>
+
+                    {fld({ label: 'Refund Remarks (Optional)', area: true, v: refRemarks, set: setRefRemarks, ph: 'e.g. Bank credit received in HDFC account on tender closure...', cls: 'text-xs min-h-[70px]' })}
+
+                    {/* Refund Proof Upload */}
+                    <ReceiptUpload
+                      label="Refund Proof / Bank Statement Receipt"
+                      view="View Refund Proof"
+                      url={refReceiptUrl}
+                      onOpen={handleOpenReceipt}
+                      uploading={uploadingRefundReceipt}
+                      disabled={!canEdit}
+                      onUpload={(e) => handleReceiptUpload(e, 'refund')}
+                    />
+
+                    {canEdit && (
+                      <div className="flex justify-end pt-3 border-t border-border">
+                        <Button type="submit" size="sm" disabled={saving} className="gap-1.5 text-xs font-semibold">
+                          {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+                          Save Release / Refund Information
+                        </Button>
+                      </div>
+                    )}
+                  </motion.form>
+                )}
+              </AnimatePresence>
             </>
           )}
         </div>

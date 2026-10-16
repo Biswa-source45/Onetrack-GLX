@@ -20,7 +20,7 @@ import { EmdApprovalDialog } from './EmdApprovalDialog'
 import { EmdAuditDialog } from './EmdAuditDialog'
 
 // ── Interactive In-App Receipt / Proof Viewer Modal ─────────────────────────
-function ReceiptPreviewModal({ open, onClose, url, title }) {
+export function ReceiptPreviewModal({ open, onClose, url, title }) {
   const [blobUrl, setBlobUrl] = useState('')
   const [loadingDoc, setLoadingDoc] = useState(true)
   const [docError, setDocError] = useState(false)
@@ -245,9 +245,10 @@ function ProofCard({ iconBox, icon, title, sub, action }) {
 
 export function EmdLifecycleCard({ bid, onRefresh }) {
   const { hasRole, user } = usePermissions()
-  const isFinance = hasRole('FINANCE')
-  const isMD = hasRole('ADMIN') || hasRole('SUPER_ADMIN')
-  const canEdit = isFinance || isMD
+  const isFinance = hasRole('FINANCE') || hasRole('FINANCE_MANAGER') || hasRole('FINANCE_EXECUTIVE')
+  const isMD = hasRole('MANAGING_DIRECTOR') || hasRole('ADMIN') || hasRole('SUPER_ADMIN')
+  const isAccountManager = hasRole('ACCOUNT_MANAGER') || hasRole('SALES_MANAGER') || hasRole('ACCOUNTS_MANAGER')
+  const canEdit = isFinance || isMD || isAccountManager
   const notRequired = Boolean(bid?.emd_exempted || bid?.emd_not_applicable)
 
   const [emd, setEmd] = useState(null)
@@ -464,127 +465,127 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
         </div>
 
         {canEdit && (<>
-        {/* Section 2: Mode-Specific Payment Details (All Payment Mode Details) */}
-        <Section
-          box="border-blue-200/80 bg-blue-50/20 dark:bg-blue-950/10"
-          h="text-blue-900 dark:text-blue-300"
-          title={<>
-            <CreditCard className="size-3.5 text-blue-600 dark:text-blue-400" />
-            {paymentModeName} Payment Details
-          </>}
-          right={
-            <Badge variant="outline" className="text-[10px] font-semibold bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800">
-              Mode: {paymentModeName}
-            </Badge>
-          }
-        >
-          {modeBlocks.map(([show, rows], i) => show && <InfoGrid key={i} rows={rows} />)}
-        </Section>
+          {/* Section 2: Mode-Specific Payment Details (All Payment Mode Details) */}
+          <Section
+            box="border-blue-200/80 bg-blue-50/20 dark:bg-blue-950/10"
+            h="text-blue-900 dark:text-blue-300"
+            title={<>
+              <CreditCard className="size-3.5 text-blue-600 dark:text-blue-400" />
+              {paymentModeName} Payment Details
+            </>}
+            right={
+              <Badge variant="outline" className="text-[10px] font-semibold bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800">
+                Mode: {paymentModeName}
+              </Badge>
+            }
+          >
+            {modeBlocks.map(([show, rows], i) => show && <InfoGrid key={i} rows={rows} />)}
+          </Section>
 
-        {/* Section 3: Uploaded Proof & Receipt Documents */}
-        <Section
-          box="border-emerald-200/80 bg-emerald-50/20 dark:bg-emerald-950/10"
-          h="text-emerald-900 dark:text-emerald-300"
-          title={<>
-            <FileCheck className="size-3.5 text-emerald-600 dark:text-emerald-400" />
-            Uploaded Proof &amp; Receipt Documents
-          </>}
-          right={<span className="text-[10px] text-muted-foreground">Scanned Verification Evidence</span>}
-        >
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            <ProofCard
-              iconBox="bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300"
-              icon={<FileText className="size-4" />}
-              title="EMD Payment Proof / Receipt"
-              sub={paymentReceiptUrl ? 'Document attached' : 'No document uploaded yet'}
-              action={paymentReceiptUrl ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleViewProof(paymentReceiptUrl, 'EMD Payment Receipt')}
-                  className="h-7 px-2.5 text-[11px] gap-1 text-primary hover:bg-primary/5 font-medium shrink-0"
-                >
-                  <Eye className="size-3" /> View Proof
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setShowDetailsModal(true)}
-                  className="h-7 text-[11px] text-muted-foreground hover:text-foreground"
-                >
-                  Upload Proof
-                </Button>
-              )}
-            />
-            <ProofCard
-              iconBox="bg-teal-100 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300"
-              icon={<Receipt className="size-4" />}
-              title="Refund Advice / Proof"
-              sub={refundReceiptUrl ? 'Refund advice uploaded' : 'Pending release/refund'}
-              action={refundReceiptUrl ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleViewProof(refundReceiptUrl, 'Refund Advice / Proof')}
-                  className="h-7 px-2.5 text-[11px] gap-1 text-teal-700 hover:bg-teal-50 font-medium shrink-0"
-                >
-                  <Eye className="size-3" /> View Proof
-                </Button>
-              ) : (
-                <span className="text-[11px] text-muted-foreground pr-2 italic">
-                  {emd?.refund_status === 'Refunded' ? 'Not uploaded' : '—'}
+          {/* Section 3: Uploaded Proof & Receipt Documents */}
+          <Section
+            box="border-emerald-200/80 bg-emerald-50/20 dark:bg-emerald-950/10"
+            h="text-emerald-900 dark:text-emerald-300"
+            title={<>
+              <FileCheck className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+              Uploaded Proof &amp; Receipt Documents
+            </>}
+            right={<span className="text-[10px] text-muted-foreground">Scanned Verification Evidence</span>}
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <ProofCard
+                iconBox="bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300"
+                icon={<FileText className="size-4" />}
+                title="EMD Payment Proof / Receipt"
+                sub={paymentReceiptUrl ? 'Document attached' : 'No document uploaded yet'}
+                action={paymentReceiptUrl ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleViewProof(paymentReceiptUrl, 'EMD Payment Receipt')}
+                    className="h-7 px-2.5 text-[11px] gap-1 text-primary hover:bg-primary/5 font-medium shrink-0"
+                  >
+                    <Eye className="size-3" /> View Proof
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setShowDetailsModal(true)}
+                    className="h-7 text-[11px] text-muted-foreground hover:text-foreground"
+                  >
+                    Upload Proof
+                  </Button>
+                )}
+              />
+              <ProofCard
+                iconBox="bg-teal-100 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300"
+                icon={<Receipt className="size-4" />}
+                title="Refund Advice / Proof"
+                sub={refundReceiptUrl ? 'Refund advice uploaded' : 'Pending release/refund'}
+                action={refundReceiptUrl ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleViewProof(refundReceiptUrl, 'Refund Advice / Proof')}
+                    className="h-7 px-2.5 text-[11px] gap-1 text-teal-700 hover:bg-teal-50 font-medium shrink-0"
+                  >
+                    <Eye className="size-3" /> View Proof
+                  </Button>
+                ) : (
+                  <span className="text-[11px] text-muted-foreground pr-2 italic">
+                    {emd?.refund_status === 'Refunded' ? 'Not uploaded' : '—'}
+                  </span>
+                )}
+              />
+            </div>
+          </Section>
+
+          {/* Section 4: Depositor Details (All Depositor / Person Details) */}
+          <Section
+            box="border-purple-200/80 bg-purple-50/20 dark:bg-purple-950/10"
+            h="text-purple-900 dark:text-purple-300"
+            title={<><User className="size-3.5 text-purple-600 dark:text-purple-400" /> Depositor / Person Details</>}
+            right={<span className="text-[10px] text-muted-foreground">Authorized Depositor Information</span>}
+          >
+            <InfoGrid gap="gap-3.5" rows={[
+              ['Deposited By', emd?.depositor_name || '—', V.sb],
+              ['Employee ID', emd?.depositor_employee_id || '—', V.monoMd],
+              ['Department', emd?.depositor_department || '—', V.md],
+              ['Designation', emd?.depositor_designation || '—', V.md],
+              ['Contact Number', emd?.depositor_contact ? (
+                <>
+                  <Phone className="size-3 text-muted-foreground" />
+                  {emd.depositor_contact}
+                </>
+              ) : '—', `${V.monoMd} flex items-center gap-1`],
+              ['Email ID', emd?.depositor_email ? (
+                <span className="flex items-center gap-1">
+                  <Mail className="size-3 text-muted-foreground shrink-0" />
+                  <span className="truncate">{emd.depositor_email}</span>
                 </span>
-              )}
-            />
-          </div>
-        </Section>
+              ) : '—', `${V.md} truncate block`, { title: emd?.depositor_email }],
+              ['Deposit Date', fmtDate(emd?.deposit_date), V.md],
+              ['Depositor Remarks', emd?.depositor_remarks || 'None', `${V.md} italic truncate block`, { title: emd?.depositor_remarks }],
+            ]} />
+          </Section>
 
-        {/* Section 4: Depositor Details (All Depositor / Person Details) */}
-        <Section
-          box="border-purple-200/80 bg-purple-50/20 dark:bg-purple-950/10"
-          h="text-purple-900 dark:text-purple-300"
-          title={<><User className="size-3.5 text-purple-600 dark:text-purple-400" /> Depositor / Person Details</>}
-          right={<span className="text-[10px] text-muted-foreground">Authorized Depositor Information</span>}
-        >
-          <InfoGrid gap="gap-3.5" rows={[
-            ['Deposited By', emd?.depositor_name || '—', V.sb],
-            ['Employee ID', emd?.depositor_employee_id || '—', V.monoMd],
-            ['Department', emd?.depositor_department || '—', V.md],
-            ['Designation', emd?.depositor_designation || '—', V.md],
-            ['Contact Number', emd?.depositor_contact ? (
-              <>
-                <Phone className="size-3 text-muted-foreground" />
-                {emd.depositor_contact}
-              </>
-            ) : '—', `${V.monoMd} flex items-center gap-1`],
-            ['Email ID', emd?.depositor_email ? (
-              <span className="flex items-center gap-1">
-                <Mail className="size-3 text-muted-foreground shrink-0" />
-                <span className="truncate">{emd.depositor_email}</span>
-              </span>
-            ) : '—', `${V.md} truncate block`, { title: emd?.depositor_email }],
-            ['Deposit Date', fmtDate(emd?.deposit_date), V.md],
-            ['Depositor Remarks', emd?.depositor_remarks || 'None', `${V.md} italic truncate block`, { title: emd?.depositor_remarks }],
-          ]} />
-        </Section>
-
-        {/* Section 5: Refund Tracking */}
-        <Section
-          box="border-teal-200/80 bg-teal-50/20 dark:bg-teal-950/10"
-          h="text-teal-900 dark:text-teal-300"
-          title={<><ArrowRight className="size-3.5 text-teal-600" /> EMD Release &amp; Refund Status</>}
-          right={<span className="text-[10px] text-muted-foreground">Post-Bid Closure Tracking</span>}
-        >
-          <InfoGrid rows={[
-            ['Refund Status', emd?.refund_status || 'Pending', `inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold border mt-0.5 ${REFUND_STATUS_CONFIG[emd?.refund_status]?.color || 'bg-muted'}`],
-            ['Expected Refund Date', fmtDate(emd?.expected_refund_date), V.md],
-            ['Actual Refund Date', fmtDate(emd?.actual_refund_date), V.md],
-            ['Refund Mode', emd?.refund_mode || '—', V.md],
-            ['Refund Reference / UTR', emd?.refund_reference_no || emd?.refund_transaction_id || '—', V.monoMd],
-            ['Refund Remarks', emd?.refund_remarks || '—', `${V.md} italic`, { wrap: 'sm:col-span-3' }],
-          ]} />
-        </Section>
+          {/* Section 5: Refund Tracking */}
+          <Section
+            box="border-teal-200/80 bg-teal-50/20 dark:bg-teal-950/10"
+            h="text-teal-900 dark:text-teal-300"
+            title={<><ArrowRight className="size-3.5 text-teal-600" /> EMD Release &amp; Refund Status</>}
+            right={<span className="text-[10px] text-muted-foreground">Post-Bid Closure Tracking</span>}
+          >
+            <InfoGrid rows={[
+              ['Refund Status', emd?.refund_status || 'Pending', `inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold border mt-0.5 ${REFUND_STATUS_CONFIG[emd?.refund_status]?.color || 'bg-muted'}`],
+              ['Expected Refund Date', fmtDate(emd?.expected_refund_date), V.md],
+              ['Actual Refund Date', fmtDate(emd?.actual_refund_date), V.md],
+              ['Refund Mode', emd?.refund_mode || '—', V.md],
+              ['Refund Reference / UTR', emd?.refund_reference_no || emd?.refund_transaction_id || '—', V.monoMd],
+              ['Refund Remarks', emd?.refund_remarks || '—', `${V.md} italic`, { wrap: 'sm:col-span-3' }],
+            ]} />
+          </Section>
 
         </>)}
 
@@ -645,10 +646,10 @@ export function EmdLifecycleCard({ bid, onRefresh }) {
                 !isRequiredInfoComplete
                   ? 'Complete required EMD amount, due date, reference number and purpose to enable MD Approval'
                   : isMDApproved
-                  ? 'EMD is already MD Approved'
-                  : isPendingMDApproval
-                  ? 'Already submitted for MD Approval'
-                  : 'Submit verified EMD details for executive sign-off'
+                    ? 'EMD is already MD Approved'
+                    : isPendingMDApproval
+                      ? 'Already submitted for MD Approval'
+                      : 'Submit verified EMD details for executive sign-off'
               }
             >
               <Button

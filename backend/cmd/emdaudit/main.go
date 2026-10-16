@@ -65,53 +65,72 @@ func main() {
 	}
 	rows.Close()
 
-	fmt.Println("\n=== 2. emd_returned distribution among IMPORTED bids only ===")
+	fmt.Println("\n=== Tenders updated recently (last 7 days) ===")
 	rows, err = conn.Query(ctx, `
-		SELECT emd_returned, emd_exempted, emd_not_applicable, count(*), sum(COALESCE(emd_amount,0))
+		SELECT id, title, workflow_stage, bid_status, emd_amount, emd_ready, emd_returned,
+		       emd_returned_date, updated_at
 		FROM bid.bid_workspaces
-		WHERE archived_at IS NULL AND metadata->>'imported' = 'true'
-		GROUP BY 1,2,3
-		ORDER BY 1,2,3`)
+		WHERE archived_at IS NULL
+		ORDER BY updated_at DESC
+		LIMIT 15`)
 	if err != nil {
-		log.Fatalf("query2: %v", err)
+		log.Fatal(err)
 	}
 	for rows.Next() {
-		var returned, exempted, notApplicable bool
-		var cnt int
-		var sum float64
-		if err := rows.Scan(&returned, &exempted, &notApplicable, &cnt, &sum); err != nil {
+		var id, title, stage, status string
+		var emdAmount *float64
+		var emdReady, emdReturned bool
+		var emdReturnedDate, updatedAt *string
+		if err := rows.Scan(&id, &title, &stage, &status, &emdAmount, &emdReady, &emdReturned, &emdReturnedDate, &updatedAt); err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("emd_returned=%-5v exempted=%-5v not_applicable=%-5v count=%-4d sum=%.2f\n", returned, exempted, notApplicable, cnt, sum)
+		amt := 0.0
+		if emdAmount != nil {
+			amt = *emdAmount
+		}
+		retD := "-"
+		if emdReturnedDate != nil {
+			retD = *emdReturnedDate
+		}
+		upD := "-"
+		if updatedAt != nil {
+			upD = *updatedAt
+		}
+		fmt.Printf("id=%s stage=%-22s status=%-6s amt=%-9.2f ready=%-5v ret=%-5v retDate=%-20s updated=%-20s title=%s\n",
+			id[:8], stage, status, amt, emdReady, emdReturned, retD[:min(len(retD), 19)], upD[:min(len(upD), 19)], title)
 	}
 	rows.Close()
 
-	fmt.Println("\n=== 3. The 9 sample Bid IDs from the reference table — current stored state ===")
-	sampleIDs := []string{
-		"GEM/2025/B/6935931", "GEM/2026/B/7206177", "GEM/2026/B/7139304",
-		"GEM/2026/B/7268770", "GEM/2026/B/7327401", "GEM/2026/B/7360277",
-		"GEM/2026/B/7392098", "GEM/2026/B/7472152", "GEM/2026/B/7791470",
+	fmt.Println("\n=== Active tenders requiring EMD ===")
+	rows, err = conn.Query(ctx, `
+		SELECT id, title, workflow_stage, bid_status, emd_amount, emd_ready, emd_returned,
+		       COALESCE(closing_date::text, end_date::text, 'no date') AS deadline
+		FROM bid.bid_workspaces
+		WHERE archived_at IS NULL
+		  AND workflow_stage NOT IN ('CANCELLED', 'CLOSED', 'LOST')
+		  AND bid_status NOT IN ('CANCELLED', 'CLOSED', 'LOST')
+		  AND COALESCE(bid_outcome, '') != 'LOST'
+		  AND emd_exempted = false AND emd_not_applicable = false AND COALESCE(emd_amount, 0) > 0
+		ORDER BY closing_date ASC NULLS LAST`)
+	if err != nil {
+		log.Fatal(err)
 	}
-	for _, id := range sampleIDs {
-		row := conn.QueryRow(ctx, `
-			SELECT gem_bid_no, bid_no, organization_name, bid_status, workflow_stage,
-			       excel_bid_status, emd_amount, emd_returned, emd_returned_date,
-			       emd_exempted, emd_not_applicable, metadata->>'imported'
-			FROM bid.bid_workspaces
-			WHERE archived_at IS NULL AND (UPPER(TRIM(gem_bid_no)) = UPPER($1) OR UPPER(TRIM(bid_no)) = UPPER($1))
-			LIMIT 1`, id)
-		var gemBidNo, bidNo, org, bidStatus, workflowStage, excelStatus, imported *string
-		var emdAmount *float64
-		var emdReturned, emdExempted, emdNotApplicable *bool
-		var emdReturnedDate *string
-		err := row.Scan(&gemBidNo, &bidNo, &org, &bidStatus, &workflowStage, &excelStatus, &emdAmount, &emdReturned, &emdReturnedDate, &emdExempted, &emdNotApplicable, &imported)
-		if err != nil {
-			fmt.Printf("%-22s NOT FOUND (%v)\n", id, err)
-			continue
+	var totalPipeline float64
+	var countPipeline int
+	for rows.Next() {
+		var id, title, stage, status, deadline string
+		var emdAmount float64
+		var emdReady, emdReturned bool
+		if err := rows.Scan(&id, &title, &stage, &status, &emdAmount, &emdReady, &emdReturned, &deadline); err != nil {
+			log.Fatal(err)
 		}
-		fmt.Printf("%-22s org=%-45s bid_status=%-10s workflow=%-14s excel_status=%-10s emd_amount=%-10v emd_returned=%-5v exempted=%-5v not_applicable=%-5v imported=%v\n",
-			id, strOr(org), strOr(bidStatus), strOr(workflowStage), strOr(excelStatus), fmtF(emdAmount), boolOr(emdReturned), boolOr(emdExempted), boolOr(emdNotApplicable), strOr(imported))
+		totalPipeline += emdAmount
+		countPipeline++
+		fmt.Printf("#%d id=%s stage=%-25s status=%-8s ready=%-5v ret=%-5v amt=%-10.2f deadline=%-25s title=%s\n",
+			countPipeline, id[:8], stage, status, emdReady, emdReturned, emdAmount, deadline, title)
 	}
+	fmt.Printf("Total Pipeline: count=%d sum=%.2f\n", countPipeline, totalPipeline)
+	rows.Close()
 
 	fmt.Println("\n=== 4. Distinct bid_status / excel_bid_status / workflow_stage values seen on IMPORTED bids ===")
 	rows, err = conn.Query(ctx, `

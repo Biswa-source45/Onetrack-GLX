@@ -40,9 +40,10 @@ import { logStageMicroEvent } from '../../services/auditLogger'
 import { useBidStore } from '../../store/useBidStore'
 import { buildAlertNoteHtml } from '../../lib/tenderFormat'
 import { actsAs, expandRoles } from '../../lib/roles'
-import { ChecklistReview } from './ChecklistReview'
 import { normalizeOemCandidates, resolveProductOem, oemKey, confirmedOems, reconcileOemRows } from '../../lib/oem'
 import { EmdLifecycleCard } from './EmdLifecycleCard'
+import { EmdDetailsDialog } from './EmdDetailsDialog'
+import { updateEmdRefund } from '../../services/emd'
 
 function fmtMoney(v) {
   if (!v && v !== 0) return '—'
@@ -5020,6 +5021,7 @@ export function Stage11Workspace({ bid, onRefresh }) {
 // when the tender actually requires a Bank Guarantee.
 export function Stage12Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
+  const [showEmdRefundModal, setShowEmdRefundModal] = useState(false)
   const [emdReturned, setEmdReturned] = useState(!!bid?.emd_returned)
   const [bgProceeded, setBgProceeded] = useState(!!bid?.bg_discharged)
   const [poReceived, setPoReceived] = useState(bid?.po_received_status === 'PO Received')
@@ -5084,23 +5086,30 @@ export function Stage12Workspace({ bid, onRefresh }) {
     }
   }
 
-  const handleEmdToggle = async (checked) => {
-    setEmdReturned(checked)
+  const handleEmdCheckboxClick = async (e) => {
+    e?.stopPropagation()
+    if (!emdReturned) {
+      toast.info('Please enter EMD refund details to mark as returned')
+      setShowEmdRefundModal(true)
+      return
+    }
     try {
       const res = await updateBid(bid.id, {
-        emd_returned: checked,
-        emd_returned_date: checked ? new Date().toISOString() : null,
+        emd_returned: false,
+        emd_returned_date: null,
       })
       if (res.ok) {
+        await updateEmdRefund(bid.id, { refund_status: 'Pending' }).catch(() => {})
+        setEmdReturned(false)
         logStageMicroEvent(bid.id, {
           fromStage: 'AWARD_HANDOVER',
           toStage: 'AWARD_HANDOVER',
           eventType: 'FINANCE',
-          transitionReason: checked ? 'Marked EMD as Refunded / Returned by Procuring Authority' : 'Marked EMD Return as Pending',
-          details: { emdReturned: checked }
+          transitionReason: 'EMD Returned status unchecked; refund status reset to Pending',
+          details: { emdReturned: false }
         })
-        toast.success(checked ? 'EMD marked as Returned' : 'EMD marked as Pending Return')
-        onRefresh()
+        toast.success('EMD return marked as Pending')
+        onRefresh?.()
       }
     } catch {
       toast.error('Network error')
@@ -5233,56 +5242,135 @@ export function Stage12Workspace({ bid, onRefresh }) {
                   </div>
                 </label>
 
-                {/* Step (conditional): Bank Guarantee Issued — enabled only once PO received, shown only if BG required */}
+                {/* Step (conditional): Bank Guarantee Issued — shown only if BG required */}
                 {bgRequired && (
-                  <label className={`flex items-center gap-2 p-2.5 rounded-lg border transition-colors ${poReceived ? 'cursor-pointer border-border hover:bg-muted/20' : 'cursor-not-allowed border-border/50 opacity-50'
+                  <div className={`flex items-start gap-2.5 p-2.5 rounded-lg border transition-colors ${bgProceeded
+                    ? 'border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20'
+                    : 'border-border bg-card hover:bg-muted/20'
                     }`}>
-                    <input type="checkbox" checked={bgProceeded} disabled={!poReceived} onChange={e => handleBgToggle(e.target.checked)} className="rounded" />
+                    <input
+                      type="checkbox"
+                      checked={bgProceeded}
+                      onChange={e => handleBgToggle(e.target.checked)}
+                      aria-label="Bank Guarantee Issued"
+                      className="rounded size-4 mt-0.5 text-primary cursor-pointer"
+                    />
                     <div className="flex-1">
-                      <span className="font-medium">{bgStep}. Bank Guarantee Issued</span>
-                      <p className="text-muted-foreground text-[10px]">{poReceived ? 'Confirm the Bank Guarantee has been issued to the procuring authority' : 'Unlocks once PO is marked Received'}</p>
-                      {bid?.bg_discharged_date && <p className="text-muted-foreground text-[10px] font-mono">Issued: {new Date(bid.bg_discharged_date).toLocaleDateString('en-IN')}</p>}
-                      {poReceived && (
-                        <div className="mt-1.5" onClick={e => e.stopPropagation()}>
-                          <Label className="text-[10px] font-medium text-muted-foreground">BG to be issued by</Label>
-                          <Input type="date" value={bgTargetDate} onChange={e => handleBgTargetDateChange(e.target.value)} className="h-7 text-[11px] mt-0.5 max-w-[160px]" />
-                        </div>
-                      )}
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium">{bgStep}. Bank Guarantee Issued</span>
+                        {bgProceeded ? (
+                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 border border-emerald-300 rounded px-1.5 py-0.5">✓ Issued</span>
+                        ) : (
+                          <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5">⏳ Pending</span>
+                        )}
+                      </div>
+                      <p className="text-muted-foreground text-[10px] mt-0.5">Confirm the Bank Guarantee has been issued to the procuring authority</p>
+                      {bid?.bg_discharged_date && <p className="text-muted-foreground text-[10px] font-mono mt-0.5">Issued: {new Date(bid.bg_discharged_date).toLocaleDateString('en-IN')}</p>}
+                      <div className="mt-1.5">
+                        <Label className="text-[10px] font-medium text-muted-foreground">BG to be issued by</Label>
+                        <Input type="date" value={bgTargetDate} onChange={e => handleBgTargetDateChange(e.target.value)} className="h-7 text-[11px] mt-0.5 max-w-[160px]" />
+                      </div>
                     </div>
-                  </label>
+                  </div>
                 )}
 
-                {/* Step: Delivery / Work Complete — enabled only once PO received (and BG issued, if required) */}
-                <label className={`flex items-center gap-2 p-2.5 rounded-lg border transition-colors ${poReceived && (!bgRequired || bgProceeded) ? 'cursor-pointer border-border hover:bg-muted/20' : 'cursor-not-allowed border-border/50 opacity-50'
+                {/* Step: Delivery / Work Complete */}
+                <label className={`flex items-start gap-2.5 p-2.5 rounded-lg border transition-colors cursor-pointer ${deliveryComplete
+                  ? 'border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20'
+                  : 'border-border bg-card hover:bg-muted/20'
                   }`}>
-                  <input type="checkbox" checked={deliveryComplete} disabled={!poReceived || (bgRequired && !bgProceeded)} onChange={e => handleDeliveryToggle(e.target.checked)} className="rounded" />
-                  <div>
-                    <span className="font-medium">{deliveryStep}. Delivery / Work Complete</span>
-                    <p className="text-muted-foreground text-[10px]">
-                      {!poReceived ? 'Unlocks once PO is marked Received' : (bgRequired && !bgProceeded) ? 'Unlocks once Bank Guarantee is Issued' : 'Confirm delivery, installation, or work has been completed'}
-                    </p>
-                    {bid?.delivery_complete_date && <p className="text-muted-foreground text-[10px] font-mono">Completed: {new Date(bid.delivery_complete_date).toLocaleDateString('en-IN')}</p>}
+                  <input
+                    type="checkbox"
+                    checked={deliveryComplete}
+                    onChange={e => handleDeliveryToggle(e.target.checked)}
+                    aria-label="Delivery / Work Complete"
+                    className="rounded size-4 mt-0.5 text-primary cursor-pointer"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">{deliveryStep}. Delivery / Work Complete</span>
+                      {deliveryComplete ? (
+                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 border border-emerald-300 rounded px-1.5 py-0.5">✓ Completed</span>
+                      ) : (
+                        <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5">⏳ Pending</span>
+                      )}
+                    </div>
+                    <p className="text-muted-foreground text-[10px] mt-0.5">Confirm delivery, installation, or work has been completed</p>
+                    {bid?.delivery_complete_date && <p className="text-muted-foreground text-[10px] font-mono mt-0.5">Completed: {new Date(bid.delivery_complete_date).toLocaleDateString('en-IN')}</p>}
                   </div>
                 </label>
 
-                {/* Step (conditional): EMD Returned — only when EMD wasn't exempted; last in the order,
-                    unlocked only once every step before it (PO, BG if required, Delivery) is done */}
-                {!emdExempted && (() => {
-                  const emdUnlocked = poReceived && (!bgRequired || bgProceeded) && deliveryComplete
-                  return (
-                    <label className={`flex items-center gap-2 p-2.5 rounded-lg border transition-colors ${emdUnlocked ? 'cursor-pointer border-border hover:bg-muted/20' : 'cursor-not-allowed border-border/50 opacity-50'
-                      }`}>
-                      <input type="checkbox" checked={emdReturned} disabled={!emdUnlocked} onChange={e => handleEmdToggle(e.target.checked)} className="rounded" />
-                      <div>
-                        <span className="font-medium">{emdStep}. EMD Returned by Procuring Authority</span>
-                        <p className="text-muted-foreground text-[10px]">
-                          {!poReceived ? 'Unlocks once PO is marked Received' : (bgRequired && !bgProceeded) ? 'Unlocks once Bank Guarantee is Issued' : !deliveryComplete ? 'Unlocks once Delivery / Work Complete is confirmed' : 'Confirm EMD amount has been refunded'}
-                        </p>
-                        {bid?.emd_returned_date && <p className="text-muted-foreground text-[10px] font-mono">Returned: {new Date(bid.emd_returned_date).toLocaleDateString('en-IN')}</p>}
+                {/* Step (conditional): EMD Returned — only when EMD wasn't exempted.
+                    If refund details are not there, checking it requires entering refund details in the dialog. */}
+                {!emdExempted && (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      if (!emdReturned) {
+                        toast.info('Please enter EMD refund details to mark as returned')
+                      }
+                      setShowEmdRefundModal(true)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        if (!emdReturned) {
+                          toast.info('Please enter EMD refund details to mark as returned')
+                        }
+                        setShowEmdRefundModal(true)
+                      }
+                    }}
+                    className={`flex items-start gap-2.5 p-2.5 rounded-lg border transition-colors cursor-pointer ${emdReturned
+                      ? 'border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 hover:bg-emerald-50 dark:hover:bg-emerald-950/30'
+                      : 'border-border bg-card hover:border-primary/50 hover:bg-muted/30'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={emdReturned}
+                      onChange={handleEmdCheckboxClick}
+                      onClick={handleEmdCheckboxClick}
+                      aria-label="EMD Returned by Procuring Authority"
+                      className="rounded size-4 mt-0.5 text-primary cursor-pointer"
+                    />
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-foreground">{emdStep}. EMD Returned by Procuring Authority</span>
+                        <div className="flex items-center gap-1.5">
+                          {emdReturned ? (
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 border border-emerald-300 rounded px-1.5 py-0.5">✓ Returned</span>
+                          ) : (
+                            <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5">⏳ Pending</span>
+                          )}
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-2 text-[10px] gap-1 text-primary hover:text-primary hover:bg-primary/10"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setShowEmdRefundModal(true)
+                            }}
+                          >
+                            {emdReturned ? 'Edit Details' : 'Record Details'}
+                            <ChevronRight className="size-3" />
+                          </Button>
+                        </div>
                       </div>
-                    </label>
-                  )
-                })()}
+                      <p className="text-muted-foreground text-[10px] mt-0.5">
+                        {emdReturned
+                          ? 'Confirm EMD amount has been refunded • Click to view or edit refund details'
+                          : 'Refund details required to mark as returned • Click to enter refund & UTR details'}
+                      </p>
+                      {bid?.emd_returned_date && (
+                        <p className="text-muted-foreground text-[10px] font-mono mt-0.5">
+                          Returned: {new Date(bid.emd_returned_date).toLocaleDateString('en-IN')}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {emdExempted && (
                   <div className="flex items-center gap-2 p-2.5 rounded-lg border border-border/50 bg-muted/10 text-muted-foreground">
@@ -5295,6 +5383,17 @@ export function Stage12Workspace({ bid, onRefresh }) {
           })()}
         </div>
       </div>
+
+      {/* EMD Release & Refund Dialog from Process #6 */}
+      <EmdDetailsDialog
+        open={showEmdRefundModal}
+        onClose={() => setShowEmdRefundModal(false)}
+        bid={bid}
+        initialSection="refund"
+        onSuccess={() => {
+          onRefresh?.()
+        }}
+      />
 
       {showModal && (
         <CompleteStageModal
@@ -5316,29 +5415,37 @@ export function Stage12Workspace({ bid, onRefresh }) {
 // just the deposit to track back.
 export function EmdReturnWorkspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
+  const [showEmdRefundModal, setShowEmdRefundModal] = useState(false)
   const [emdReturned, setEmdReturned] = useState(!!bid?.emd_returned)
 
   useEffect(() => {
     setEmdReturned(!!bid?.emd_returned)
   }, [bid?.emd_returned])
 
-  const handleEmdToggle = async (checked) => {
-    setEmdReturned(checked)
+  const handleEmdCheckboxClick = async (e) => {
+    e?.stopPropagation()
+    if (!emdReturned) {
+      toast.info('Please enter EMD refund details to mark as returned')
+      setShowEmdRefundModal(true)
+      return
+    }
     try {
       const res = await updateBid(bid.id, {
-        emd_returned: checked,
-        emd_returned_date: checked ? new Date().toISOString() : undefined,
+        emd_returned: false,
+        emd_returned_date: null,
       })
       if (res.ok) {
+        await updateEmdRefund(bid.id, { refund_status: 'Pending' }).catch(() => {})
+        setEmdReturned(false)
         logStageMicroEvent(bid.id, {
           fromStage: 'AWARD_HANDOVER',
           toStage: 'AWARD_HANDOVER',
           eventType: 'FINANCE',
-          transitionReason: checked ? 'Marked EMD as Refunded / Returned by Procuring Authority' : 'Marked EMD Return as Pending',
-          details: { emdReturned: checked }
+          transitionReason: 'EMD Returned status unchecked; refund status reset to Pending',
+          details: { emdReturned: false }
         })
-        toast.success(checked ? 'EMD marked as Returned' : 'EMD marked as Pending Return')
-        onRefresh()
+        toast.success('EMD return marked as Pending')
+        onRefresh?.()
       }
     } catch {
       toast.error('Network error')
@@ -5369,17 +5476,80 @@ export function EmdReturnWorkspace({ bid, onRefresh }) {
 
       <div className="p-4 rounded-xl border border-border bg-card space-y-3 max-w-md">
         <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">EMD Closure</h4>
-        <label className="flex items-center gap-2 cursor-pointer p-2.5 rounded-lg border border-border hover:bg-muted/20 transition-colors text-xs">
-          <input type="checkbox" checked={emdReturned} onChange={e => handleEmdToggle(e.target.checked)} className="rounded" />
-          <div>
-            <span className="font-medium">EMD Returned by Procuring Authority</span>
-            <p className="text-muted-foreground text-[10px]">EMD Amount: {fmtMoney(bid?.emd_amount)}</p>
-            {bid?.emd_returned_date && <p className="text-muted-foreground text-[10px] font-mono">Returned: {new Date(bid.emd_returned_date).toLocaleDateString('en-IN')}</p>}
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            if (!emdReturned) {
+              toast.info('Please enter EMD refund details to mark as returned')
+            }
+            setShowEmdRefundModal(true)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              if (!emdReturned) {
+                toast.info('Please enter EMD refund details to mark as returned')
+              }
+              setShowEmdRefundModal(true)
+            }
+          }}
+          className={`flex items-start gap-2.5 p-2.5 rounded-lg border transition-colors cursor-pointer text-xs ${emdReturned
+            ? 'border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 hover:bg-emerald-50 dark:hover:bg-emerald-950/30'
+            : 'border-border bg-card hover:border-primary/50 hover:bg-muted/30'
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={emdReturned}
+            onChange={handleEmdCheckboxClick}
+            onClick={handleEmdCheckboxClick}
+            aria-label="EMD Returned by Procuring Authority"
+            className="rounded size-4 mt-0.5 text-primary cursor-pointer"
+          />
+          <div className="flex-1">
+            <div className="flex items-center justify-between">
+              <span className="font-medium text-foreground">EMD Returned by Procuring Authority</span>
+              <div className="flex items-center gap-1.5">
+                {emdReturned ? (
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 border border-emerald-300 rounded px-1.5 py-0.5">✓ Returned</span>
+                ) : (
+                  <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5">⏳ Pending</span>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2 text-[10px] gap-1 text-primary hover:text-primary hover:bg-primary/10"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setShowEmdRefundModal(true)
+                  }}
+                >
+                  {emdReturned ? 'Edit Details' : 'Record Details'}
+                  <ChevronRight className="size-3" />
+                </Button>
+              </div>
+            </div>
+            <p className="text-muted-foreground text-[10px] mt-0.5">
+              {emdReturned
+                ? 'EMD amount has been refunded • Click to view or edit refund details'
+                : 'Refund details required to mark as returned • Click to enter refund & UTR details'}
+            </p>
+            {bid?.emd_returned_date && <p className="text-muted-foreground text-[10px] font-mono mt-0.5">Returned: {new Date(bid.emd_returned_date).toLocaleDateString('en-IN')}</p>}
           </div>
-        </label>
+        </div>
       </div>
 
       <EmdLifecycleCard bid={bid} onRefresh={onRefresh} />
+
+      <EmdDetailsDialog
+        open={showEmdRefundModal}
+        onClose={() => setShowEmdRefundModal(false)}
+        bid={bid}
+        initialSection="refund"
+        onSuccess={() => onRefresh?.()}
+      />
 
       {showModal && (
         <CompleteStageModal
