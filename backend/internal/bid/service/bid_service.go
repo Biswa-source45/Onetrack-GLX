@@ -1285,7 +1285,6 @@ func (s *bidService) applyUpdate(ctx context.Context, id string, req *domain.Upd
 				TransitionedBy:   actorID,
 			})
 			_ = s.repo.UpdateStage(ctx, id, "LOST", "LOST")
-			s.TriggerEMDReturnOnLost(ctx, id, actorID, reason)
 		}
 	}
 
@@ -2277,7 +2276,7 @@ func (s *bidService) RecordOutcome(ctx context.Context, id string, req *domain.R
 	}
 	s.logAction(ctx, id, bid.Title, "OUTCOME_RECORDED", actorID, outcomeLogText(req.BidOutcome, req.OutcomeReason))
 
-	if req.BidOutcome == domain.OutcomeLost || req.BidOutcome == "LOST" {
+	if req.BidOutcome == domain.OutcomeLost {
 		reason := "Bid outcome marked as LOST"
 		if req.OutcomeReason != nil && *req.OutcomeReason != "" {
 			reason = *req.OutcomeReason

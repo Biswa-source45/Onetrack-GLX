@@ -577,15 +577,23 @@ func TestChecklist_ValidatesPriorityAndStatus(t *testing.T) {
 	wantErr(t, err, domain.ErrValidation, "priority is case sensitive")
 }
 
+func (s *emdTestSetup) returnRequests() int {
+	n := 0
+	for _, a := range s.alerts.created {
+		if a.Type == "EMD_RETURN_REQUEST" {
+			n++
+		}
+	}
+	return n
+}
+
 func TestEMD_TriggerReturnOnLost(t *testing.T) {
-	s := newEMDTestSetup()
 	ctx := context.Background()
 
-	// 1. Live tender with EMD amount 50000
+	// 1. A paid EMD: the return is initiated for the paid amount, with the reason, and Finance is alerted once.
+	s := newEMDTestSetup()
+	s.pay(t)
 	s.svc.TriggerEMDReturnOnLost(ctx, "bid-123", "actor-1", "Lost to L1 bidder")
-	if s.repo.emd == nil {
-		t.Fatal("expected emd record to be initialized")
-	}
 	if s.repo.emd.RefundStatus != domain.RefundStatusInitiated {
 		t.Fatalf("expected refund status %q, got %q", domain.RefundStatusInitiated, s.repo.emd.RefundStatus)
 	}
@@ -595,20 +603,38 @@ func TestEMD_TriggerReturnOnLost(t *testing.T) {
 	if s.repo.emd.RefundRemarks == nil || !strings.Contains(*s.repo.emd.RefundRemarks, "Lost to L1 bidder") {
 		t.Fatalf("expected remarks to mention reason, got %v", s.repo.emd.RefundRemarks)
 	}
+	if s.returnRequests() != 1 {
+		t.Fatalf("expected one Finance alert, got %d", s.returnRequests())
+	}
+	// Several paths mark a tender LOST: a second call must not repeat the alert.
+	s.svc.TriggerEMDReturnOnLost(ctx, "bid-123", "actor-1", "Bid status updated to LOST")
+	if s.returnRequests() != 1 {
+		t.Fatalf("a repeated trigger must not alert Finance again, got %d alerts", s.returnRequests())
+	}
 
-	// 2. Exempted tender: must not trigger refund
+	// 2. An EMD that was never paid has nothing to return: no refund, no status change, no alert.
 	s2 := newEMDTestSetup()
-	s2.repo.bid.EMDExempted = true
-	s2.svc.TriggerEMDReturnOnLost(ctx, "bid-123", "actor-1", "Lost")
-	if s2.repo.emd != nil && s2.repo.emd.RefundStatus == domain.RefundStatusInitiated {
+	s2.svc.TriggerEMDReturnOnLost(ctx, "bid-123", "actor-1", "Lost before payment")
+	if s2.repo.emd != nil && (s2.repo.emd.RefundStatus == domain.RefundStatusInitiated || s2.repo.emd.Status != domain.EMDStatusPending) {
+		t.Fatalf("an unpaid EMD must be left alone, got status %q refund %q", s2.repo.emd.Status, s2.repo.emd.RefundStatus)
+	}
+	if s2.returnRequests() != 0 {
+		t.Fatal("an unpaid EMD must not alert Finance")
+	}
+
+	// 3. Exempted tender: must not trigger refund
+	s3 := newEMDTestSetup()
+	s3.repo.bid.EMDExempted = true
+	s3.svc.TriggerEMDReturnOnLost(ctx, "bid-123", "actor-1", "Lost")
+	if s3.repo.emd != nil && s3.repo.emd.RefundStatus == domain.RefundStatusInitiated {
 		t.Fatal("exempted tender should not have triggered EMD return")
 	}
 
-	// 3. Already returned tender: must not overwrite
-	s3 := newEMDTestSetup()
-	s3.repo.bid.EMDReturned = true
-	s3.svc.TriggerEMDReturnOnLost(ctx, "bid-123", "actor-1", "Lost")
-	if s3.repo.emd != nil && s3.repo.emd.RefundStatus == domain.RefundStatusInitiated {
+	// 4. Already returned tender: must not overwrite
+	s4 := newEMDTestSetup()
+	s4.repo.bid.EMDReturned = true
+	s4.svc.TriggerEMDReturnOnLost(ctx, "bid-123", "actor-1", "Lost")
+	if s4.repo.emd != nil && s4.repo.emd.RefundStatus == domain.RefundStatusInitiated {
 		t.Fatal("already returned tender should not be re-initiated")
 	}
 }

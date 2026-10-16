@@ -888,14 +888,24 @@ func (s *bidService) TriggerEMDReturnOnLost(ctx context.Context, bidID, actorID,
 		autoRemark = fmt.Sprintf("Automated EMD return request triggered: %s", strings.TrimSpace(reason))
 	}
 
+	changed := false
 	op, err := s.mutateEMD(ctx, bidID, actorID, actorRoles, func(tx domain.EMDTx, op *emdOp) (*domain.TenderEMDAuditLog, error) {
 		emd := op.emd
+		// Only money that was actually paid can come back. A tender lost while its EMD is still
+		// pending, awaiting MD approval, rejected, or already refunded has nothing to return, and
+		// pushing it to "Paid" here would skip the MD approval and payment verification.
+		switch emd.Status {
+		case domain.EMDStatusPaid, domain.EMDStatusVerified, domain.EMDStatusReleased:
+		default:
+			return nil, nil
+		}
 		// If already refunded, released, or already initiated, don't overwrite
 		if emd.RefundStatus == domain.RefundStatusRefunded ||
 			emd.RefundStatus == domain.RefundStatusReleased ||
 			emd.RefundStatus == domain.RefundStatusInitiated {
 			return nil, nil
 		}
+		changed = true
 
 		paid := emd.EMDAmount
 		if emd.PaymentAmount != nil && *emd.PaymentAmount > 0 {
@@ -908,10 +918,6 @@ func (s *bidService) TriggerEMDReturnOnLost(ctx context.Context, bidID, actorID,
 			emd.RefundAmount = &paid
 		}
 
-		// Ensure status is at least Paid if it was still Pending so refund can be tracked
-		if emd.Status == domain.EMDStatusPending || emd.Status == "" {
-			emd.Status = domain.EMDStatusPaid
-		}
 		emd.RefundStatus = domain.RefundStatusInitiated
 		emd.RefundRemarks = &autoRemark
 		emd.RefundUpdatedAt = &op.now
@@ -922,7 +928,9 @@ func (s *bidService) TriggerEMDReturnOnLost(ctx context.Context, bidID, actorID,
 			Remarks: &autoRemark,
 		}, nil
 	})
-	if err != nil || op == nil {
+	// mutateEMD returns its op even when the closure changed nothing, so "changed" is what stops a
+	// second call (several paths mark a tender LOST) from repeating the timeline event and the alert.
+	if err != nil || !changed {
 		return
 	}
 
