@@ -21,6 +21,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { authService, tokenStorage } from '../services/auth'
 import { getMyProfile, updateUserProfile } from '../services/users'
 import { getPreferences } from '../services/preferences'
+import { EMD_VIEW_ROLES } from '../lib/emdAccess'
 import { useBidStore } from '../store/useBidStore'
 import { getAlerts } from '../services/alerts'
 import { getOpenTicketCount } from '../services/tickets'
@@ -67,11 +68,7 @@ const NAV_ITEMS = [
     id: 'emd-details',
     label: 'EMD Details',
     icon: ShieldCheck,
-    roles: [
-      'FINANCE', 'FINANCE_MANAGER', 'FINANCE_EXECUTIVE',
-      'MANAGING_DIRECTOR', 'ADMIN', 'SUPER_ADMIN',
-      'ACCOUNT_MANAGER', 'SALES_MANAGER', 'ACCOUNTS_MANAGER'
-    ],
+    roles: EMD_VIEW_ROLES,
     path: '/dashboard/emd-details'
   },
   { id: 'leads', label: 'Leads', icon: Target, permission: 'lead.view' },

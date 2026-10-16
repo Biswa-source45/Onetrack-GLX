@@ -13,6 +13,7 @@ import { MasterSheetPage } from "./components/tenders/MasterSheetPage"
 import { AddTenderPage } from "./components/tenders/AddTenderPage"
 import { TenderDetailPage } from "./components/tenders/TenderDetailPage"
 import { EmdDetailsPage } from "./components/tenders/EmdDetailsPage"
+import { EMD_VIEW_ROLES } from "./lib/emdAccess"
 import { UserManagement } from "./components/admin/UserManagement"
 import { BulkImportPage } from "./components/admin/BulkImportPage"
 import { AlertsPage } from "./components/alerts/AlertsPage"
@@ -114,7 +115,7 @@ export default function App() {
               </Route>
 
               {/* EMD Details — strictly restricted to MD, Finance, and Account Manager */}
-              <Route element={<RoleGuard roles={['FINANCE', 'FINANCE_MANAGER', 'FINANCE_EXECUTIVE', 'MANAGING_DIRECTOR', 'ADMIN', 'SUPER_ADMIN', 'ACCOUNT_MANAGER', 'SALES_MANAGER', 'ACCOUNTS_MANAGER']} />}>
+              <Route element={<RoleGuard roles={EMD_VIEW_ROLES} />}>
                 <Route path="emd-details" element={<EmdDetailsPage />} />
               </Route>
 

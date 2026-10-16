@@ -18,6 +18,7 @@ import {
 } from '../../services/emd'
 import { updateBid } from '../../services/bids'
 import { usePermissions } from '../../hooks/usePermissions'
+import { canViewEmd, canEditEmd } from '../../lib/emdAccess'
 
 const SECTIONS = [
   { id: 'basic', step: 1, label: 'Basic EMD Info', shortLabel: 'Basic Info', icon: FileText },
@@ -92,10 +93,8 @@ function ReceiptUpload({ label, view, url, onOpen, uploading, disabled, onUpload
 
 export function EmdDetailsDialog({ open, onClose, bid, onSuccess, initialSection = 'basic' }) {
   const { hasRole } = usePermissions()
-  const canAccess = hasRole('FINANCE') || hasRole('FINANCE_MANAGER') || hasRole('FINANCE_EXECUTIVE') ||
-    hasRole('MANAGING_DIRECTOR') || hasRole('ADMIN') || hasRole('SUPER_ADMIN') ||
-    hasRole('ACCOUNT_MANAGER') || hasRole('SALES_MANAGER') || hasRole('ACCOUNTS_MANAGER')
-  const canEdit = canAccess
+  const canAccess = canViewEmd(hasRole)
+  const canEdit = canEditEmd(hasRole)
 
   const [activeSection, setActiveSection] = useState(initialSection)
   const [loading, setLoading] = useState(true)

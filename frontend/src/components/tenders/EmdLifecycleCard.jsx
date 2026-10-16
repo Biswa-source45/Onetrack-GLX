@@ -15,6 +15,7 @@ import {
 } from '../../services/emd'
 import { formatDate as fmtDate } from '../../lib/tenderFormat'
 import { usePermissions } from '../../hooks/usePermissions'
+import { canEditEmd } from '../../lib/emdAccess'
 import { EmdDetailsDialog } from './EmdDetailsDialog'
 import { EmdApprovalDialog } from './EmdApprovalDialog'
 import { EmdAuditDialog } from './EmdAuditDialog'
@@ -245,10 +246,8 @@ function ProofCard({ iconBox, icon, title, sub, action }) {
 
 export function EmdLifecycleCard({ bid, onRefresh }) {
   const { hasRole, user } = usePermissions()
-  const isFinance = hasRole('FINANCE') || hasRole('FINANCE_MANAGER') || hasRole('FINANCE_EXECUTIVE')
   const isMD = hasRole('MANAGING_DIRECTOR') || hasRole('ADMIN') || hasRole('SUPER_ADMIN')
-  const isAccountManager = hasRole('ACCOUNT_MANAGER') || hasRole('SALES_MANAGER') || hasRole('ACCOUNTS_MANAGER')
-  const canEdit = isFinance || isMD || isAccountManager
+  const canEdit = canEditEmd(hasRole)
   const notRequired = Boolean(bid?.emd_exempted || bid?.emd_not_applicable)
 
   const [emd, setEmd] = useState(null)

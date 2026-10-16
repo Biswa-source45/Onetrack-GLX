@@ -25,6 +25,7 @@ import {
 } from '../../lib/tenderFormat'
 import { StageBadge, StatusBadge } from '../../lib/tenderDisplay'
 import { usePermissions } from '../../hooks/usePermissions'
+import { canViewEmd, canEditEmd } from '../../lib/emdAccess'
 import { downloadExcel } from '../../lib/excelExport'
 import { ExportSuccessDialog } from './ExportSuccessDialog'
 import { EmdDetailsDialog } from './EmdDetailsDialog'
@@ -92,10 +93,8 @@ export function EmdDetailsPage() {
 
   // Restriction: Only Managing Director (MD), Finance, and Account Manager can see and access EMD details.
   // All other roles are strictly restricted.
-  const canAccess = hasRole('FINANCE') || hasRole('FINANCE_MANAGER') || hasRole('FINANCE_EXECUTIVE') ||
-    hasRole('MANAGING_DIRECTOR') || hasRole('ADMIN') || hasRole('SUPER_ADMIN') ||
-    hasRole('ACCOUNT_MANAGER') || hasRole('SALES_MANAGER') || hasRole('ACCOUNTS_MANAGER')
-  const canManage = canAccess
+  const canAccess = canViewEmd(hasRole)
+  const canManage = canEditEmd(hasRole)
 
   // State
   const [bids, setBids] = useState([])
