@@ -19,6 +19,8 @@ type UserRepository interface {
 	GetEffectivePermissions(ctx context.Context, userID string) ([]string, error)
 	UsernameExists(ctx context.Context, username string) (bool, error)
 	EmployeeCodeExists(ctx context.Context, employeeCode string) (bool, error)
+	// EmailExists: is the email used by a user other than exceptUserID ("" = nobody excluded)?
+	EmailExists(ctx context.Context, email, exceptUserID string) (bool, error)
 }
 
 type UserService interface {

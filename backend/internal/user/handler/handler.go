@@ -36,6 +36,8 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 			response.Conflict(c, "Username already exists")
 		case errors.Is(err, service.ErrEmployeeCodeExists):
 			response.Conflict(c, "Employee code already exists")
+		case errors.Is(err, service.ErrEmailExists):
+			response.Conflict(c, "Email already exists")
 		case strings.Contains(err.Error(), "role not found"):
 			response.BadRequest(c, "Invalid role specified", err.Error())
 		default:
@@ -130,6 +132,8 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 			response.NotFound(c, "User not found")
 		case errors.Is(err, service.ErrNoFieldsToUpdate):
 			response.BadRequest(c, "No fields to update", nil)
+		case errors.Is(err, service.ErrEmailExists):
+			response.Conflict(c, "Email already exists")
 		default:
 			response.InternalError(c, "Failed to update user")
 		}

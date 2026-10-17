@@ -18,6 +18,7 @@ var (
 	ErrUserNotFound       = errors.New("user not found")
 	ErrUsernameExists     = errors.New("username already exists")
 	ErrEmployeeCodeExists = errors.New("employee code already exists")
+	ErrEmailExists        = errors.New("email already exists")
 	ErrNoFieldsToUpdate   = errors.New("no fields to update")
 	ErrRoleNotFound       = errors.New("role not found")
 	ErrPermissionNotFound = errors.New("permission not found")
@@ -51,6 +52,18 @@ func (s *userService) CreateUser(ctx context.Context, req domain.CreateUserReque
 	}
 	if exists {
 		return nil, ErrUsernameExists
+	}
+
+	if req.Email != nil {
+		*req.Email = strings.TrimSpace(*req.Email)
+		if *req.Email != "" {
+			if exists, err = s.repo.EmailExists(ctx, *req.Email, ""); err != nil {
+				return nil, fmt.Errorf("failed to check email: %w", err)
+			}
+			if exists {
+				return nil, ErrEmailExists
+			}
+		}
 	}
 
 	exists, err = s.repo.EmployeeCodeExists(ctx, req.EmployeeCode)
@@ -152,6 +165,19 @@ func (s *userService) UpdateUser(ctx context.Context, id string, req domain.Upda
 	_, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, ErrUserNotFound
+	}
+
+	if req.Email != nil {
+		*req.Email = strings.TrimSpace(*req.Email)
+		if *req.Email != "" {
+			taken, err := s.repo.EmailExists(ctx, *req.Email, id)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check email: %w", err)
+			}
+			if taken {
+				return nil, ErrEmailExists
+			}
+		}
 	}
 
 	if err := s.repo.Update(ctx, id, req); err != nil {

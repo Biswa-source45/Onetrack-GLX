@@ -20,6 +20,7 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { createUser } from "../../services/users";
+import { nextUsername } from "../../lib/username";
 import { ASSIGNABLE_ROLES, ROLE_LABELS } from "./RoleBadge";
 
 // ── Form initial state ────────────────────────────────────────────────────────
@@ -135,6 +136,17 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
       setFieldErrors((prev) => ({ ...prev, [key]: undefined }));
   }
 
+  // The username follows the email (the part before the @) until someone types a username of their own.
+  function setEmail(value) {
+    setForm((prev) => ({
+      ...prev,
+      email: value,
+      username: nextUsername(prev.username, prev.email, value),
+    }));
+    if (fieldErrors.username || fieldErrors.email)
+      setFieldErrors((prev) => ({ ...prev, username: undefined, email: undefined }));
+  }
+
   function toggleRole(role) {
     setForm((prev) => {
       const isAlreadySelected = prev.roles.includes(role);
@@ -207,6 +219,8 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
         const code = result.error?.code;
         if (code === "CONFLICT" && msg.toLowerCase().includes("username")) {
           setFieldErrors({ username: "Username already exists" });
+        } else if (code === "CONFLICT" && msg.toLowerCase().includes("email")) {
+          setFieldErrors({ email: "This email already belongs to another user" });
         } else if (
           code === "CONFLICT" &&
           msg.toLowerCase().includes("employee")
@@ -298,8 +312,8 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
                     Create New User
                   </h2>
                   <p className="text-xs text-muted-foreground">
-                    Assign basic details and up to 2 system roles (Primary &
-                    Secondary).
+                    Assign basic details and one or more system roles. The
+                    first role you pick is the Primary role.
                   </p>
                 </div>
                 {/* Mobile close button */}
@@ -379,7 +393,7 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
                         </Label>
                         <Input
                           id="cus-username"
-                          placeholder="jane.smith"
+                          placeholder="filled in from the email"
                           value={form.username}
                           onChange={(e) => setField("username", e.target.value)}
                           aria-invalid={!!fieldErrors.username}
@@ -401,9 +415,15 @@ export function CreateUserSheet({ open, onOpenChange, onCreated }) {
                             type="email"
                             placeholder="jane@company.com"
                             value={form.email}
-                            onChange={(e) => setField("email", e.target.value)}
+                            onChange={(e) => setEmail(e.target.value)}
+                            aria-invalid={!!fieldErrors.email}
                             disabled={loading}
                           />
+                          {fieldErrors.email && (
+                            <p className="text-xs text-destructive">
+                              {fieldErrors.email}
+                            </p>
+                          )}
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="cus-phone">Phone</Label>

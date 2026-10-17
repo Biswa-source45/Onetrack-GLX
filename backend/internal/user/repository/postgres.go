@@ -404,8 +404,18 @@ func (r *postgresUserRepo) GetEffectivePermissions(ctx context.Context, userID s
 
 func (r *postgresUserRepo) UsernameExists(ctx context.Context, username string) (bool, error) {
 	var exists bool
-	query := `SELECT EXISTS(SELECT 1 FROM auth.users WHERE username = $1)`
+	// Case-insensitive, like sign-in: 'sadmin' must not be creatable next to 'Sadmin'.
+	query := `SELECT EXISTS(SELECT 1 FROM auth.users WHERE LOWER(username) = LOWER($1))`
 	err := r.pool.QueryRow(ctx, query, username).Scan(&exists)
+	return exists, err
+}
+
+// EmailExists is case-insensitive too: sign-in matches the email without regard to case, so two users that
+// differ only by case would make that sign-in ambiguous.
+func (r *postgresUserRepo) EmailExists(ctx context.Context, email, exceptUserID string) (bool, error) {
+	var exists bool
+	query := `SELECT EXISTS(SELECT 1 FROM auth.users WHERE email IS NOT NULL AND LOWER(email) = LOWER($1) AND id::text <> $2)`
+	err := r.pool.QueryRow(ctx, query, email, exceptUserID).Scan(&exists)
 	return exists, err
 }
 
