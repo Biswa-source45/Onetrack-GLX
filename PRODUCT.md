@@ -2,6 +2,13 @@
 
 <!-- impeccable:product-schema 1 -->
 
+## Version
+
+**1.4.0** is the current stable release. The number is shown at the bottom of the sidebar and on the sign-in
+page, and `/health` reports it. It lives in three places that must change together:
+`frontend/package.json`, `backend/internal/version/version.go` (a Go test fails if these two differ) and this
+file. Each release raises the minor number (1.5.0, 1.6.0, ...); a fix-only release raises the last number.
+
 ## Platform
 
 web

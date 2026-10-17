@@ -45,6 +45,7 @@ import { expandRoles } from '../lib/roles'
 import { PipelineKpiBand } from './analytics/PipelineKpiBand'
 import { EmdProjectionBlock } from './analytics/EmdProjectionBlock'
 import { dimOtherSlices } from '../lib/chartUtils'
+import { APP_VERSION } from '../lib/appVersion'
 import {
   ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis,
   Tooltip as RechartsTooltip, CartesianGrid
@@ -1855,6 +1856,14 @@ export default function Dashboard() {
                       · {user.roles[1]}
                     </span>
                   )}
+                  {user.roles?.length > 2 && (
+                    <span
+                      className="text-[10px] text-primary/80 font-normal"
+                      title={user.roles.slice(2).join(', ')}
+                    >
+                      +{user.roles.length - 2} more
+                    </span>
+                  )}
                 </p>
               </div>
             </button>
@@ -1953,6 +1962,7 @@ export default function Dashboard() {
               )
             })}
           </nav>
+          <div className="px-3 py-2 border-t border-border text-[10px] text-muted-foreground">OneTrack v{APP_VERSION}</div>
         </aside>
 
         {/* Mobile sidebar overlay */}

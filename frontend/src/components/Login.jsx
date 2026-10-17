@@ -6,6 +6,7 @@ import { toast } from "sonner"
 import { authService } from "../services/auth"
 import { ledgerFont } from "../lib/ledgerTheme"
 import { LedgerStampMark } from "../lib/ledgerMarks"
+import { APP_VERSION } from "../lib/appVersion"
 
 // ── Abstract Building Vector Illustration ─────────────────────────────────
 function BuildingAbstractIllustration({ className = "" }) {
@@ -422,6 +423,7 @@ export default function Login() {
                 </button>
               </div>
             )}
+            <p className="pt-4 text-center text-[10px] text-slate-400">OneTrack v{APP_VERSION}</p>
           </div>
         </motion.div>
       </div>
