@@ -23,6 +23,7 @@ import (
 	feedbackHandler "github.com/onetrack/backend/internal/feedback/handler"
 	feedbackRepo "github.com/onetrack/backend/internal/feedback/repository"
 	feedbackService "github.com/onetrack/backend/internal/feedback/service"
+	"github.com/onetrack/backend/internal/credmail"
 	leadHandler "github.com/onetrack/backend/internal/lead/handler"
 	"github.com/onetrack/backend/internal/directory"
 	"github.com/onetrack/backend/internal/preferences"
@@ -44,6 +45,7 @@ import (
 	userHandler "github.com/onetrack/backend/internal/user/handler"
 	userRepo "github.com/onetrack/backend/internal/user/repository"
 	userService "github.com/onetrack/backend/internal/user/service"
+	"github.com/onetrack/backend/internal/version"
 	"github.com/onetrack/backend/migrations"
 )
 
@@ -106,6 +108,7 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "healthy",
 			"service": "onetrack-backend",
+			"version": version.Current,
 			"time":    time.Now().UTC().Format(time.RFC3339),
 		})
 	})
@@ -131,6 +134,11 @@ func main() {
 	userSvc := userService.NewUserService(userRepository, systemlogSvc)
 	userHdlr := userHandler.NewUserHandler(userSvc)
 	userHandler.RegisterUserRoutes(v1, userHdlr, authMiddleware)
+
+	// Bulk "Alert users" credential mails (Super Admin). A batch left RUNNING by a crashed process is closed first.
+	credSvc := credmail.NewService(credmail.NewStore(dbPool), emailSvc, systemlogSvc, cfg.DefaultUserPassword, cfg.AppBaseURL)
+	credSvc.SweepStale(ctx)
+	credmail.RegisterRoutes(v1, credmail.NewHandler(credSvc), authMiddleware)
 
 	// Initialize alert module
 	alertRepository := alertRepo.NewPostgresAlertRepository(dbPool)

@@ -85,7 +85,7 @@ func (r *postgresAuthRepo) UpdateLastLogin(ctx context.Context, userID string) e
 }
 
 func (r *postgresAuthRepo) UpdatePassword(ctx context.Context, userID string, passwordHash string) error {
-	query := `UPDATE auth.users SET password_hash = $1, force_password_change = false WHERE id = $2`
+	query := `UPDATE auth.users SET password_hash = $1, force_password_change = false, password_changed_at = NOW() WHERE id = $2`
 	_, err := r.pool.Exec(ctx, query, passwordHash, userID)
 	return err
 }

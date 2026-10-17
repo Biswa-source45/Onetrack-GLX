@@ -32,6 +32,9 @@ type Config struct {
 	// used to turn alert deep links into clickable email buttons. Empty
 	// leaves emails without the button.
 	AppBaseURL string
+	// DefaultUserPassword is the shared initial password admins give new users. The bulk "Alert users" mail only
+	// states it for users whose stored password still matches it.
+	DefaultUserPassword string
 	// CalendarSchedulerEnabled turns on the background 72-working-hour deadline
 	// engine. Only the literal "true" enables it; off by default so a fresh
 	// deploy never sends alerts on its own.
@@ -123,6 +126,8 @@ func Load() (*Config, error) {
 		LeadsUploadDir: getEnv("LEADS_UPLOAD_DIR", "./uploads/leads"),
 		EMDUploadDir:   getEnv("EMD_UPLOAD_DIR", "./uploads/emd"),
 		AppBaseURL:     getEnv("APP_BASE_URL", ""),
+
+		DefaultUserPassword: getEnv("DEFAULT_USER_PASSWORD", "Globx@2026"),
 
 		TenderDocsUploadDir: getEnv("TENDER_DOCS_UPLOAD_DIR", "./uploads/tenders"),
 

@@ -31,6 +31,7 @@ import { RolesPermissionsDialog } from "./RolesPermissionsDialog";
 import { ForceResetDialog } from "./ForceResetDialog";
 import { ActivityLogDialog } from "./ActivityLogDialog";
 import { StageAccessDialog } from "./StageAccessDialog";
+import { AlertUsersPanel } from "./AlertUsersPanel";
 import { ALL_ROLES, ROLE_LABELS } from "./RoleBadge";
 
 const LIMIT = 20;
@@ -51,7 +52,7 @@ function useDebounce(value, delay = 350) {
  * This component is only rendered when the logged-in user has the
  * `user.view` permission (enforced by the parent Dashboard).
  */
-export function UserManagement() {
+function UsersTab() {
   const { hasPermission, hasRole } = usePermissions();
   // Mirrors the sidebar: roles that administer the system get the management
   // wording, everyone else just sees the user directory.
@@ -400,6 +401,38 @@ export function UserManagement() {
           user={stageAccessUser}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * The Users page. Super Admins get a second tab, "Alert users", for the bulk credential mails; everyone else
+ * sees the user list exactly as before.
+ */
+export function UserManagement() {
+  const { hasRole } = usePermissions();
+  const [tab, setTab] = useState("users");
+  if (!hasRole("SUPER_ADMIN")) return <UsersTab />;
+  return (
+    <div className="space-y-5">
+      <div role="tablist" className="flex gap-1 border-b border-border">
+        {[
+          ["users", "Users"],
+          ["alert", "Alert users"],
+        ].map(([id, label]) => (
+          <button
+            key={id}
+            role="tab"
+            type="button"
+            aria-selected={tab === id}
+            onClick={() => setTab(id)}
+            className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors ${tab === id ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === "users" ? <UsersTab /> : <AlertUsersPanel />}
     </div>
   );
 }

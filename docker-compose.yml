@@ -88,6 +88,8 @@ services:
       - EMAIL_USERNAME=${EMAIL_USERNAME:-}
       - EMAIL_PASSWORD=${EMAIL_PASSWORD:-}
       - APP_BASE_URL=${APP_BASE_URL:-}
+      # The shared first password the "Alert users" mail states. Change it here, not in code.
+      - DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:-Globx@2026}
       # 72-working-hour deadline engine: off unless explicitly "true". The first
       # run after enabling only records already-in-window tenders; it sends nothing.
       - CALENDAR_SCHEDULER_ENABLED=${CALENDAR_SCHEDULER_ENABLED:-false}
