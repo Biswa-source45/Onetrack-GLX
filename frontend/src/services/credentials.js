@@ -20,3 +20,13 @@ export async function sendCredentialAlerts(payload) {
 export async function getCredentialBatch(id) {
   return json(await apiFetch(`${BASE}/batches/${id}`))
 }
+
+// Super Admin only. Sends an informational access-details email (no credentials) to
+// all active users. siteUrl is the current office URL typed by the admin.
+export async function sendAccessAlert(siteUrl) {
+  return json(await apiFetch(`${BASE}/access-alert`, {
+    method: 'POST',
+    body: JSON.stringify({ site_url: siteUrl }),
+  }))
+}
+

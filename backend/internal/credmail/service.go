@@ -296,3 +296,57 @@ func (s *Service) SweepStale(ctx context.Context) {
 		log.Printf("[credmail] marked %d interrupted batch(es) as failed", n)
 	}
 }
+
+// SendAccessAlert emails all active users (who have a valid email) an
+// informational message about the current site URL and how to access it.
+// Mails are sent one at a time in a background goroutine so the caller returns
+// immediately. Returns the number of recipients queued (not yet sent).
+func (s *Service) SendAccessAlert(ctx context.Context, actorID, siteURL string) (int, error) {
+	if !s.mail.Configured() {
+		return 0, ErrNotConfigured
+	}
+	if strings.TrimSpace(siteURL) == "" {
+		return 0, errors.New("site_url must not be empty")
+	}
+
+	cands, err := s.store.Candidates(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list users: %w", err)
+	}
+
+	var recipients []string
+	for _, c := range cands {
+		if c.IsActive && validEmail(c.Email) {
+			recipients = append(recipients, c.Email)
+		}
+	}
+	if len(recipients) == 0 {
+		return 0, ErrNothingToSend
+	}
+
+	subject, body := AccessAlertMessage(siteURL)
+	total := len(recipients)
+
+	// Send in background so the HTTP handler returns at once.
+	go func() {
+		sent := 0
+		for i, email := range recipients {
+			if i > 0 && s.pause > 0 {
+				time.Sleep(s.pause)
+			}
+			if err := s.mail.SendNow([]string{email}, subject, body); err != nil {
+				log.Printf("[credmail] access-alert to %s failed: %v", email, err)
+				continue
+			}
+			sent++
+		}
+		log.Printf("[credmail] access-alert complete: %d/%d sent, URL=%s", sent, total, siteURL)
+	}()
+
+	if s.log != nil {
+		s.log.Record(ctx, systemlogDomain.CategoryUserMgmt, "ACCESS_ALERT_SENT", actorID, nil,
+			fmt.Sprintf("Dispatched access-info mail to %d user(s) with URL: %s", total, siteURL),
+			map[string]interface{}{"total": total, "site_url": siteURL})
+	}
+	return total, nil
+}

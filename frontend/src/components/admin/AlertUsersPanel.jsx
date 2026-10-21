@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Loader2, Mail, MailCheck, MailWarning, RefreshCw, Send, TriangleAlert } from 'lucide-react'
+import { Globe, Loader2, Mail, MailCheck, MailWarning, RefreshCw, Send, TriangleAlert, Wifi } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -15,7 +15,7 @@ import {
   AlertDialogCancel,
 } from '@/components/ui/alert-dialog'
 
-import { previewCredentialAlerts, sendCredentialAlerts, getCredentialBatch } from '../../services/credentials'
+import { previewCredentialAlerts, sendCredentialAlerts, getCredentialBatch, sendAccessAlert } from '../../services/credentials'
 import {
   KIND_LABEL, batchPercent, buildSend, defaultSelection, isAlerted, isFinished, missingPasswords, pruneSelection, toggleId,
 } from '../../lib/credentialAlert'
@@ -80,6 +80,110 @@ function UserList({ title, hint, rows, selected, includeAlerted, onToggle, onAll
   )
 }
 
+// ── Access Alert Dialog ──────────────────────────────────────────────────────
+const DEFAULT_URL = 'http://192.168.1.50/'
+
+function AccessAlertDialog({ open, onClose }) {
+  const [url, setUrl] = useState(DEFAULT_URL)
+  const [sending, setSending] = useState(false)
+
+  // Reset URL to default each time the dialog opens
+  useEffect(() => { if (open) setUrl(DEFAULT_URL) }, [open])
+
+  async function handleSend() {
+    const trimmed = url.trim()
+    if (!trimmed) { toast.error('Please enter the current office URL.'); return }
+    setSending(true)
+    try {
+      const res = await sendAccessAlert(trimmed)
+      if (res.ok && res.success) {
+        toast.success(`Access details sent to ${res.data?.total ?? 'all'} user(s).`)
+        onClose()
+      } else if (res.error?.code === 'EMAIL_NOT_CONFIGURED') {
+        toast.error('Email is not configured on this server. Check EMAIL_PASSWORD in .env.')
+      } else {
+        toast.error(res.error?.message || 'Could not send the access alert.')
+      }
+    } catch {
+      toast.error('Network error. Could not reach the server.')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  if (!open) return null
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      onClick={(e) => { if (!sending && e.target === e.currentTarget) onClose() }}
+      data-testid="access-alert-dialog"
+    >
+      <div className="w-full max-w-md rounded-xl border border-border bg-background p-6 shadow-xl space-y-4">
+        {/* Header */}
+        <div className="flex items-center gap-2">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+            <Wifi className="size-5 text-primary" />
+          </div>
+          <div>
+            <h3 className="font-heading text-base font-semibold text-foreground">Alert Access Details</h3>
+            <p className="text-xs text-muted-foreground">Send system access information to all active users</p>
+          </div>
+        </div>
+
+        {/* Info callout */}
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
+          <TriangleAlert className="size-4 mt-0.5 shrink-0" />
+          <span>
+            This email contains <strong>no credentials</strong>. It only tells users the current URL
+            and that they must be in the office on <strong>Airtel Wi-Fi</strong> to access the system.
+          </span>
+        </div>
+
+        {/* URL input */}
+        <div className="space-y-1.5">
+          <label htmlFor="access-alert-url" className="text-sm font-medium text-foreground flex items-center gap-1.5">
+            <Globe className="size-3.5 text-muted-foreground" />
+            Current office URL
+          </label>
+          <input
+            id="access-alert-url"
+            type="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            disabled={sending}
+            placeholder="http://192.168.1.50/"
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50"
+            autoComplete="off"
+          />
+          <p className="text-xs text-muted-foreground">Paste the current IP/URL (e.g. http://192.168.1.50/). This is what users will see in the email.</p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={sending}
+            className="h-9 rounded-md px-4 text-sm font-medium text-muted-foreground hover:bg-muted/60 transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            id="access-alert-send-btn"
+            onClick={handleSend}
+            disabled={sending || !url.trim()}
+            className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
+            {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+            {sending ? 'Sending…' : 'Send to all users'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function AlertUsersPanel() {
   const [preview, setPreview] = useState(null)
   const [loadError, setLoadError] = useState('')
@@ -98,6 +202,8 @@ export function AlertUsersPanel() {
   const [sendReset, setSendReset] = useState(false)
   const [sendTemp, setSendTemp] = useState(true)
   const [starting, setStarting] = useState(false)
+
+  const [accessAlertOpen, setAccessAlertOpen] = useState(false)
 
   const [batch, setBatch] = useState(null)
   const [pollError, setPollError] = useState('')
@@ -276,9 +382,21 @@ export function AlertUsersPanel() {
             Users who have not changed the initial password get their login details. Users whose password you reset yourself can be sent the new one. Users who already chose their own password can get a short confirmation. Nothing is sent when you add a user.
           </p>
         </div>
-        <Button variant="outline" size="sm" className="gap-1.5" onClick={load} disabled={loading || running}>
-          <RefreshCw className={`size-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            id="access-alert-btn"
+            variant="outline"
+            size="sm"
+            className="gap-1.5 border-primary/30 text-primary hover:bg-primary/5"
+            onClick={() => setAccessAlertOpen(true)}
+            disabled={running}
+          >
+            <Wifi className="size-3.5" /> Alert Access Details
+          </Button>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={load} disabled={loading || running}>
+            <RefreshCw className={`size-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
+          </Button>
+        </div>
       </div>
 
       {!preview.smtp_configured && (
@@ -414,6 +532,8 @@ export function AlertUsersPanel() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AccessAlertDialog open={accessAlertOpen} onClose={() => setAccessAlertOpen(false)} />
     </div>
   )
 }

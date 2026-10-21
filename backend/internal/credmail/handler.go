@@ -22,6 +22,7 @@ func RegisterRoutes(router *gin.RouterGroup, h *Handler, auth *middleware.AuthMi
 	g.GET("/preview", h.Preview)
 	g.POST("/send", h.Send)
 	g.GET("/batches/:id", h.Batch)
+	g.POST("/access-alert", h.AccessAlert)
 }
 
 func (h *Handler) Preview(c *gin.Context) {
@@ -78,3 +79,30 @@ func (h *Handler) Batch(c *gin.Context) {
 		response.NotFound(c, "Batch not found")
 	}
 }
+
+// AccessAlert sends an access-information email (no credentials) to all active
+// users. The admin supplies the current office URL in the request body.
+func (h *Handler) AccessAlert(c *gin.Context) {
+	var req struct {
+		SiteURL string `json:"site_url"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.SiteURL == "" {
+		response.BadRequest(c, "site_url is required", nil)
+		return
+	}
+	actor, _ := c.Get("user_id")
+	actorID, _ := actor.(string)
+
+	total, err := h.svc.SendAccessAlert(c.Request.Context(), actorID, req.SiteURL)
+	switch {
+	case err == nil:
+		response.Success(c, http.StatusOK, "Access alert sent", gin.H{"total": total})
+	case errors.Is(err, ErrNotConfigured):
+		response.Error(c, http.StatusPreconditionFailed, "EMAIL_NOT_CONFIGURED", err.Error(), nil)
+	case errors.Is(err, ErrNothingToSend):
+		response.BadRequest(c, "No active users with a valid email address found", nil)
+	default:
+		response.InternalError(c, "Could not send access alert")
+	}
+}
+

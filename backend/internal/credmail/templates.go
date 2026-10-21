@@ -121,3 +121,49 @@ func Message(it Item, appURL string) (subject, body string) {
 			callout(note) +
 			para("We wish you a smooth and productive experience with OneTrack. Should you encounter any issues, please do not hesitate to reach out to us for support."))
 }
+
+// accessInfoTable renders the "How to access" block — site URL plus the two
+// mandatory requirements (in-office + Airtel Wi-Fi).
+func accessInfoTable(siteURL string) string {
+	safeURL := esc(siteURL)
+	linkCell := fmt.Sprintf(`<a href="%s" style="color:#2563eb;font-weight:700;">%s</a>`, safeURL, safeURL)
+	return `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 18px 0;border:1px solid #d1d5db;">` +
+		`<tr><td colspan="2" style="padding:10px 14px;background:#1d4ed8;color:#ffffff;font-size:14px;font-weight:700;border:1px solid #1d4ed8;">Access Information</td></tr>` +
+		row("Platform URL:", linkCell, valueCell) +
+		row("Network:", "Office Airtel Wi-Fi only", valueCell) +
+		row("Location:", "Must be physically present in office", valueCell) +
+		`</table>`
+}
+
+// stepsBlock renders the numbered how-to-access steps.
+func stepsBlock() string {
+	const stepStyle = `margin:0 0 8px 0;font-size:14px;line-height:1.65;color:#1f2937;`
+	steps := []string{
+		"Connect your device to the <strong>office Airtel Wi-Fi</strong> network.",
+		"Open any web browser (Chrome, Edge, Firefox) on your device.",
+		"Type or click the <strong>Platform URL</strong> shown above in the address bar.",
+		"Log in with the username and password that were shared with you separately.",
+		"If you see &ldquo;Site cannot be reached&rdquo;, verify you are on the correct Wi-Fi and are inside the office premises.",
+		"For any issues, please contact the <strong>Dev Team</strong>.",
+	}
+	out := `<ol style="margin:0 0 18px 0;padding-left:20px;">`
+	for _, s := range steps {
+		out += fmt.Sprintf(`<li style="%s">%s</li>`, stepStyle, s)
+	}
+	return out + `</ol>`
+}
+
+// AccessAlertMessage returns the subject and HTML body for an access-information
+// mail. It contains NO credentials — only the site URL and how to reach it.
+func AccessAlertMessage(siteURL string) (subject, body string) {
+	greet := para("Dear Sir/Madam,") +
+		para("Greetings from the Software Development Team at GLOBX!")
+	intro := para("We would like to inform you that the <strong>OneTrack</strong> platform — our centralised Tender &amp; Bidding Management System — is accessible to you at the URL shown below.")
+	warning := callout("⚠️ Important: OneTrack is hosted on an office system and is accessible <strong>only</strong> when you are physically present in the office <strong>and</strong> connected to the office Airtel Wi-Fi. " +
+		"The system cannot be accessed remotely, over mobile data, or from outside the office premises.")
+	howTo := para("<strong>How to access OneTrack:</strong>") + stepsBlock()
+	closing := para("We wish you a smooth and productive experience with OneTrack. Should you encounter any issues, please do not hesitate to reach out to the Dev Team for support.")
+	return "OneTrack – How to Access the System", shell(
+		greet + intro + accessInfoTable(siteURL) + warning + howTo + closing,
+	)
+}
