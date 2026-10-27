@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   useNavigate,
@@ -20,6 +20,9 @@ import {
   DollarSign,
   Tag,
   ArrowUpRight,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   Loader2,
   X,
   AlertCircle,
@@ -108,6 +111,8 @@ import { EDITABLE_SHEET_COLUMNS } from "../../lib/sheetColumns";
 import { isHttpUrl } from "../../lib/tenderSpec";
 import { ExportSuccessDialog } from "./ExportSuccessDialog";
 import { TodoBlocks } from "./TodoBlocks";
+import { SortableHeaderCell } from "./SortableHeaderCell";
+import { sortBids, getSortDirections } from "../../lib/sheetSort";
 
 // ── Stage List order for progress computation ────────────────────────────────
 // The real 11-stage pipeline (mirrors services/bids.js STAGE_LABELS). A
@@ -573,15 +578,14 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
   };
 
   const handlePermanentDeleteBid = async (bidId, bidTitle) => {
-    if (
-      !window.confirm(
-        `Are you sure you want to PERMANENTLY delete tender "${bidTitle || bidId}"? This action CANNOT be undone.`,
-      )
-    ) {
+    const reason = window.prompt(
+      `Are you sure you want to PERMANENTLY delete tender "${bidTitle || bidId}"? This action CANNOT be undone.\n\nEnter reason for purge:`,
+    );
+    if (reason === null) {
       return;
     }
     try {
-      const res = await permanentDeleteBid(bidId);
+      const res = await permanentDeleteBid(bidId, reason);
       if (res.ok && res.data?.status === "PENDING_APPROVAL") {
         toast.success(
           `Submitted to ${res.data.reporting_manager_name || "your Reporting Manager"} for approval`,
@@ -605,7 +609,17 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
   // disagree with the stat-card counts (which come from the same server
   // truth via meta.*_count).
   const clientFilters = { isOwnedView, currentUser, portalSourceFilter };
-  const effectiveBids = bids.filter((bid) => matchesClientFilters(bid, clientFilters));
+  const filteredBids = bids.filter((bid) => matchesClientFilters(bid, clientFilters));
+
+  // ── Column Sorting ──────────────────────────────────────────────────────────
+  // Pure client-side sort on the currently loaded page. Supports text (A-Z/Z-A),
+  // dates (closest/farthest), and numbers (low-high/high-low).
+  const [clientSort, setClientSort] = useState({ key: null, dir: 'asc' });
+
+  const effectiveBids = useMemo(() => {
+    return sortBids(filteredBids, clientSort.key, clientSort.dir);
+  }, [filteredBids, clientSort.key, clientSort.dir]);
+
   // Account Name cell: status dot, then the pill icons, then the name. The pill area is as wide as the
   // busiest visible row needs (and absent when none has a pill), so names stay aligned without a big gap.
   const pillCount = (b) => (b.is_imported ? 1 : 0) + (b.derived_status === "ACTIVE" ? 1 : 0);
@@ -891,7 +905,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                 : todoMode
                   ? "Quick To-Dos"
                   : isOwnedView
-                    ? "Owned Tenders"
+                    ? "My Tenders"
                     : "Tenders Workspace"}
             </h1>
 
@@ -928,7 +942,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                 }`}
               >
                 <UserCheck className="size-3.5" />
-                Owned Tenders
+                My Tenders
               </button>
 
               <button
@@ -1814,6 +1828,14 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                         )}
                       </div>
 
+                      {/* Bin Reason */}
+                      {inBin && (bid.delete_reason || bid.outcome_reason) && (
+                        <div className="mt-2.5 p-2 rounded-md bg-rose-50/80 border border-rose-200/80 text-[11px] text-rose-800 dark:bg-rose-950/30 dark:border-rose-900/50 dark:text-rose-300">
+                          <span className="font-semibold text-rose-900 dark:text-rose-200">Reason: </span>
+                          <span className="line-clamp-2">{bid.delete_reason || bid.outcome_reason}</span>
+                        </div>
+                      )}
+
                       {/* Bin Actions */}
                       {inBin && (
                         <div className="mt-3 pt-3 border-t border-border flex items-center justify-between gap-2 z-20">
@@ -1850,30 +1872,40 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
             </div>
           ) : (
             /* ── Sheet View (Wide Spreadsheet Table) ── */
-            <div className={`flex gap-3 w-full items-start`}>
+            <div className={`flex flex-col gap-2 w-full items-start`}>
+              {/* Active sort indicator badge */}
+              {clientSort.key && (
+                <div className="flex items-center gap-2">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/25 text-xs text-primary font-medium">
+                    <span>
+                      Sorted by <strong className="font-semibold">{EDITABLE_SHEET_COLUMNS.find((c) => c.key === clientSort.key)?.label || clientSort.key}</strong> ({getSortDirections(clientSort.key)[clientSort.dir === 'asc' ? 'ascShort' : 'descShort']})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setClientSort({ key: null, dir: 'asc' })}
+                      className="ml-1 p-0.5 rounded-full hover:bg-primary/20 text-primary transition-colors"
+                      title="Clear sort and return to default order"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Table */}
-              <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden flex-1 min-w-0">
+              <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden w-full flex-1 min-w-0">
                 <div className="w-full overflow-x-auto overflow-y-hidden">
                   <table className="min-w-full w-max text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-muted/40 border-b border-border text-[11px] font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
-                        {EDITABLE_SHEET_COLUMNS.map((c) => (
-                          <th
+                        {EDITABLE_SHEET_COLUMNS.map((c, idx) => (
+                          <SortableHeaderCell
                             key={c.key}
-                            style={{ minWidth: c.minWidth }}
-                            className={
-                              c.key === EDITABLE_SHEET_COLUMNS[0].key
-                                ? "p-3 border-r border-border sticky left-0 bg-[color-mix(in_srgb,var(--muted)_40%,var(--card))] z-20 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)]"
-                                : "p-3 border-r border-border"
-                            }
-                          >
-                            {c.label}
-                            {c.hint && (
-                              <span className="block text-[10px] font-medium normal-case tracking-normal text-primary/80">
-                                {c.hint}
-                              </span>
-                            )}
-                          </th>
+                            column={c}
+                            isFirst={idx === 0}
+                            clientSort={clientSort}
+                            onSortChange={(key, dir) => setClientSort({ key, dir })}
+                          />
                         ))}
                         {inBin && (
                           <th className="p-3 min-w-[160px] text-center bg-rose-50/50 text-rose-900">
@@ -2832,32 +2864,42 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                             {/* 25. Bin Actions */}
                             {inBin && (
                               <td className="p-3 bg-rose-50/20">
-                                <div className="flex items-center justify-center gap-1.5">
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-7 text-[11px] px-2 text-emerald-700 border-emerald-300 hover:bg-emerald-50 gap-1 font-semibold"
-                                    onClick={() =>
-                                      handleRestoreBid(bid.id, bid.title)
-                                    }
-                                  >
-                                    <RotateCcw className="size-3" />
-                                    Restore
-                                  </Button>
-                                  <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    className="h-7 text-[11px] px-2 gap-1 font-semibold bg-rose-600 hover:bg-rose-700 text-white"
-                                    onClick={() =>
-                                      handlePermanentDeleteBid(
-                                        bid.id,
-                                        bid.title,
-                                      )
-                                    }
-                                  >
-                                    <Trash2 className="size-3" />
-                                    Purge
-                                  </Button>
+                                <div className="flex flex-col items-center justify-center gap-1">
+                                  <div className="flex items-center justify-center gap-1.5">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-7 text-[11px] px-2 text-emerald-700 border-emerald-300 hover:bg-emerald-50 gap-1 font-semibold"
+                                      onClick={() =>
+                                        handleRestoreBid(bid.id, bid.title)
+                                      }
+                                    >
+                                      <RotateCcw className="size-3" />
+                                      Restore
+                                    </Button>
+                                    <Button
+                                      variant="destructive"
+                                      size="sm"
+                                      className="h-7 text-[11px] px-2 gap-1 font-semibold bg-rose-600 hover:bg-rose-700 text-white"
+                                      onClick={() =>
+                                        handlePermanentDeleteBid(
+                                          bid.id,
+                                          bid.title,
+                                        )
+                                      }
+                                    >
+                                      <Trash2 className="size-3" />
+                                      Purge
+                                    </Button>
+                                  </div>
+                                  {(bid.delete_reason || bid.outcome_reason) && (
+                                    <span
+                                      className="text-[10px] text-rose-700 dark:text-rose-400 max-w-[150px] truncate cursor-help"
+                                      title={`Reason: ${bid.delete_reason || bid.outcome_reason}`}
+                                    >
+                                      {bid.delete_reason || bid.outcome_reason}
+                                    </span>
+                                  )}
                                 </div>
                               </td>
                             )}

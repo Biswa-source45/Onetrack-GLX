@@ -15,7 +15,7 @@ type BidRepository interface {
 	Update(ctx context.Context, id string, req *UpdateBidRequest) error
 	UpdateStage(ctx context.Context, id string, stage string, status string) error
 	UpdateOutcome(ctx context.Context, id string, req *RecordOutcomeRequest) error
-	SoftDelete(ctx context.Context, id string) error
+	SoftDelete(ctx context.Context, id string, reason string) error
 	Restore(ctx context.Context, id string) error
 	PermanentDelete(ctx context.Context, id string) error
 	CleanupExpired(ctx context.Context) error
@@ -166,12 +166,12 @@ type BidService interface {
 	// (actorRoles decides whether the gate applies) when the outcome being
 	// recorded is CANCELLED, or the bid has one assigned.
 	RecordOutcome(ctx context.Context, id string, req *RecordOutcomeRequest, actorID string, actorRoles []string) error
-	ArchiveBid(ctx context.Context, id string, actorID string, actorRoles []string) error
+	ArchiveBid(ctx context.Context, id string, reason string, actorID string, actorRoles []string) error
 	RestoreBid(ctx context.Context, id string, actorID string) error
 	// ReopenBid returns a Cancelled or Closed tender to the live pipeline at
 	// the stage it had reached.
 	ReopenBid(ctx context.Context, id string, actorID string) error
-	PermanentDeleteBid(ctx context.Context, id string, actorID string, actorRoles []string) error
+	PermanentDeleteBid(ctx context.Context, id string, reason string, actorID string, actorRoles []string) error
 
 	// Bid-scoped checklists
 	GetChecklists(ctx context.Context, bidID string) ([]BidChecklistItem, error)

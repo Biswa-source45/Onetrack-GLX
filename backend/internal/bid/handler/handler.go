@@ -542,7 +542,16 @@ func (h *BidHandler) ArchiveBid(c *gin.Context) {
 	actorID := c.GetString("user_id")
 	rolesVal, _ := c.Get("roles")
 	actorRoles, _ := rolesVal.([]string)
-	if err := h.svc.ArchiveBid(c.Request.Context(), id, actorID, actorRoles); err != nil {
+
+	var req struct {
+		Reason string `json:"reason" form:"reason"`
+	}
+	_ = c.ShouldBind(&req)
+	if req.Reason == "" {
+		req.Reason = c.Query("reason")
+	}
+
+	if err := h.svc.ArchiveBid(c.Request.Context(), id, req.Reason, actorID, actorRoles); err != nil {
 		var pae *domain.PendingApprovalError
 		if errors.As(err, &pae) {
 			response.Success(c, http.StatusAccepted, err.Error(), gin.H{
@@ -550,6 +559,10 @@ func (h *BidHandler) ArchiveBid(c *gin.Context) {
 				"pending_edit_id":        pae.EditID,
 				"reporting_manager_name": pae.ReportingManagerName,
 			})
+			return
+		}
+		if errors.Is(err, domain.ErrValidation) {
+			response.BadRequest(c, err.Error(), nil)
 			return
 		}
 		response.NotFound(c, "Bid not found")
@@ -580,9 +593,18 @@ func (h *BidHandler) PermanentDeleteBid(c *gin.Context) {
 	actorID := c.GetString("user_id")
 	rolesVal, _ := c.Get("roles")
 	actorRoles, _ := rolesVal.([]string)
+
+	var req struct {
+		Reason string `json:"reason" form:"reason"`
+	}
+	_ = c.ShouldBind(&req)
+	if req.Reason == "" {
+		req.Reason = c.Query("reason")
+	}
+
 	// Read before the delete: the row (and its folder name) is gone afterwards.
 	docsFolder, _ := h.docs.Folder(c.Request.Context(), id)
-	if err := h.svc.PermanentDeleteBid(c.Request.Context(), id, actorID, actorRoles); err != nil {
+	if err := h.svc.PermanentDeleteBid(c.Request.Context(), id, req.Reason, actorID, actorRoles); err != nil {
 		var pae *domain.PendingApprovalError
 		if errors.As(err, &pae) {
 			response.Success(c, http.StatusAccepted, err.Error(), gin.H{
@@ -590,6 +612,10 @@ func (h *BidHandler) PermanentDeleteBid(c *gin.Context) {
 				"pending_edit_id":        pae.EditID,
 				"reporting_manager_name": pae.ReportingManagerName,
 			})
+			return
+		}
+		if errors.Is(err, domain.ErrValidation) {
+			response.BadRequest(c, err.Error(), nil)
 			return
 		}
 		response.NotFound(c, "Bid not found")

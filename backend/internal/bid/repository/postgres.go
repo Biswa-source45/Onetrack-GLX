@@ -144,7 +144,7 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 		       qualification_status, bid_outcome, outcome_reason, tech_compliance_status,
 		       remarks, competitor_info, metadata,
 		       ai_source_document_id, ai_extraction_confidence,
-		       created_at, updated_at, archived_at,
+		       created_at, updated_at, archived_at, delete_reason,
 		       team, scope_type, activity_type,
 		       excel_bid_status, submission_status, financial_evaluation_status, po_received_status,
 		       bid_result, target_month_date,
@@ -425,7 +425,7 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		       b.qualification_status, b.bid_outcome, b.outcome_reason, b.tech_compliance_status,
 		       b.remarks, b.competitor_info, b.metadata,
 		       b.ai_source_document_id, b.ai_extraction_confidence,
-		       b.created_at, b.updated_at, b.archived_at,
+		       b.created_at, b.updated_at, b.archived_at, b.delete_reason,
 		       b.team, b.scope_type, b.activity_type,
 		       b.excel_bid_status, b.submission_status, b.financial_evaluation_status, b.po_received_status,
 		       b.bid_result, b.target_month_date,
@@ -945,16 +945,25 @@ func (r *postgresBidRepo) UpdateOutcome(ctx context.Context, id string, req *dom
 // has nothing to put back and has to guess. Guessing ACTIVE would quietly
 // return a Won, Lost or Closed tender to the live pipeline.
 // Every SET expression sees the pre-update row, so bid_status here is the old value.
-func (r *postgresBidRepo) SoftDelete(ctx context.Context, id string) error {
+func (r *postgresBidRepo) SoftDelete(ctx context.Context, id string, reason string) error {
+	trimmed := strings.TrimSpace(reason)
+	var reasonArg *string
+	if trimmed != "" {
+		reasonArg = &trimmed
+	}
 	_, err := r.pool.Exec(ctx, `
 		UPDATE bid.bid_workspaces
 		SET archived_at   = NOW(),
-		    metadata      = jsonb_set(COALESCE(metadata, '{}'::jsonb),
-		                              '{pre_archive_status}',
-		                              to_jsonb(COALESCE(bid_status, 'ACTIVE'))),
+		    delete_reason = $2,
+		    metadata      = jsonb_set(
+		                       jsonb_set(COALESCE(metadata, '{}'::jsonb),
+		                                 '{pre_archive_status}',
+		                                 to_jsonb(COALESCE(bid_status, 'ACTIVE'))),
+		                       '{delete_reason}',
+		                       to_jsonb(COALESCE($2, ''))),
 		    bid_status    = 'ARCHIVED',
 		    updated_at    = NOW()
-		WHERE id = $1`, id)
+		WHERE id = $1`, id, reasonArg)
 	return err
 }
 
@@ -963,10 +972,11 @@ func (r *postgresBidRepo) SoftDelete(ctx context.Context, id string) error {
 func (r *postgresBidRepo) Restore(ctx context.Context, id string) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE bid.bid_workspaces
-		SET archived_at = NULL,
-		    bid_status  = COALESCE(NULLIF(metadata->>'pre_archive_status', 'ARCHIVED'), 'ACTIVE'),
-		    metadata    = COALESCE(metadata, '{}'::jsonb) - 'pre_archive_status',
-		    updated_at  = NOW()
+		SET archived_at   = NULL,
+		    delete_reason = NULL,
+		    bid_status    = COALESCE(NULLIF(metadata->>'pre_archive_status', 'ARCHIVED'), 'ACTIVE'),
+		    metadata      = (COALESCE(metadata, '{}'::jsonb) - 'pre_archive_status') - 'delete_reason',
+		    updated_at    = NOW()
 		WHERE id = $1`, id)
 	return err
 }
@@ -1410,7 +1420,7 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 		&b.QualificationStatus, &b.BidOutcome, &b.OutcomeReason, &b.TechComplianceStatus,
 		&b.Remarks, &b.CompetitorInfo, &b.Metadata,
 		&b.AISourceDocumentID, &b.AIExtractionConfidence,
-		&b.CreatedAt, &b.UpdatedAt, &b.ArchivedAt,
+		&b.CreatedAt, &b.UpdatedAt, &b.ArchivedAt, &b.DeleteReason,
 		&b.Team, &b.ScopeType, &b.ActivityType,
 		&b.ExcelBidStatus, &b.SubmissionStatus, &b.FinancialEvaluationStatus, &b.POReceivedStatus,
 		&b.BidResult, &b.TargetMonthDate,
@@ -1433,6 +1443,15 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan bid: %w", err)
+	}
+	if (b.DeleteReason == nil || *b.DeleteReason == "") && len(b.Metadata) > 0 {
+		var meta map[string]interface{}
+		if err := json.Unmarshal(b.Metadata, &meta); err == nil {
+			if dr, ok := meta["delete_reason"].(string); ok && strings.TrimSpace(dr) != "" {
+				trimmed := strings.TrimSpace(dr)
+				b.DeleteReason = &trimmed
+			}
+		}
 	}
 	return &b, nil
 }

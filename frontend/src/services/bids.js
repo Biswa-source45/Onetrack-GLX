@@ -222,14 +222,19 @@ export async function reopenBid(id) {
 }
 
 // ── Archive / Soft Delete Bid ───────────────────────────────────────────────
-export async function archiveBid(id) {
-  const res = await apiFetch(`${BASE}/bids/${id}`, { method: 'DELETE' })
+export async function archiveBid(id, reason = '') {
+  const query = reason ? `?reason=${encodeURIComponent(reason)}` : ''
+  const res = await apiFetch(`${BASE}/bids/${id}${query}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  })
   const data = await res.json()
   return { ok: res.ok, status: res.status, ...data }
 }
 
-export async function softDeleteBid(id) {
-  return archiveBid(id)
+export async function softDeleteBid(id, reason = '') {
+  return archiveBid(id, reason)
 }
 
 // ── Restore Bid ─────────────────────────────────────────────────────────────
@@ -240,8 +245,13 @@ export async function restoreBid(id) {
 }
 
 // ── Permanent Delete Bid ────────────────────────────────────────────────────
-export async function permanentDeleteBid(id) {
-  const res = await apiFetch(`${BASE}/bids/${id}/permanent`, { method: 'DELETE' })
+export async function permanentDeleteBid(id, reason = '') {
+  const query = reason ? `?reason=${encodeURIComponent(reason)}` : ''
+  const res = await apiFetch(`${BASE}/bids/${id}/permanent${query}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  })
   const data = await res.json()
   return { ok: res.ok, status: res.status, ...data }
 }

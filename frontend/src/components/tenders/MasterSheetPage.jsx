@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
-import { Download, Loader2, RefreshCw, LayoutList, ArrowLeft, SearchX, ShieldCheck } from 'lucide-react'
+import { Download, Loader2, RefreshCw, LayoutList, ArrowLeft, SearchX, ShieldCheck, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -20,6 +20,8 @@ import { statusStyle } from '../../services/bids'
 import { readMasterSheetDrill } from '../../lib/masterSheetDrill'
 import { downloadExcel } from '../../lib/excelExport'
 import { ExportSuccessDialog } from './ExportSuccessDialog'
+import { SortableHeaderCell } from './SortableHeaderCell'
+import { sortBids, getSortDirections } from '../../lib/sheetSort'
 
 const PAGE_SIZE = 100
 
@@ -219,6 +221,7 @@ export function MasterSheetPage() {
   const [exporting, setExporting] = useState(false)
   const [exportResult, setExportResult] = useState(null)
   const [error, setError] = useState(null)
+  const [clientSort, setClientSort] = useState({ key: null, dir: 'asc' })
 
   // Drill-through mode (route has :drillId) — a specific, small set of
   // tenders someone clicked through to from a KPI card / chart segment /
@@ -373,7 +376,10 @@ export function MasterSheetPage() {
     )
   }
 
-  const rows = drillId ? drillBids : bids
+  const rawRows = drillId ? drillBids : bids
+  const rows = useMemo(() => {
+    return sortBids(rawRows, clientSort.key, clientSort.dir)
+  }, [rawRows, clientSort.key, clientSort.dir])
   // As wide as the busiest visible row needs (none when no row has a pill), so names stay aligned.
   const pillSlotMax = rows.reduce((m, r) => Math.max(m, (r.is_imported ? 1 : 0) + (r.derived_status === 'ACTIVE' ? 1 : 0)), 0)
   const rowsLoading = drillId ? drillLoading : loadingFirst
@@ -449,22 +455,39 @@ export function MasterSheetPage() {
         </div>
       )}
 
+      {/* Active sort indicator badge */}
+      {clientSort.key && (
+        <div className="flex items-center gap-2">
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/25 text-xs text-primary font-medium">
+            <span>
+              Sorted by <strong className="font-semibold">{COLUMNS.find((c) => c.key === clientSort.key)?.label || clientSort.key}</strong> ({getSortDirections(clientSort.key)[clientSort.dir === 'asc' ? 'ascShort' : 'descShort']})
+            </span>
+            <button
+              type="button"
+              onClick={() => setClientSort({ key: null, dir: 'asc' })}
+              className="ml-1 p-0.5 rounded-full hover:bg-primary/20 text-primary transition-colors"
+              title="Clear sort and return to default order"
+            >
+              <X className="size-3" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── The sheet ────────────────────────────────────────────────────── */}
       <div className="border border-border rounded-lg overflow-auto max-h-[75vh]">
         <table className="min-w-full w-max text-left border-collapse text-xs">
           <thead className="sticky top-0 z-20">
             <tr className="bg-muted/90 backdrop-blur border-b border-border text-[11px] font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
-              {COLUMNS.map((c) => (
-                <th
+              {COLUMNS.map((c, idx) => (
+                <SortableHeaderCell
                   key={c.key}
-                  style={{ minWidth: c.minWidth }}
-                  className={`p-3 border-r border-border ${c.sticky ? 'sticky left-0 z-30 bg-[color-mix(in_srgb,var(--muted)_90%,var(--card))]' : ''}`}
-                >
-                  {c.label}
-                  {c.hint && (
-                    <span className="block text-[10px] font-medium normal-case tracking-normal text-primary/80">{c.hint}</span>
-                  )}
-                </th>
+                  column={c}
+                  isFirst={idx === 0}
+                  clientSort={clientSort}
+                  onSortChange={(key, dir) => setClientSort({ key, dir })}
+                  className={c.sticky ? 'sticky left-0 z-30 bg-[color-mix(in_srgb,var(--muted)_90%,var(--card))]' : ''}
+                />
               ))}
             </tr>
           </thead>

@@ -215,9 +215,10 @@ type BidWorkspace struct {
 	AIExtractionConfidence *float64 `json:"ai_extraction_confidence,omitempty"`
 
 	// Timestamps
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
-	ArchivedAt *time.Time `json:"archived_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	ArchivedAt   *time.Time `json:"archived_at,omitempty"`
+	DeleteReason *string    `json:"delete_reason,omitempty"`
 
 	// V2 Core Fields
 	HighLevelScope *string    `json:"high_level_scope,omitempty"`
@@ -842,6 +843,7 @@ type BidResponse struct {
 	CreatedAt                 time.Time          `json:"created_at"`
 	UpdatedAt                 time.Time          `json:"updated_at"`
 	ArchivedAt                *time.Time         `json:"archived_at"`
+	DeleteReason              *string            `json:"delete_reason,omitempty"`
 	ResultDate                *time.Time         `json:"result_date,omitempty"`
 	DaysRemaining             *int               `json:"days_remaining,omitempty"`
 
@@ -915,6 +917,7 @@ type BidListItem struct {
 	BidResult                 *string      `json:"bid_result,omitempty"`
 	CreatedAt                 time.Time    `json:"created_at"`
 	ArchivedAt                *time.Time   `json:"archived_at,omitempty"`
+	DeleteReason              *string      `json:"delete_reason,omitempty"`
 	DaysRemaining             *int         `json:"days_remaining,omitempty"`
 }
 

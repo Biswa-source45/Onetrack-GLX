@@ -62,7 +62,7 @@ const NAV_ITEMS = [
     children: [
       { id: 'tenders-all', label: 'All Tenders', icon: Layers, path: '/dashboard/tenders' },
       { id: 'tenders-todos', label: 'Quick To-Dos', icon: ListChecks, path: '/dashboard/tenders/todos' },
-      { id: 'tenders-owned', label: 'Owned Tenders', icon: UserCheck, path: '/dashboard/tenders/owned' }
+      { id: 'tenders-owned', label: 'My Tenders', icon: UserCheck, path: '/dashboard/tenders/owned' }
     ]
   },
   {

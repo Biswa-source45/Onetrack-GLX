@@ -1,68 +1,68 @@
-# Graph Report - Onetrack-GlobX  (2026-10-15)
+# Graph Report - Onetrack-GlobX  (2026-10-21)
 
 ## Corpus Check
-- 405 files · ~462,303 words
+- 452 files · ~492,201 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 10 file(s) not represented in the graph (top: (none) 5, .css 2, .example 1)
 
 ## Summary
-- 3345 nodes · 9650 edges · 159 communities (135 shown, 24 thin omitted)
-- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 176 edges (avg confidence: 0.86)
+- 3424 nodes · 9861 edges · 153 communities (134 shown, 19 thin omitted)
+- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 179 edges (avg confidence: 0.86)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `273f9f11`
+- Built from commit: `d50be3b8`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
-- .BulkImport
-- AddTenderPage.jsx
+- templates.go
+- DocsTab.jsx
 - context.Context
 - WorkingCalendarRepository
 - TenderDetailPage.jsx
 - Landing.jsx
-- fakeTicketRepo
+- TicketResponse
 - TendersPage.jsx
-- StageWorkspaces.jsx
+- LeadWorkflow.jsx
 - time.Time
 - Endpoints
 - working_calendar_service_test.go
-- FeedbackPage.jsx
+- lucide-react
 - Alert
-- BidWorkspace
+- emd_service.go
 - Endpoints
-- Success
+- BadRequest
 - Dashboard.jsx
-- go_pkg_context
-- go_pkg_encoding_json
+- go_pkg_fmt
+- EventItem
 - WorkingCalendarPage.jsx
 - userService
 - Files Changed
 - encoding/json.RawMessage
-- buildBidListItem
-- testing.T
+- BidWorkspace
+- bid_service_test.go
 - authService
 - Stage4Workspace
 - dependencies
-- go_pkg_fmt
+- response.go
 - package.json
 - calendar/handler/handler_test.go
 - components.json
 - ContactsTab.jsx
 - JWTService
 - cn
-- BulkImportPage
+- AlertUsersPanel.jsx
 - CreateUserSheet
 - EmdDetailsDialog.jsx
 - emdfix/main.go
-- bid/domain/models.go
+- go_pkg_time
 - LedgerRow
 - bid_service.go
 - Browser Session Management
 - App.jsx
 - devDependencies
-- UserRepository
+- main
 - Storage Management
 - fakeBidRepo
 - scripts
@@ -72,12 +72,12 @@
 - Test generation (plan → generate → heal)
 - Tracing
 - github.com/onetrack/backend
-- docShortfall.js
+- DocShortfall.jsx
 - CLAUDE.md
 - .claude/CLAUDE.md
 - ledgerTheme.js
-- UserManagement.jsx
-- emd_service_test.go
+- react
+- testing.T
 - TenderContact
 - PART 2 — TASK MANAGEMENT APIs
 - OneTrack GlobX — API Documentation
@@ -96,7 +96,7 @@
 - 4. Users & Profile — `/api/v1/users`
 - SKILL.md
 - 9. Feedback Tickets — `/api/v1/tickets`
-- apiFetch
+- LeadDetailPage
 - 7. Leads — `/api/v1/leads`
 - 1. Getting started
 - normalize.go
@@ -120,52 +120,46 @@
 - go_pkg_github_com_onetrack_backend_internal_calendar_repository
 - POST /api/v1/bids
 - POST /api/v1/tasks/{id}/activities
-- main
+- AuthMiddleware
 - bidService
 - POST /api/v1/tasks/{id}/approve
 - POST /api/v1/tasks/{id}/oem-followup
 - POST /api/v1/bids/{id}/tasks/document
 - POST /api/v1/bids/{id}/tasks
 - React + Vite
-- ChecklistTab.jsx
-- alerts.js
-- TicketResponse
-- updateBid
-- ticketService
-- contacts_test.go
+- LeadDetailPage.jsx
+- BidChecklistItem
+- LeadDocumentPicker.jsx
+- StageWorkspaces.jsx
+- bid/domain/models.go
+- engineRouter
 - contactError
-- email.go
-- TicketService
+- Recorder
+- LeadWorkflow
 - CreateUserDialog
 - sheetColumns.test.js
-- TicketRepository
+- ForceResetDialog
 - InteractiveBoardDemo.jsx
-- TicketStatusEvent
 - vite.config.js
-- list_exports.js
 - service_test.go
 - xlsx.go
 - github.com/gin-gonic/gin.Context
-- fail
+- Success
 - BidService
 - WorkingCalendarService
-- Lead
-- LeadHandler
+- Repo
+- NotFound
 - bidService
-- Forbidden
 - UserSummary
-- StageHistoryTab
 - github.com/onetrack/backend/internal/bid/domain.TenderEMDAuditLog
 - github.com/onetrack/backend/internal/bid/domain.TenderEMDDetails
 - .applyUpdate
-- AddTenderDialog.jsx
-- ImportedBid
-- Actor
+- apiFetch
+- Lead
 - PrimaryButton
-- BadRequest
-- github.com/jackc/pgx/v5/pgxpool.Pool
-- Preview
-- importer_test.go
+- InternalError
+- DocsRepo
+- importer.go
 - .UpdateDocument
 - UserSummary
 - frontend_src_components_tenders_postbidcontacts
@@ -177,22 +171,22 @@
 - github.com/onetrack/backend/internal/bid/domain.EMDTx
 
 ## God Nodes (most connected - your core abstractions)
-1. `Success()` - 97 edges
-2. `cn()` - 95 edges
-3. `apiFetch()` - 91 edges
-4. `react` - 81 edges
-5. `BadRequest()` - 66 edges
-6. `lucide-react` - 64 edges
-7. `InternalError()` - 62 edges
+1. `Success()` - 101 edges
+2. `apiFetch()` - 96 edges
+3. `cn()` - 95 edges
+4. `react` - 82 edges
+5. `BadRequest()` - 68 edges
+6. `InternalError()` - 65 edges
+7. `lucide-react` - 65 edges
 8. `fakeBidRepo` - 58 edges
 9. `BidRepository` - 54 edges
 10. `mockCalendarRepo` - 51 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `1.7 Roles and permissions` --references--> `bid()`  [INFERRED]
-  API_DOCUMENTATION.md → frontend/src/lib/oem.test.js
 - `The Ledger Stamp Mark (signature component)` --references--> `LedgerStampMark()`  [INFERRED]
   frontend/DESIGN.md → frontend/src/lib/ledgerMarks.jsx
+- `1.7 Roles and permissions` --references--> `bid()`  [INFERRED]
+  API_DOCUMENTATION.md → frontend/src/lib/oem.test.js
 - `Do:` --references--> `LedgerRow()`  [INFERRED]
   frontend/DESIGN.md → frontend/src/lib/LedgerRow.jsx
 - `Hierarchy` --references--> `LedgerRow()`  [INFERRED]
@@ -203,195 +197,195 @@
 ## Import Cycles
 - None detected.
 
-## Communities (159 total, 24 thin omitted)
+## Communities (153 total, 19 thin omitted)
 
-### Community 0 - ".BulkImport"
-Cohesion: 0.20
-Nodes (15): commit(), connect(), getEnv(), pgx.Conn, main(), blank(), EnrichDuplicates(), pgx.Row (+7 more)
+### Community 0 - "templates.go"
+Cohesion: 0.09
+Nodes (31): NewHandler(), Item, NewService(), rowOf(), validEmail(), AccessAlertMessage(), accessInfoTable(), callout() (+23 more)
 
-### Community 1 - "AddTenderPage.jsx"
-Cohesion: 0.12
-Nodes (27): AddTenderPage(), handleSubmit(), nextStep(), validateStep(), BIDDER_SUGGESTIONS, OEM_SUGGESTIONS, FilePick(), EmdBgSection() (+19 more)
+### Community 1 - "DocsTab.jsx"
+Cohesion: 0.10
+Nodes (29): inputCls(), ManualForm(), handleSubmit(), loadUsers(), validate(), AddTenderPage(), handleSubmit(), nextStep() (+21 more)
 
 ### Community 2 - "context.Context"
-Cohesion: 0.06
-Nodes (6): BidRepository, EMDTx, UpdateChecklistRequest, context.Context, TenderEMDAuditLog, TenderEMDDetails
+Cohesion: 0.03
+Nodes (16): AuthRepository, Role, User, UserPermissionOverride, BidRepository, EMDTx, FieldSuggestion, TenderOwnerPerformanceStat (+8 more)
 
 ### Community 3 - "WorkingCalendarRepository"
-Cohesion: 0.05
-Nodes (16): WorkingCalendarRepository, CalendarException, DeadlineCoverage, GoogleSyncService, GoogleCalendarIntegration, GoogleCalendarSyncLog, stubRepo, Holiday (+8 more)
+Cohesion: 0.04
+Nodes (18): WorkingCalendarRepository, CalendarException, DeadlineCoverage, GoogleSyncService, sync.Mutex, sync.WaitGroup, GoogleCalendarIntegration, GoogleCalendarSyncLog (+10 more)
 
 ### Community 4 - "TenderDetailPage.jsx"
-Cohesion: 0.05
-Nodes (69): ShortfallHistoryCard(), DocsTab(), fmtDate(), PreviewDialog(), saveBlob(), applyAlertNote(), EditTenderDialog(), handleSubmit() (+61 more)
+Cohesion: 0.07
+Nodes (49): ArchiveConfirmDialog(), handleConfirm(), ComplianceCard(), EXIT_HINTS, EXIT_OPTIONS, ExitedBanner(), extractCommercialDetails(), fmt() (+41 more)
 
 ### Community 5 - "Landing.jsx"
 Cohesion: 0.09
 Nodes (6): DEMO_SHEET_TENDERS, Landing(), MotionLink, ROLES, FaqSection(), LEDGER_STAGES
 
-### Community 6 - "fakeTicketRepo"
-Cohesion: 0.15
-Nodes (4): Ticket, TicketStatusHistoryInsert, postgresTicketRepo, fakeTicketRepo
+### Community 6 - "TicketResponse"
+Cohesion: 0.05
+Nodes (20): FieldMemory, TicketRepository, TicketService, CreateTicketRequest, ListTicketsParams, Ticket, TicketListPage, TicketResponse (+12 more)
 
 ### Community 7 - "TendersPage.jsx"
-Cohesion: 0.06
-Nodes (60): ActivityLogDialog(), eventBadge(), ShortfallHistory(), ExportSuccessDialog(), ImportedPill(), InProgressPill(), COLUMNS, MasterSheetPage() (+52 more)
+Cohesion: 0.07
+Nodes (57): ImportedPill(), InProgressPill(), COLUMNS, MasterSheetPage(), handleExport(), PILLS, plainText(), RENDER (+49 more)
 
-### Community 8 - "StageWorkspaces.jsx"
-Cohesion: 0.11
-Nodes (38): INITIAL_FORM, PERMISSION_CATEGORIES, PERMISSION_METADATA, ROLE_DETAILS, ACTIONS, APPROVER_ROLES, EVENT_LABELS, STEPS (+30 more)
+### Community 8 - "LeadWorkflow.jsx"
+Cohesion: 0.12
+Nodes (26): ActivityLogDialog(), eventBadge(), StageAccessDialog(), handleClose(), handleSave(), AlertsPage(), ACTIONS, APPROVER_ROLES (+18 more)
 
 ### Community 9 - "time.Time"
-Cohesion: 0.06
-Nodes (53): TenderDeadlineCandidate, CalculateDeadlineResult, DeadlineCoverage, EngineRuntime, EvaluationSummary, LastRun, NextActionableTask, RedZoneNotificationResult (+45 more)
+Cohesion: 0.07
+Nodes (39): StageLink(), TenderLink(), TenderDeadlineCandidate, CalculateDeadlineResult, EngineRuntime, EvaluationSummary, LastRun, RedZoneNotificationResult (+31 more)
 
 ### Community 10 - "Endpoints"
 Cohesion: 0.04
 Nodes (46): 1. Health Check, 2. Login, 3. Refresh Token, 4. Logout, 5. Change Password, 6. Force Password Reset, Access Token JWT Payload, Admin User (+38 more)
 
 ### Community 11 - "working_calendar_service_test.go"
-Cohesion: 0.15
-Nodes (44): escalationAlerts(), escalationRepo(), inWindowTender(), isWorkingDay(), newMockCalendarRepo(), newSvc(), notifKey(), shortfallAlerts() (+36 more)
+Cohesion: 0.14
+Nodes (50): escalationAlerts(), escalationRepo(), inWindowTender(), isWorkingDay(), newMockCalendarRepo(), newSvc(), rules(), shortfallAlerts() (+42 more)
 
-### Community 12 - "FeedbackPage.jsx"
-Cohesion: 0.09
-Nodes (37): CATEGORY_CLASSES, CATEGORY_FILTERS, CATEGORY_LABELS, formatTime(), SystemLogsPage(), ALLOWED_IMAGE_TYPES, FeedbackPage(), handleSubmit() (+29 more)
+### Community 12 - "lucide-react"
+Cohesion: 0.06
+Nodes (60): brands, keys, CATEGORY_CLASSES, CATEGORY_FILTERS, CATEGORY_LABELS, ALLOWED_IMAGE_TYPES, FeedbackPage(), handleSubmit() (+52 more)
 
 ### Community 13 - "Alert"
 Cohesion: 0.06
-Nodes (11): Alert, AlertRepository, AlertService, SafeLink(), TestSafeLink(), NewAlertHandler(), NewPostgresAlertRepository(), fakeAlertSvc (+3 more)
+Nodes (10): Alert, AlertRepository, AlertService, SafeLink(), TestSafeLink(), NewAlertHandler(), fakeAlertSvc, postgresAlertRepo (+2 more)
 
-### Community 14 - "BidWorkspace"
-Cohesion: 0.16
-Nodes (23): MDDecisionRequest, SubmitMDApprovalRequest, TenderEMDResponse, UpdateBasicEMDRequest, UpdateEMDRefundRequest, VerifyEMDPaymentRequest, BidWorkspace, defaultEMD() (+15 more)
+### Community 14 - "emd_service.go"
+Cohesion: 0.17
+Nodes (20): MDDecisionRequest, SubmitMDApprovalRequest, TenderEMDResponse, UpdateBasicEMDRequest, UpdateEMDRefundRequest, VerifyEMDPaymentRequest, defaultEMD(), emdAmount() (+12 more)
 
 ### Community 15 - "Endpoints"
 Cohesion: 0.05
 Nodes (39): 1. Create User, 2. List Users, 3. Get My Profile, 4. Get User by ID, 5. Update User Profile, 6. Update User Status (Activate/Deactivate), 7. Update User Roles, 8. Update Permission Overrides (+31 more)
 
-### Community 16 - "Success"
-Cohesion: 0.11
-Nodes (8): BidHandler, parseIntQuery(), Conflict(), InternalError(), NotFound(), Success(), AlertHandler, UserHandler
+### Community 16 - "BadRequest"
+Cohesion: 0.12
+Nodes (7): BidHandler, parseIntQuery(), hasPermission(), BadRequest(), Conflict(), Forbidden(), github.com/gin-gonic/gin.HandlerFunc
 
 ### Community 17 - "Dashboard.jsx"
-Cohesion: 0.06
-Nodes (58): AnalyticsPage(), CATEGORY_COLORS, ROLE_BADGES, STAGE_COLORS, STAGE_LABELS, EmdProjectionBlock(), getTenderDeadline(), isActivePipeline() (+50 more)
+Cohesion: 0.07
+Nodes (37): EditUserDialog(), handleClose(), handleSubmit(), RoleBadge(), AnalyticsPage(), EmdProjectionBlock(), getTenderDeadline(), isActivePipeline() (+29 more)
 
-### Community 18 - "go_pkg_context"
-Cohesion: 0.12
-Nodes (13): TestValidateImageUpload(), validateImageUpload(), ForgotPasswordRequest, Permission, RefreshRequest, ResetPasswordOTPRequest, VerifyOTPRequest, go_pkg_context (+5 more)
+### Community 18 - "go_pkg_fmt"
+Cohesion: 0.09
+Nodes (27): getEnv(), main(), PasswordMismatchError, ForgotPasswordRequest, Permission, RefreshRequest, ResetPasswordOTPRequest, VerifyOTPRequest (+19 more)
 
-### Community 19 - "go_pkg_encoding_json"
-Cohesion: 0.13
-Nodes (14): Repository, Service, Event, EventItem, ListQuery, Page, Handler, NewHandler() (+6 more)
+### Community 19 - "EventItem"
+Cohesion: 0.14
+Nodes (12): Repository, Service, Event, EventItem, ListQuery, Page, Handler, NewHandler() (+4 more)
 
 ### Community 20 - "WorkingCalendarPage.jsx"
-Cohesion: 0.10
-Nodes (45): COVERAGE_COLS, CURRENT_YEAR, DEADLINE_PRESETS, DEADLINE_UNITS, describeRun(), EMPTY_HOLIDAY_FORM, EngineStatusCard(), fmtTime() (+37 more)
+Cohesion: 0.07
+Nodes (60): COVERAGE_COLS, CURRENT_YEAR, DEADLINE_PRESETS, DEADLINE_UNITS, describeRun(), EMPTY_HOLIDAY_FORM, EngineStatusCard(), fmtTime() (+52 more)
 
 ### Community 21 - "userService"
-Cohesion: 0.11
-Nodes (11): UserService, CreateUserRequest, UpdatePermissionsRequest, UpdateRolesRequest, UpdateStatusRequest, UpdateUserRequest, UserListResponse, UserResponse (+3 more)
+Cohesion: 0.10
+Nodes (12): UserService, CreateUserRequest, ListUsersParams, UpdatePermissionsRequest, UpdateRolesRequest, UpdateStatusRequest, UpdateUserRequest, UserListResponse (+4 more)
 
 ### Community 22 - "Files Changed"
 Cohesion: 0.09
 Nodes (22): 1. New column on `bid.bid_workspaces`, 2. New table `bid.bid_checklists`, API Changes Summary, Changes, Database Migration, Files Changed, `GET /api/v1/bids/:id/checklists`, `GET /api/v1/bids/:id` — updated response (+14 more)
 
 ### Community 23 - "encoding/json.RawMessage"
-Cohesion: 0.07
-Nodes (20): AddMicroEventRequest, AuditLogPage, AuditLogQuery, StageHistoryPage, StageHistoryResponse, auditPageSize(), decodeAuditCursor(), encodeAuditCursor() (+12 more)
+Cohesion: 0.13
+Nodes (10): Repository, Service, SystemConfig, NewHandler(), postgresRepo, service, NewService(), BidStageHistory (+2 more)
 
-### Community 24 - "buildBidListItem"
-Cohesion: 0.14
-Nodes (11): BidListItem, BidListResponse, ListBidsParams, scanBid(), scanBidFields(), scanBidFromRows(), buildBidListItem(), calcDaysRemaining() (+3 more)
+### Community 24 - "BidWorkspace"
+Cohesion: 0.43
+Nodes (4): BidWorkspace, scanBid(), scanBidFields(), scannable
 
-### Community 25 - "testing.T"
-Cohesion: 0.10
-Nodes (36): NewBidService(), floatPtr(), hasAlertType(), intPtr(), lastEventType(), newLedgerTestBid(), TestAddRemoveMember_LogActions(), TestArchiveRestoreDeleteBid_LogActions() (+28 more)
+### Community 25 - "bid_service_test.go"
+Cohesion: 0.12
+Nodes (30): extractProductFields(), fieldSuggestionEntries(), NewBidService(), floatPtr(), hasAlertType(), intPtr(), lastEventType(), newLedgerTestBid() (+22 more)
 
 ### Community 26 - "authService"
 Cohesion: 0.12
 Nodes (8): AuthService, ChangePasswordRequest, ForceResetRequest, LoginRequest, LoginResponse, NewAuthHandler(), UserInfo, authService
 
 ### Community 27 - "Stage4Workspace"
-Cohesion: 0.28
-Nodes (14): buildRemarkCalloutHtml(), buildValuesAdjustedBannerHtml(), computeL1PricingSummary(), escHtml(), fmtMoneyFull(), Stage4Workspace(), buybackDraft(), buybackLines() (+6 more)
+Cohesion: 0.25
+Nodes (15): buildRemarkCalloutHtml(), buildValuesAdjustedBannerHtml(), computeL1PricingSummary(), escHtml(), fmtMoneyFull(), Stage4Workspace(), buybackDraft(), buybackLines() (+7 more)
 
 ### Community 28 - "dependencies"
 Cohesion: 0.08
 Nodes (26): dependencies, canvas-confetti, class-variance-authority, clsx, docx-preview, exceljs, @fontsource-variable/instrument-sans, @fontsource-variable/inter (+18 more)
 
-### Community 29 - "go_pkg_fmt"
-Cohesion: 0.12
-Nodes (27): FolderSlug(), safeName(), strp(), TestFolderSlugAndSafeName(), TestNormalize(), TestValidateDocument(), validateDocument(), TransitionRequest (+19 more)
+### Community 29 - "response.go"
+Cohesion: 0.14
+Nodes (16): TestValidateTenderDoc(), validateTenderDoc(), go_pkg_bytes, go_pkg_crypto_rand, go_pkg_encoding_hex, go_pkg_github_com_gin_gonic_gin, go_pkg_io, go_pkg_mime_multipart (+8 more)
 
 ### Community 30 - "package.json"
-Cohesion: 0.09
-Nodes (23): name, private, type, version, canvas-confetti, clsx, docx-preview, eslint (+15 more)
+Cohesion: 0.10
+Nodes (22): name, private, type, version, canvas-confetti, clsx, eslint, @eslint/js (+14 more)
 
 ### Community 31 - "calendar/handler/handler_test.go"
-Cohesion: 0.11
-Nodes (22): f64p(), intp(), strp(), TestUpdateCalendarRequestValidate(), isRealAPIKey(), call(), engineRouter(), TestEngineStatusIsAdminOnly() (+14 more)
+Cohesion: 0.13
+Nodes (15): f64p(), intp(), strp(), TestUpdateCalendarRequestValidate(), TestValidateIntervalNormalisesUnit(), ValidateInterval(), isRealAPIKey(), TestIsRealAPIKeyRejectsPlaceholders() (+7 more)
 
 ### Community 32 - "components.json"
 Cohesion: 0.09
 Nodes (21): aliases, components, hooks, lib, ui, utils, iconLibrary, menuAccent (+13 more)
 
 ### Community 33 - "ContactsTab.jsx"
-Cohesion: 0.15
-Nodes (29): ContactDialog(), ContactsSummary(), ContactsTab(), FIELDS, OemContactCell(), ReasonDialog(), applyPlan(), blankContact() (+21 more)
+Cohesion: 0.16
+Nodes (28): ContactDialog(), ContactsSummary(), ContactsTab(), FIELDS, OemContactCell(), applyPlan(), blankContact(), cleanContact() (+20 more)
 
 ### Community 34 - "JWTService"
-Cohesion: 0.15
-Nodes (7): JWTService, TokenClaims, TokenPair, redis.Client, NewJWTService(), stubJWT, jwtService
+Cohesion: 0.14
+Nodes (8): JWTService, TokenClaims, TokenPair, redis.Client, NewJWTService(), NewAuthMiddleware(), stubJWT, jwtService
 
 ### Community 35 - "cn"
 Cohesion: 0.06
-Nodes (53): getHue(), getInitials(), UserAvatar(), emdSummary(), Accordion(), AccordionContent(), AccordionItem(), AccordionTrigger() (+45 more)
+Nodes (63): getHue(), getInitials(), UserAvatar(), applyAlertNote(), EditTenderDialog(), handleSubmit(), loadFullBid(), loadUsers() (+55 more)
 
-### Community 36 - "BulkImportPage"
-Cohesion: 0.38
-Nodes (7): BulkImportPage(), handleCommit(), handleFile(), commitLines(), errorLines(), previewLines(), bulkImportTenders()
+### Community 36 - "AlertUsersPanel.jsx"
+Cohesion: 0.12
+Nodes (24): AccessAlertDialog(), handleSend(), AlertUsersPanel(), applySharedPassword(), confirmSend(), setPassword(), fmt(), roleText() (+16 more)
 
 ### Community 37 - "CreateUserSheet"
 Cohesion: 0.29
 Nodes (6): CreateUserSheet(), handleSubmit(), onKeyDown(), requestClose(), resetForm(), validate()
 
 ### Community 38 - "EmdDetailsDialog.jsx"
-Cohesion: 0.12
+Cohesion: 0.13
 Nodes (30): EmdApprovalDialog(), ACTION_STYLE, EmdAuditDialog(), fmtDate(), EmdDetailsDialog(), fmtDate(), SECTIONS, EmdLifecycleCard() (+22 more)
 
 ### Community 39 - "emdfix/main.go"
-Cohesion: 0.12
-Nodes (20): boolOr(), env(), fmtF(), main(), strOr(), env(), main(), printSection() (+12 more)
+Cohesion: 0.13
+Nodes (19): boolOr(), env(), fmtF(), main(), strOr(), env(), main(), printSection() (+11 more)
 
-### Community 40 - "bid/domain/models.go"
-Cohesion: 0.09
-Nodes (25): RecordEMDPaymentRequest, PricingSuggestion, digitsOnly(), phoneKey(), ChallanPaymentDetails, ChequePaymentDetails, DepositorDetailsDTO, IdentifierMatch (+17 more)
+### Community 40 - "go_pkg_time"
+Cohesion: 0.10
+Nodes (24): RecordEMDPaymentRequest, FolderSlug(), safeName(), strp(), TestFolderSlugAndSafeName(), TestNormalize(), TestValidateDocument(), validateDocument() (+16 more)
 
 ### Community 41 - "LedgerRow"
 Cohesion: 0.12
 Nodes (20): Colors, Deep Panel (login left panel only), Design System: OneTrack — The Ledger, Do:, Do's and Don'ts, Don't:, Elevation & Depth, Hierarchy (+12 more)
 
 ### Community 42 - "bid_service.go"
-Cohesion: 0.08
-Nodes (28): CreateBidRequest, alertNoteHTML(), extractProductFields(), fieldLabel(), fieldSuggestionEntries(), money(), ownershipChangeSummaryHTML(), pickL1PricingQuote() (+20 more)
+Cohesion: 0.09
+Nodes (34): FieldDiff, alertNoteHTML(), buildBidListItem(), calcDaysRemaining(), checkDocShortfall(), derefFloat(), derefInt(), derefStr() (+26 more)
 
 ### Community 43 - "Browser Session Management"
 Cohesion: 0.10
 Nodes (20): 1. Name Browser Sessions Semantically, 2. Always Clean Up, 3. Delete Stale Browser Data, A/B Testing Sessions, Attach by channel name, Attach via browser extension, Attach via CDP endpoint, Attaching to a Running Browser (+12 more)
 
 ### Community 44 - "App.jsx"
-Cohesion: 0.11
-Nodes (20): App(), ExcludeRoleGuard(), PermissionGuard(), RoleGuard(), useDebounce(), UserManagement(), LeadStageBadge(), LeadStatusBadge() (+12 more)
+Cohesion: 0.09
+Nodes (24): App(), ExcludeRoleGuard(), PermissionGuard(), RoleGuard(), BulkImportPage(), handleCommit(), handleFile(), commitLines() (+16 more)
 
 ### Community 45 - "devDependencies"
 Cohesion: 0.20
 Nodes (10): devDependencies, eslint, @eslint/js, eslint-plugin-react-hooks, eslint-plugin-react-refresh, globals, @types/react, @types/react-dom (+2 more)
 
-### Community 46 - "UserRepository"
-Cohesion: 0.04
-Nodes (11): AuthRepository, Role, User, UserPermissionOverride, NewPostgresAuthRepository(), UserRepository, ListUsersParams, mapKeys() (+3 more)
+### Community 46 - "main"
+Cohesion: 0.19
+Nodes (19): main(), NewPostgresAlertRepository(), NewPostgresAuthRepository(), NewBulkImportHandler(), NewDocsRepo(), NewPostgresBidRepository(), NewPostgresCalendarRepository(), NewPostgresTicketRepository() (+11 more)
 
 ### Community 47 - "Storage Management"
 Cohesion: 0.11
@@ -399,19 +393,19 @@ Nodes (18): Authentication State Reuse, Clear sessionStorage, Common Patterns, D
 
 ### Community 48 - "fakeBidRepo"
 Cohesion: 0.03
-Nodes (15): PricingWorkspaceRow, BidChecklist, FieldSuggestion, MemberResponse, PendingApproval, RecordOutcomeRequest, TenderEditApproval, TenderOwnerPerformanceStat (+7 more)
+Nodes (27): PricingWorkspaceRow, AddMicroEventRequest, AuditLogPage, AuditLogQuery, BidChecklist, BidListItem, BidListResponse, ListBidsParams (+19 more)
 
 ### Community 49 - "scripts"
 Cohesion: 0.40
 Nodes (5): scripts, build, dev, lint, preview
 
 ### Community 50 - ".TransitionStage"
-Cohesion: 0.31
-Nodes (7): TransitionResult, TransitionStageRequest, getRoleForStage(), GetAllowedTransitions(), IsTerminalStage(), IsTransitionAllowed(), skipEMDStage()
+Cohesion: 0.26
+Nodes (8): TransitionResult, TransitionStageRequest, getRoleForStage(), emdNotRequired(), GetAllowedTransitions(), IsTerminalStage(), IsTransitionAllowed(), skipEMDStage()
 
 ### Community 51 - "server/main.go"
 Cohesion: 0.06
-Nodes (39): TestValidateTenderDoc(), validateTenderDoc(), getEnv(), Load(), redis.Client, NewRedisClient(), Config, DatabaseConfig (+31 more)
+Nodes (35): getEnv(), Load(), Config, DatabaseConfig, EmailConfig, JWTConfig, RedisConfig, ServerConfig (+27 more)
 
 ### Community 52 - "compilerOptions"
 Cohesion: 0.50
@@ -425,25 +419,25 @@ Nodes (17): 0. How generation works, 1.1 Prerequisite: workspace, 1.2 Prerequisi
 Cohesion: 0.12
 Nodes (16): 1. Start Tracing Before the Problem, 2. Clean Up Old Traces, Analyzing Performance, Basic Usage, Best Practices, Capturing Evidence, Debugging Failed Actions, Limitations (+8 more)
 
-### Community 56 - "docShortfall.js"
-Cohesion: 0.22
-Nodes (20): esc(), ShortfallPanel(), Stage10Workspace(), addRound(), approverChoices(), awaitingReeval(), docCounts(), docId() (+12 more)
+### Community 56 - "DocShortfall.jsx"
+Cohesion: 0.17
+Nodes (28): DUE_STYLE, esc(), RaiseShortfallDialog(), ReasonDialog(), ShortfallHistory(), ShortfallHistoryCard(), ShortfallPanel(), STATUS_STYLE (+20 more)
 
 ### Community 59 - "ledgerTheme.js"
 Cohesion: 0.35
 Nodes (5): LedgerStampMark(), ledger, ledgerFont, BUILDINGS, LoginSkyline()
 
-### Community 60 - "UserManagement.jsx"
-Cohesion: 0.06
-Nodes (45): FORMATS, STAGE_LABELS, STAGE_ORDER, backdropVariants, closeButtonVariants, INITIAL_FORM, panelVariants, EditUserDialog() (+37 more)
+### Community 60 - "react"
+Cohesion: 0.08
+Nodes (47): FORMATS, STAGE_LABELS, STAGE_ORDER, INITIAL_FORM, backdropVariants, closeButtonVariants, INITIAL_FORM, panelVariants (+39 more)
 
-### Community 61 - "emd_service_test.go"
-Cohesion: 0.26
-Nodes (20): boolPtr(), strPtr(), float64Ptr(), newEMDTestSetup(), onlinePayment(), TestChecklist_ToggleKeepsStatusInSync(), TestChecklist_ValidatesPriorityAndStatus(), TestEMD_BasicUpdateCannotTouchStatusAndLocksWhilePending() (+12 more)
+### Community 61 - "testing.T"
+Cohesion: 0.15
+Nodes (31): boolPtr(), strPtr(), float64Ptr(), newEMDTestSetup(), onlinePayment(), TestChecklist_ToggleKeepsStatusInSync(), TestChecklist_ValidatesPriorityAndStatus(), TestEMD_BasicUpdateCannotTouchStatusAndLocksWhilePending() (+23 more)
 
 ### Community 62 - "TenderContact"
-Cohesion: 0.10
-Nodes (15): ReorderContactItem, ReorderContactsRequest, SaveContactRequest, TenderContact, UpdateContactRequest, contactErr(), pgx.Row, postgresBidRepo (+7 more)
+Cohesion: 0.07
+Nodes (26): ReorderContactItem, ReorderContactsRequest, SaveContactRequest, TenderContact, UpdateContactRequest, contactErr(), pgx.Row, postgresBidRepo (+18 more)
 
 ### Community 63 - "PART 2 — TASK MANAGEMENT APIs"
 Cohesion: 0.12
@@ -501,9 +495,9 @@ Nodes (4): Examples, Inspecting Element Attributes, Debugging Playwright Tests, 
 Cohesion: 0.20
 Nodes (10): 9.1 `POST /tickets` — submit feedback, 9.2 `GET /tickets/mine`, 9.3 `GET /tickets/:id`, 9.4 `GET /tickets/:id/history`, 9.5 `GET /tickets/:id/image`, 9.6 `GET /tickets` — all tickets (triage), 9.7 `GET /tickets/open-count`, 9.8 `PATCH /tickets/:id/status` (+2 more)
 
-### Community 80 - "apiFetch"
-Cohesion: 0.08
-Nodes (53): SettingsPage(), AlertsPage(), AddLeadPage(), buildPayload(), handleSubmit(), validate(), leadToForm(), STATUS_OPTIONS (+45 more)
+### Community 80 - "LeadDetailPage"
+Cohesion: 0.18
+Nodes (23): AddLeadPage(), buildPayload(), handleSubmit(), validate(), leadToForm(), emdSummary(), LeadDetailPage(), handleDelete() (+15 more)
 
 ### Community 81 - "7. Leads — `/api/v1/leads`"
 Cohesion: 0.22
@@ -514,8 +508,8 @@ Cohesion: 0.22
 Nodes (9): 1.1 Base URL, 1.2 Authentication flow (step by step), 1.3 Response envelope, 1.4 Errors and status codes, 1.5 Pagination, 1.6 Data conventions, 1.7 Roles and permissions, 1. Getting started (+1 more)
 
 ### Community 83 - "normalize.go"
-Cohesion: 0.23
-Nodes (29): canonDashboardActivity(), canonDashboardPlatform(), deriveStageDashboard(), isOurName(), parseCompetitors(), ParseRowDashboard(), parseTimeFraction(), timeOfDay() (+21 more)
+Cohesion: 0.14
+Nodes (38): canonDashboardActivity(), canonDashboardPlatform(), deriveStageDashboard(), isOurName(), parseCompetitors(), ParseRowDashboard(), parseTimeFraction(), timeOfDay() (+30 more)
 
 ### Community 84 - "3. Auth — `/api/v1/auth`"
 Cohesion: 0.29
@@ -534,8 +528,8 @@ Cohesion: 0.33
 Nodes (6): 12.1 Tender workflow stages, 12.2 Tender status values, 12.3 Lead values, 12.4 Preset dropdown values (free text also accepted), 12.5 Feedback categories, 12. Appendix: enums and reference values
 
 ### Community 88 - "mockCalendarRepo"
-Cohesion: 0.04
-Nodes (14): ShortfallCandidate, DefaultIntegration(), CalendarException, GoogleCalendarIntegration, GoogleCalendarSyncLog, Holiday, SyncResult, UpdateChecklistPriorityRequest (+6 more)
+Cohesion: 0.03
+Nodes (23): ShortfallCandidate, DefaultIntegration(), CalendarException, DeadlineCoverage, GoogleCalendarIntegration, GoogleCalendarSyncLog, Holiday, NextActionableTask (+15 more)
 
 ### Community 89 - "6.7 Edit approvals"
 Cohesion: 0.40
@@ -582,8 +576,8 @@ Cohesion: 0.40
 Nodes (5): Allowed Transitions (Manual Mode), Error Codes, POST /api/v1/bids/{id}/transition, Request, Response
 
 ### Community 100 - "Stage2PrimaryReviewWorkspace"
-Cohesion: 0.20
-Nodes (17): buildPresalesCands(), fmtEmdSummary(), makeOemRow(), nextLocalId(), Stage2PrimaryReviewWorkspace(), Stage3Workspace(), ScopeProductsCard(), oemRowIds() (+9 more)
+Cohesion: 0.22
+Nodes (16): buildPresalesCands(), makeOemRow(), nextLocalId(), Stage2PrimaryReviewWorkspace(), Stage3Workspace(), ScopeProductsCard(), oemRowIds(), confirmedOems() (+8 more)
 
 ### Community 102 - "POST /api/v1/bids"
 Cohesion: 0.40
@@ -593,13 +587,13 @@ Nodes (5): Error Codes, Example Request (Manual Mode), POST /api/v1/bids, Reques
 Cohesion: 0.40
 Nodes (5): Example — Call Logged, Example — Comment, POST /api/v1/tasks/{id}/activities, Request, Response — 201 Created
 
-### Community 104 - "main"
-Cohesion: 0.13
-Nodes (23): main(), RegisterAlertRoutes(), RegisterAuthRoutes(), NewAuthService(), RegisterBidRoutes(), RegisterCalendarRoutes(), NewGoogleSyncService(), RegisterTicketRoutes() (+15 more)
+### Community 104 - "AuthMiddleware"
+Cohesion: 0.20
+Nodes (16): RegisterAlertRoutes(), RegisterAuthRoutes(), RegisterBidRoutes(), RegisterCalendarRoutes(), RegisterRoutes(), RegisterTicketRoutes(), RegisterLeadRoutes(), AuthMiddleware (+8 more)
 
 ### Community 105 - "bidService"
-Cohesion: 0.10
-Nodes (16): AddChecklistRequest, BidChecklistItem, BidResponse, ReorderChecklistRequest, UserSummary, approverDisplayName(), buildBidResponse(), closeOrCancelWords() (+8 more)
+Cohesion: 0.15
+Nodes (7): ApprovalLink(), approverDisplayName(), authorizeEditDecision(), closeOrCancelWords(), needsRMApproval(), outcomeLogText(), bidService
 
 ### Community 106 - "POST /api/v1/tasks/{id}/approve"
 Cohesion: 0.50
@@ -621,45 +615,53 @@ Nodes (4): Example Request, POST /api/v1/bids/{id}/tasks, Request Body, Response
 Cohesion: 0.50
 Nodes (3): Expanding the ESLint configuration, React Compiler, React + Vite
 
-### Community 111 - "ChecklistTab.jsx"
-Cohesion: 0.13
-Nodes (26): ChecklistTab(), logChecklistHistory(), OEM_PILL_COLORS, getOemFollowUps(), OEMFollowUpModal(), addSection(), cellBorder, cleanTitle() (+18 more)
+### Community 111 - "LeadDetailPage.jsx"
+Cohesion: 0.17
+Nodes (14): LeadStageBadge(), LeadStatusBadge(), LeadTypeBadge(), STAGES, AlertDialog(), AlertDialogAction(), AlertDialogCancel(), AlertDialogContent() (+6 more)
 
-### Community 112 - "alerts.js"
-Cohesion: 0.28
-Nodes (15): buildEmdDetailsTableHtml(), buildTenderDetailHtml(), fmtDate(), fmtDateTime(), fmtMoney(), InternalApprovalDialog(), Stage1Workspace(), Stage6Workspace() (+7 more)
+### Community 112 - "BidChecklistItem"
+Cohesion: 0.23
+Nodes (8): AddChecklistRequest, BidChecklistItem, BidResponse, ReorderChecklistRequest, buildBidResponse(), validateChecklistFields(), ReorderChecklistItem, TenderContact
 
-### Community 113 - "TicketResponse"
-Cohesion: 0.20
-Nodes (6): CreateTicketRequest, TicketResponse, scanTicket(), Decode(), Encode(), PageSize()
-
-### Community 114 - "updateBid"
-Cohesion: 0.22
-Nodes (14): AssignPresalesModal(), CompleteStageModal(), EmdDecisionModal(), EmdReturnWorkspace(), logStageInteraction(), NoGoModal(), ReVerificationModal(), Stage11Workspace() (+6 more)
-
-### Community 115 - "ticketService"
+### Community 113 - "LeadDocumentPicker.jsx"
 Cohesion: 0.29
-Nodes (4): FieldMemory, ListTicketsParams, TicketListPage, ticketService
+Nodes (10): CATEGORY_PRESETS, DropZone(), FileChip(), keepValid(), LeadDocumentPicker(), ACCEPTED_DOC_TYPES, emptyDocs(), formatBytes() (+2 more)
 
-### Community 116 - "contacts_test.go"
-Cohesion: 0.42
-Nodes (9): add(), contactSvc(), no(), TestContactBanNeedsAReasonAndUnbanClearsIt(), TestContactDuplicatesAreRefusedAndNamed(), TestContactMoveReorderAndDelete(), TestContactUpdateKeepsOwnEmailButNotAnotherOnes(), TestContactValidation() (+1 more)
+### Community 114 - "StageWorkspaces.jsx"
+Cohesion: 0.08
+Nodes (48): frontend_src_components_tenders_checklistreview, frontend_src_components_tenders_checklistreview_checklistreview, logChecklistHistory(), AssignPresalesModal(), buildEmdDetailsTableHtml(), buildTenderDetailHtml(), checkStageState(), CompleteStageModal() (+40 more)
 
-### Community 118 - "email.go"
-Cohesion: 0.31
-Nodes (6): NewAlertService(), EmailService, NewEmailService(), uniqueNonEmpty(), go_pkg_crypto_tls, go_pkg_net_smtp
+### Community 115 - "bid/domain/models.go"
+Cohesion: 0.22
+Nodes (6): PricingSuggestion, IdentifierMatch, PendingApprovalError, PricingDeal, SetStageRestrictionsRequest, StageRestrictionsResponse
 
-### Community 119 - "TicketService"
-Cohesion: 0.25
-Nodes (3): TicketService, UpdateTicketStatusRequest, NewTicketHandler()
+### Community 116 - "engineRouter"
+Cohesion: 0.36
+Nodes (8): NewCalendarHandler(), call(), engineRouter(), TestEngineStatusIsAdminOnly(), TestEngineStatusShape(), TestManualEvaluationIsRecordedAsManual(), github.com/gin-gonic/gin.Engine, net/http/httptest.ResponseRecorder
+
+### Community 117 - "contactError"
+Cohesion: 0.26
+Nodes (4): contactError(), saveReceiptFile(), validateReceiptUpload(), BidHandler
+
+### Community 118 - "Recorder"
+Cohesion: 0.20
+Nodes (8): NewAlertService(), NewAuthService(), NewGoogleSyncService(), EmailService, NewEmailService(), uniqueNonEmpty(), NewUserService(), Recorder
+
+### Community 119 - "LeadWorkflow"
+Cohesion: 0.50
+Nodes (4): LeadWorkflow(), submit(), statusLine(), transitionLead()
 
 ### Community 120 - "CreateUserDialog"
 Cohesion: 0.36
 Nodes (5): CreateUserDialog(), handleClose(), handleSubmit(), resetForm(), validate()
 
 ### Community 121 - "sheetColumns.test.js"
-Cohesion: 0.32
-Nodes (4): EDITABLE_SHEET_COLUMNS, SHEET_COLUMNS, ref_node_assert, ref_node_test
+Cohesion: 0.38
+Nodes (3): EDITABLE_SHEET_COLUMNS, SHEET_COLUMNS, ref_node_test
+
+### Community 122 - "ForceResetDialog"
+Cohesion: 0.83
+Nodes (4): ForceResetDialog(), handleClose(), handleConfirm(), forcePasswordReset()
 
 ### Community 123 - "InteractiveBoardDemo.jsx"
 Cohesion: 0.33
@@ -678,92 +680,80 @@ Cohesion: 0.20
 Nodes (17): atoiSafe(), colIndex(), ReadNamedSheet(), ReadSheet(), ReadSheetFrom(), readSheetFromZip(), readZipEntry(), resolveSheetTarget() (+9 more)
 
 ### Community 133 - "github.com/gin-gonic/gin.Context"
-Cohesion: 0.18
-Nodes (8): actorRoles(), BidHandler, mapServiceError(), parseListParams(), respondPage(), Error(), Handler, github.com/gin-gonic/gin.Context
+Cohesion: 0.16
+Nodes (9): actorRoles(), BidHandler, mapServiceError(), hasRole(), parseListParams(), respondPage(), Error(), github.com/gin-gonic/gin.Context (+1 more)
 
-### Community 134 - "fail"
-Cohesion: 0.18
-Nodes (6): actorPtr(), fail(), isAdmin(), maskIntegration(), oneOf(), CalendarHandler
+### Community 134 - "Success"
+Cohesion: 0.17
+Nodes (8): actorPtr(), fail(), isAdmin(), maskIntegration(), oneOf(), Success(), Handler, CalendarHandler
 
 ### Community 135 - "BidService"
 Cohesion: 0.07
-Nodes (9): BidService, AddMemberRequest, MDDecisionRequest, RecordEMDPaymentRequest, SubmitMDApprovalRequest, TenderEMDResponse, UpdateBasicEMDRequest, UpdateEMDRefundRequest (+1 more)
+Nodes (10): BidService, AddMemberRequest, UpdateBidRequest, MDDecisionRequest, RecordEMDPaymentRequest, SubmitMDApprovalRequest, TenderEMDResponse, UpdateBasicEMDRequest (+2 more)
 
 ### Community 136 - "WorkingCalendarService"
-Cohesion: 0.11
-Nodes (12): WorkingCalendarService, NewCalendarHandler(), NewBackgroundScheduler(), NewWorkingCalendarService(), TestSchedulerIntervalUsesUnit(), TestSchedulerPicksUpCadenceChange(), CalculateDeadlineResult, EngineRuntime (+4 more)
+Cohesion: 0.12
+Nodes (11): WorkingCalendarService, NewBackgroundScheduler(), NewWorkingCalendarService(), TestSchedulerIntervalUsesUnit(), TestSchedulerPicksUpCadenceChange(), CalculateDeadlineResult, EngineRuntime, EvaluationSummary (+3 more)
 
-### Community 137 - "Lead"
-Cohesion: 0.11
-Nodes (13): CreateLeadRequest, Document, Lead, NewLeadHandler(), approverID(), detailsHTML(), leadName(), managerID() (+5 more)
-
-### Community 138 - "LeadHandler"
-Cohesion: 0.20
-Nodes (6): LeadHandler, randomHex(), userMessage(), actorOf(), fail(), LeadHandler
-
-### Community 140 - "Forbidden"
+### Community 137 - "Repo"
 Cohesion: 0.16
-Nodes (6): hasRole(), extractBearerToken(), hasPermission(), Forbidden(), github.com/gin-gonic/gin.HandlerFunc, TicketHandler
+Nodes (4): CreateLeadRequest, Document, NewLeadHandler(), Repo
 
-### Community 142 - "StageHistoryTab"
-Cohesion: 0.25
-Nodes (15): ComplianceCard(), extractCommercialDetails(), fmt(), fmtMoney(), formatFullDateTime(), getBidEndDate(), getBidStartDate(), getEventTypeBadge() (+7 more)
+### Community 138 - "NotFound"
+Cohesion: 0.13
+Nodes (7): LeadHandler, randomHex(), userMessage(), actorOf(), fail(), NotFound(), UserHandler
 
 ### Community 145 - ".applyUpdate"
-Cohesion: 0.15
-Nodes (19): ApprovalLink(), StageLink(), TenderLink(), FieldDiff, UpdateBidRequest, authorizeEditDecision(), checkDocShortfall(), derefFloat() (+11 more)
+Cohesion: 0.21
+Nodes (9): CreateBidRequest, hasAnyRole(), TestValidateTenderLink(), validateEMDDetails(), validateEMDExemption(), validateEMDMutualExclusivity(), validateTenderLink(), emdAwaitingApproval() (+1 more)
 
-### Community 146 - "AddTenderDialog.jsx"
-Cohesion: 0.15
-Nodes (12): AddTenderDialog(), BID_TYPES, EMD_TYPES, inputCls(), ManualForm(), handleSubmit(), loadUsers(), validate() (+4 more)
+### Community 146 - "apiFetch"
+Cohesion: 0.09
+Nodes (36): RolesPermissionsDialog(), handleClose(), handleSave(), SettingsPage(), formatTime(), SystemLogsPage(), formatDateTime(), UserTable() (+28 more)
 
-### Community 147 - "ImportedBid"
-Cohesion: 0.25
-Nodes (5): deref(), fmtDate(), fmtNum(), writeReport(), ImportedBid
+### Community 151 - "Lead"
+Cohesion: 0.19
+Nodes (11): Lead, Actor, Lead, approverID(), detailsHTML(), LeadHandler, leadName(), managerID() (+3 more)
 
 ### Community 153 - "PrimaryButton"
 Cohesion: 0.40
 Nodes (3): BentoTile(), handleMove(), PrimaryButton()
 
-### Community 155 - "BadRequest"
-Cohesion: 0.27
-Nodes (4): extractTokenFromHeader(), BadRequest(), Unauthorized(), AuthHandler
+### Community 155 - "InternalError"
+Cohesion: 0.09
+Nodes (7): extractTokenFromHeader(), extractBearerToken(), InternalError(), Unauthorized(), Handler, AlertHandler, AuthHandler
 
-### Community 156 - "github.com/jackc/pgx/v5/pgxpool.Pool"
-Cohesion: 0.10
-Nodes (16): TenderDocument, NewBidHandler(), NewBulkImportHandler(), DocsRepo, NewDocsRepo(), scanDoc(), NewPostgresBidRepository(), NewPostgresCalendarRepository() (+8 more)
+### Community 156 - "DocsRepo"
+Cohesion: 0.23
+Nodes (5): TenderDocument, NewBidHandler(), DocsRepo, scanDoc(), pgx.Row
 
-### Community 160 - "Preview"
-Cohesion: 0.14
-Nodes (23): printSummary(), summarise(), buildPreview(), CheckHeaders(), checkHeadersAgainst(), dashboardRowParser(), derefStr(), findDuplicates() (+15 more)
-
-### Community 161 - "importer_test.go"
-Cohesion: 0.31
-Nodes (9): ParseWorkbook(), f64(), findRow(), TestDashboardDeterministicAcrossRuns(), TestDashboardUnrecordedResultsAreClosedNotLost(), TestExemptedRowsCarryAnExemptionType(), TestGBXDuplicateRowsAreSkippedNotSummed(), TestGBXInconclusiveOutcomeIsClosedNotLost() (+1 more)
+### Community 160 - "importer.go"
+Cohesion: 0.09
+Nodes (45): commit(), connect(), deref(), fmtDate(), fmtNum(), getEnv(), pgx.Conn, main() (+37 more)
 
 ### Community 165 - ".UpdateDocument"
-Cohesion: 0.18
-Nodes (12): cleanDocName(), folderSlug(), BidHandler, randomHex(), readTenderDoc(), safeName(), TestSafeNameAndSlug(), saveReceiptFile() (+4 more)
+Cohesion: 0.20
+Nodes (10): cleanDocName(), folderSlug(), BidHandler, randomHex(), readTenderDoc(), safeName(), TestSafeNameAndSlug(), io.ReadSeeker (+2 more)
 
 ## Knowledge Gaps
-- **585 isolated node(s):** `Contents`, `1.1 Base URL`, `1.2 Authentication flow (step by step)`, `1.3 Response envelope`, `1.4 Errors and status codes` (+580 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 800 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **24 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **585 isolated node(s):** `BIDDER_SUGGESTIONS`, `OEM_SUGGESTIONS`, `MAX_TENDER_DOC_BYTES`, `Access Token JWT Payload`, `Admin User` (+580 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 816 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **19 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `main()` connect `main` to `JWTService`, `service_test.go`, `TicketRepository`, `WorkingCalendarService`, `Lead`, `Alert`, `UserRepository`, `server/main.go`, `encoding/json.RawMessage`, `go_pkg_encoding_json`, `email.go`, `TicketService`, `userService`, `testing.T`, `authService`, `github.com/jackc/pgx/v5/pgxpool.Pool`?**
+- **Why does `react` connect `react` to `DocsTab.jsx`, `TenderDetailPage.jsx`, `Landing.jsx`, `TendersPage.jsx`, `LeadWorkflow.jsx`, `lucide-react`, `Dashboard.jsx`, `apiFetch`, `WorkingCalendarPage.jsx`, `package.json`, `ContactsTab.jsx`, `cn`, `AlertUsersPanel.jsx`, `EmdDetailsDialog.jsx`, `App.jsx`, `DocShortfall.jsx`, `ledgerTheme.js`, `PipelineConstellation.jsx`, `LeadDetailPage.jsx`, `LeadDocumentPicker.jsx`, `StageWorkspaces.jsx`, `InteractiveBoardDemo.jsx`?**
+  _High betweenness centrality (0.017) - this node is a cross-community bridge._
+- **Why does `1. Getting started` connect `1. Getting started` to `OneTrack GlobX — API Documentation`?**
   _High betweenness centrality (0.016) - this node is a cross-community bridge._
 - **Why does `bid()` connect `1. Getting started` to `Stage2PrimaryReviewWorkspace`?**
-  _High betweenness centrality (0.015) - this node is a cross-community bridge._
-- **What connects `Contents`, `1.1 Base URL`, `1.2 Authentication flow (step by step)` to the rest of the system?**
+  _High betweenness centrality (0.016) - this node is a cross-community bridge._
+- **What connects `BIDDER_SUGGESTIONS`, `OEM_SUGGESTIONS`, `MAX_TENDER_DOC_BYTES` to the rest of the system?**
   _585 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `AddTenderPage.jsx` be split into smaller, more focused modules?**
-  _Cohesion score 0.12121212121212122 - nodes in this community are weakly interconnected._
+- **Should `templates.go` be split into smaller, more focused modules?**
+  _Cohesion score 0.08943089430894309 - nodes in this community are weakly interconnected._
+- **Should `DocsTab.jsx` be split into smaller, more focused modules?**
+  _Cohesion score 0.10420168067226891 - nodes in this community are weakly interconnected._
 - **Should `context.Context` be split into smaller, more focused modules?**
-  _Cohesion score 0.05834464043419267 - nodes in this community are weakly interconnected._
-- **Should `WorkingCalendarRepository` be split into smaller, more focused modules?**
-  _Cohesion score 0.047058823529411764 - nodes in this community are weakly interconnected._
-- **Should `TenderDetailPage.jsx` be split into smaller, more focused modules?**
-  _Cohesion score 0.0483609217786433 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.031853925096628016 - nodes in this community are weakly interconnected._

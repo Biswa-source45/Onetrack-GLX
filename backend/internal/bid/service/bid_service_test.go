@@ -81,7 +81,7 @@ func (f *fakeBidRepo) UpdateOutcome(ctx context.Context, id string, req *domain.
 	f.lastOutcome = req
 	return nil
 }
-func (f *fakeBidRepo) SoftDelete(ctx context.Context, id string) error {
+func (f *fakeBidRepo) SoftDelete(ctx context.Context, id string, reason string) error {
 	f.softDeleted = true
 	return nil
 }
@@ -978,7 +978,7 @@ func TestArchiveRestoreDeleteBid_LogActions(t *testing.T) {
 	t.Run("ArchiveBid logs TENDER_ARCHIVED", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newLedgerTestBid()}
 		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
-		if err := svc.ArchiveBid(context.Background(), "bid-1", "actor-1", nil); err != nil {
+		if err := svc.ArchiveBid(context.Background(), "bid-1", "Dropping tender", "actor-1", nil); err != nil {
 			t.Fatalf("ArchiveBid: %v", err)
 		}
 		if lastEventType(repo) != "TENDER_ARCHIVED" {
@@ -1000,7 +1000,7 @@ func TestArchiveRestoreDeleteBid_LogActions(t *testing.T) {
 	t.Run("PermanentDeleteBid logs TENDER_DELETED before deleting", func(t *testing.T) {
 		repo := &fakeBidRepo{bid: newLedgerTestBid()}
 		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
-		if err := svc.PermanentDeleteBid(context.Background(), "bid-1", "actor-1", nil); err != nil {
+		if err := svc.PermanentDeleteBid(context.Background(), "bid-1", "Permanently purging", "actor-1", nil); err != nil {
 			t.Fatalf("PermanentDeleteBid: %v", err)
 		}
 		if lastEventType(repo) != "TENDER_DELETED" {
@@ -1422,7 +1422,7 @@ func TestCancelDeleteApproval(t *testing.T) {
 		repo := &fakeBidRepo{bid: newBid()}
 		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
-		err := svc.ArchiveBid(context.Background(), "bid-1", execID, []string{"BID_EXECUTIVE"})
+		err := svc.ArchiveBid(context.Background(), "bid-1", "Outdated requirement", execID, []string{"BID_EXECUTIVE"})
 		var pae *domain.PendingApprovalError
 		if !errors.As(err, &pae) {
 			t.Fatalf("expected a PendingApprovalError, got: %v", err)
@@ -1443,7 +1443,7 @@ func TestCancelDeleteApproval(t *testing.T) {
 		repo := &fakeBidRepo{bid: newBid()}
 		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
-		err := svc.PermanentDeleteBid(context.Background(), "bid-1", execID, []string{"BID_EXECUTIVE"})
+		err := svc.PermanentDeleteBid(context.Background(), "bid-1", "Duplicate entry", execID, []string{"BID_EXECUTIVE"})
 		var pae *domain.PendingApprovalError
 		if !errors.As(err, &pae) {
 			t.Fatalf("expected a PendingApprovalError, got: %v", err)
@@ -1520,7 +1520,7 @@ func TestCancelDeleteApproval(t *testing.T) {
 		repo := &fakeBidRepo{bid: newBid()}
 		svc := NewBidService(repo, &fakeAlertSvc{}, &fakeSystemLog{})
 
-		if err := svc.ArchiveBid(context.Background(), "bid-1", "admin-1", []string{"SUPER_ADMIN"}); err != nil {
+		if err := svc.ArchiveBid(context.Background(), "bid-1", "Admin cleanup", "admin-1", []string{"SUPER_ADMIN"}); err != nil {
 			t.Fatalf("ArchiveBid: %v", err)
 		}
 		if !repo.softDeleted {

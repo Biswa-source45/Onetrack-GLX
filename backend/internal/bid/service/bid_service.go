@@ -1712,8 +1712,12 @@ func parseCancelPayload(raw []byte) cancelPayload {
 // to the Tender Bin", mode ARCHIVE) or a permanent purge (mode PERMANENT) —
 // for this tender's Reporting Manager instead of applying it immediately.
 // Called from ArchiveBid and PermanentDeleteBid once the gate applies.
-func (s *bidService) submitPendingDelete(ctx context.Context, bid *domain.BidWorkspace, mode string, actorID string) error {
-	payload, err := json.Marshal(map[string]string{"mode": mode})
+func (s *bidService) submitPendingDelete(ctx context.Context, bid *domain.BidWorkspace, mode string, reason string, actorID string) error {
+	payload, err := json.Marshal(map[string]string{
+		"mode":          mode,
+		"reason":        reason,
+		"delete_reason": reason,
+	})
 	if err != nil {
 		return fmt.Errorf("marshal delete payload: %w", err)
 	}
@@ -1726,10 +1730,14 @@ func (s *bidService) submitPendingDelete(ctx context.Context, bid *domain.BidWor
 	if mode == "ARCHIVE" {
 		verb = "move to the Tender Bin"
 	}
+	message := fmt.Sprintf("<p>%s wants to %s tender '%s'.</p>", requesterName, verb, bid.Title)
+	if strings.TrimSpace(reason) != "" {
+		message += fmt.Sprintf(`<p style="margin-top:12px;color:#475569;">Reason: %s</p>`, html.EscapeString(reason))
+	}
 	return s.submitPendingAction(ctx, bid, actorID, domain.ActionTypeDelete, payload, nil,
 		"TENDER_DELETE_PENDING_APPROVAL",
 		fmt.Sprintf("Deletion awaiting your approval: %s", bid.Title),
-		fmt.Sprintf("<p>%s wants to %s tender '%s'.</p>", requesterName, verb, bid.Title),
+		message,
 	)
 }
 
@@ -1874,29 +1882,46 @@ func (s *bidService) approvePendingCancel(ctx context.Context, edit *domain.Tend
 // PENDING, and the later DecidePendingEdit would find nothing to update.
 func (s *bidService) approvePendingDelete(ctx context.Context, edit *domain.TenderEditApproval, comment string, actorID string) error {
 	var payload struct {
-		Mode string `json:"mode"`
+		Mode         string `json:"mode"`
+		Reason       string `json:"reason"`
+		DeleteReason string `json:"delete_reason"`
 	}
 	_ = json.Unmarshal(edit.Payload, &payload)
+	deleteReason := payload.Reason
+	if deleteReason == "" {
+		deleteReason = payload.DeleteReason
+	}
 
 	if err := s.repo.DecidePendingEdit(ctx, edit.ID, domain.EditApprovalApproved, edit.Payload, nil, comment, actorID); err != nil {
 		return err
 	}
 
 	if payload.Mode == "PERMANENT" {
-		s.logAction(ctx, edit.BidID, edit.BidTitle, "TENDER_DELETED", edit.RequestedBy.ID, "Permanently deleted")
+		detail := "Permanently deleted"
+		if strings.TrimSpace(deleteReason) != "" {
+			detail = fmt.Sprintf("Permanently deleted: %s", deleteReason)
+		}
+		s.logAction(ctx, edit.BidID, edit.BidTitle, "TENDER_DELETED", edit.RequestedBy.ID, detail)
 		if err := s.repo.PermanentDelete(ctx, edit.BidID); err != nil {
 			return err
 		}
 	} else {
-		if err := s.repo.SoftDelete(ctx, edit.BidID); err != nil {
+		if err := s.repo.SoftDelete(ctx, edit.BidID, deleteReason); err != nil {
 			return err
 		}
-		s.logAction(ctx, edit.BidID, edit.BidTitle, "TENDER_ARCHIVED", edit.RequestedBy.ID, "Moved to the Tender Bin")
+		detail := "Moved to the Tender Bin"
+		if strings.TrimSpace(deleteReason) != "" {
+			detail = fmt.Sprintf("Moved to the Tender Bin: %s", deleteReason)
+		}
+		s.logAction(ctx, edit.BidID, edit.BidTitle, "TENDER_ARCHIVED", edit.RequestedBy.ID, detail)
 	}
 
 	if s.alertSvc != nil {
 		approverName := approverDisplayName(s, ctx, actorID)
 		message := fmt.Sprintf("<p>%s approved deleting tender '%s'.</p>", approverName, edit.BidTitle)
+		if strings.TrimSpace(deleteReason) != "" {
+			message += fmt.Sprintf(`<p style="margin-top:8px;color:#475569;">Reason: %s</p>`, html.EscapeString(deleteReason))
+		}
 		if strings.TrimSpace(comment) != "" {
 			message += fmt.Sprintf(`<p style="margin-top:12px;color:#475569;">Comment: %s</p>`, comment)
 		}
@@ -2031,12 +2056,17 @@ func (s *bidService) TransitionStage(ctx context.Context, id string, req *domain
 	// Held for Reporting Manager approval only once the transition is
 	// otherwise confirmed valid — no point asking them to decide a
 	// cancellation that couldn't have applied anyway.
-	if req.TargetStage == domain.StageCancelled && needsRMApproval(bid, actorID, actorRoles) {
+	if req.TargetStage == domain.StageCancelled {
 		reason := ""
 		if req.Reason != nil {
-			reason = *req.Reason
+			reason = strings.TrimSpace(*req.Reason)
 		}
-		return nil, s.submitPendingCancel(ctx, bid, domain.BidStatusCancelled, reason, actorID)
+		if reason == "" {
+			return nil, fmt.Errorf("%w: a reason is required to cancel a tender", domain.ErrValidation)
+		}
+		if needsRMApproval(bid, actorID, actorRoles) {
+			return nil, s.submitPendingCancel(ctx, bid, domain.BidStatusCancelled, reason, actorID)
+		}
 	}
 
 	// Determine bid_status update
@@ -2326,18 +2356,22 @@ func (s *bidService) ReopenBid(ctx context.Context, id string, actorID string) e
 	return nil
 }
 
-func (s *bidService) ArchiveBid(ctx context.Context, id string, actorID string, actorRoles []string) error {
+func (s *bidService) ArchiveBid(ctx context.Context, id string, reason string, actorID string, actorRoles []string) error {
 	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	if needsRMApproval(bid, actorID, actorRoles) {
-		return s.submitPendingDelete(ctx, bid, "ARCHIVE", actorID)
+	trimmedReason := strings.TrimSpace(reason)
+	if trimmedReason == "" {
+		return fmt.Errorf("%w: a reason is required to move a tender to the bin", domain.ErrValidation)
 	}
-	if err := s.repo.SoftDelete(ctx, id); err != nil {
+	if needsRMApproval(bid, actorID, actorRoles) {
+		return s.submitPendingDelete(ctx, bid, "ARCHIVE", trimmedReason, actorID)
+	}
+	if err := s.repo.SoftDelete(ctx, id, trimmedReason); err != nil {
 		return err
 	}
-	s.logAction(ctx, id, bid.Title, "TENDER_ARCHIVED", actorID, "Moved to the Tender Bin")
+	s.logAction(ctx, id, bid.Title, "TENDER_ARCHIVED", actorID, fmt.Sprintf("Moved to the Tender Bin: %s", trimmedReason))
 	return nil
 }
 
@@ -2365,20 +2399,20 @@ func (s *bidService) RestoreBid(ctx context.Context, id string, actorID string) 
 	return nil
 }
 
-func (s *bidService) PermanentDeleteBid(ctx context.Context, id string, actorID string, actorRoles []string) error {
+func (s *bidService) PermanentDeleteBid(ctx context.Context, id string, reason string, actorID string, actorRoles []string) error {
 	bid, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
+	trimmedReason := strings.TrimSpace(reason)
 	if needsRMApproval(bid, actorID, actorRoles) {
-		return s.submitPendingDelete(ctx, bid, "PERMANENT", actorID)
+		return s.submitPendingDelete(ctx, bid, "PERMANENT", trimmedReason, actorID)
 	}
-	// Logged before the delete, not after: bid_stage_history.bid_id now sets
-	// itself to NULL (not cascade-deletes) when the tender it references is
-	// removed — see migration 000039 — but the FK still requires bid_id to
-	// point at a row that exists at INSERT time. bid_title is captured here
-	// too, so this entry stays readable once the tender itself is gone.
-	s.logAction(ctx, id, bid.Title, "TENDER_DELETED", actorID, "Permanently deleted")
+	detail := "Permanently deleted"
+	if trimmedReason != "" {
+		detail = fmt.Sprintf("Permanently deleted: %s", trimmedReason)
+	}
+	s.logAction(ctx, id, bid.Title, "TENDER_DELETED", actorID, detail)
 	return s.repo.PermanentDelete(ctx, id)
 }
 
@@ -2552,6 +2586,7 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, repor
 		CreatedAt:                     bid.CreatedAt,
 		UpdatedAt:                     bid.UpdatedAt,
 		ArchivedAt:                    bid.ArchivedAt,
+		DeleteReason:                  bid.DeleteReason,
 		ResultDate:                    bid.ResultDate,
 		DaysRemaining:                 calcDaysRemaining(bid.ArchivedAt),
 		CalendarID:                    bid.CalendarID,
@@ -2652,6 +2687,7 @@ func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary, accou
 		BidResult:                 bid.BidResult,
 		CreatedAt:                 bid.CreatedAt,
 		ArchivedAt:                bid.ArchivedAt,
+		DeleteReason:              bid.DeleteReason,
 		DaysRemaining:             calcDaysRemaining(bid.ArchivedAt),
 	}
 }
