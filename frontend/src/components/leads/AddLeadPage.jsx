@@ -31,6 +31,7 @@ import { UserSelect } from "./UserSelect";
 import { createLead, getLead, updateLead } from "../../services/leads";
 import { tokenStorage } from "../../services/auth";
 import { useBidStore } from "../../store/useBidStore";
+import { UnsavedChangesDialog } from "../tenders/UnsavedChangesDialog";
 
 const STATUS_OPTIONS = [
   {
@@ -113,7 +114,7 @@ export function AddLeadPage() {
   const backTo = editing ? `/dashboard/leads/${leadId}` : "/dashboard/leads";
   const reduceMotion = useReducedMotion();
   const currentUser = tokenStorage.getUser();
-  const { users, usersLoading, loadUsers } = useBidStore();
+  const { users, usersLoading, loadUsers, setUnsavedFormDirty } = useBidStore();
   const orgUsers = users.filter((u) => u.is_active !== false);
 
   const [form, setForm] = useState({
@@ -139,6 +140,9 @@ export function AddLeadPage() {
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState("");
   const [loadState, setLoadState] = useState(editing ? "loading" : "ready"); // loading | ready | error
+  const [initialSnapshot, setInitialSnapshot] = useState(null);
+  const [showDiscardDialog, setShowDiscardDialog] = useState(false);
+  const [pendingDiscardTarget, setPendingDiscardTarget] = useState(null);
 
   useEffect(() => {
     if (!editing) return;
@@ -148,10 +152,36 @@ export function AddLeadPage() {
         if (!live) return;
         if (!res.ok || !res.data.can_edit) return setLoadState("error");
         const d = res.data.published_details || {};
-        setForm((blank) => leadToForm(res.data, blank));
-        if (d.requested_products?.length) setProducts(d.requested_products.map((p, i) => ({ id: i + 1, product: "", description: "", qty: "", oem: "", ...p })));
-        setEmdOnlineOn(!!d.emd_online);
-        setEmdDdOn(!!d.emd_dd);
+        const loadedForm = leadToForm(res.data, {
+          publish_status: "",
+          lead_type: "GOV",
+          account_name: "",
+          department_name: "",
+          location: "",
+          high_level_scope: "",
+          expected_date: "",
+          scope_type: "",
+          category: "",
+          estimated_value: "",
+          ...PUBLISHED_BLANK,
+          lead_owner_id: "",
+          reporting_manager_id: "",
+        });
+        setForm(loadedForm);
+        const loadedProducts = d.requested_products?.length
+          ? d.requested_products.map((p, i) => ({ id: i + 1, product: "", description: "", qty: "", oem: "", ...p }))
+          : blankProducts();
+        setProducts(loadedProducts);
+        const loadedOnline = !!d.emd_online;
+        const loadedDd = !!d.emd_dd;
+        setEmdOnlineOn(loadedOnline);
+        setEmdDdOn(loadedDd);
+        setInitialSnapshot(JSON.stringify({
+          form: loadedForm,
+          products: loadedProducts,
+          emdOnlineOn: loadedOnline,
+          emdDdOn: loadedDd,
+        }));
         setLoadState("ready");
       })
       .catch(() => live && setLoadState("error"));
@@ -159,6 +189,97 @@ export function AddLeadPage() {
   }, [editing, leadId]);
 
   const isPublished = form.publish_status === "PUBLISHED";
+
+  const isDirty = editing
+    ? Boolean(
+        initialSnapshot &&
+        JSON.stringify({ form, products, emdOnlineOn, emdDdOn }) !== initialSnapshot
+      )
+    : Boolean(
+        form.publish_status ||
+        form.account_name?.trim() ||
+        form.department_name?.trim() ||
+        form.location?.trim() ||
+        form.high_level_scope?.trim() ||
+        form.expected_date ||
+        form.scope_type?.trim() ||
+        form.category?.trim() ||
+        form.estimated_value ||
+        form.lead_type !== "GOV" ||
+        form.reporting_manager_id ||
+        form.title?.trim() ||
+        form.gem_bid_no?.trim() ||
+        form.tender_link?.trim() ||
+        form.start_date ||
+        form.end_date ||
+        form.quantity ||
+        form.emd_amount ||
+        form.emd_bank_name?.trim() ||
+        form.emd_beneficiary?.trim() ||
+        form.emd_payable_at?.trim() ||
+        form.bg_required ||
+        form.bg_rate ||
+        emdOnlineOn ||
+        emdDdOn ||
+        products.length > 1 ||
+        Boolean(products[0]?.product?.trim() || products[0]?.description?.trim() || products[0]?.qty || products[0]?.oem?.trim()) ||
+        Object.values(docs || {}).some((arr) => Array.isArray(arr) && arr.length > 0)
+      );
+
+  useEffect(() => {
+    setUnsavedFormDirty(isDirty, {
+      formName: editing ? "Edit Lead" : "Add Lead",
+      title: editing ? "Discard Unsaved Lead Changes?" : "Discard Incomplete Lead Form?",
+      description: editing
+        ? "You have modified lead details that have not been saved yet. Leaving this section will discard your modifications."
+        : "You have entered lead information and specifications that have not been saved yet. Leaving this section will discard all your entered progress.",
+      confirmLabel: "Leave Section",
+      cancelLabel: "Keep Editing",
+    });
+    return () => setUnsavedFormDirty(false, null);
+  }, [isDirty, editing, setUnsavedFormDirty]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
+
+  useEffect(() => {
+    if (!isDirty) return;
+    window.history.pushState({ trapUnsaved: true }, "", window.location.href);
+
+    const handlePopState = () => {
+      setPendingDiscardTarget(backTo);
+      setShowDiscardDialog(true);
+      window.history.pushState({ trapUnsaved: true }, "", window.location.href);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [isDirty, backTo]);
+
+  const handleSafeBack = (target = backTo) => {
+    if (isDirty) {
+      setPendingDiscardTarget(target);
+      setShowDiscardDialog(true);
+    } else {
+      navigate(target);
+    }
+  };
+
+  const handleConfirmDiscard = () => {
+    setShowDiscardDialog(false);
+    setUnsavedFormDirty(false, null);
+    navigate(pendingDiscardTarget || backTo);
+  };
 
   useEffect(() => {
     loadUsers();
@@ -231,6 +352,7 @@ export function AddLeadPage() {
           toast.error(res.error?.message ?? "Could not save the lead");
           return;
         }
+        setUnsavedFormDirty(false, null);
         toast.success("Lead updated");
         navigate(backTo);
         return;
@@ -252,10 +374,12 @@ export function AddLeadPage() {
               .join(", ")}. Re-upload from the lead page.`,
             { duration: 10000 },
           );
+          setUnsavedFormDirty(false, null);
           navigate(`/dashboard/leads/${lead.id}`);
           return;
         }
       }
+      setUnsavedFormDirty(false, null);
       toast.success(items.length ? `Lead created with ${items.length} document${items.length > 1 ? "s" : ""}` : "Lead created");
       navigate(`/dashboard/leads/${lead.id}`);
     } catch {
@@ -272,7 +396,7 @@ export function AddLeadPage() {
   if (loadState !== "ready") {
     return (
       <div className="mx-auto max-w-4xl space-y-6">
-        <Button type="button" variant="ghost" size="sm" onClick={() => navigate(backTo)} className="gap-1.5 text-muted-foreground hover:text-foreground">
+        <Button type="button" variant="ghost" size="sm" onClick={() => handleSafeBack(backTo)} className="gap-1.5 text-muted-foreground hover:text-foreground">
           <ChevronLeft className="size-4" />
           Back
         </Button>
@@ -289,7 +413,7 @@ export function AddLeadPage() {
 
   return (
     <form onSubmit={handleSubmit} noValidate className="mx-auto max-w-4xl space-y-6 pb-12">
-      <Button type="button" variant="ghost" size="sm" onClick={() => navigate(backTo)} className="gap-1.5 text-muted-foreground hover:text-foreground">
+      <Button id="back-to-leads-btn" type="button" variant="ghost" size="sm" onClick={() => handleSafeBack(backTo)} className="gap-1.5 text-muted-foreground hover:text-foreground">
         <ChevronLeft className="size-4" />
         {editing ? "Back to Lead" : "Back to Leads"}
       </Button>
@@ -415,13 +539,27 @@ export function AddLeadPage() {
       </Panel>
 
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <Button type="button" variant="outline" onClick={() => navigate(backTo)} disabled={!!saving}>
+        <Button id="cancel-lead-btn" type="button" variant="outline" onClick={() => handleSafeBack(backTo)} disabled={!!saving}>
           Cancel
         </Button>
         <Button type="submit" disabled={!!saving} className="min-w-36 gap-1.5">
           {saving ? <><Loader2 className="size-4 animate-spin" />{saving}</> : editing ? "Save Changes" : "Save Lead"}
         </Button>
       </div>
+
+      <UnsavedChangesDialog
+        open={showDiscardDialog}
+        title={editing ? "Discard Unsaved Lead Changes?" : "Discard Incomplete Lead Form?"}
+        description={
+          editing
+            ? "You have modified lead details that have not been saved yet. Leaving this page will discard your modifications."
+            : "You have entered lead information and specifications that have not been saved yet. Leaving this page will discard all your entered progress."
+        }
+        confirmLabel="Leave Page"
+        cancelLabel="Keep Editing"
+        onConfirm={handleConfirmDiscard}
+        onCancel={() => setShowDiscardDialog(false)}
+      />
     </form>
   );
 }

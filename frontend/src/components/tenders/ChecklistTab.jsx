@@ -24,6 +24,8 @@ import { exportChecklistToExcel } from '../../lib/checklistExport'
 import { readOemRows } from '../../lib/oem'
 import { formatDateTime } from '../../lib/tenderFormat'
 import { updateChecklistPriority } from '../../services/calendar'
+import { useStageModificationGuard } from './StageWorkspaces'
+import { StageModificationWarningDialog } from './StageModificationWarningDialog'
 
 // Cycled by OEM index so each OEM reads as a consistent color across every
 // checklist row it appears on, without needing to store a color per OEM.
@@ -40,6 +42,11 @@ export function ChecklistTab({ bid, onRefresh }) {
   const bidId = bid.id
   const currentUser = tokenStorage.getUser()
   const isLocked = ['ARCHIVED', 'CANCELLED', 'WON', 'LOST'].includes(bid.bid_status)
+  const stageCompleted = bid?.stage_completions?.DOCUMENT_CHECKLIST_PREPARATION === true
+  const stageGuard = useStageModificationGuard({
+    isCompleted: stageCompleted,
+    stageTitle: 'Stage 5: Document Checklist Preparation',
+  })
 
   const [loading, setLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -135,70 +142,74 @@ export function ChecklistTab({ bid, onRefresh }) {
     }
 
     const targetState = !item.is_done
-    try {
-      const res = await toggleChecklist(bidId, item.id, targetState)
-      if (!res.ok) {
-        toast.error(res.error?.message ?? 'Failed to update checklist item')
-        return
-      }
+    stageGuard.guardAction(async () => {
+      try {
+        const res = await toggleChecklist(bidId, item.id, targetState)
+        if (!res.ok) {
+          toast.error(res.error?.message ?? 'Failed to update checklist item')
+          return
+        }
 
-      const cleanTitle = item.title.replace(/^\[(Bidder|OEM)\]\s*/i, '')
-      if (targetState) {
-        toast.success(`Completed checklist item: "${cleanTitle}"`)
-        logChecklistHistory(`Verified & completed checklist item: "${cleanTitle}"`)
-      } else {
-        toast.info(`Re-opened checklist item: "${cleanTitle}"`)
-        logChecklistHistory(`Re-opened checklist item for review: "${cleanTitle}"`)
-      }
+        const cleanTitle = item.title.replace(/^\[(Bidder|OEM)\]\s*/i, '')
+        if (targetState) {
+          toast.success(`Completed checklist item: "${cleanTitle}"`)
+          logChecklistHistory(`Verified & completed checklist item: "${cleanTitle}"`)
+        } else {
+          toast.info(`Re-opened checklist item: "${cleanTitle}"`)
+          logChecklistHistory(`Re-opened checklist item for review: "${cleanTitle}"`)
+        }
 
-      if (isOemItem && oemList.length === 1) {
-        const nextOems = oemList.map(o => writeOemDoc(o, item, targetState))
-        updateBid(bidId, { oem_workspace: JSON.stringify(nextOems) }).catch(() => {})
-      }
+        if (isOemItem && oemList.length === 1) {
+          const nextOems = oemList.map(o => writeOemDoc(o, item, targetState))
+          updateBid(bidId, { oem_workspace: JSON.stringify(nextOems) }).catch(() => {})
+        }
 
-      loadChecklist()
-    } catch {
-      toast.error('Network error during checklist update')
-    }
+        loadChecklist()
+      } catch {
+        toast.error('Network error during checklist update')
+      }
+    })
   }
 
   // Confirm the per-OEM picker: apply the chosen RECEIVED/NOT RECEIVED state
   // to only the OEMs it actually applies to, then derive the checklist
   // item's own done state from whether every tracked OEM is now RECEIVED —
   // matching the same rule Stage3Workspace's Save Matrix uses.
-  const handleOemPickerConfirm = async () => {
+  const handleOemPickerConfirm = () => {
     const item = oemPickerItem
     if (!item) return
-    // Defensive re-check: a non-initiated OEM's checkbox is disabled in the
-    // picker UI, but never trust the client state alone for what gets
-    // persisted as RECEIVED.
-    const nextOems = oemList.map(o => writeOemDoc(o, item, o.initiated === 'YES' && !!oemPickerSelected[o.id]))
-    const shouldBeDone = nextOems.length > 0 && nextOems.every(o => readOemDoc(o, item))
+    stageGuard.guardAction(async () => {
+      // Defensive re-check: a non-initiated OEM's checkbox is disabled in the
+      // picker UI, but never trust the client state alone for what gets
+      // persisted as RECEIVED.
+      const nextOems = oemList.map(o => writeOemDoc(o, item, o.initiated === 'YES' && !!oemPickerSelected[o.id]))
+      const shouldBeDone = nextOems.length > 0 && nextOems.every(o => readOemDoc(o, item))
 
-    try {
-      await updateBid(bidId, { oem_workspace: JSON.stringify(nextOems) })
-      const res = await toggleChecklist(bidId, item.id, shouldBeDone)
-      if (!res.ok) {
-        toast.error(res.error?.message ?? 'Failed to update checklist item')
-        return
+      try {
+        await updateBid(bidId, { oem_workspace: JSON.stringify(nextOems) })
+        const res = await toggleChecklist(bidId, item.id, shouldBeDone)
+        if (!res.ok) {
+          toast.error(res.error?.message ?? 'Failed to update checklist item')
+          return
+        }
+        const cleanTitle = item.title.replace(/^\[(Bidder|OEM)\]\s*/i, '')
+        const receivedNames = nextOems.filter(o => readOemDoc(o, item)).map(o => o.name)
+        logChecklistHistory(
+          shouldBeDone
+            ? `Verified & completed checklist item: "${cleanTitle}" (received from: ${receivedNames.join(', ') || 'none'})`
+            : `Updated OEM receipt status for checklist item: "${cleanTitle}" (received from: ${receivedNames.join(', ') || 'none'})`
+        )
+        toast.success(shouldBeDone ? `Completed checklist item: "${cleanTitle}"` : 'OEM receipt status updated')
+        setOemPickerItem(null)
+        loadChecklist()
+      } catch {
+        toast.error('Network error during checklist update')
       }
-      const cleanTitle = item.title.replace(/^\[(Bidder|OEM)\]\s*/i, '')
-      const receivedNames = nextOems.filter(o => readOemDoc(o, item)).map(o => o.name)
-      logChecklistHistory(
-        shouldBeDone
-          ? `Verified & completed checklist item: "${cleanTitle}" (received from: ${receivedNames.join(', ') || 'none'})`
-          : `Updated OEM receipt status for checklist item: "${cleanTitle}" (received from: ${receivedNames.join(', ') || 'none'})`
-      )
-      toast.success(shouldBeDone ? `Completed checklist item: "${cleanTitle}"` : 'OEM receipt status updated')
-      setOemPickerItem(null)
-      loadChecklist()
-    } catch {
-      toast.error('Network error during checklist update')
-    }
+    })
   }
 
   // 4. Handle adding custom checklist items using backend POST
-  const handleAddItem = async (e, type) => {
+  const handleAddItem = (e, type) => {
     if (e) e.preventDefault()
     if (isLocked) return
 
@@ -208,52 +219,56 @@ export function ChecklistTab({ bid, onRefresh }) {
     const prefix = type === 'OEM' ? '[OEM] ' : '[Bidder] '
     const fullTitle = prefix + titleVal.trim().replace(/^\[(Bidder|OEM)\]\s*/i, '')
 
-    try {
-      const res = await addChecklist(bidId, fullTitle, items.length)
-      if (!res.ok) {
-        toast.error(res.error?.message ?? 'Failed to create checklist item')
-        return
-      }
+    stageGuard.guardAction(async () => {
+      try {
+        const res = await addChecklist(bidId, fullTitle, items.length)
+        if (!res.ok) {
+          toast.error(res.error?.message ?? 'Failed to create checklist item')
+          return
+        }
 
-      toast.success(`${type} checklist item added`)
-      logChecklistHistory(`Created ${type.toLowerCase()} checklist item: "${titleVal.trim()}"`)
-      if (type === 'OEM') {
-        setNewOemTitle('')
-      } else {
-        setNewBidderTitle('')
+        toast.success(`${type} checklist item added`)
+        logChecklistHistory(`Created ${type.toLowerCase()} checklist item: "${titleVal.trim()}"`)
+        if (type === 'OEM') {
+          setNewOemTitle('')
+        } else {
+          setNewBidderTitle('')
+        }
+        loadChecklist()
+      } catch (err) {
+        toast.error('Failed to create checklist item')
       }
-      loadChecklist()
-    } catch (err) {
-      toast.error('Failed to create checklist item')
-    }
+    })
   }
 
   // 5. Handle deletion of checklist items using backend DELETE
-  const handleDeleteItem = async () => {
+  const handleDeleteItem = () => {
     if (isLocked) return
     const targetItem = items.find(i => i.id === confirmDeleteId)
     if (!targetItem) return
 
     const cleanTitle = targetItem.title.replace(/^\[(Bidder|OEM)\]\s*/i, '')
 
-    try {
-      const res = await deleteChecklist(bidId, confirmDeleteId)
-      if (!res.ok) {
-        toast.error(res.error?.message ?? 'Failed to delete checklist item')
-        return
-      }
+    stageGuard.guardAction(async () => {
+      try {
+        const res = await deleteChecklist(bidId, confirmDeleteId)
+        if (!res.ok) {
+          toast.error(res.error?.message ?? 'Failed to delete checklist item')
+          return
+        }
 
-      toast.success(`Deleted checklist item: "${cleanTitle}"`)
-      logChecklistHistory(`Deleted checklist item: "${cleanTitle}"`)
-      setConfirmDeleteId(null)
-      loadChecklist()
-    } catch (err) {
-      toast.error('Failed to delete checklist item')
-    }
+        toast.success(`Deleted checklist item: "${cleanTitle}"`)
+        logChecklistHistory(`Deleted checklist item: "${cleanTitle}"`)
+        setConfirmDeleteId(null)
+        loadChecklist()
+      } catch (err) {
+        toast.error('Failed to delete checklist item')
+      }
+    })
   }
 
   // 5.5 Handle inline editing/rename of checklist items using backend PUT
-  const handleSaveEdit = async (item) => {
+  const handleSaveEdit = (item) => {
     if (isLocked) return
     if (!editTitle.trim()) return
 
@@ -266,21 +281,23 @@ export function ChecklistTab({ bid, onRefresh }) {
       return
     }
 
-    try {
-      const res = await updateChecklist(bidId, item.id, { title: fullNewTitle })
-      if (!res.ok) {
-        toast.error(res.error?.message ?? 'Failed to update checklist item')
-        return
-      }
+    stageGuard.guardAction(async () => {
+      try {
+        const res = await updateChecklist(bidId, item.id, { title: fullNewTitle })
+        if (!res.ok) {
+          toast.error(res.error?.message ?? 'Failed to update checklist item')
+          return
+        }
 
-      const cleanOld = item.title.replace(/^\[(Bidder|OEM)\]\s*/i, '')
-      toast.success('Checklist item updated')
-      logChecklistHistory(`Renamed checklist item "${cleanOld}" to "${editTitle.trim()}"`)
-      setEditingId(null)
-      loadChecklist()
-    } catch (err) {
-      toast.error('Failed to update checklist item')
-    }
+        const cleanOld = item.title.replace(/^\[(Bidder|OEM)\]\s*/i, '')
+        toast.success('Checklist item updated')
+        logChecklistHistory(`Renamed checklist item "${cleanOld}" to "${editTitle.trim()}"`)
+        setEditingId(null)
+        loadChecklist()
+      } catch (err) {
+        toast.error('Failed to update checklist item')
+      }
+    })
   }
 
   // 6. Drag and drop reordering handlers
@@ -807,6 +824,8 @@ export function ChecklistTab({ bid, onRefresh }) {
           </div>
         )}
       </AnimatePresence>
+
+      <StageModificationWarningDialog {...stageGuard.dialogProps} />
     </div>
   )
 }

@@ -31,6 +31,7 @@ import {
 import { createBid } from "../../services/bids";
 import { listUsers } from "../../services/users";
 import { tokenStorage } from "../../services/auth";
+import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 
 // ── macOS spring dialog animation (pops from origin point) ────────────────────
 function useMacOSDialog(open, originX, originY) {
@@ -79,7 +80,9 @@ export function AddTenderDialog({
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
             className="absolute inset-0 bg-foreground/25 backdrop-blur-sm"
-            onClick={handleClose}
+            onClick={() => {
+              if (!mode) handleClose();
+            }}
           />
 
           {/* Dialog */}
@@ -215,6 +218,74 @@ function ManualForm({ onClose, onCreated, onBack }) {
   const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
+  const [showDiscardDialog, setShowDiscardDialog] = useState(false);
+  const [discardAction, setDiscardAction] = useState(null); // 'CLOSE' | 'BACK'
+
+  const isDirty = Boolean(
+    form.title?.trim() ||
+    form.bid_no?.trim() ||
+    form.gem_bid_no?.trim() ||
+    form.organization_name?.trim() ||
+    form.department_name?.trim() ||
+    form.category ||
+    form.estimated_value ||
+    form.emd_amount ||
+    form.remarks?.trim()
+  );
+
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
+
+  const setUnsavedFormDirty = useBidStore((s) => s.setUnsavedFormDirty);
+
+  useEffect(() => {
+    setUnsavedFormDirty(isDirty, {
+      formName: "Add Tender Modal",
+      title: "Discard Incomplete Tender?",
+      description:
+        "You have entered information in this tender form that has not been saved yet. If you leave now, all your inputs will be cleared.",
+      confirmLabel: "Discard & Leave",
+      cancelLabel: "Keep Editing",
+    });
+    return () => setUnsavedFormDirty(false, null);
+  }, [isDirty, setUnsavedFormDirty]);
+
+  const requestClose = () => {
+    if (isDirty) {
+      setDiscardAction("CLOSE");
+      setShowDiscardDialog(true);
+    } else {
+      onClose();
+    }
+  };
+
+  const requestBack = () => {
+    if (isDirty) {
+      setDiscardAction("BACK");
+      setShowDiscardDialog(true);
+    } else {
+      onBack();
+    }
+  };
+
+  const confirmDiscard = () => {
+    setShowDiscardDialog(false);
+    setUnsavedFormDirty(false, null);
+    if (discardAction === "BACK") {
+      onBack();
+    } else {
+      onClose();
+    }
+    setDiscardAction(null);
+  };
 
   // Load users for owner selector
   useEffect(() => {
@@ -325,6 +396,7 @@ function ManualForm({ onClose, onCreated, onBack }) {
         learnFieldValue("organization_name", form.organization_name);
         learnFieldValue("department_name", form.department_name);
 
+        setUnsavedFormDirty(false, null);
         onCreated(res.data);
       } else {
         toast.error(res.error?.message ?? "Failed to create tender");
@@ -343,7 +415,7 @@ function ManualForm({ onClose, onCreated, onBack }) {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={onBack}
+            onClick={requestBack}
             className="p-1 rounded-md hover:bg-muted transition-colors text-muted-foreground"
           >
             <ChevronDown className="size-4 rotate-90" />
@@ -357,7 +429,7 @@ function ManualForm({ onClose, onCreated, onBack }) {
         </div>
         <button
           type="button"
-          onClick={onClose}
+          onClick={requestClose}
           className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"
         >
           <X className="size-4" />
@@ -703,6 +775,16 @@ function ManualForm({ onClose, onCreated, onBack }) {
           {loading ? "Creating…" : "Create Tender"}
         </Button>
       </div>
+
+      <UnsavedChangesDialog
+        open={showDiscardDialog}
+        title="Discard Incomplete Tender?"
+        description="You have entered information in this tender form that has not been saved yet. If you leave now, all your inputs will be cleared."
+        confirmLabel={discardAction === "BACK" ? "Discard & Go Back" : "Discard & Close"}
+        cancelLabel="Keep Editing"
+        onConfirm={confirmDiscard}
+        onCancel={() => setShowDiscardDialog(false)}
+      />
     </form>
   );
 }
