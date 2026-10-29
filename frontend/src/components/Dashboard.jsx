@@ -22,7 +22,7 @@ import { authService, tokenStorage } from '../services/auth'
 import { getMyProfile, updateUserProfile } from '../services/users'
 import { getPreferences } from '../services/preferences'
 import { EMD_VIEW_ROLES } from '../lib/emdAccess'
-import { useBidStore } from '../store/useBidStore'
+import { useBidStore, computeEndDateRange } from '../store/useBidStore'
 import { getAlerts } from '../services/alerts'
 import { getOpenTicketCount } from '../services/tickets'
 import { usePermissions } from '../hooks/usePermissions'
@@ -33,8 +33,10 @@ import { UserManagement } from './admin/UserManagement'
 import { UserAvatar } from './admin/UserAvatar'
 import { RoleBadge } from './admin/RoleBadge'
 import { TendersPage } from './tenders/TendersPage'
-import { listAllBids } from '../services/bids'
-import { getTenderPerformanceMatrix } from '../services/bids'
+import { listAllBids, listBids, getMyPendingApprovals, getTenderPerformanceMatrix } from '../services/bids'
+import { DeadlineTasksLogoutDialog } from './tenders/DeadlineTasksLogoutDialog'
+import { SignOutConfirmDialog } from './tenders/SignOutConfirmDialog'
+import { UnsavedChangesDialog } from './tenders/UnsavedChangesDialog'
 import { formatCurrency } from '../lib/tenderFormat'
 import { StageBadge, StatusBadge } from '../lib/tenderDisplay'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
@@ -1631,6 +1633,25 @@ export default function Dashboard() {
 
   const { hasPermission, hasRole } = usePermissions()
 
+  // Unsaved / Incomplete Form Guard (e.g. Add Tender in progress)
+  const unsavedFormDirty = useBidStore((s) => s.unsavedFormDirty)
+  const unsavedFormMeta = useBidStore((s) => s.unsavedFormMeta)
+  const setUnsavedFormDirty = useBidStore((s) => s.setUnsavedFormDirty)
+
+  const [pendingNavigation, setPendingNavigation] = useState(null)
+  const [showUnsavedNavDialog, setShowUnsavedNavDialog] = useState(false)
+  const [unsavedNavIntent, setUnsavedNavIntent] = useState(null) // 'NAVIGATE' | 'SIGNOUT'
+
+  const handleSafeNavigation = useCallback((targetPath) => {
+    if (unsavedFormDirty) {
+      setPendingNavigation(targetPath)
+      setUnsavedNavIntent('NAVIGATE')
+      setShowUnsavedNavDialog(true)
+      return
+    }
+    navigate(targetPath)
+  }, [unsavedFormDirty, navigate])
+
   const fetchAlertsCount = useCallback(async () => {
     try {
       const res = await getAlerts()
@@ -1729,13 +1750,110 @@ export default function Dashboard() {
     return () => window.removeEventListener('onetrack_user_updated', refreshUser)
   }, [])
 
-  async function handleLogout() {
+  const [showDeadlineLogoutDialog, setShowDeadlineLogoutDialog] = useState(false)
+  const [showConfirmLogoutDialog, setShowConfirmLogoutDialog] = useState(false)
+  const [deadlineLogoutTasks, setDeadlineLogoutTasks] = useState({
+    pendingApprovals: [],
+    endingSoonBids: [],
+    shortfallBids: [],
+  })
+  const [checkingDeadlines, setCheckingDeadlines] = useState(false)
+
+  const proceedLogout = useCallback(async () => {
+    setShowDeadlineLogoutDialog(false)
+    setShowConfirmLogoutDialog(false)
     const p = authService.logout()
     toast.promise(p, {
       loading: 'Signing out…',
       success: () => { navigate('/login'); return 'Signed out' },
       error: 'Sign out failed; session cleared locally',
     })
+  }, [navigate])
+
+  async function runDeadlineChecksAndLogout() {
+    setCheckingDeadlines(true)
+    try {
+      const [approvalsRes, redZoneRes, dueSoonRes, shortfallRes] = await Promise.all([
+        getMyPendingApprovals().catch(() => ({ ok: false })),
+        listBids({ high_alert: true, limit: 10, page: 1 }).catch(() => ({ ok: false })),
+        listBids({ due_soon: true, limit: 10, page: 1 }).catch(() => ({ ok: false })),
+        listBids({ doc_shortfall: true, limit: 10, page: 1 }).catch(() => ({ ok: false })),
+      ])
+
+      const approvals = Array.isArray(approvalsRes?.data)
+        ? approvalsRes.data
+        : (Array.isArray(approvalsRes) ? approvalsRes : (Array.isArray(approvalsRes?.data?.data) ? approvalsRes.data.data : []))
+
+      // Only include tenders that are strictly in the RED ZONE (high alert threshold reached)
+      const rawRedZone = Array.isArray(redZoneRes?.data)
+        ? redZoneRes.data
+        : (Array.isArray(redZoneRes?.bids) ? redZoneRes.bids : [])
+      const rawDueSoon = Array.isArray(dueSoonRes?.data)
+        ? dueSoonRes.data
+        : (Array.isArray(dueSoonRes?.bids) ? dueSoonRes.bids : [])
+
+      const redZoneMap = new Map()
+      rawRedZone.forEach((b) => { if (b?.id) redZoneMap.set(b.id, b) })
+      rawDueSoon.forEach((b) => {
+        if (!b?.id) return
+        const dl = b.calculated_72h_deadline ? new Date(b.calculated_72h_deadline).getTime() : null
+        const isRz = b.deadline_is_threshold_reached || (dl && Date.now() >= dl)
+        if (isRz) redZoneMap.set(b.id, b)
+      })
+      const endingSoon = Array.from(redZoneMap.values())
+
+      const shortfall = Array.isArray(shortfallRes?.data)
+        ? shortfallRes.data
+        : (Array.isArray(shortfallRes?.bids) ? shortfallRes.bids : (Array.isArray(shortfallRes?.data?.bids) ? shortfallRes.data.bids : []))
+
+      if (approvals.length > 0 || endingSoon.length > 0 || shortfall.length > 0) {
+        setDeadlineLogoutTasks({
+          pendingApprovals: approvals,
+          endingSoonBids: endingSoon,
+          shortfallBids: shortfall,
+        })
+        setShowDeadlineLogoutDialog(true)
+        return
+      }
+
+      // If 0 pending tasks: ask confirmation before logging out (Yes / No)
+      setShowConfirmLogoutDialog(true)
+    } catch (err) {
+      console.warn('Failed to check deadline tasks prior to logout:', err)
+      // Even if deadline check encounters an error, ask confirmation before logging out
+      setShowConfirmLogoutDialog(true)
+    } finally {
+      setCheckingDeadlines(false)
+    }
+  }
+
+  function handleLogout() {
+    if (unsavedFormDirty) {
+      setUnsavedNavIntent('SIGNOUT')
+      setShowUnsavedNavDialog(true)
+      return
+    }
+    runDeadlineChecksAndLogout()
+  }
+
+  const handleConfirmDiscardNav = () => {
+    setShowUnsavedNavDialog(false)
+    setUnsavedFormDirty(false, null)
+    if (unsavedNavIntent === 'SIGNOUT') {
+      setUnsavedNavIntent(null)
+      runDeadlineChecksAndLogout()
+    } else if (pendingNavigation) {
+      const dest = pendingNavigation
+      setPendingNavigation(null)
+      setUnsavedNavIntent(null)
+      navigate(dest)
+    }
+  }
+
+  const handleCancelDiscardNav = () => {
+    setShowUnsavedNavDialog(false)
+    setPendingNavigation(null)
+    setUnsavedNavIntent(null)
   }
 
   async function handleChangePasswordSubmit(e) {
@@ -1831,12 +1949,16 @@ export default function Dashboard() {
             >
               {sidebarOpen ? <X className="size-5" /> : <Menu className="size-5" />}
             </button>
-            <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleSafeNavigation('/dashboard')}
+              className="flex items-center gap-2 hover:opacity-85 transition-opacity text-left cursor-pointer"
+            >
               <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
                 <Layers className="size-3.5" />
               </div>
               <span className="font-heading text-sm font-semibold text-foreground">OneTrack</span>
-            </div>
+            </button>
           </div>
 
           {/* Right side: user info + actions */}
@@ -1869,12 +1991,18 @@ export default function Dashboard() {
             </button>
 
             <Button
+              id="header-signout-btn"
               variant="default"
               size="sm"
+              disabled={checkingDeadlines}
               onClick={handleLogout}
               className="gap-1.5"
             >
-              <LogOut className="size-3.5" />
+              {checkingDeadlines ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <LogOut className="size-3.5" />
+              )}
               <span className="hidden sm:inline">Sign Out</span>
             </Button>
           </div>
@@ -1899,9 +2027,9 @@ export default function Dashboard() {
                 <div key={item.id} className="space-y-1">
                   <button
                     onClick={() => {
-                      if (item.id === 'overview') navigate('/dashboard')
-                      else if (hasChildren) navigate(item.children[0].path)
-                      else navigate(`/dashboard/${item.id}`)
+                      if (item.id === 'overview') handleSafeNavigation('/dashboard')
+                      else if (hasChildren) handleSafeNavigation(item.children[0].path)
+                      else handleSafeNavigation(`/dashboard/${item.id}`)
                     }}
                     className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors text-left
                       ${active
@@ -1944,7 +2072,7 @@ export default function Dashboard() {
                         return (
                           <button
                             key={child.id}
-                            onClick={() => navigate(child.path)}
+                            onClick={() => handleSafeNavigation(child.path)}
                             className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors text-left
                               ${childActive
                                 ? 'bg-primary/15 text-primary font-semibold'
@@ -1995,10 +2123,13 @@ export default function Dashboard() {
                       <div key={item.id} className="space-y-1">
                         <button
                           onClick={() => {
-                            if (item.id === 'overview') navigate('/dashboard')
-                            else if (hasChildren) navigate(item.children[0].path)
-                            else navigate(`/dashboard/${item.id}`)
+                            const target = item.id === 'overview'
+                              ? '/dashboard'
+                              : hasChildren
+                                ? item.children[0].path
+                                : `/dashboard/${item.id}`
                             if (!hasChildren) setSidebarOpen(false)
+                            handleSafeNavigation(target)
                           }}
                           className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors text-left
                             ${active
@@ -2042,8 +2173,8 @@ export default function Dashboard() {
                                 <button
                                   key={child.id}
                                   onClick={() => {
-                                    navigate(child.path)
                                     setSidebarOpen(false)
+                                    handleSafeNavigation(child.path)
                                   }}
                                   className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors text-left
                                     ${childActive
@@ -2210,6 +2341,48 @@ export default function Dashboard() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* ── Pending Deadline Tasks Warning before Sign Out ───────────────── */}
+      <DeadlineTasksLogoutDialog
+        open={showDeadlineLogoutDialog}
+        tasks={deadlineLogoutTasks}
+        onReview={(targetUrl) => {
+          setShowDeadlineLogoutDialog(false)
+          navigate(targetUrl || '/dashboard/tenders/todos')
+        }}
+        onConfirmSignout={proceedLogout}
+        onCancel={() => setShowDeadlineLogoutDialog(false)}
+      />
+
+      {/* ── Standard Sign Out Confirmation (0 Pending Tasks) ─────────────── */}
+      <SignOutConfirmDialog
+        open={showConfirmLogoutDialog}
+        onConfirm={proceedLogout}
+        onCancel={() => setShowConfirmLogoutDialog(false)}
+      />
+
+      {/* ── Unsaved Incomplete Form Guard before Navigation or Sign Out ───── */}
+      <UnsavedChangesDialog
+        open={showUnsavedNavDialog}
+        title={
+          unsavedNavIntent === 'SIGNOUT'
+            ? (unsavedFormMeta?.title ? `${unsavedFormMeta.title.replace(/\?$/, '')} & Sign Out?` : 'Discard Incomplete Form & Sign Out?')
+            : (unsavedFormMeta?.title || 'Discard Incomplete Form?')
+        }
+        description={
+          unsavedNavIntent === 'SIGNOUT'
+            ? (unsavedFormMeta?.formName ? `You have entered information in ${unsavedFormMeta.formName} that has not been saved yet. Signing out now will discard your unsaved progress.` : 'You have entered information that has not been saved yet. Signing out now will discard your unsaved progress.')
+            : (unsavedFormMeta?.description || 'You have entered information in this section that has not been saved yet. Leaving this section will discard your unsaved progress.')
+        }
+        confirmLabel={
+          unsavedNavIntent === 'SIGNOUT'
+            ? 'Discard & Sign Out'
+            : (unsavedFormMeta?.confirmLabel || 'Leave Section')
+        }
+        cancelLabel={unsavedFormMeta?.cancelLabel || 'Keep Editing'}
+        onConfirm={handleConfirmDiscardNav}
+        onCancel={handleCancelDiscardNav}
+      />
     </div>
   )
 }

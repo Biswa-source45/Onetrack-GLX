@@ -63,6 +63,7 @@ import { createBid } from "../../services/bids";
 import { tokenStorage } from "../../services/auth";
 import { useBidStore } from "../../store/useBidStore";
 import { actsAs } from "../../lib/roles";
+import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 
 const BIDDER_SUGGESTIONS = [
   "Experience Certificate",
@@ -89,6 +90,7 @@ export function AddTenderPage() {
     learnFieldValue,
     systemConfigs,
     loadSystemConfigs,
+    setUnsavedFormDirty,
   } = useBidStore();
 
   // Stepper state
@@ -177,6 +179,86 @@ export function AddTenderPage() {
     loadUsers();
     loadSystemConfigs();
   }, [loadUsers, loadSystemConfigs]);
+
+  const [showDiscardDialog, setShowDiscardDialog] = useState(false);
+
+  const isDirty = Boolean(
+    form.title?.trim() ||
+    form.bid_no?.trim() ||
+    form.gem_bid_no?.trim() ||
+    form.organization_name?.trim() ||
+    form.department_name?.trim() ||
+    form.location?.trim() ||
+    form.tender_link?.trim() ||
+    form.high_level_scope?.trim() ||
+    form.category ||
+    form.estimated_value ||
+    form.emd_amount ||
+    form.quantity ||
+    form.start_date ||
+    form.end_date ||
+    form.opening_date ||
+    form.closing_date ||
+    form.target_month_date ||
+    form.bg_required ||
+    form.bg_rate ||
+    form.bg_duration_months ||
+    form.emd_bank_name?.trim() ||
+    form.emd_beneficiary?.trim() ||
+    form.emd_payable_at?.trim() ||
+    form.remarks?.trim() ||
+    docFile ||
+    bidderChecklists.length > 0 ||
+    oemChecklists.length > 0 ||
+    alertNoteText?.trim() ||
+    (products.length > 1 || products[0]?.product?.trim() || products[0]?.description?.trim())
+  );
+
+  useEffect(() => {
+    setUnsavedFormDirty(isDirty, {
+      formName: "Add Tender",
+      title: "Discard Incomplete Tender Form?",
+      description:
+        "You have entered tender specifications and details that have not been submitted yet. Leaving this section will discard all your entered progress.",
+      confirmLabel: "Leave Section",
+      cancelLabel: "Keep Editing",
+    });
+    return () => setUnsavedFormDirty(false, null);
+  }, [isDirty, setUnsavedFormDirty]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
+
+  useEffect(() => {
+    if (!isDirty) return;
+    window.history.pushState({ trapUnsaved: true }, "", window.location.href);
+
+    const handlePopState = () => {
+      setShowDiscardDialog(true);
+      window.history.pushState({ trapUnsaved: true }, "", window.location.href);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [isDirty]);
+
+  const handleBack = () => {
+    if (isDirty) {
+      setShowDiscardDialog(true);
+    } else {
+      navigate("/dashboard/tenders");
+    }
+  };
 
   const requireAmPresales = systemConfigs?.stage2_require_am_presales !== false;
 
@@ -331,6 +413,7 @@ export function AddTenderPage() {
         });
 
         toast.success("Tender workspace created successfully!");
+        setUnsavedFormDirty(false, null);
         navigate("/dashboard/tenders");
       } else {
         toast.error(res.error?.message ?? "Failed to create tender");
@@ -381,9 +464,10 @@ export function AddTenderPage() {
       {/* Breadcrumb / Back Button */}
       <div className="flex items-center gap-2">
         <Button
+          id="back-to-tenders-btn"
           variant="ghost"
           size="sm"
-          onClick={() => navigate("/dashboard/tenders")}
+          onClick={handleBack}
           className="gap-1.5 text-muted-foreground hover:text-foreground"
         >
           <ChevronLeft className="size-4" />
@@ -536,6 +620,7 @@ export function AddTenderPage() {
                           tooltip="The primary title of the tender."
                         >
                           <FieldMemoryInput
+                            id="add-tender-title-input"
                             fieldKey="title"
                             value={form.title}
                             onChange={(v) => set("title", v)}
@@ -1385,6 +1470,20 @@ export function AddTenderPage() {
           </div>
         </div>
       </div>
+
+      <UnsavedChangesDialog
+        open={showDiscardDialog}
+        title="Discard Incomplete Tender Form?"
+        description="You have entered tender specifications and details that have not been submitted yet. Leaving this page will discard all your entered progress."
+        confirmLabel="Leave Page"
+        cancelLabel="Keep Editing"
+        onConfirm={() => {
+          setShowDiscardDialog(false);
+          setUnsavedFormDirty(false, null);
+          navigate("/dashboard/tenders");
+        }}
+        onCancel={() => setShowDiscardDialog(false)}
+      />
     </div>
   );
 }

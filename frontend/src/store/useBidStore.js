@@ -87,6 +87,12 @@ export const useBidStore = create((set, get) => ({
   restrictedStages: [],
   restrictedStagesLoaded: false,
 
+  // Unsaved / Incomplete Form Tracking (e.g. Add Tender or Edit Tender in progress)
+  unsavedFormDirty: false,
+  unsavedFormMeta: null,
+  setUnsavedFormDirty: (dirty, meta = null) =>
+    set({ unsavedFormDirty: Boolean(dirty), unsavedFormMeta: dirty ? meta : null }),
+
   setScope: (scope, ownerId = '') => {
     const finalOwnerId = scope === 'owned' ? (ownerId || tokenStorage.getUser()?.id || '') : ''
     set({ scope, bidOwnerId: finalOwnerId, page: 1 })

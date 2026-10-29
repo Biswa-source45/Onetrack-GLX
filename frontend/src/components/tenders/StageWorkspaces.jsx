@@ -45,6 +45,7 @@ import { normalizeOemCandidates, resolveProductOem, oemKey, confirmedOems, recon
 import { EmdLifecycleCard } from './EmdLifecycleCard'
 import { EmdDetailsDialog } from './EmdDetailsDialog'
 import { updateEmdRefund } from '../../services/emd'
+import { StageModificationWarningDialog } from './StageModificationWarningDialog'
 
 function fmtMoney(v) {
   if (!v && v !== 0) return '—'
@@ -358,6 +359,46 @@ export function checkStageState(bid, stageKey) {
   }
 
   return { isCompleted, isCurrent, isLocked, isInReview, isEmdExempt, emdSkipReason, currentIdx, stageIdx }
+}
+
+export function useStageModificationGuard({ isCompleted, stageTitle }) {
+  const [showWarning, setShowWarning] = useState(false)
+  const [pendingAction, setPendingAction] = useState(null)
+
+  const guardAction = useCallback((action) => {
+    if (isCompleted) {
+      setPendingAction(() => action)
+      setShowWarning(true)
+    } else {
+      action()
+    }
+  }, [isCompleted])
+
+  const confirmModification = useCallback(() => {
+    setShowWarning(false)
+    if (pendingAction) {
+      pendingAction()
+      setPendingAction(null)
+    }
+  }, [pendingAction])
+
+  const cancelModification = useCallback(() => {
+    setShowWarning(false)
+    setPendingAction(null)
+  }, [pendingAction])
+
+  return {
+    guardAction,
+    showWarning,
+    confirmModification,
+    cancelModification,
+    dialogProps: {
+      open: showWarning,
+      stageTitle,
+      onConfirm: confirmModification,
+      onCancel: cancelModification,
+    }
+  }
 }
 
 export function ReVerificationModal({ title, stageKey, bidId, bid, onClose, onComplete }) {
@@ -898,6 +939,10 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
   // Once Go is recorded (stage complete), No-Go no longer applies here — cancelling
   // an already-approved tender goes through the top-right "Cancel Tender" action instead.
   const primaryReviewCompleted = bid?.stage_completions?.PRIMARY_REVIEW === true
+  const stageGuard = useStageModificationGuard({
+    isCompleted: primaryReviewCompleted,
+    stageTitle: 'Stage 2: Primary Review',
+  })
 
   const [activeTab, setActiveTab] = useState((isAssignedPresales && !canManageAM) ? 'presales' : 'account_manager')
   const [showCompleteModal, setShowCompleteModal] = useState(false)
@@ -948,18 +993,22 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
     return true
   }
 
-  const handleSaveOems = async () => {
-    const ok = await savePresalesOems(presalesCands)
-    if (ok) { toast.success('OEM mapping saved'); onRefresh() }
+  const handleSaveOems = () => {
+    stageGuard.guardAction(async () => {
+      const ok = await savePresalesOems(presalesCands)
+      if (ok) { toast.success('OEM mapping saved'); onRefresh() }
+    })
   }
 
-  const handleTogglePresalesComplete = async () => {
-    const ok = await savePresalesOems(presalesCands, !presalesCompleted)
-    if (ok) {
-      logStageInteraction(bid.id, 'PRIMARY_REVIEW', presalesCompleted ? 'Pre-Sales reopened their OEM mapping' : 'Pre-Sales marked their Primary Review task complete')
-      toast.success(presalesCompleted ? 'Marked as in progress again' : 'Marked your part complete')
-      onRefresh()
-    }
+  const handleTogglePresalesComplete = () => {
+    stageGuard.guardAction(async () => {
+      const ok = await savePresalesOems(presalesCands, !presalesCompleted)
+      if (ok) {
+        logStageInteraction(bid.id, 'PRIMARY_REVIEW', presalesCompleted ? 'Pre-Sales reopened their OEM mapping' : 'Pre-Sales marked their Primary Review task complete')
+        toast.success(presalesCompleted ? 'Marked as in progress again' : 'Marked your part complete')
+        onRefresh()
+      }
+    })
   }
 
   // Account Manager / Reviewer's per-product final OEM pick, finalized separately from
@@ -981,32 +1030,36 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
   // The Account Manager's sign-off on the document checklist; recorded in primary_review.
   const checklistConfirmed = !!primaryReview.checklistConfirmedAt
 
-  const handleConfirmChecklist = async (count) => {
-    const by = currentUser?.full_name || currentUser?.username || ''
-    const res = await updateBid(bid.id, {
-      primary_review: JSON.stringify({ ...primaryReview, checklistConfirmedAt: new Date().toISOString(), checklistConfirmedBy: by }),
+  const handleConfirmChecklist = (count) => {
+    stageGuard.guardAction(async () => {
+      const by = currentUser?.full_name || currentUser?.username || ''
+      const res = await updateBid(bid.id, {
+        primary_review: JSON.stringify({ ...primaryReview, checklistConfirmedAt: new Date().toISOString(), checklistConfirmedBy: by }),
+      })
+      if (!res.ok) { toast.error(res.error?.message || 'Failed to confirm checklist'); return }
+      logStageInteraction(bid.id, 'PRIMARY_REVIEW', `${by || 'Reviewer'} confirmed the document checklist (${count} item${count === 1 ? '' : 's'})`)
+      toast.success('Checklist confirmed')
+      onRefresh()
     })
-    if (!res.ok) { toast.error(res.error?.message || 'Failed to confirm checklist'); return }
-    logStageInteraction(bid.id, 'PRIMARY_REVIEW', `${by || 'Reviewer'} confirmed the document checklist (${count} item${count === 1 ? '' : 's'})`)
-    toast.success('Checklist confirmed')
-    onRefresh()
   }
 
-  const handleSaveAmOems = async () => {
-    const map = {}
-    amPicks.forEach((v, i) => { if (v && v.trim()) map[i] = v.trim() })
-    const payload = {
-      ...primaryReview,
-      amOemSelections: map,
-      amOemFinalizedAt: new Date().toISOString(),
-      amOemFinalizedBy: currentUser?.full_name || currentUser?.username || '',
-      oemRowsDismissed: (primaryReview.oemRowsDismissed || []).filter(n => !Object.values(map).some(v => oemKey(v) === oemKey(n))),
-    }
-    const res = await updateBid(bid.id, { primary_review: JSON.stringify(payload) })
-    if (!res.ok) { toast.error(res.error?.message || 'Failed to save'); return }
-    logStageInteraction(bid.id, 'PRIMARY_REVIEW', requireAmPresales ? 'Account Manager finalized the product→OEM selections' : `${currentUser?.full_name || 'Reviewer'} finalized the product→OEM selections`)
-    toast.success('OEM selections saved')
-    onRefresh()
+  const handleSaveAmOems = () => {
+    stageGuard.guardAction(async () => {
+      const map = {}
+      amPicks.forEach((v, i) => { if (v && v.trim()) map[i] = v.trim() })
+      const payload = {
+        ...primaryReview,
+        amOemSelections: map,
+        amOemFinalizedAt: new Date().toISOString(),
+        amOemFinalizedBy: currentUser?.full_name || currentUser?.username || '',
+        oemRowsDismissed: (primaryReview.oemRowsDismissed || []).filter(n => !Object.values(map).some(v => oemKey(v) === oemKey(n))),
+      }
+      const res = await updateBid(bid.id, { primary_review: JSON.stringify(payload) })
+      if (!res.ok) { toast.error(res.error?.message || 'Failed to save'); return }
+      logStageInteraction(bid.id, 'PRIMARY_REVIEW', requireAmPresales ? 'Account Manager finalized the product→OEM selections' : `${currentUser?.full_name || 'Reviewer'} finalized the product→OEM selections`)
+      toast.success('OEM selections saved')
+      onRefresh()
+    })
   }
 
   const showTabs = true
@@ -1372,6 +1425,8 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
       {showAssignPresalesModal && (
         <AssignPresalesModal bid={bid} users={users} onClose={() => setShowAssignPresalesModal(false)} onDone={() => { setShowAssignPresalesModal(false); onRefresh() }} />
       )}
+
+      <StageModificationWarningDialog {...stageGuard.dialogProps} />
     </div>
   )
 }
@@ -1707,26 +1762,31 @@ export function Stage3Workspace({ bid, onRefresh }) {
   const [newOemContact, setNewOemContact] = useState('')
   const [activeFollowUpOem, setActiveFollowUpOem] = useState(null)
   const stageCompleted = bid?.stage_completions?.OEM_AUTHORIZATION_REQUEST === true
+  const stageGuard = useStageModificationGuard({
+    isCompleted: stageCompleted,
+    stageTitle: 'Stage 3: OEM Authorization Request',
+  })
   const completedBy = useStageCompletedBy(bid.id, 'OEM_AUTHORIZATION_REQUEST', stageCompleted)
 
-  const handleAddOemSubmit = async () => {
-    const name = newOemName.trim()
-    if (!name) { toast.error('OEM name is required'); return }
-    if (oems.some(o => oemKey(o.name) === oemKey(name))) { toast.error(`"${name}" is already on the sheet`); return }
-    const row = makeOemRow(name, 'manual', currentUser?.full_name || '')
-    const updated = [...oems, row]
-    await saveOems(updated)
-    if (newOemContact.trim()) {
-      // The contact goes in the tender's shared contact list, tagged as coming from OEM Authorization.
-      const who = parseContactText(newOemContact)
-      const res = await addContact(bid.id, { kind: 'OEM', name: who.name, email: who.email, org: name, source: 'OEM_AUTH', source_ref: row.id }).catch(() => ({ ok: false }))
-      if (res.ok) onRefresh?.()
-      else toast.error(res.message || 'The OEM was added, but its contact could not be')
-    }
-    setNewOemName('')
-    setNewOemContact('')
-    setShowAddOemDlg(false)
-    toast.success(`Added OEM: ${name}`)
+  const handleAddOemSubmit = () => {
+    stageGuard.guardAction(async () => {
+      const name = newOemName.trim()
+      if (!name) { toast.error('OEM name is required'); return }
+      if (oems.some(o => oemKey(o.name) === oemKey(name))) { toast.error(`"${name}" is already on the sheet`); return }
+      const row = makeOemRow(name, 'manual', currentUser?.full_name || '')
+      const updated = [...oems, row]
+      await saveOems(updated)
+      if (newOemContact.trim()) {
+        const who = parseContactText(newOemContact)
+        const res = await addContact(bid.id, { kind: 'OEM', name: who.name, email: who.email, org: name, source: 'OEM_AUTH', source_ref: row.id }).catch(() => ({ ok: false }))
+        if (res.ok) onRefresh?.()
+        else toast.error(res.message || 'The OEM was added, but its contact could not be')
+      }
+      setNewOemName('')
+      setNewOemContact('')
+      setShowAddOemDlg(false)
+      toast.success(`Added OEM: ${name}`)
+    })
   }
 
   // Awaitable — a caller that immediately follows a save with onRefresh()
@@ -1764,59 +1824,57 @@ export function Stage3Workspace({ bid, onRefresh }) {
     })
   }
 
-  const handleSaveMatrix = async () => {
-    await saveOems(oems)
-    setIsEditing(false)
-    logStageMicroEvent(bid.id, {
-      fromStage: 'OEM_AUTHORIZATION_REQUEST',
-      toStage: 'OEM_AUTHORIZATION_REQUEST',
-      eventType: 'OEM',
-      transitionReason: `Saved OEM Authorization Matrix updates (${oems.length} OEM entries tracked)`,
-      details: { oems }
-    })
-    // Bidirectional sync: the linked Document Checklist item is complete only
-    // once EVERY tracked OEM has that document RECEIVED — with 2+ OEMs a
-    // single "yes" doesn't mean the requirement is satisfied for all of
-    // them, so this can't complete on just one row being RECEIVED. The
-    // reverse direction lives in ChecklistTab. Collected and awaited so the
-    // follow-up onRefresh() below can't race ahead of these writes either.
-    const checklistSyncs = []
-    oemChecklistItems.forEach(col => {
-      const shouldBeDone = oems.length > 0 && oems.every(o => (o.docStatus || {})[col.id] === 'RECEIVED')
-      if (!!col.is_done !== shouldBeDone) {
-        checklistSyncs.push(toggleChecklist(bid.id, col.id, shouldBeDone).catch(() => { }))
+  const handleSaveMatrix = () => {
+    stageGuard.guardAction(async () => {
+      await saveOems(oems)
+      setIsEditing(false)
+      logStageMicroEvent(bid.id, {
+        fromStage: 'OEM_AUTHORIZATION_REQUEST',
+        toStage: 'OEM_AUTHORIZATION_REQUEST',
+        eventType: 'OEM',
+        transitionReason: `Saved OEM Authorization Matrix updates (${oems.length} OEM entries tracked)`,
+        details: { oems }
+      })
+      const checklistSyncs = []
+      oemChecklistItems.forEach(col => {
+        const shouldBeDone = oems.length > 0 && oems.every(o => (o.docStatus || {})[col.id] === 'RECEIVED')
+        if (!!col.is_done !== shouldBeDone) {
+          checklistSyncs.push(toggleChecklist(bid.id, col.id, shouldBeDone).catch(() => { }))
+        }
+      })
+      if (mafChecklistItem) {
+        const mafShouldBeDone = oems.length > 0 && oems.every(o => o.maf === 'RECEIVED')
+        if (!!mafChecklistItem.is_done !== mafShouldBeDone) {
+          checklistSyncs.push(toggleChecklist(bid.id, mafChecklistItem.id, mafShouldBeDone).catch(() => { }))
+        }
       }
+      await Promise.all(checklistSyncs)
+      toast.success('OEM Authorization Matrix saved successfully')
+      if (onRefresh) await onRefresh()
     })
-    if (mafChecklistItem) {
-      const mafShouldBeDone = oems.length > 0 && oems.every(o => o.maf === 'RECEIVED')
-      if (!!mafChecklistItem.is_done !== mafShouldBeDone) {
-        checklistSyncs.push(toggleChecklist(bid.id, mafChecklistItem.id, mafShouldBeDone).catch(() => { }))
-      }
-    }
-    await Promise.all(checklistSyncs)
-    toast.success('OEM Authorization Matrix saved successfully')
-    if (onRefresh) await onRefresh()
   }
 
   const deleteOem = (id) => {
-    const target = oems.find(o => o.id === id)
-    const updated = oems.filter(o => o.id !== id)
-    saveOems(updated)
-    if (target?.name) {
-      const normalized = oemKey(target.name)
-      setDismissedNames(prev => new Set([...prev, normalized]))
-      const pr = (bid.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
-      const nextDismissed = [...new Set([...(pr.oemRowsDismissed || []), target.name])]
-      updateBid(bid.id, { primary_review: JSON.stringify({ ...pr, oemRowsDismissed: nextDismissed }) }).catch(() => { })
-    }
-    logStageMicroEvent(bid.id, {
-      fromStage: 'OEM_AUTHORIZATION_REQUEST',
-      toStage: 'OEM_AUTHORIZATION_REQUEST',
-      eventType: 'OEM',
-      transitionReason: `Deleted OEM authorization entry for "${target?.name || 'OEM'}"`,
-      details: { oem_name: target?.name }
+    stageGuard.guardAction(() => {
+      const target = oems.find(o => o.id === id)
+      const updated = oems.filter(o => o.id !== id)
+      saveOems(updated)
+      if (target?.name) {
+        const normalized = oemKey(target.name)
+        setDismissedNames(prev => new Set([...prev, normalized]))
+        const pr = (bid.primary_review && typeof bid.primary_review === 'object') ? bid.primary_review : {}
+        const nextDismissed = [...new Set([...(pr.oemRowsDismissed || []), target.name])]
+        updateBid(bid.id, { primary_review: JSON.stringify({ ...pr, oemRowsDismissed: nextDismissed }) }).catch(() => { })
+      }
+      logStageMicroEvent(bid.id, {
+        fromStage: 'OEM_AUTHORIZATION_REQUEST',
+        toStage: 'OEM_AUTHORIZATION_REQUEST',
+        eventType: 'OEM',
+        transitionReason: `Deleted OEM authorization entry for "${target?.name || 'OEM'}"`,
+        details: { oem_name: target?.name }
+      })
+      toast.success('OEM removed')
     })
-    toast.success('OEM removed')
   }
 
   const getStageStatus = (o) => {
@@ -1904,7 +1962,7 @@ export function Stage3Workspace({ bid, onRefresh }) {
               <CheckCircle2 className="size-4" /> Save Matrix
             </Button>
           ) : (
-            <Button size="sm" variant="outline" onClick={() => setIsEditing(true)} className="gap-1.5 border-purple-300 text-purple-900 dark:text-purple-200 hover:bg-purple-100 dark:hover:bg-purple-900/40 text-xs font-medium">
+            <Button size="sm" variant="outline" onClick={() => stageGuard.guardAction(() => setIsEditing(true))} className="gap-1.5 border-purple-300 text-purple-900 dark:text-purple-200 hover:bg-purple-100 dark:hover:bg-purple-900/40 text-xs font-medium">
               <Edit2 className="size-3.5" /> Edit Matrix
             </Button>
           )}
@@ -2240,6 +2298,8 @@ export function Stage3Workspace({ bid, onRefresh }) {
           </DialogContent>
         </Dialog>
       )}
+
+      <StageModificationWarningDialog {...stageGuard.dialogProps} />
     </div>
   )
 }
@@ -2413,6 +2473,11 @@ export function Stage4Workspace({ bid, onRefresh }) {
   }, [bid.pricing_workspace, key4])
 
   const marginPct = pricingData.marginPct ?? 2.45
+  const stageCompleted = bid?.stage_completions?.PRICING_REQUEST === true || bid?.stage_completions?.PRICING_AND_MARGIN_DECISION === true
+  const stageGuard = useStageModificationGuard({
+    isCompleted: stageCompleted,
+    stageTitle: 'Stage 4: Pricing & Margin Decision',
+  })
 
   const [showModal, setShowModal] = useState(false)
   const [showRequestDlg, setShowRequestDlg] = useState(false)
@@ -2465,36 +2530,40 @@ export function Stage4Workspace({ bid, onRefresh }) {
   }
 
   const handleSendRequest = () => {
-    const names = initDistNames.split(',').map(s => s.trim()).filter(Boolean)
-    if (!names.length) { toast.error('Enter at least one distributor name'); return }
-    save({ phase: 'AWAITING', distNames: names })
-    logStageMicroEvent(bid.id, {
-      fromStage: 'PRICING_REQUEST',
-      toStage: 'PRICING_REQUEST',
-      eventType: 'PRICING',
-      transitionReason: `Sent pricing request inquiry to ${names.length} distributor(s): ${names.join(', ')}`,
-      details: { distNames: names }
+    stageGuard.guardAction(() => {
+      const names = initDistNames.split(',').map(s => s.trim()).filter(Boolean)
+      if (!names.length) { toast.error('Enter at least one distributor name'); return }
+      save({ phase: 'AWAITING', distNames: names })
+      logStageMicroEvent(bid.id, {
+        fromStage: 'PRICING_REQUEST',
+        toStage: 'PRICING_REQUEST',
+        eventType: 'PRICING',
+        transitionReason: `Sent pricing request inquiry to ${names.length} distributor(s): ${names.join(', ')}`,
+        details: { distNames: names }
+      })
+      setShowRequestDlg(false)
+      setInitDistNames('')
+      toast.success('Pricing request sent! Awaiting distributor response.')
     })
-    setShowRequestDlg(false)
-    setInitDistNames('')
-    toast.success('Pricing request sent! Awaiting distributor response.')
   }
 
   const handleAddMoreDistributors = () => {
-    const newNames = addMoreDistNames.split(',').map(s => s.trim()).filter(Boolean)
-    if (!newNames.length) { toast.error('Enter at least one distributor name'); return }
-    const merged = [...new Set([...pricingData.distNames, ...newNames])]
-    save({ distNames: merged })
-    logStageMicroEvent(bid.id, {
-      fromStage: 'PRICING_REQUEST',
-      toStage: 'PRICING_REQUEST',
-      eventType: 'PRICING',
-      transitionReason: `Added ${newNames.length} new distributor(s) to pricing request list: ${newNames.join(', ')}`,
-      details: { newDistributors: newNames, totalDistributors: merged }
+    stageGuard.guardAction(() => {
+      const newNames = addMoreDistNames.split(',').map(s => s.trim()).filter(Boolean)
+      if (!newNames.length) { toast.error('Enter at least one distributor name'); return }
+      const merged = [...new Set([...pricingData.distNames, ...newNames])]
+      save({ distNames: merged })
+      logStageMicroEvent(bid.id, {
+        fromStage: 'PRICING_REQUEST',
+        toStage: 'PRICING_REQUEST',
+        eventType: 'PRICING',
+        transitionReason: `Added ${newNames.length} new distributor(s) to pricing request list: ${newNames.join(', ')}`,
+        details: { newDistributors: newNames, totalDistributors: merged }
+      })
+      setShowAddDistDlg(false)
+      setAddMoreDistNames('')
+      toast.success(`Added ${newNames.length} distributor(s) to the request list`)
     })
-    setShowAddDistDlg(false)
-    setAddMoreDistNames('')
-    toast.success(`Added ${newNames.length} distributor(s) to the request list`)
   }
 
   const handleOpenAddQuote = () => {
@@ -2518,27 +2587,29 @@ export function Stage4Workspace({ bid, onRefresh }) {
   }
 
   const handleAddQuote = () => {
-    const effectiveName = quoteDistSel === 'Others' ? (quoteCustomName.trim() || 'Others') : (quoteDistSel || 'Others')
-    if (!quoteItems.some(i => i.desc && i.basicPrice)) { toast.error('Fill at least one item'); return }
-    const items = quoteItems.filter(i => i.desc && i.basicPrice).map(i => ({
-      desc: i.desc, qty: Number(i.qty) || 1, basicPrice: Number(i.basicPrice) || 0,
-      ...(i.marginPct !== '' && i.marginPct != null ? { marginPct: Number(i.marginPct) } : {}),
-      ...(i.oem ? { oem: i.oem } : {}),
-    }))
-    const quotes = [...pricingData.quotes, { id: Date.now(), distName: effectiveName, items }]
-    save({ phase: pricingData.phase === 'APPROVAL' ? 'APPROVAL' : 'QUOTING', quotes })
-    logStageMicroEvent(bid.id, {
-      fromStage: 'PRICING_REQUEST',
-      toStage: 'PRICING_REQUEST',
-      eventType: 'PRICING',
-      transitionReason: `Recorded commercial quotation from distributor "${effectiveName}" with ${items.length} line item(s)`,
-      details: { distName: effectiveName, itemsCount: items.length }
+    stageGuard.guardAction(() => {
+      const effectiveName = quoteDistSel === 'Others' ? (quoteCustomName.trim() || 'Others') : (quoteDistSel || 'Others')
+      if (!quoteItems.some(i => i.desc && i.basicPrice)) { toast.error('Fill at least one item'); return }
+      const items = quoteItems.filter(i => i.desc && i.basicPrice).map(i => ({
+        desc: i.desc, qty: Number(i.qty) || 1, basicPrice: Number(i.basicPrice) || 0,
+        ...(i.marginPct !== '' && i.marginPct != null ? { marginPct: Number(i.marginPct) } : {}),
+        ...(i.oem ? { oem: i.oem } : {}),
+      }))
+      const quotes = [...pricingData.quotes, { id: Date.now(), distName: effectiveName, items }]
+      save({ phase: pricingData.phase === 'APPROVAL' ? 'APPROVAL' : 'QUOTING', quotes })
+      logStageMicroEvent(bid.id, {
+        fromStage: 'PRICING_REQUEST',
+        toStage: 'PRICING_REQUEST',
+        eventType: 'PRICING',
+        transitionReason: `Recorded commercial quotation from distributor "${effectiveName}" with ${items.length} line item(s)`,
+        details: { distName: effectiveName, itemsCount: items.length }
+      })
+      setShowQuoteDlg(false)
+      setQuoteDistSel('')
+      setQuoteCustomName('')
+      setQuoteItems([{ desc: '', qty: 1, basicPrice: '', marginPct: '', oem: '' }])
+      toast.success('Distributor quote added')
     })
-    setShowQuoteDlg(false)
-    setQuoteDistSel('')
-    setQuoteCustomName('')
-    setQuoteItems([{ desc: '', qty: 1, basicPrice: '', marginPct: '', oem: '' }])
-    toast.success('Distributor quote added')
   }
 
   const handleOpenEditQuote = (q) => {
@@ -2555,28 +2626,30 @@ export function Stage4Workspace({ bid, onRefresh }) {
   }
 
   const handleUpdateQuote = () => {
-    const effectiveName = quoteDistSel === 'Others' ? (quoteCustomName.trim() || 'Others') : (quoteDistSel || 'Others')
-    if (!quoteItems.some(i => i.desc && i.basicPrice)) { toast.error('Fill at least one item'); return }
-    const items = quoteItems.filter(i => i.desc && i.basicPrice).map(i => ({
-      desc: i.desc, qty: Number(i.qty) || 1, basicPrice: Number(i.basicPrice) || 0,
-      ...(i.marginPct !== '' && i.marginPct != null ? { marginPct: Number(i.marginPct) } : {}),
-      ...(i.oem ? { oem: i.oem } : {}),
-    }))
-    const updatedQuotes = pricingData.quotes.map(q => q.id === editingQuoteId ? { ...q, distName: effectiveName, items } : q)
-    save({ quotes: updatedQuotes })
-    logStageMicroEvent(bid.id, {
-      fromStage: 'PRICING_REQUEST',
-      toStage: 'PRICING_REQUEST',
-      eventType: 'PRICING',
-      transitionReason: `Updated commercial quotation for distributor "${effectiveName}" with ${items.length} line item(s)`,
-      details: { distName: effectiveName, itemsCount: items.length }
+    stageGuard.guardAction(() => {
+      const effectiveName = quoteDistSel === 'Others' ? (quoteCustomName.trim() || 'Others') : (quoteDistSel || 'Others')
+      if (!quoteItems.some(i => i.desc && i.basicPrice)) { toast.error('Fill at least one item'); return }
+      const items = quoteItems.filter(i => i.desc && i.basicPrice).map(i => ({
+        desc: i.desc, qty: Number(i.qty) || 1, basicPrice: Number(i.basicPrice) || 0,
+        ...(i.marginPct !== '' && i.marginPct != null ? { marginPct: Number(i.marginPct) } : {}),
+        ...(i.oem ? { oem: i.oem } : {}),
+      }))
+      const updatedQuotes = pricingData.quotes.map(q => q.id === editingQuoteId ? { ...q, distName: effectiveName, items } : q)
+      save({ quotes: updatedQuotes })
+      logStageMicroEvent(bid.id, {
+        fromStage: 'PRICING_REQUEST',
+        toStage: 'PRICING_REQUEST',
+        eventType: 'PRICING',
+        transitionReason: `Updated commercial quotation for distributor "${effectiveName}" with ${items.length} line item(s)`,
+        details: { distName: effectiveName, itemsCount: items.length }
+      })
+      setShowEditQuoteDlg(false)
+      setEditingQuoteId(null)
+      setQuoteDistSel('')
+      setQuoteCustomName('')
+      setQuoteItems([{ desc: '', qty: 1, basicPrice: '', marginPct: '', oem: '' }])
+      toast.success('Distributor quote updated successfully')
     })
-    setShowEditQuoteDlg(false)
-    setEditingQuoteId(null)
-    setQuoteDistSel('')
-    setQuoteCustomName('')
-    setQuoteItems([{ desc: '', qty: 1, basicPrice: '', marginPct: '', oem: '' }])
-    toast.success('Distributor quote updated successfully')
   }
 
   const handleDeleteQuote = (quoteId, distName) => {
@@ -2585,19 +2658,21 @@ export function Stage4Workspace({ bid, onRefresh }) {
 
   const confirmDeleteQuote = async () => {
     if (!quoteToDelete) return
-    const { id: quoteId, distName } = quoteToDelete
-    const updatedQuotes = pricingData.quotes.filter(q => q.id !== quoteId)
-    await save({ quotes: updatedQuotes })
-    logStageMicroEvent(bid.id, {
-      fromStage: 'PRICING_REQUEST',
-      toStage: 'PRICING_REQUEST',
-      eventType: 'PRICING',
-      transitionReason: `Deleted commercial quotation for distributor "${distName}"`,
-      details: { distName, quoteId, remainingQuotesCount: updatedQuotes.length }
+    stageGuard.guardAction(async () => {
+      const { id: quoteId, distName } = quoteToDelete
+      const updatedQuotes = pricingData.quotes.filter(q => q.id !== quoteId)
+      await save({ quotes: updatedQuotes })
+      logStageMicroEvent(bid.id, {
+        fromStage: 'PRICING_REQUEST',
+        toStage: 'PRICING_REQUEST',
+        eventType: 'PRICING',
+        transitionReason: `Deleted commercial quotation for distributor "${distName}"`,
+        details: { distName, quoteId, remainingQuotesCount: updatedQuotes.length }
+      })
+      setQuoteToDelete(null)
+      toast.success(`Deleted distributor quote from "${distName}"`)
+      if (typeof onRefresh === 'function') await onRefresh()
     })
-    setQuoteToDelete(null)
-    toast.success(`Deleted distributor quote from "${distName}"`)
-    if (typeof onRefresh === 'function') await onRefresh()
   }
 
   // Renders the alert/email copy of the pricing sheet straight from
@@ -2849,38 +2924,40 @@ export function Stage4Workspace({ bid, onRefresh }) {
   }
   const handleSaveMargins = () => {
     if (!l1Quote) return
-    const updatedQuotes = pricingData.quotes.map(q => {
-      if (q.id !== l1Quote.id) return q
-      return {
-        ...q,
-        items: q.items.map((it, idx) => {
-          const val = marginEdits[idx]
-          if (val === '' || val == null) {
-            const { marginPct, ...rest } = it
-            return rest
-          }
-          return { ...it, marginPct: Number(val) }
-        }),
+    stageGuard.guardAction(() => {
+      const updatedQuotes = pricingData.quotes.map(q => {
+        if (q.id !== l1Quote.id) return q
+        return {
+          ...q,
+          items: q.items.map((it, idx) => {
+            const val = marginEdits[idx]
+            if (val === '' || val == null) {
+              const { marginPct, ...rest } = it
+              return rest
+            }
+            return { ...it, marginPct: Number(val) }
+          }),
+        }
+      })
+      // approvedGrandTotal is a snapshot taken at approval and is what Bid
+      // Submission quotes — margins can still be edited after approval, so
+      // re-snapshot it here or Submission keeps showing the superseded price.
+      const patch = { quotes: updatedQuotes }
+      if (pricingData.approvalStatus === 'APPROVED') {
+        const { l1Calculations: recalculated } = computeL1PricingSummary({ ...pricingData, quotes: updatedQuotes })
+        if (recalculated) patch.approvedGrandTotal = recalculated.grandGlobxTotal
       }
+      save(patch)
+      logStageMicroEvent(bid.id, {
+        fromStage: 'PRICING_REQUEST',
+        toStage: 'PRICING_REQUEST',
+        eventType: 'PRICING',
+        transitionReason: `Updated per-product margins for L1 distributor "${l1Quote.distName}"`,
+        details: { distName: l1Quote.distName, margins: marginEdits },
+      })
+      setShowMarginDlg(false)
+      toast.success('Margins saved')
     })
-    // approvedGrandTotal is a snapshot taken at approval and is what Bid
-    // Submission quotes — margins can still be edited after approval, so
-    // re-snapshot it here or Submission keeps showing the superseded price.
-    const patch = { quotes: updatedQuotes }
-    if (pricingData.approvalStatus === 'APPROVED') {
-      const { l1Calculations: recalculated } = computeL1PricingSummary({ ...pricingData, quotes: updatedQuotes })
-      if (recalculated) patch.approvedGrandTotal = recalculated.grandGlobxTotal
-    }
-    save(patch)
-    logStageMicroEvent(bid.id, {
-      fromStage: 'PRICING_REQUEST',
-      toStage: 'PRICING_REQUEST',
-      eventType: 'PRICING',
-      transitionReason: `Updated per-product margins for L1 distributor "${l1Quote.distName}"`,
-      details: { distName: l1Quote.distName, margins: marginEdits },
-    })
-    setShowMarginDlg(false)
-    toast.success('Margins saved')
   }
 
   // ── Buyback ────────────────────────────────────────────────────────────
@@ -3620,6 +3697,8 @@ export function Stage4Workspace({ bid, onRefresh }) {
           onComplete={onRefresh}
         />
       )}
+
+      <StageModificationWarningDialog {...stageGuard.dialogProps} />
     </div>
   )
 }
@@ -4382,6 +4461,11 @@ export function Stage8Workspace({ bid, onRefresh }) {
 export function Stage9Workspace({ bid, onRefresh }) {
   const [showModal, setShowModal] = useState(false)
   const { isLocked } = checkStageState(bid, 'GEM_SUBMISSION')
+  const stageCompleted = bid?.stage_completions?.GEM_SUBMISSION === true
+  const stageGuard = useStageModificationGuard({
+    isCompleted: stageCompleted,
+    stageTitle: 'Stage 9: GeM Portal Submission',
+  })
 
   // Bid Submission: the bid person confirms the GeM submission with the final price. Once it is
   // submitted the tender's contacts (Contacts tab) are listed here; nothing else gates the stage.
@@ -4401,19 +4485,20 @@ export function Stage9Workspace({ bid, onRefresh }) {
     setPriceInput(start != null && Number(start) > 0 ? String(Math.round(Number(start) * 100) / 100) : '')
     setShowSubmit(true)
   }
-  const markSubmitted = async () => {
-    if (!priceOk) { toast.error('Enter the final submitted price'); return }
-    setBusy(true)
-    try {
-      // The price entered here is the official submitted (quoted) price.
-      const now = new Date().toISOString()
-      const res = await updateBid(bid.id, { post_bid: JSON.stringify({ ...pb, submittedAt: now, submittedBy: actorName, submittedPrice: priceNum, updatedAt: now }), quoted_price: priceNum })
-      if (!res.ok) { toast.error(res.error?.message || 'Failed to save'); return }
-      toast.success('Bid marked as submitted')
-      logStageInteraction(bid.id, 'GEM_SUBMISSION', `Bid submitted on GeM at ${fmtMoneyFull(priceNum)} (confirmed by ${actorName})`, null, { quoted_price: priceNum })
-      setShowSubmit(false)
-      onRefresh()
-    } finally { setBusy(false) }
+  const markSubmitted = () => {
+    stageGuard.guardAction(async () => {
+      if (!priceOk) { toast.error('Enter the final submitted price'); return }
+      setBusy(true)
+      try {
+        const now = new Date().toISOString()
+        const res = await updateBid(bid.id, { post_bid: JSON.stringify({ ...pb, submittedAt: now, submittedBy: actorName, submittedPrice: priceNum, updatedAt: now }), quoted_price: priceNum })
+        if (!res.ok) { toast.error(res.error?.message || 'Failed to save'); return }
+        toast.success('Bid marked as submitted')
+        logStageInteraction(bid.id, 'GEM_SUBMISSION', `Bid submitted on GeM at ${fmtMoneyFull(priceNum)} (confirmed by ${actorName})`, null, { quoted_price: priceNum })
+        setShowSubmit(false)
+        onRefresh()
+      } finally { setBusy(false) }
+    })
   }
 
   // Final submitted price is no longer hand-typed — it's sourced from Stage 4's
@@ -4575,6 +4660,8 @@ export function Stage9Workspace({ bid, onRefresh }) {
           onComplete={handleConfettiSubmit}
         />
       )}
+
+      <StageModificationWarningDialog {...stageGuard.dialogProps} />
     </div>
   )
 }

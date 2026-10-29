@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
@@ -57,6 +57,8 @@ import { usePermissions } from "../../hooks/usePermissions";
 import { overlayPendingPayload } from "../../lib/pendingEdit";
 import { actsAs } from "../../lib/roles";
 import { RejectReasonDialog } from "./RejectReasonDialog";
+import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
+import { StageModificationWarningDialog } from "./StageModificationWarningDialog";
 import {
   BID_TYPES,
   SCOPE_TYPES,
@@ -275,6 +277,36 @@ export function EditTenderDialog({
   const [fetchingBid, setFetchingBid] = useState(false);
   const [showRejectDlg, setShowRejectDlg] = useState(false);
   const [rejecting, setRejecting] = useState(false);
+  const [showUnsavedPrompt, setShowUnsavedPrompt] = useState(false);
+  const [showStageWarning, setShowStageWarning] = useState(false);
+  const initialSnapshotRef = useRef(null);
+
+  const isDirty = initialSnapshotRef.current !== null && JSON.stringify(form) !== initialSnapshotRef.current;
+  const isStageApproved = Boolean(
+    bid?.stage_completions?.DISCOVERED ||
+    bid?.stage_completions?.PRIMARY_REVIEW ||
+    (bid?.workflow_stage && bid?.workflow_stage !== "DISCOVERED")
+  );
+
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
+
+  const handleRequestClose = () => {
+    if (isDirty) {
+      setShowUnsavedPrompt(true);
+    } else {
+      onClose();
+    }
+  };
+
   // Online/DD are independent raw-capture toggles, kept outside `form` so
   // unticking one clears just its own fields (see AddTenderPage for why).
   const [emdOnlineOn, setEmdOnlineOn] = useState(false);
@@ -338,7 +370,7 @@ export function EditTenderDialog({
           // freshly-fetched (current, unchanged) bid, so the form starts
           // from what they asked to change rather than what's live today.
           const b = overlayPendingPayload(res.data, approvalContext?.payload);
-          setForm({
+          const loaded = {
             title: b.title || "",
             high_level_scope: b.high_level_scope || "",
             gem_bid_no: b.gem_bid_no || "",
@@ -398,7 +430,9 @@ export function EditTenderDialog({
             emd_branch: b.emd_branch || "",
             emd_beneficiary: b.emd_beneficiary || "",
             emd_payable_at: b.emd_payable_at || "",
-          });
+          };
+          setForm(loaded);
+          initialSnapshotRef.current = JSON.stringify(loaded);
           setEmdOnlineOn(!!b.emd_bank_name);
           setEmdDdOn(!!b.emd_beneficiary);
           setProducts(parseRequestedProducts(b.requested_products));
@@ -629,7 +663,7 @@ export function EditTenderDialog({
   }
 
   async function handleSubmit(ev) {
-    ev.preventDefault();
+    if (ev) ev.preventDefault();
     const e = validate();
     if (Object.keys(e).length > 0) {
       setErrors(e);
@@ -637,6 +671,15 @@ export function EditTenderDialog({
       return;
     }
 
+    if (isStageApproved && isDirty && !approvalContext) {
+      setShowStageWarning(true);
+      return;
+    }
+
+    executeSave();
+  }
+
+  async function executeSave() {
     setLoading(true);
     try {
       const cleanProducts = products
@@ -766,7 +809,7 @@ export function EditTenderDialog({
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
             className="absolute inset-0 bg-foreground/25 backdrop-blur-sm"
-            onClick={onClose}
+            onClick={handleRequestClose}
           />
 
           {/* Dialog */}
@@ -792,7 +835,7 @@ export function EditTenderDialog({
                 </div>
                 <button
                   type="button"
-                  onClick={onClose}
+                  onClick={handleRequestClose}
                   className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"
                 >
                   <X className="size-4" />
@@ -1811,7 +1854,7 @@ export function EditTenderDialog({
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={onClose}
+                      onClick={handleRequestClose}
                       disabled={loading || fetchingBid}
                     >
                       Cancel
@@ -1897,6 +1940,32 @@ export function EditTenderDialog({
                 toast.error(res.error?.message ?? "Failed to reject edit");
               }
             }}
+          />
+
+          <UnsavedChangesDialog
+            open={showUnsavedPrompt}
+            title="Discard Unsaved Changes?"
+            description="You have modified fields in this tender form. If you close this window now, your changes will not be saved."
+            confirmLabel="Discard & Close"
+            cancelLabel="Keep Editing"
+            onConfirm={() => {
+              setShowUnsavedPrompt(false);
+              onClose();
+            }}
+            onCancel={() => setShowUnsavedPrompt(false)}
+          />
+
+          <StageModificationWarningDialog
+            open={showStageWarning}
+            stageTitle={bid?.workflow_stage ? (bid.workflow_stage.replace(/_/g, " ")) : "Approved Stage"}
+            description="This tender has already completed initial stage approval. Modifying these core parameters will update approved tender specifications and will be recorded in the audit history."
+            confirmLabel="Proceed & Save Changes"
+            cancelLabel="Review Changes"
+            onConfirm={() => {
+              setShowStageWarning(false);
+              executeSave();
+            }}
+            onCancel={() => setShowStageWarning(false)}
           />
         </div>
       )}
