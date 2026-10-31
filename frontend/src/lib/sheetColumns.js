@@ -18,6 +18,7 @@ export const SHEET_COLUMNS = [
   { key: 'platform', label: 'Platform', minWidth: 135 },
   { key: 'quantity', label: 'Quantity', minWidth: 90 },
   { key: 'scope_type', label: 'Scope Type', minWidth: 140 },
+  { key: 'support_type', label: 'Bid Support', minWidth: 150 },
   { key: 'no_emd', label: 'No EMD', minWidth: 100 },
   { key: 'emd_exemption', label: 'EMD Exemption', minWidth: 130 },
   { key: 'bg_rate', label: 'BG Rate (%)', minWidth: 110 },

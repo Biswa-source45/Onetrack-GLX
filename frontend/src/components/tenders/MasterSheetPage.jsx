@@ -95,6 +95,33 @@ const RENDER = [
     render: (b) => b.scope_type ?? '—'
   },
   {
+    key: 'support_type', label: 'Bid Support', minWidth: 150,
+    render: (b) => {
+      if (b.support_type === 'IN_SUPPORT') {
+        return (
+          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 dark:text-indigo-300">
+            <span>📥 In-Support</span>
+            {b.support_partner_name && <span className="font-semibold text-muted-foreground">({b.support_partner_name})</span>}
+          </span>
+        )
+      }
+      if (b.support_type === 'OUT_SUPPORT') {
+        return (
+          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-purple-700 dark:text-purple-300">
+            <span>📤 Out-Support</span>
+            {b.support_partner_name && <span className="font-semibold text-muted-foreground">({b.support_partner_name})</span>}
+          </span>
+        )
+      }
+      return <span className="text-muted-foreground text-xs font-medium">GLOBX</span>
+    },
+    exportValue: (b) => {
+      if (b.support_type === 'IN_SUPPORT') return `In-Support (${b.support_partner_name || 'Partner'})`
+      if (b.support_type === 'OUT_SUPPORT') return `Out-Support (${b.support_partner_name || 'Partner'})`
+      return 'GLOBX'
+    }
+  },
+  {
     key: 'emd', label: 'EMD Amount (₹)', minWidth: 100,
     render: (b) => formatAmount(b.emd_amount), exportValue: (b) => b.emd_amount ?? ''
   },
@@ -182,8 +209,8 @@ const RENDER = [
 
 const COLUMNS = SHEET_COLUMNS.map((sc) => {
   const def = RENDER.find((r) => r.key === sc.key)
-  if (!def) throw new Error(`MasterSheetPage: no renderer for sheet column "${sc.key}"`)
-  return { ...def, label: sc.label, minWidth: sc.minWidth, hint: sc.hint }
+  const effective = def || { key: sc.key, label: sc.label, minWidth: sc.minWidth, render: (b) => b[sc.key] ?? '—' }
+  return { ...effective, label: sc.label, minWidth: sc.minWidth, hint: sc.hint }
 })
 // The first column stays pinned while the sheet scrolls sideways.
 COLUMNS[0].sticky = true

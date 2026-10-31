@@ -59,7 +59,7 @@ import {
   isHttpUrl,
   validateEmd,
 } from "../../lib/tenderSpec";
-import { createBid } from "../../services/bids";
+import { createBid, SUPPORT_TYPES } from "../../services/bids";
 import { tokenStorage } from "../../services/auth";
 import { useBidStore } from "../../store/useBidStore";
 import { actsAs } from "../../lib/roles";
@@ -128,6 +128,8 @@ export function AddTenderPage() {
     presales_id: "",
     remarks: "",
     scope_type: "Supply",
+    support_type: "GLOBX",
+    support_partner_name: "",
     // EMD bank/online payment details
     emd_bank_name: "",
     emd_account_number: "",
@@ -281,6 +283,8 @@ export function AddTenderPage() {
       if (!form.bid_type) e.bid_type = "Bid type is required";
       if (form.tender_link.trim() && !isHttpUrl(form.tender_link.trim()))
         e.tender_link = TENDER_LINK_ERROR;
+      if ((form.support_type === "IN_SUPPORT" || form.support_type === "OUT_SUPPORT") && !form.support_partner_name?.trim())
+        e.support_partner_name = "Supporting partner organization name is required";
       // The Account Manager decides which EMD route to go with, later, in
       // Primary Review.
       Object.assign(e, validateEmd(form, emdOnlineOn, emdDdOn));
@@ -343,6 +347,8 @@ export function AddTenderPage() {
         ...form,
         bid_owner_id: activeOwnerId,
         tender_link: form.tender_link.trim(),
+        support_type: form.support_type || "GLOBX",
+        support_partner_name: (form.support_type === "IN_SUPPORT" || form.support_type === "OUT_SUPPORT") && form.support_partner_name?.trim() ? form.support_partner_name.trim() : undefined,
         presales_id: form.presales_id || undefined,
         quantity: form.quantity ? Number(form.quantity) : undefined,
         estimated_value: form.estimated_value
@@ -823,6 +829,67 @@ export function AddTenderPage() {
                           className={inputCls()}
                         />
                       </Field>
+
+                      {/* Bid Support Type */}
+                      <Field
+                        label="Bid Support"
+                        tooltip="GLOBX: Our own bidding entry. In-Support: Taking support from partner. Out-Support: Providing support to partner."
+                        required
+                      >
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-full h-9 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5"
+                            >
+                              <span className="truncate">
+                                {SUPPORT_TYPES.find((s) => s.value === form.support_type)?.label ||
+                                  "GLOBX : Our own bidding entry"}
+                              </span>
+                              <ChevronDown className="size-3 text-muted-foreground ml-auto shrink-0" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent className="w-[320px]">
+                            {SUPPORT_TYPES.map((st) => (
+                              <DropdownMenuItem
+                                key={st.value}
+                                onSelect={() => {
+                                  set("support_type", st.value);
+                                  if (st.value === "GLOBX") {
+                                    set("support_partner_name", "");
+                                  }
+                                }}
+                                className="flex flex-col items-start gap-0.5 py-2 cursor-pointer"
+                              >
+                                <span className="font-semibold text-xs">{st.shortLabel}</span>
+                                <span className="text-[11px] text-muted-foreground">{st.desc}</span>
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </Field>
+
+                      {/* Supporting Partner Organization (when In-Support or Out-Support) */}
+                      {(form.support_type === "IN_SUPPORT" || form.support_type === "OUT_SUPPORT") && (
+                        <Field
+                          label={
+                            form.support_type === "IN_SUPPORT"
+                              ? "Supporting Partner (Taking Support From)"
+                              : "Partner Organization (Providing Support To)"
+                          }
+                          tooltip="Enter the name of the partner organization involved in this supporting bid."
+                          error={errors.support_partner_name}
+                          required
+                        >
+                          <Input
+                            value={form.support_partner_name}
+                            onChange={(e) => set("support_partner_name", e.target.value)}
+                            placeholder="e.g. Bharat Electronics Ltd, Cisco, etc."
+                            className={inputCls(errors.support_partner_name)}
+                          />
+                        </Field>
+                      )}
 
                       {/* Every tender is for some number of units or licences. */}
                       <Field label="Quantity">

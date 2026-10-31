@@ -53,7 +53,7 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 			bid_result, ai_source_document_id, ai_extraction_confidence, stage_completions,
 			emd_not_applicable,
 			account_manager_id, presales_id, location, bg_duration_months, requested_products,
-			emd_exemption_types, alert_note, tender_link, calendar_id
+			emd_exemption_types, alert_note, tender_link, calendar_id, support_type, support_partner_name
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9,
@@ -70,7 +70,7 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 			$42, $43, $44, $45, $46, $47, $48, '{"DISCOVERED": true}'::jsonb,
 			$49,
 			$52, $53, $54, $55, $56,
-			$57, $58, $59, $60
+			$57, $58, $59, $60, $61, $62
 		) RETURNING id
 	`
 	var id string
@@ -93,6 +93,7 @@ func (r *postgresBidRepo) Create(ctx context.Context, params *domain.CreateBidPa
 		params.Quantity, params.OurRank,
 		params.AccountManagerID, params.PresalesID, params.Location, params.BGDurationMonths, params.RequestedProducts,
 		params.EMDExemptionTypes, params.AlertNote, params.TenderLink, params.CalendarID,
+		params.SupportType, params.SupportPartnerName,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("failed to create bid: %w", err)
@@ -163,7 +164,8 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 		       account_manager_id, presales_id, location, bg_duration_months,
 		       requested_products, primary_review, alert_note, tender_link, post_bid, doc_shortfall,
 		       ` + derivedStatusExpr + ` AS derived_status,
-		       calendar_id, calculated_72h_deadline, deadline_remaining_working_hours, deadline_last_computed_at
+		       calendar_id, calculated_72h_deadline, deadline_remaining_working_hours, deadline_last_computed_at,
+		       b.support_type, b.support_partner_name
 		FROM bid.bid_workspaces b
 		WHERE b.id = $1
 	`
@@ -201,7 +203,7 @@ const derivedStatusExpr = `
 		WHEN b.bid_status = 'WON' OR b.workflow_stage = 'WON' OR b.bid_outcome = 'WON' THEN 'WON'
 		WHEN b.bid_status = 'LOST' OR b.workflow_stage = 'LOST' OR b.bid_outcome = 'LOST' OR b.technical_result = 'DISQUALIFIED' THEN 'LOST'
 		WHEN b.bid_status = 'CANCELLED' OR b.workflow_stage = 'CANCELLED' OR b.bid_outcome = 'CANCELLED' THEN 'CANCELLED'
-		WHEN b.bid_status = 'CLOSED' THEN 'CLOSED'
+		WHEN b.bid_status = 'CLOSED' OR b.bid_outcome = 'CLOSED' THEN 'CLOSED'
 		-- "Submitted": has cleared GeM Submission and hasn't yet resolved to an
 		-- outcome above — includes Award & Handover, since sitting there isn't
 		-- itself a resolution (a WON/LOST/CANCELLED outcome there is caught by
@@ -248,7 +250,7 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		// are themselves exact matches, since selecting them means "show me
 		// the WON/LOST/CANCELLED ones" and they'd otherwise match nothing.
 		if params.WorkflowStage == "WON" || params.WorkflowStage == "LOST" || params.WorkflowStage == "CANCELLED" {
-			conditions = append(conditions, fmt.Sprintf("b.workflow_stage = $%d", idx))
+			conditions = append(conditions, fmt.Sprintf("(%s) = $%d", derivedStatusExpr, idx))
 		} else {
 			conditions = append(conditions, fmt.Sprintf("b.workflow_stage = $%d AND (%s) NOT IN ('WON', 'LOST', 'CANCELLED', 'CLOSED')", idx, derivedStatusExpr))
 		}
@@ -258,7 +260,11 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 	if params.BidStatus != "" {
 		// Filter on the same expression the counts are grouped by, so a tile's
 		// number always matches the list behind it.
-		if derivedStatuses[params.BidStatus] {
+		if params.BidStatus == "ARCHIVE" {
+			conditions = append(conditions, fmt.Sprintf("(%s) IN ('WON', 'LOST')", derivedStatusExpr))
+		} else if params.BidStatus == "ABORTED" || params.BidStatus == "CLOSED" {
+			conditions = append(conditions, fmt.Sprintf("(%s) = 'CLOSED'", derivedStatusExpr))
+		} else if derivedStatuses[params.BidStatus] {
 			conditions = append(conditions, fmt.Sprintf("(%s) = $%d", derivedStatusExpr, idx))
 			args = append(args, params.BidStatus)
 			idx++
@@ -410,6 +416,9 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		}
 	}
 
+	statusCounts["ARCHIVE"] = statusCounts["WON"] + statusCounts["LOST"]
+	statusCounts["ABORTED"] = statusCounts["CLOSED"]
+
 	offset := (params.Page - 1) * params.Limit
 	listArgs := append(args, params.Limit, offset)
 	dataQuery := fmt.Sprintf(`
@@ -444,7 +453,8 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		       b.account_manager_id, b.presales_id, b.location, b.bg_duration_months,
 		       b.requested_products, b.primary_review, b.alert_note, b.tender_link, b.post_bid, b.doc_shortfall,
 		       ` + derivedStatusExpr + ` AS derived_status,
-		       b.calendar_id, b.calculated_72h_deadline, b.deadline_remaining_working_hours, b.deadline_last_computed_at
+		       b.calendar_id, b.calculated_72h_deadline, b.deadline_remaining_working_hours, b.deadline_last_computed_at,
+		       b.support_type, b.support_partner_name
 		FROM bid.bid_workspaces b
 		LEFT JOIN auth.users u ON b.bid_owner_id = u.id
 		%s
@@ -857,6 +867,34 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 			addSet("calendar_id", *req.CalendarID)
 		}
 	}
+	if req.SupportType != nil {
+		addSet("support_type", *req.SupportType)
+	}
+	if req.SupportPartnerName != nil {
+		if *req.SupportPartnerName == "" {
+			sets = append(sets, fmt.Sprintf("support_partner_name = $%d", idx))
+			args = append(args, nil)
+			idx++
+		} else {
+			addSet("support_partner_name", *req.SupportPartnerName)
+		}
+	}
+	if req.SupportType != nil || req.SupportPartnerName != nil {
+		st := "GLOBX"
+		if req.SupportType != nil {
+			st = *req.SupportType
+		}
+		var spn interface{}
+		if req.SupportPartnerName != nil {
+			spn = *req.SupportPartnerName
+		}
+		sets = append(sets, fmt.Sprintf("metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('support_type', $%d::text, 'support_partner_name', $%d::text)", idx, idx+1))
+		args = append(args, st, spn)
+		idx += 2
+		if false {
+		}
+	}
+
 
 	args = append(args, id)
 	query := fmt.Sprintf("UPDATE bid.bid_workspaces SET %s WHERE id = $%d AND archived_at IS NULL",
@@ -932,6 +970,7 @@ func (r *postgresBidRepo) UpdateOutcome(ctx context.Context, id string, req *dom
 			addSet("result_date", t)
 		}
 	}
+
 
 	args = append(args, id)
 	query := fmt.Sprintf("UPDATE bid.bid_workspaces SET %s WHERE id = $%d AND archived_at IS NULL",
@@ -1440,18 +1479,31 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 		&b.RequestedProducts, &b.PrimaryReview, &b.AlertNote, &b.TenderLink, &b.PostBid, &b.DocShortfall,
 		&b.DerivedStatus,
 		&b.CalendarID, &b.Calculated72hDeadline, &b.DeadlineRemainingWorkingHours, &b.DeadlineLastComputedAt,
+		&b.SupportType, &b.SupportPartnerName,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan bid: %w", err)
 	}
-	if (b.DeleteReason == nil || *b.DeleteReason == "") && len(b.Metadata) > 0 {
+	if len(b.Metadata) > 0 {
 		var meta map[string]interface{}
 		if err := json.Unmarshal(b.Metadata, &meta); err == nil {
 			if dr, ok := meta["delete_reason"].(string); ok && strings.TrimSpace(dr) != "" {
 				trimmed := strings.TrimSpace(dr)
 				b.DeleteReason = &trimmed
 			}
+			if st, ok := meta["support_type"].(string); ok && strings.TrimSpace(st) != "" && (b.SupportType == nil || *b.SupportType == "") {
+				trimmedSt := strings.TrimSpace(st)
+				b.SupportType = &trimmedSt
+			}
+			if spn, ok := meta["support_partner_name"].(string); ok && strings.TrimSpace(spn) != "" && (b.SupportPartnerName == nil || *b.SupportPartnerName == "") {
+				trimmedSpn := strings.TrimSpace(spn)
+				b.SupportPartnerName = &trimmedSpn
+			}
 		}
+	}
+	if b.SupportType == nil || *b.SupportType == "" {
+		defaultSupport := "GLOBX"
+		b.SupportType = &defaultSupport
 	}
 	return &b, nil
 }

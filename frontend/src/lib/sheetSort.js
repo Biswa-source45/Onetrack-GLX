@@ -111,6 +111,9 @@ export function getSortValue(bid, key) {
     case 'scope_type':
       return bid.scope_type ? bid.scope_type.trim().toLowerCase() : null
 
+    case 'support_type':
+      return bid.support_type ? (bid.support_type + (bid.support_partner_name ? ` ${bid.support_partner_name}` : '')).toLowerCase() : 'globx'
+
     case 'no_emd':
       return bid.emd_not_applicable != null ? (bid.emd_not_applicable ? 1 : 0) : null
 
@@ -223,6 +226,7 @@ export const SORTABLE_KEYS = new Set([
   'platform',
   'quantity',
   'scope_type',
+  'support_type',
   'no_emd',
   'emd_exemption',
   'bg_rate',

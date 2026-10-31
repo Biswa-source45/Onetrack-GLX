@@ -381,6 +381,18 @@ export const STATUS_STYLES = {
     accent: 'bg-red-500',
     tint:   'bg-red-50/30 border-red-200/50 dark:bg-red-950/10 dark:border-red-900/30',
   },
+  ABORTED: {
+    pill:   'bg-amber-100 text-amber-800 border-amber-300/60 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800/30',
+    dot:    'bg-amber-500',
+    accent: 'bg-amber-500',
+    tint:   'bg-amber-50/40 border-amber-200/60 dark:bg-amber-950/20 dark:border-amber-800/40',
+  },
+  ARCHIVE: {
+    pill:   'bg-zinc-100 text-zinc-700 border-zinc-300 dark:bg-zinc-900/50 dark:text-zinc-300 dark:border-zinc-700',
+    dot:    'bg-zinc-500',
+    accent: 'bg-zinc-500',
+    tint:   'bg-zinc-50/40 border-zinc-200/60 dark:bg-zinc-950/20 dark:border-zinc-800/40',
+  },
   ARCHIVED: {
     pill:   'bg-gray-100 text-gray-500 border-gray-200 dark:bg-gray-900/40 dark:text-gray-400 dark:border-gray-800/40',
     dot:    'bg-slate-400',
@@ -413,6 +425,45 @@ export const WORKFLOW_STAGES_ORDERED = [
   'FINANCIAL_EVALUATION',
   'AWARD_HANDOVER',
 ]
+
+export const SUPPORT_TYPES = [
+  { value: 'GLOBX', label: 'GLOBX : Our own bidding entry', shortLabel: 'GLOBX', desc: 'Our own bidding entry', description: 'Our own bidding entry' },
+  { value: 'IN_SUPPORT', label: 'In-Support : We are taking support from other partner', shortLabel: 'In-Support', desc: 'We are taking support from other partner', description: 'We are taking support from other partner' },
+  { value: 'OUT_SUPPORT', label: 'Out-Support : We are providing support to other partner', shortLabel: 'Out-Support', desc: 'We are providing support to other partner', description: 'We are providing support to other partner' },
+]
+
+export const SUPPORT_STYLES = {
+  GLOBX: {
+    badge: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800',
+    dot: 'bg-blue-500',
+    cardBorder: '',
+    cardAccent: '',
+    cardTint: '',
+    sheetCell: '',
+  },
+  IN_SUPPORT: {
+    badge: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/50 dark:text-indigo-300 dark:border-indigo-800',
+    pill: 'bg-indigo-100 text-indigo-800 border-indigo-300 dark:bg-indigo-950 dark:text-indigo-200 dark:border-indigo-700',
+    dot: 'bg-indigo-500',
+    cardBorder: 'border-indigo-300/80 dark:border-indigo-700/70 shadow-indigo-500/5',
+    cardAccent: 'bg-indigo-500',
+    cardTint: 'bg-indigo-50/25 dark:bg-indigo-950/20',
+    sheetCell: 'bg-indigo-50/50 dark:bg-indigo-950/40 text-indigo-950 dark:text-indigo-100',
+  },
+  OUT_SUPPORT: {
+    badge: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/50 dark:text-purple-300 dark:border-purple-800',
+    pill: 'bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950 dark:text-purple-200 dark:border-purple-700',
+    dot: 'bg-purple-500',
+    cardBorder: 'border-purple-300/80 dark:border-purple-700/70 shadow-purple-500/5',
+    cardAccent: 'bg-purple-500',
+    cardTint: 'bg-purple-50/25 dark:bg-purple-950/20',
+    sheetCell: 'bg-purple-50/50 dark:bg-purple-950/40 text-purple-950 dark:text-purple-100',
+  },
+}
+
+export function getSupportStyle(type) {
+  return SUPPORT_STYLES[type] || SUPPORT_STYLES.GLOBX
+}
 
 // ── Checklists ──────────────────────────────────────────────────────────────
 export async function getChecklists(bidId) {

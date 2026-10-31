@@ -193,7 +193,7 @@ export const useBidStore = create((set, get) => ({
     return {
       search: debouncedSearch,
       workflow_stage: stageFilter,
-      bid_status: statusFilter,
+      bid_status: statusFilter === 'ABORTED' ? 'CLOSED' : statusFilter,
       portal_source: portalSourceFilter || undefined,
       bid_owner_id: (scope === 'owned' || finalOwnerId) ? finalOwnerId : undefined,
       closing_after,

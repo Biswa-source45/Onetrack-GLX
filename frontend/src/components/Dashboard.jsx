@@ -5,7 +5,7 @@ import {
   Layers, LogOut, Key, CheckCircle, Eye, EyeOff, Loader2,
   Users, LayoutDashboard, Menu, X, ChevronRight,
   FileText, TrendingUp, Activity, BarChart2, ShieldCheck, Bell,
-  Award, XCircle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Pencil,
+  Award, XCircle, AlertTriangle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Pencil,
   FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass, ScrollText, Settings, Target, ListChecks, Building2, Factory
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -359,18 +359,18 @@ export function OverviewPanel() {
   ).length
 
   const wonBids = filteredBids.filter(b =>
-    b.bid_status === 'WON' || b.bid_outcome === 'WON' || b.workflow_stage === 'WON'
+    getEffectiveStage(b) === 'WON'
   ).length
 
   const lostBids = filteredBids.filter(b =>
-    b.bid_status === 'LOST' || b.bid_outcome === 'LOST' || b.workflow_stage === 'LOST' || b.technical_result === 'DISQUALIFIED'
+    getEffectiveStage(b) === 'LOST'
   ).length
 
   const cancelledBids = filteredBids.filter(b => getEffectiveStage(b) === 'CANCELLED').length
 
   // Closed = assessed then dropped without ever bidding. Counted separately so
   // it neither inflates the live pipeline nor the loss rate.
-  const closedBids = filteredBids.filter(b => b.bid_status === 'CLOSED').length
+  const closedBids = filteredBids.filter(b => getEffectiveStage(b) === 'CLOSED').length
 
   // Financial BI metrics. Total Won Order Value deliberately keeps its own
   // 2-field chain (final_bid_value || estimated_value, no quoted_price) —
@@ -379,7 +379,7 @@ export function OverviewPanel() {
   // "PO Value Won" figure (from the shared pipelineMetrics module, matching
   // Analytics exactly) with its own label so the two are never confused.
   const totalWonValue = filteredBids
-    .filter(b => b.bid_status === 'WON' || b.bid_outcome === 'WON' || b.workflow_stage === 'WON')
+    .filter(b => getEffectiveStage(b) === 'WON')
     .reduce((sum, b) => sum + (b.final_bid_value || b.estimated_value || 0), 0)
 
   // Single source of truth for participated/active/submitted/won/aging/
@@ -456,7 +456,8 @@ export function OverviewPanel() {
     { label: 'Won Bids', value: wonBids, icon: Award, color: 'text-sky-600', bg: 'bg-sky-50', border: 'border-sky-200', onClick: () => navigate('/dashboard/tenders?status=WON') },
     { label: 'Lost Bids', value: lostBids, icon: XCircle, color: 'text-orange-600', bg: 'bg-orange-50', border: 'border-orange-200', onClick: () => navigate('/dashboard/tenders?status=LOST') },
     { label: 'Cancelled', value: cancelledBids, icon: Ban, color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', onClick: () => navigate('/dashboard/tenders?status=CANCELLED') },
-    { label: 'Closed (No Bid)', value: closedBids, icon: Archive, color: 'text-zinc-600', bg: 'bg-zinc-100', border: 'border-zinc-300', onClick: () => navigate('/dashboard/tenders?status=CLOSED') },
+    { label: 'Aborted', value: closedBids, icon: AlertTriangle, color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200', onClick: () => navigate('/dashboard/tenders?status=ABORTED') },
+    { label: 'Archive', value: wonBids + lostBids, icon: Archive, color: 'text-zinc-600', bg: 'bg-zinc-100', border: 'border-zinc-300', onClick: () => navigate('/dashboard/tenders?status=ARCHIVE') },
   ]
 
   // Win rate is won / actually-bid. Tenders closed without ever being bid were
@@ -682,18 +683,18 @@ export function OverviewPanel() {
         isManagement ? (
           <>
             {/* 8-Card Enterprise Analytics Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-9 lg:grid-cols-9 gap-2.5">
               {headerStats.map((s, i) => (
                 <motion.div key={s.label}
                   onClick={s.onClick}
                   initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
-                  className={`rounded-xl border ${s.border} p-3.5 bg-card hover:shadow-md transition-all group ${s.onClick ? 'cursor-pointer' : ''}`}>
+                  className={`rounded-xl border ${s.border} p-2.5 2xl:p-3.5 bg-card hover:shadow-md transition-all group ${s.onClick ? 'cursor-pointer' : ''}`}>
                   <div className="flex items-center justify-between mb-2">
                     <div className={`size-8 rounded-lg ${s.bg} flex items-center justify-center group-hover:scale-105 transition-transform`}>
                       <s.icon className={`size-4 ${s.color}`} />
                     </div>
                   </div>
-                  <p className={`text-2xl font-extrabold font-heading tracking-tight ${s.color}`}>{s.value}</p>
+                  <p className={`text-xl 2xl:text-2xl font-extrabold font-heading tracking-tight ${s.color}`}>{s.value}</p>
                   <p className="text-[11px] font-medium text-muted-foreground mt-0.5 truncate group-hover:text-foreground">{s.label}</p>
                 </motion.div>
               ))}

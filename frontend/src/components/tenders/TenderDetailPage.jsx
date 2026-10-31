@@ -5,7 +5,7 @@ import {
   ArrowLeft, Loader2, AlertCircle, Clock, Building2,
   DollarSign, Users, Plus, ChevronRight, CheckCircle2, CheckSquare,
   XCircle, Edit2, Save, X, MoreHorizontal, Calendar,
-  FileText, Activity, History, UserPlus, Target, ChevronDown,
+  FileText, Activity, History, UserPlus, Target, ChevronDown, MessageSquare,
   RotateCcw, Trash2, Trophy, Search, ShieldCheck, Share2, Coins, Eye,
   Send, Upload, Hourglass, Ban, ArrowRight, Layers, Lock, Check, Sparkles, AlertTriangle, UserCheck, RefreshCw, ExternalLink, Printer, Contact
 } from 'lucide-react'
@@ -32,7 +32,7 @@ import {
   softDeleteBid, restoreBid, reopenBid, permanentDeleteBid, getPendingEdit,
   approvePendingEdit, rejectPendingEdit,
   STAGE_LABELS, STAGE_COLORS, STATUS_COLORS, statusStyle, STAGE_TRANSITIONS,
-  WORKFLOW_STAGES_ORDERED,
+  WORKFLOW_STAGES_ORDERED, SUPPORT_TYPES, SUPPORT_STYLES, getSupportStyle,
 } from '../../services/bids'
 import { ImportedPill } from './ImportedPill'
 import { InProgressPill } from './InProgressPill'
@@ -1937,6 +1937,32 @@ function ExitedBanner({ bid, canReopen, onReopened }) {
   // as a "[CANCELLED] ..." prefix in remarks.
   const reason = bid.outcome_reason || (bid.remarks?.startsWith('[CANCELLED] ') ? bid.remarks.slice(12) : '')
 
+  const isAbortNotEligible = reason.startsWith('[Abort - Not Eligible]:')
+  const isAbortNotParticipating = reason.startsWith('[Abort - Not Participating]:')
+  const isAbort = isAbortNotEligible || isAbortNotParticipating || (!cancelled && (bid.derived_status === 'CLOSED' || bid.bid_status === 'CLOSED'))
+  const isCancelledByIssuer = cancelled || reason.startsWith('[Cancelled by Issuer]:')
+
+  let title = 'This tender was closed'
+  let reasonHeading = 'Reason for closing'
+  let cleanReason = reason
+
+  if (isAbortNotEligible) {
+    title = 'This tender was aborted — Not Eligible'
+    reasonHeading = 'Reason for aborting (Not Eligible)'
+    cleanReason = reason.replace(/^\[Abort - Not Eligible\]:\s*/, '')
+  } else if (isAbortNotParticipating) {
+    title = 'This tender was aborted — Not Participating'
+    reasonHeading = 'Reason for aborting (Not Participating)'
+    cleanReason = reason.replace(/^\[Abort - Not Participating\]:\s*/, '')
+  } else if (isCancelledByIssuer) {
+    title = 'This tender was cancelled by the issuer'
+    reasonHeading = 'Reason for cancellation'
+    cleanReason = reason.replace(/^\[Cancelled by Issuer\]:\s*/, '')
+  } else if (isAbort) {
+    title = 'This tender was aborted / closed'
+    reasonHeading = 'Reason for aborting'
+  }
+
   const reopen = async () => {
     setReopening(true)
     try {
@@ -1955,18 +1981,18 @@ function ExitedBanner({ bid, canReopen, onReopened }) {
   }
 
   return (
-    <div role="status" className={`rounded-xl border-2 p-4 flex items-start justify-between gap-4 shadow-sm ${cancelled
+    <div role="status" className={`rounded-xl border-2 p-4 flex items-start justify-between gap-4 shadow-sm ${isCancelledByIssuer
       ? 'border-red-300 bg-red-50 text-red-900 dark:bg-red-950/30 dark:border-red-900 dark:text-red-200'
       : 'border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:border-amber-900 dark:text-amber-200'}`}>
       <div className="flex items-start gap-3 min-w-0">
         <Ban className="size-5 shrink-0 mt-0.5" />
         <div className="space-y-1 min-w-0">
           <p className="font-semibold text-sm">
-            {cancelled ? 'This tender was cancelled' : 'This tender was closed'}
+            {title}
             <span className="font-normal"> — it is out of the pipeline and read-only.</span>
           </p>
-          <p className="text-[10px] font-semibold uppercase tracking-wider opacity-70">{cancelled ? 'Reason for cancellation' : 'Reason for closing'}</p>
-          <p className="text-sm whitespace-pre-wrap break-words">{reason || 'No reason was recorded.'}</p>
+          <p className="text-[10px] font-semibold uppercase tracking-wider opacity-70">{reasonHeading}</p>
+          <p className="text-sm whitespace-pre-wrap break-words">{cleanReason || 'No remark was recorded.'}</p>
         </div>
       </div>
       {canReopen && (
@@ -1982,11 +2008,11 @@ function ExitedBanner({ bid, canReopen, onReopened }) {
 // ── Outcome Input/Form Dialog ────────────────────────────────────────────────
 // `options` is the set of outcomes offered: the default records a result;
 // EXIT_OPTIONS turns it into the "Close or Cancel" dialog (reason only).
-const EXIT_OPTIONS = ['CLOSED', 'CANCELLED']
-const OUTCOME_LABELS = { WON: '🏆 Won', LOST: '❌ Lost', CANCELLED: '🛑 Cancel Tender', CLOSED: '📁 Close Tender' }
+const EXIT_OPTIONS = ['CANCEL', 'ABORT']
+const OUTCOME_LABELS = { WON: '🏆 Won', LOST: '❌ Lost', CANCELLED: '🛑 Cancelled', CLOSED: '📁 Closed', CANCEL: '🛑 Cancel (Issuer)', ABORT: '⚠️ Abort (Our Side)' }
 const EXIT_HINTS = {
-  CLOSED: 'We are dropping this tender ourselves — a missing document, no OEM authorization, not viable, and so on.',
-  CANCELLED: 'The tender itself is off — withdrawn or cancelled by the buyer. Its value is removed from the pipeline.',
+  CANCEL: 'Tender has been cancelled by the issuer.',
+  ABORT: 'GlobX is backing out of this tender.',
 }
 
 function OutcomeDialog({ bid, options = ['WON', 'LOST', 'CANCELLED'], onClose, onDone }) {
@@ -2001,20 +2027,29 @@ function OutcomeDialog({ bid, options = ['WON', 'LOST', 'CANCELLED'], onClose, o
     competitor_info: bid.competitor_info || [],
   })
   const [newCompetitor, setNewCompetitor] = useState({ name: '', quoted_price: '', rank: '' })
+  const [abortType, setAbortType] = useState('Not Eligible')
   const [loading, setLoading] = useState(false)
-  const isExit = EXIT_OPTIONS.includes(form.bid_outcome)
+  const isExit = isExitDialog || ['CANCEL', 'ABORT', 'CLOSED', 'CANCELLED'].includes(form.bid_outcome)
 
   async function submit(e) {
     e.preventDefault()
     if (isExit && !form.outcome_reason.trim()) {
-      toast.error('Please provide a reason')
+      toast.error('Please provide a mandatory remark')
       return
     }
     setLoading(true)
     try {
       const payload = {
-        bid_outcome: form.bid_outcome,
-        outcome_reason: form.outcome_reason ? form.outcome_reason.trim() : undefined,
+        bid_outcome: form.bid_outcome === 'CANCEL' ? 'CANCELLED' : form.bid_outcome === 'ABORT' ? 'CLOSED' : form.bid_outcome,
+        outcome_reason: form.outcome_reason ? (
+          form.bid_outcome === 'CANCEL'
+            ? `[Cancelled by Issuer]: ${form.outcome_reason.trim()}`
+            : form.bid_outcome === 'ABORT'
+              ? `[Abort - ${abortType}]: ${form.outcome_reason.trim()}`
+              : form.bid_outcome === 'CANCELLED'
+                ? `[Cancelled by Issuer]: ${form.outcome_reason.trim()}`
+                : form.outcome_reason.trim()
+        ) : undefined,
       }
       if (!isExit) {
         payload.final_bid_value = form.final_bid_value ? Number(form.final_bid_value) : undefined
@@ -2032,7 +2067,7 @@ function OutcomeDialog({ bid, options = ['WON', 'LOST', 'CANCELLED'], onClose, o
         toast.success(`Submitted to ${res.data.reporting_manager_name || 'your Reporting Manager'} for approval`)
         onDone()
       } else if (res.ok) {
-        toast.success(form.bid_outcome === 'CLOSED' ? 'Tender closed' : form.bid_outcome === 'CANCELLED' ? 'Tender cancelled' : 'Bid outcome recorded successfully')
+        toast.success(form.bid_outcome === 'ABORT' ? `Tender aborted (${abortType})` : form.bid_outcome === 'CANCEL' || form.bid_outcome === 'CANCELLED' ? 'Tender cancelled' : form.bid_outcome === 'CLOSED' ? 'Tender closed' : 'Bid outcome recorded successfully')
         onDone()
       } else {
         toast.error(res.error?.message ?? 'Failed to record outcome')
@@ -2082,7 +2117,7 @@ function OutcomeDialog({ bid, options = ['WON', 'LOST', 'CANCELLED'], onClose, o
       >
         <div className="flex items-center justify-between">
           <h3 className="font-heading font-semibold text-foreground">
-            {isExitDialog ? 'Close or Cancel Tender' : 'Record Outcome'}
+            {isExitDialog ? 'Cancel or Abort Tender' : 'Record Outcome'}
           </h3>
           <button onClick={onClose} className="p-1 rounded-md hover:bg-muted text-muted-foreground">
             <X className="size-4" />
@@ -2117,12 +2152,30 @@ function OutcomeDialog({ bid, options = ['WON', 'LOST', 'CANCELLED'], onClose, o
 
           {isExit ? (
             <div className="space-y-1.5">
-              <Label className="text-xs">{form.bid_outcome === 'CLOSED' ? 'Reason for Closing *' : 'Reason for Cancellation *'}</Label>
+              {isExitDialog && form.bid_outcome === 'ABORT' && (
+                <div className="space-y-1.5 pb-1">
+                  <Label className="text-xs font-semibold">Abort Type *</Label>
+                  <select
+                    value={abortType}
+                    onChange={e => setAbortType(e.target.value)}
+                    className="w-full text-xs h-9 px-3 rounded-md border border-input bg-background text-foreground focus:ring-1 focus:ring-primary outline-none"
+                  >
+                    <option value="Not Eligible">Not Eligible</option>
+                    <option value="Not Participating">Not Participating</option>
+                  </select>
+                  <p className="text-[11px] text-muted-foreground">
+                    {abortType === 'Not Eligible'
+                      ? 'Either late realization of PQ/TQ or a change in corrigendum or any other issue.'
+                      : 'We are backing out: either us or partner issue to be stated in remark.'}
+                  </p>
+                </div>
+              )}
+              <Label className="text-xs">{form.bid_outcome === 'CANCEL' || form.bid_outcome === 'CANCELLED' ? 'Reason for Cancellation (Issuer) *' : `Reason for Aborting (${abortType}) *`}</Label>
               <Textarea
                 required
                 value={form.outcome_reason}
                 onChange={e => setForm(f => ({ ...f, outcome_reason: e.target.value }))}
-                placeholder={form.bid_outcome === 'CLOSED' ? 'Why are we closing this tender? (e.g. a required document is missing)' : 'Describe the reason for cancellation...'}
+                placeholder={form.bid_outcome === 'CANCEL' || form.bid_outcome === 'CANCELLED' ? 'Tender has been cancelled by the issuer (mandatory remark)...' : abortType === 'Not Eligible' ? 'State late realization of PQ/TQ, change in corrigendum, or other issue (mandatory remark)...' : 'State why we or our partner are backing out (mandatory remark)...'}
                 className="text-sm min-h-[100px]"
               />
             </div>
@@ -2261,7 +2314,7 @@ function OutcomeDialog({ bid, options = ['WON', 'LOST', 'CANCELLED'], onClose, o
             </Button>
             <Button type="submit" size="sm" className="flex-1" disabled={loading}>
               {loading && <Loader2 className="size-3.5 animate-spin mr-1" />}
-              {form.bid_outcome === 'CLOSED' ? 'Close Tender' : form.bid_outcome === 'CANCELLED' ? 'Confirm Cancellation' : 'Save Outcome'}
+              {form.bid_outcome === 'ABORT' ? 'Abort Tender' : form.bid_outcome === 'CANCEL' || form.bid_outcome === 'CANCELLED' ? 'Confirm Cancellation' : form.bid_outcome === 'CLOSED' ? 'Close Tender' : 'Save Outcome'}
             </Button>
           </div>
         </form>
@@ -2502,6 +2555,64 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
         )
       })()}
 
+
+      {/* Stage 4 Commercial Pricing Pending Approval Banner */}
+      {(() => {
+        if (!bid || isBinned || exited) return null
+        let pw = bid.pricing_workspace
+        if (typeof pw === 'string') {
+          try { pw = JSON.parse(pw) } catch { pw = null }
+        }
+        if (!pw || pw.approvalStatus !== 'PENDING') return null
+
+        return (
+          <div className="rounded-xl border border-amber-300 bg-amber-50/85 dark:bg-amber-950/35 dark:border-amber-800 p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 text-amber-950 dark:text-amber-200 shadow-sm transition-all">
+            <div className="flex items-start gap-3.5">
+              <div className="p-2.5 rounded-xl bg-amber-200/80 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300 shrink-0 mt-0.5 shadow-2xs">
+                <Coins className="size-5" />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="font-bold text-base text-amber-950 dark:text-amber-200">
+                    Commercial Pricing Approval Awaiting Sign-off (Stage 4)
+                  </p>
+                  <span className="text-[11px] px-2.5 py-0.5 rounded-full font-bold bg-amber-200 text-amber-900 dark:bg-amber-900/80 dark:text-amber-200 border border-amber-300/80 dark:border-amber-700 animate-pulse">
+                    Action Required
+                  </span>
+                </div>
+                <p className="text-xs text-amber-900/90 dark:text-amber-300 leading-relaxed">
+                  Requested by <strong className="font-semibold">{pw.requestedByName || 'Bid Executive'}</strong>
+                  {pw.approverName && <> for <strong className="font-semibold">{pw.approverName}</strong></>}
+                  {pw.approvalRequestedAt && <> on {new Date(pw.approvalRequestedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</>}
+                  {pw.requestedMarginPct != null && <> • Proposed Margin: <strong className="font-semibold text-indigo-700 dark:text-indigo-400">{Number(pw.requestedMarginPct).toFixed(2)}%</strong></>}
+                  {pw.requestedGrandTotal != null && <> • Offered Total (w/GST): <strong className="font-semibold font-mono text-emerald-700 dark:text-emerald-400">{fmtMoney(pw.requestedGrandTotal)}</strong></>}
+                </p>
+                {pw.approvalRemarks && (
+                  <div className="mt-2 text-xs bg-white/90 dark:bg-black/40 border border-amber-200 dark:border-amber-800 rounded-lg p-3 space-y-1 shadow-2xs">
+                    <p className="font-semibold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
+                      <MessageSquare className="size-3.5 text-amber-600 dark:text-amber-400" />
+                      Request Remarks from {pw.requestedByName || 'Bid Executive'}:
+                    </p>
+                    <p className="text-amber-950 dark:text-amber-200 whitespace-pre-wrap pl-5 font-medium leading-relaxed">
+                      {pw.approvalRemarks}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+              <Button
+                size="sm"
+                className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-sm"
+                onClick={() => setActiveTab('stages', 'PRICING_REQUEST')}
+              >
+                <ChevronRight className="size-4" /> Review Commercial Pricing
+              </Button>
+            </div>
+          </div>
+        )
+      })()}
+
       {exited && !isBinned && (
         <ExitedBanner bid={bid} canReopen={hasPermission('bid.edit')} onReopened={loadBid} />
       )}
@@ -2625,6 +2736,25 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
               )}
               {bid.is_imported && <ImportedPill />}
               {bid.derived_status === 'ACTIVE' && <InProgressPill />}
+              {bid.support_type === 'IN_SUPPORT' && (
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-800 shadow-sm">
+                  <span className="size-2 rounded-full bg-indigo-500 animate-pulse" />
+                  <span>📥 In-Support:</span>
+                  <span className="font-bold underline decoration-indigo-400">{bid.support_partner_name || "Partner"}</span>
+                </span>
+              )}
+              {bid.support_type === 'OUT_SUPPORT' && (
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800 shadow-sm">
+                  <span className="size-2 rounded-full bg-purple-500 animate-pulse" />
+                  <span>📤 Out-Support:</span>
+                  <span className="font-bold underline decoration-purple-400">{bid.support_partner_name || "Partner"}</span>
+                </span>
+              )}
+              {bid.support_type === 'GLOBX' && (
+                <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800">
+                  🏢 GLOBX Own Bid
+                </span>
+              )}
             </div>
           </div>
 
@@ -2662,7 +2792,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
 
             {!isBinned && hasPermission('bid.edit') && !exited && !['WON', 'LOST'].includes(bid.bid_status) && !['WON', 'LOST'].includes(bid.workflow_stage) && (
               <Button size="sm" variant="outline" className="gap-1.5 border-red-200 hover:border-red-500 text-red-600 hover:bg-red-50/50 dark:border-red-900/50 dark:hover:bg-red-950/20" onClick={()=>setShowCancel(true)}>
-                <XCircle className="size-3.5"/>Close / Cancel
+                <XCircle className="size-3.5"/>Cancel / Abort
               </Button>
             )}
             {!isBinned && ['SUBMITTED', 'RA_ACTIVE', 'AWAITING_RESULT'].includes(bid.workflow_stage) && bid.bid_status === 'ACTIVE' && hasPermission('bid.edit') && (
@@ -2934,6 +3064,60 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
         <motion.div key={activeTab} initial={{opacity:0,y:6}} animate={{opacity:1,y:0}} exit={{opacity:0}} transition={{duration:0.15}}>
           {activeTab === 'overview' && (
             <div className="space-y-5">
+              {/* Bid Support Highlight Box */}
+              {(bid.support_type === 'IN_SUPPORT' || bid.support_type === 'OUT_SUPPORT') && (
+                <div className={`rounded-xl border p-4 shadow-sm transition-all ${
+                  bid.support_type === 'IN_SUPPORT'
+                    ? 'border-indigo-300 bg-indigo-50/50 dark:border-indigo-800 dark:bg-indigo-950/20'
+                    : 'border-purple-300 bg-purple-50/50 dark:border-purple-800 dark:bg-purple-950/20'
+                }`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-indigo-200/50 dark:border-indigo-800/50">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">
+                        {bid.support_type === 'IN_SUPPORT' ? '📥' : '📤'}
+                      </span>
+                      <div>
+                        <h4 className="text-sm font-bold text-foreground flex items-center gap-2">
+                          {bid.support_type === 'IN_SUPPORT' ? 'In-Support Bid (Taking Support from Partner)' : 'Out-Support Bid (Providing Support to Partner)'}
+                          <Badge variant="outline" className={`text-[11px] font-semibold ${
+                            bid.support_type === 'IN_SUPPORT'
+                              ? 'border-indigo-400 text-indigo-700 bg-indigo-100/60 dark:text-indigo-300 dark:bg-indigo-900/40'
+                              : 'border-purple-400 text-purple-700 bg-purple-100/60 dark:text-purple-300 dark:bg-purple-900/40'
+                          }`}>
+                            {bid.support_type === 'IN_SUPPORT' ? 'Direction: Taking Support' : 'Direction: Providing Support'}
+                          </Badge>
+                        </h4>
+                        <p className="text-xs text-muted-foreground">
+                          {bid.support_type === 'IN_SUPPORT'
+                            ? 'Our organization (GLOBX) is taking bidding & technical support from another partner organization.'
+                            : 'Our organization (GLOBX) is providing bidding & technical support to another partner organization.'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 text-xs">
+                    <div className="bg-background/80 dark:bg-background/40 p-2.5 rounded-lg border border-border/50">
+                      <span className="text-muted-foreground block text-[11px]">Supporting Partner Organization</span>
+                      <span className="font-semibold text-sm text-foreground flex items-center gap-1.5 mt-0.5">
+                        <Building2 className="size-3.5 text-primary" />
+                        {bid.support_partner_name || 'Not Specified'}
+                      </span>
+                    </div>
+                    <div className="bg-background/80 dark:bg-background/40 p-2.5 rounded-lg border border-border/50">
+                      <span className="text-muted-foreground block text-[11px]">Bid Scope & Flow Direction</span>
+                      <span className="font-semibold text-sm text-foreground block mt-0.5">
+                        {bid.support_type === 'IN_SUPPORT' ? 'Inflow (Partner ➔ GLOBX)' : 'Outflow (GLOBX ➔ Partner)'}
+                      </span>
+                    </div>
+                    <div className="bg-background/80 dark:bg-background/40 p-2.5 rounded-lg border border-border/50">
+                      <span className="text-muted-foreground block text-[11px]">Tender Account Name</span>
+                      <span className="font-semibold text-sm text-foreground block mt-0.5">
+                        {bid.organization_name || 'Not Specified'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="rounded-lg border border-border p-4 space-y-3 bg-card shadow-sm">
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
@@ -2958,6 +3142,8 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                         </a>
                       ) : 'Not Specified'],
                       ['Scope Type', bid.scope_type || 'Not Specified'],
+                      ['Bid Support', bid.support_type === 'IN_SUPPORT' ? 'In-Support (Taking Support)' : bid.support_type === 'OUT_SUPPORT' ? 'Out-Support (Providing Support)' : 'GLOBX (Own Bid)'],
+                      ...(bid.support_partner_name ? [['Supporting Partner', bid.support_partner_name]] : []),
                       ['Bid Scope Type', bid.bid_type || 'CUSTOM_BID'],
                       ['Quantity', bid.quantity ?? 'Not Specified'],
                     ]} />
@@ -3012,7 +3198,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
         )}
       </AnimatePresence>
 
-      {/* Close / Cancel Dialog */}
+      {/* Cancel / Abort Dialog */}
       <AnimatePresence>
         {showCancel && (
           <OutcomeDialog bid={bid} options={EXIT_OPTIONS} onClose={()=>setShowCancel(false)} onDone={()=>{setShowCancel(false);loadBid()}} />

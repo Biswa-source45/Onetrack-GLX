@@ -273,6 +273,8 @@ type BidWorkspace struct {
 	// Excel bulk upload fields
 	Team                      *string    `json:"team,omitempty"`
 	ScopeType                 *string    `json:"scope_type,omitempty"`
+	SupportType               *string    `json:"support_type,omitempty"`
+	SupportPartnerName        *string    `json:"support_partner_name,omitempty"`
 	BGRate                    *float64   `json:"bg_rate,omitempty"`
 	ActivityType              *string    `json:"activity_type,omitempty"`
 	TargetMonthDate           *time.Time `json:"target_month_date,omitempty"`
@@ -548,6 +550,8 @@ type CreateBidRequest struct {
 	Checklists                []string `json:"checklists"`        // legacy support
 	Team                      *string  `json:"team,omitempty"`
 	ScopeType                 *string  `json:"scope_type,omitempty"`
+	SupportType               *string  `json:"support_type,omitempty"`
+	SupportPartnerName        *string  `json:"support_partner_name,omitempty"`
 	BGRate                    *float64 `json:"bg_rate,omitempty"`
 	ActivityType              *string  `json:"activity_type,omitempty"`
 	TargetMonthDate           *string  `json:"target_month_date,omitempty"`
@@ -619,6 +623,8 @@ type UpdateBidRequest struct {
 	BidOutcome                *string `json:"bid_outcome,omitempty"`
 	Team                      *string `json:"team,omitempty"`
 	ScopeType                 *string `json:"scope_type,omitempty"`
+	SupportType               *string `json:"support_type,omitempty"`
+	SupportPartnerName        *string `json:"support_partner_name,omitempty"`
 	ActivityType              *string `json:"activity_type,omitempty"`
 	ExcelBidStatus            *string `json:"excel_bid_status,omitempty"`
 	SubmissionStatus          *string `json:"submission_status,omitempty"`
@@ -805,6 +811,8 @@ type BidResponse struct {
 	AIExtractionConfidence    *float64           `json:"ai_extraction_confidence,omitempty"`
 	Team                      *string            `json:"team,omitempty"`
 	ScopeType                 *string            `json:"scope_type,omitempty"`
+	SupportType               *string            `json:"support_type,omitempty"`
+	SupportPartnerName        *string            `json:"support_partner_name,omitempty"`
 	ActivityType              *string            `json:"activity_type,omitempty"`
 	TargetMonthDate           *time.Time         `json:"target_month_date,omitempty"`
 	IsImported                bool               `json:"is_imported"`
@@ -889,6 +897,8 @@ type BidListItem struct {
 	Remarks                   *string      `json:"remarks"`
 	Team                      *string      `json:"team,omitempty"`
 	ScopeType                 *string      `json:"scope_type,omitempty"`
+	SupportType               *string      `json:"support_type,omitempty"`
+	SupportPartnerName        *string      `json:"support_partner_name,omitempty"`
 	BGRate                    *float64     `json:"bg_rate,omitempty"`
 	ActivityType              *string      `json:"activity_type,omitempty"`
 	TargetMonthDate           *time.Time   `json:"target_month_date,omitempty"`
@@ -930,8 +940,10 @@ type BidListResponse struct {
 	ActiveCount    int           `json:"active_count"`
 	WonCount       int           `json:"won_count"`
 	LostCount      int           `json:"lost_count"`
+	ArchiveCount   int           `json:"archive_count"`
 	CancelledCount int           `json:"cancelled_count"`
 	ClosedCount    int           `json:"closed_count"`
+	AbortedCount   int           `json:"aborted_count"`
 	TechEvalCount  int           `json:"tech_eval_count"`
 	SubmittedCount int           `json:"submitted_count"`
 }
@@ -1006,6 +1018,8 @@ type CreateBidParams struct {
 	Metadata                  []byte
 	Team                      *string
 	ScopeType                 *string
+	SupportType               *string
+	SupportPartnerName        *string
 	ActivityType              *string
 	TargetMonthDate           *time.Time
 	ExcelBidStatus            *string

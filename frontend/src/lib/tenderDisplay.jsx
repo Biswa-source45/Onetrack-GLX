@@ -23,7 +23,9 @@ const STATUS_DISPLAY_LABELS = {
   TECHNICAL_EVALUATION: 'Submitted',
   ACTIVE: 'Active',
   ARCHIVED: 'Archived',
-  CLOSED: 'Closed',
+  CLOSED: 'Aborted',
+  ABORTED: 'Aborted',
+  ARCHIVE: 'Archive',
 }
 
 export function StatusBadge({ status }) {
@@ -36,7 +38,9 @@ export function StatusBadge({ status }) {
     TECHNICAL_EVALUATION: <Clock className="size-3 mr-1 text-teal-600" />,
     ACTIVE: <span className="size-1.5 rounded-full bg-emerald-500 mr-1.5" />,
     ARCHIVED: <Archive className="size-3 mr-1" />,
-    CLOSED: <Archive className="size-3 mr-1 text-zinc-500" />,
+    CLOSED: <Archive className="size-3 mr-1 text-amber-500" />,
+    ABORTED: <Archive className="size-3 mr-1 text-amber-500" />,
+    ARCHIVE: <Archive className="size-3 mr-1 text-zinc-500" />,
   }
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border ${color}`}>

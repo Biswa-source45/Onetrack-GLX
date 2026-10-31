@@ -748,12 +748,12 @@ function EmdDecisionModal({ bid, onClose, onDone }) {
           <div className="space-y-1.5">
             <Label className="text-xs font-medium">EMD Mode</Label>
             <div className="flex flex-wrap gap-2">
-              {availableModes.map((t) => (
+              {availableModes.map(t =>
                 <button key={t} type="button" onClick={() => setEmdType(t)}
                   className={`text-xs px-3 py-1.5 rounded-md border font-medium transition-colors ${emdType === t ? 'bg-primary text-primary-foreground border-primary' : 'bg-background border-input text-foreground hover:bg-muted/50'}`}>
                   {t === 'ONLINE' ? 'Online Payment' : t === 'DD' ? 'DD (Demand Draft)' : t === 'EXEMPTED' ? 'Exempted' : 'Not Applicable'}
                 </button>
-              ))}
+              )}
             </div>
             <p className="text-[11px] text-muted-foreground">Only the modes ticked on this tender at Add/Edit Tender time are offered here.</p>
           </div>
@@ -777,12 +777,12 @@ function EmdDecisionModal({ bid, onClose, onDone }) {
             <div className="space-y-2 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800">
               <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-200">Exemption Basis *</p>
               <div className="flex flex-wrap items-center gap-4">
-                {exemptionChoices.map((t) => (
+                {exemptionChoices.map(t =>
                   <label key={t} className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-foreground">
                     <input type="radio" name="pr_emd_exemption" checked={exemptionType === t} onChange={() => setExemptionType(t)} className="accent-primary" />
                     {t === 'OTHER' ? 'Other' : t === 'STARTUP' ? 'Startup' : t === 'MSME' ? 'MSME' : t}
                   </label>
-                ))}
+                )}
               </div>
               {exemptionType === 'OTHER' && (
                 <Input value={exemptionReason} onChange={(e) => setExemptionReason(e.target.value)} placeholder="Specify the reason" className="text-xs h-8" />
@@ -844,7 +844,7 @@ function AssignPresalesModal({ bid, users, onClose, onDone }) {
               <p className="text-xs text-muted-foreground italic">No users hold the Pre-Sales role yet.</p>
             ) : (
               <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto">
-                {presalesUsers.map((u) => (
+                {presalesUsers.map(u =>
                   <label key={u.id} className="flex items-center gap-2 text-xs cursor-pointer p-2 rounded-md border border-border/60 hover:bg-muted/40">
                     <input type="radio" name="pr_presales" checked={presalesId === u.id} onChange={() => setPresalesId(u.id)} className="accent-primary" />
                     {u.full_name}
@@ -852,7 +852,7 @@ function AssignPresalesModal({ bid, users, onClose, onDone }) {
                       <span className="text-[10px] font-semibold text-violet-600 dark:text-violet-400">(current)</span>
                     )}
                   </label>
-                ))}
+                )}
               </div>
             )}
           </div>
@@ -1157,14 +1157,14 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {products.map((p, i) => (
+                  {products.map((p, i) =>
                     <TableRow key={i}>
                       <TableCell>{p.product || '—'}</TableCell>
                       <TableCell>{p.description || '—'}</TableCell>
                       <TableCell>{p.qty || '—'}</TableCell>
                       <TableCell>{resolveProductOem(bid, i) || '—'}</TableCell>
                     </TableRow>
-                  ))}
+                  )}
                 </TableBody>
               </Table>
             </div>
@@ -1176,9 +1176,9 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
                 <div className="flex items-center gap-2">
                   <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Finalize Product OEMs</h4>
                   {primaryReview.amOemFinalizedAt && (
-                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                    <div className="inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                       Finalized {fmtDate(primaryReview.amOemFinalizedAt)}
-                    </span>
+                    </div>
                   )}
                 </div>
                 <Button
@@ -1223,9 +1223,9 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
                         {rfpOem && (
                           <option value={rfpOem}>{rfpOem} — from RFP</option>
                         )}
-                        {cands.filter(c => c.oem !== rfpOem).map((c) => (
+                        {cands.filter(c => c.oem !== rfpOem).map((c) =>
                           <option key={c.oem} value={c.oem}>{c.oem}{c.suggested ? ' — suggested by Pre-Sales' : ''}</option>
-                        ))}
+                        )}
                         <option value="__other">Other (Custom OEM)…</option>
                       </select>
                       {isOther && (
@@ -1242,9 +1242,9 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
                 })}
               </div>
               <div className="flex justify-end">
-                <span title={!canManageAM ? (requireAmPresales ? 'Only the assigned Account Manager (or an Admin) can act here' : 'Only the Bid Owner, Reporting Manager, or an Admin can act here') : undefined}>
+                <div className="inline-block" title={!canManageAM ? (requireAmPresales ? 'Only the assigned Account Manager (or an Admin) can act here' : 'Only the Bid Owner, Reporting Manager, or an Admin can act here') : undefined}>
                   <Button size="sm" disabled={!canManageAM} onClick={handleSaveAmOems} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm font-semibold disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none">Save OEM Selections</Button>
-                </span>
+                </div>
               </div>
             </div>
           )}
@@ -1271,11 +1271,11 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
                 </Button>
               </span>
               {!primaryReviewCompleted && (
-                <span title={!canManageAM ? (requireAmPresales ? 'Only the assigned Account Manager (or an Admin) can act here' : 'Only the Bid Owner, Reporting Manager, or an Admin can act here') : undefined}>
+                <div className="inline-block" title={!canManageAM ? (requireAmPresales ? 'Only the assigned Account Manager (or an Admin) can act here' : 'Only the Bid Owner, Reporting Manager, or an Admin can act here') : undefined}>
                   <Button size="sm" variant="outline" disabled={!canManageAM} onClick={() => setShowNoGoModal(true)} className="gap-1.5 text-xs border-rose-300 text-rose-700 hover:bg-rose-50 dark:text-rose-400 dark:border-rose-800 dark:hover:bg-rose-950/40">
                     <Ban className="size-3.5" /> No-Go — Cancel Tender
                   </Button>
-                </span>
+                </div>
               )}
             </div>
             {primaryReviewCompleted && (
@@ -1295,9 +1295,9 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
               <div className="flex items-center gap-2">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Map Each Product to an OEM</h4>
                 {!bid.presales && (
-                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-300 dark:border-blue-800">
+                  <div className="inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-300 dark:border-blue-800">
                     Self-Managed OEM Mapping
-                  </span>
+                  </div>
                 )}
               </div>
               <div className="flex items-center gap-2">
@@ -1315,14 +1315,14 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
               <p className="text-xs text-muted-foreground italic">No products were added to this tender at creation time.</p>
             ) : (
               <div className="space-y-4">
-                {products.map((p, i) => (
+                {products.map((p, i) =>
                   <div key={i} className="rounded-lg border border-border/70 p-3 space-y-2">
                     <div className="flex items-baseline justify-between gap-2 flex-wrap">
                       <span className="text-xs font-semibold text-foreground">{p.product || `Product ${i + 1}`}</span>
                       <span className="text-[11px] text-muted-foreground">{p.description || '—'} {p.qty ? `· Qty ${p.qty}` : ''}</span>
                     </div>
                     <div className="space-y-1.5">
-                      {(presalesCands[i] || []).map((c) => (
+                      {(presalesCands[i] || []).map((c) =>
                         <div key={c.id} className={`flex items-center gap-1.5 p-1.5 rounded-md border ${c.suggested ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800' : 'border-transparent'}`}>
                           <input
                             type="checkbox"
@@ -1351,13 +1351,13 @@ export function Stage2PrimaryReviewWorkspace({ bid, onRefresh }) {
                             <XCircle className="size-3.5" />
                           </button>
                         </div>
-                      ))}
+                      )}
                     </div>
                     <Button type="button" size="sm" variant="outline" disabled={!canManagePresales} onClick={() => addCand(i)} className="h-7 text-[11px] gap-1">
                       <Plus className="size-3" /> Add OEM
                     </Button>
                   </div>
-                ))}
+                )}
               </div>
             )}
             <div className="flex gap-2 justify-end pt-1">
@@ -1603,18 +1603,18 @@ function OEMFollowUpModal({ oem, bidId, onClose, onSaveFollowUps }) {
                     <div key={fu.id || idx} className="p-3.5 rounded-xl border border-border bg-card shadow-2xs hover:border-purple-300 dark:hover:border-purple-800 transition-all space-y-2">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300 border border-purple-200">
+                          <div className="inline-flex items-center text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300 border border-purple-200">
                             Follow-up #{followUps.length - idx}
-                          </span>
-                          <span className="font-mono text-xs font-bold text-foreground flex items-center gap-1">
+                          </div>
+                          <div className="font-mono text-xs font-bold text-foreground flex items-center gap-1">
                             <Calendar className="size-3 text-purple-600" />
                             {fu.date}
-                          </span>
+                          </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-muted-foreground font-medium bg-muted px-2 py-0.5 rounded">
+                          <div className="inline-flex items-center text-[10px] text-muted-foreground font-medium bg-muted px-2 py-0.5 rounded">
                             by {displayAuthor}
-                          </span>
+                          </div>
                           <button
                             type="button"
                             onClick={() => handleDeleteFollowUp(fu.id)}
@@ -2037,9 +2037,9 @@ export function Stage3Workspace({ bid, onRefresh }) {
                 <th className="p-3 border-r border-border/60 min-w-[150px]">OEM Name</th>
                 <th className="p-3 border-r border-border/60 min-w-[160px]">OEM Contact</th>
                 <th className="p-3 text-center border-r border-border/60 min-w-[120px]">Initiated By</th>
-                {docColumns.map(col => (
+                {docColumns.map(col =>
                   <th key={col.id} className="p-3 text-center border-r border-border/60">{col.title}</th>
-                ))}
+                )}
                 <th className="p-3 text-center border-r border-border/60 min-w-[110px]">OEM Compliance</th>
                 <th className="p-3 border-r border-border/60 bg-purple-50/50 dark:bg-purple-950/20 text-purple-900 dark:text-purple-300 min-w-[180px]">
                   <div className="flex items-center gap-1">
@@ -2115,9 +2115,9 @@ export function Stage3Workspace({ bid, onRefresh }) {
                           </select>
                         ) : (
                           <div className="flex flex-col items-center gap-0.5">
-                            <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold border ${o.initiated === 'YES' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-muted text-muted-foreground border-border'}`}>
+                            <div className={`inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-extrabold border ${o.initiated === 'YES' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-muted text-muted-foreground border-border'}`}>
                               {o.initiated}
-                            </span>
+                            </div>
                             {o.initiated === 'YES' && o.initiatedByName && (
                               <span className="text-[10px] text-muted-foreground font-medium">by {o.initiatedByName}</span>
                             )}
@@ -2126,7 +2126,7 @@ export function Stage3Workspace({ bid, onRefresh }) {
                       </td>
 
                       {/* Document status columns — dynamic, driven by this tender's OEM checklist items */}
-                      {docColumns.map(col => (
+                      {docColumns.map(col =>
                         <td key={col.id} className="p-3 text-center border-r border-border/60">
                           {isEditing ? (
                             <select value={getDocStatus(o, col)} onChange={e => setDocStatus(o.id, col, e.target.value)} className="h-7 text-xs border border-border rounded-md px-1.5 bg-background font-semibold">
@@ -2134,12 +2134,12 @@ export function Stage3Workspace({ bid, onRefresh }) {
                               <option value="RECEIVED">RECEIVED</option>
                             </select>
                           ) : (
-                            <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold border ${getDocStatus(o, col) === 'RECEIVED' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300'}`}>
+                            <div className={`inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-extrabold border ${getDocStatus(o, col) === 'RECEIVED' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300'}`}>
                               {getDocStatus(o, col)}
-                            </span>
+                            </div>
                           )}
                         </td>
-                      ))}
+                      )}
 
                       {/* OEM Compliance */}
                       <td className="p-3 text-center border-r border-border/60">
@@ -2151,13 +2151,13 @@ export function Stage3Workspace({ bid, onRefresh }) {
                             <option value="NA">NA</option>
                           </select>
                         ) : (
-                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold border whitespace-nowrap ${o.compliance === 'COMPLIANT' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300'
+                          <div className={`inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-extrabold border whitespace-nowrap ${o.compliance === 'COMPLIANT' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300'
                             : o.compliance === 'NOT_COMPLIANT' ? 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300'
                               : o.compliance === 'PARTIAL_COMPLIANT' ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300'
                                 : 'bg-muted text-muted-foreground border-border'
                             }`}>
                             {o.compliance === 'COMPLIANT' ? 'Compliant' : o.compliance === 'NOT_COMPLIANT' ? 'Not Compliant' : o.compliance === 'PARTIAL_COMPLIANT' ? 'Partial' : 'NA'}
-                          </span>
+                          </div>
                         )}
                       </td>
 
@@ -2176,10 +2176,10 @@ export function Stage3Workspace({ bid, onRefresh }) {
                           </button>
 
                           {latestFollowUpDate ? (
-                            <span className="text-[10px] font-mono text-purple-900 dark:text-purple-300 flex items-center gap-1 font-semibold pl-0.5">
+                            <div className="text-[10px] font-mono text-purple-900 dark:text-purple-300 flex items-center gap-1 font-semibold pl-0.5">
                               <Calendar className="size-3 text-purple-600" />
                               Latest: <span>{latestFollowUpDate}</span>
-                            </span>
+                            </div>
                           ) : (
                             <span className="text-[10px] italic text-muted-foreground pl-0.5">No follow-ups logged</span>
                           )}
@@ -2417,9 +2417,13 @@ const PRICING_DEFAULTS = {
   approverName: '',
   approvalRequestedAt: '',
   approvalRemarks: '',
+  decisionRemarks: '',
   approvalStatus: '', // '' | 'PENDING' | 'APPROVED'
   approvedAt: '',
+  approvedById: '',
+  approvedByName: '',
   reminders: [], // [{ sentAt, sentBy }]
+  approvalHistory: [], // [{ action, by, byRole, at, approverName, remarks, marginPct, total }]
   marginPct: 2.45,
   // Tenders that take old equipment back: value is deducted from the total.
   // items: [{ id, product, qty, unitPrice }]; the buyback value is the sum of qty x unitPrice.
@@ -2489,6 +2493,9 @@ export function Stage4Workspace({ bid, onRefresh }) {
   const [showMarginDlg, setShowMarginDlg] = useState(false)
   const [approverSelId, setApproverSelId] = useState('')
   const [approvalRemarks, setApprovalRemarks] = useState('')
+  const [showApproveDlg, setShowApproveDlg] = useState(false)
+  const [decisionRemarks, setDecisionRemarks] = useState('')
+  const [approvingLoading, setApprovingLoading] = useState(false)
   const [quoteToDelete, setQuoteToDelete] = useState(null)
   const [newDistNameInput, setNewDistNameInput] = useState('')
   const [initDistNames, setInitDistNames] = useState('')
@@ -2784,6 +2791,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
       approvalStatus: 'PENDING',
       approvedAt: '',
       approvalRemarks: remarks,
+      decisionRemarks: '',
       reminders: [],
       // Snapshot of the values at request time, so the approval email can
       // flag it if the approver adjusts margin/pricing before accepting.
@@ -2791,6 +2799,19 @@ export function Stage4Workspace({ bid, onRefresh }) {
       requestedByName: currentUser?.full_name || currentUser?.username || 'Unknown',
       requestedMarginPct: marginAtRequest,
       requestedGrandTotal: l1Calculations?.grandGlobxTotal ?? null,
+      approvalHistory: [
+        ...(Array.isArray(pricingData.approvalHistory) ? pricingData.approvalHistory : []),
+        {
+          action: 'REQUESTED',
+          by: currentUser?.full_name || currentUser?.username || 'Bid Executive',
+          byRole: 'Bid Executive / Requester',
+          at: nowISO,
+          approverName: approver?.full_name || approver?.username || 'Approver',
+          remarks: remarks,
+          marginPct: marginAtRequest,
+          total: l1Calculations?.grandGlobxTotal ?? null,
+        }
+      ],
     })
     logStageMicroEvent(bid.id, {
       fromStage: 'PRICING_REQUEST',
@@ -2817,7 +2838,23 @@ export function Stage4Workspace({ bid, onRefresh }) {
       })
     })
     const reminders = [...(pricingData.reminders || []), { sentAt: nowISO, sentBy: currentUser?.full_name || currentUser?.username || 'Unknown' }]
-    save({ reminders })
+    const reminderHistory = {
+      action: 'REMINDER',
+      by: currentUser?.full_name || currentUser?.username || 'Requester',
+      byRole: 'Requester',
+      at: nowISO,
+      approverName: pricingData.approverName || 'Approver',
+      remarks: `Sent reminder for pending approval`,
+      marginPct: null,
+      total: null,
+    }
+    save({
+      reminders,
+      approvalHistory: [
+        ...(Array.isArray(pricingData.approvalHistory) ? pricingData.approvalHistory : []),
+        reminderHistory
+      ]
+    })
     logStageMicroEvent(bid.id, {
       fromStage: 'PRICING_REQUEST',
       toStage: 'PRICING_REQUEST',
@@ -2831,15 +2868,18 @@ export function Stage4Workspace({ bid, onRefresh }) {
   const canApprovePricing = !!currentUser?.id && (
     currentUser.id === pricingData.approverId ||
     isAdmin ||
-    (!bid.account_manager && (
+    (currentUser.id === bid.reporting_manager_id ||
       currentUser.id === bid.reporting_manager?.id ||
       currentUser.id === bid.bid_owner?.id ||
       hasRole('MANAGER') ||
-      hasRole('BID_MANAGER')
-    ))
+      hasRole('BID_MANAGER') ||
+      currentUser.id === bid.bid_owner_id
+    )
   )
 
-  const handleApprovePricing = async () => {
+  const handleApprovePricing = async (customRemarks = null) => {
+    setApprovingLoading(true)
+    const decRemarks = (customRemarks != null ? customRemarks : decisionRemarks).trim()
     if (buybackExceedsTotal) { toast.error('Buyback is larger than the total before buyback — fix the buyback value or margins first'); return }
     const nowISO = new Date().toISOString()
     const finalMargin = l1Calculations?.effectiveMarginPct ?? marginPct
@@ -2857,7 +2897,26 @@ export function Stage4Workspace({ bid, onRefresh }) {
       ? ` Values were adjusted before approval — Margin: ${Number(reqMarginDisplay).toFixed(2)}% → ${Number(finalMargin).toFixed(2)}%, GlobX Total (incl. GST): ${fmtMoneyFull(reqTotal)} → ${fmtMoneyFull(finalTotal)}.`
       : ''
 
-    await save({ approvalStatus: 'APPROVED', approvedAt: nowISO, approvedGrandTotal: finalTotal })
+    const historyEntry = {
+      action: 'APPROVED',
+      by: currentUser?.full_name || currentUser?.username || 'Approver',
+      byRole: 'Approver / Reporting Manager',
+      at: nowISO,
+      approverName: currentUser?.full_name || currentUser?.username || 'Approver',
+      remarks: decRemarks || 'Pricing approved',
+      marginPct: finalMargin,
+      total: finalTotal,
+    }
+    const currentHistory = Array.isArray(pricingData.approvalHistory) ? pricingData.approvalHistory : []
+    await save({
+      approvalStatus: 'APPROVED',
+      approvedAt: nowISO,
+      approvedById: currentUser?.id || '',
+      approvedByName: currentUser?.full_name || currentUser?.username || 'Approver',
+      approvedGrandTotal: finalTotal,
+      decisionRemarks: decRemarks,
+      approvalHistory: [...currentHistory, historyEntry],
+    })
 
     // Notify the tender owner (and the original requester, if different) that
     // pricing has been approved — this was previously silent; only the
@@ -2865,6 +2924,9 @@ export function Stage4Workspace({ bid, onRefresh }) {
     const tableHtml = buildPricingTableHtml(l1Quote, l1Calculations)
     const changeBannerHtml = valuesChanged
       ? buildValuesAdjustedBannerHtml(reqMarginDisplay, finalMargin, reqTotal, finalTotal)
+      : ''
+    const decRemarksHtml = decRemarks
+      ? `<div style="margin:0 0 12px 0;padding:10px 14px;border-radius:8px;background:#ecfdf5;border:1px solid #a7f3d0;border-left:4px solid #10b981;color:#065f46;font-size:12px;"><strong style="color:#065f46;">✓ Approval Decision Remarks from ${currentUser?.full_name || 'Approver'}:</strong> ${decRemarks}</div>`
       : ''
     const remarksHtml = buildRemarkCalloutHtml(pricingData.requestedByName || 'requester', pricingData.approvalRemarks, 'Original remarks')
     const recipientIds = new Set()
@@ -2875,7 +2937,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
         createAlert({
           link: stageLink(bid.id, 'PRICING_REQUEST'), user_id: uid, bid_id: bid.id, type: 'APPROVAL', created_by: currentUser?.id,
           title: `Pricing Approved — ${bid.title}`,
-          message: `<p style="margin: 0 0 12px 0;">Bid #${bid.gem_bid_no || bid.id}: the commercial pricing sheet has been <strong>approved</strong> by ${currentUser?.full_name || currentUser?.username || 'the approver'}.</p>${changeBannerHtml}${remarksHtml}${tableHtml}`
+          message: `<p style="margin: 0 0 12px 0;">Bid #${bid.gem_bid_no || bid.id}: the commercial pricing sheet has been <strong>approved</strong> by ${currentUser?.full_name || currentUser?.username || 'the approver'}.</p>${decRemarksHtml}${changeBannerHtml}${remarksHtml}${tableHtml}`
         })
       })
     })
@@ -2887,6 +2949,8 @@ export function Stage4Workspace({ bid, onRefresh }) {
       transitionReason: `Pricing approved by ${currentUser?.full_name || currentUser?.username || 'Unknown'}${finalTotal != null ? ` — GlobX Total (incl. GST): ${fmtMoneyFull(finalTotal)}` : ''}.${changeNote}`,
       details: { approvedBy: currentUser?.id, approvedGrandTotal: finalTotal, requestedMarginPct: reqMargin, finalMarginPct: finalMargin, requestedGrandTotal: reqTotal, valuesChanged }
     })
+    setShowApproveDlg(false)
+    setApprovingLoading(false)
     toast.success(valuesChanged ? 'Pricing approved — owner notified of the adjusted values!' : 'Pricing approved — owner notified!')
     if (onRefresh) await onRefresh()
   }
@@ -2911,6 +2975,50 @@ export function Stage4Workspace({ bid, onRefresh }) {
     const totalChanged = reqTotal != null && finalTotal != null && Math.abs(Number(reqTotal) - Number(finalTotal)) > 0.01
     return marginChanged || totalChanged
   })()
+
+  const combinedApprovalHistory = useMemo(() => {
+    if (Array.isArray(pricingData.approvalHistory) && pricingData.approvalHistory.length > 0) {
+      return [...pricingData.approvalHistory].sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0))
+    }
+    const items = []
+    if (pricingData.approvalRequestedAt) {
+      items.push({
+        action: 'REQUESTED',
+        by: pricingData.requestedByName || 'Bid Executive',
+        byRole: 'Bid Executive / Requester',
+        at: pricingData.approvalRequestedAt,
+        approverName: pricingData.approverName || 'Approver',
+        remarks: pricingData.approvalRemarks || 'Pricing approval requested',
+        marginPct: pricingData.requestedMarginPct,
+        total: pricingData.requestedGrandTotal,
+      })
+    }
+    ;(pricingData.reminders || []).forEach(r => {
+      items.push({
+        action: 'REMINDER',
+        by: r.sentBy || 'Requester',
+        byRole: 'Requester',
+        at: r.sentAt,
+        approverName: pricingData.approverName || 'Approver',
+        remarks: 'Sent reminder for pending approval',
+        marginPct: null,
+        total: null,
+      })
+    })
+    if (pricingData.approvalStatus === 'APPROVED' && pricingData.approvedAt) {
+      items.push({
+        action: 'APPROVED',
+        by: pricingData.approvedByName || pricingData.approverName || 'Approver',
+        byRole: 'Approver / Reporting Manager',
+        at: pricingData.approvedAt,
+        approverName: pricingData.approverName || 'Approver',
+        remarks: pricingData.decisionRemarks || 'Pricing sheet approved',
+        marginPct: l1Calculations?.effectiveMarginPct ?? pricingData.marginPct,
+        total: pricingData.approvedGrandTotal,
+      })
+    }
+    return items.sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0))
+  }, [pricingData, l1Calculations])
 
   // Margin is set per product on the L1 quote, from a dedicated dialog — not
   // at quote-entry time, and not as one global preset. Blank clears back to
@@ -3068,7 +3176,12 @@ export function Stage4Workspace({ bid, onRefresh }) {
               </Button>
             )}
             {pricingData.approvalStatus === 'PENDING' && canApprovePricing && (
-              <Button size="sm" onClick={handleApprovePricing} className="gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm font-semibold">
+              <Button size="sm" variant="outline" onClick={openMarginDlg} className="gap-1.5 text-xs border-indigo-300 text-indigo-700 bg-indigo-50/70 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300 font-semibold" title="Reporting Manager / Approver: adjust margins before approving">
+                <Edit2 className="size-3.5" /> Update Margins
+              </Button>
+            )}
+            {pricingData.approvalStatus === 'PENDING' && canApprovePricing && (
+              <Button size="sm" onClick={() => { setDecisionRemarks(pricingData.decisionRemarks || ''); setShowApproveDlg(true) }} className="gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm font-semibold">
                 <CheckCircle2 className="size-3.5" /> {pendingApprovalValuesChanged ? 'Update & Approve Pricing' : 'Approve Pricing'}
               </Button>
             )}
@@ -3105,22 +3218,150 @@ export function Stage4Workspace({ bid, onRefresh }) {
           }
           const eventLabel = { SENT: 'Sent', REMINDER: 'Reminder', ACCEPTED: 'Accepted' }
           return (
-            <div className="mt-2 flex items-center gap-2 flex-wrap text-[11px]">
+            <div className="mt-2.5 flex items-center gap-2 flex-wrap text-[11px] w-full">
+              {pricingData.approvalStatus === 'PENDING' && canApprovePricing && (
+                <div className="w-full p-3 rounded-lg border border-indigo-200 bg-indigo-50/70 dark:border-indigo-800 dark:bg-indigo-950/40 text-xs text-indigo-950 dark:text-indigo-200 flex items-start justify-between gap-3 shadow-2xs">
+                  <div className="flex items-start gap-2.5">
+                    <Sparkles className="size-4 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold text-indigo-950 dark:text-indigo-200">
+                        Reporting Manager / Approver Review: Margin Updating is Enabled
+                      </p>
+                      <p className="text-[11px] text-indigo-700 dark:text-indigo-300 mt-0.5 leading-relaxed">
+                        As the approving authority, you can review distributor quotes and adjust per-product margins before giving approval. Click <strong>Update Margins</strong> to edit values.
+                      </p>
+                    </div>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={openMarginDlg} className="h-7 text-xs border-indigo-300 text-indigo-800 bg-white hover:bg-indigo-100 font-semibold shrink-0">
+                    <Edit2 className="size-3 mr-1" /> Update Margins
+                  </Button>
+                </div>
+              )}
               {pricingData.approvalStatus === 'APPROVED' ? (
-                <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-semibold border border-emerald-300 dark:border-emerald-800">
+                <div className="inline-flex items-center px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-semibold border border-emerald-300 dark:border-emerald-800">
                   ✓ Approved by {pricingData.approverName} on {fmtDate(pricingData.approvedAt)}
-                </span>
+                </div>
               ) : (
-                <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-semibold border border-amber-300 dark:border-amber-800">
+                <div className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-semibold border border-amber-300 dark:border-amber-800">
                   ⏳ Pending approval from {pricingData.approverName}
-                </span>
+                </div>
               )}
               {pricingData.approvalRemarks && (
-                <span className="w-full px-2.5 py-1.5 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 border-l-4 border-l-amber-500 text-amber-900 dark:text-amber-200">
-                  <strong className="font-semibold">⚑ Remarks:</strong> {pricingData.approvalRemarks}
-                </span>
+                <div className="w-full p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 border-l-4 border-l-amber-500 text-amber-900 dark:text-amber-200 text-xs space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-bold flex items-center gap-1.5 text-amber-900 dark:text-amber-300">
+                      <MessageSquare className="size-3.5 text-amber-600" />
+                      Pricing Request Remarks (from {pricingData.requestedByName || 'Bid Executive'})
+                    </div>
+                    {pricingData.approvalRequestedAt && (
+                      <div className="text-[10px] text-amber-700/80 dark:text-amber-400 font-normal">
+                        {fmtDateTime(pricingData.approvalRequestedAt)}
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-xs text-amber-900 dark:text-amber-200 whitespace-pre-wrap pl-5 font-medium leading-relaxed">
+                    {pricingData.approvalRemarks}
+                  </p>
+                </div>
               )}
-              {activity.length > 0 && (
+              {pricingData.decisionRemarks && (
+                <div className="w-full p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 border-l-4 border-l-emerald-500 text-emerald-950 dark:text-emerald-200 text-xs space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-bold flex items-center gap-1.5 text-emerald-900 dark:text-emerald-300">
+                      <CheckCircle2 className="size-3.5 text-emerald-600" />
+                      Pricing Decision Remarks (from {pricingData.approvedByName || pricingData.approverName || 'Approving Manager'})
+                    </div>
+                    {pricingData.approvedAt && (
+                      <div className="text-[10px] text-emerald-700/80 dark:text-emerald-400 font-normal">
+                        {fmtDateTime(pricingData.approvedAt)}
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-xs text-emerald-900 dark:text-emerald-200 whitespace-pre-wrap pl-5 font-medium leading-relaxed">
+                    {pricingData.decisionRemarks}
+                  </p>
+                </div>
+              )}
+              {combinedApprovalHistory.length > 0 && (
+                <div className="w-full mt-2 overflow-hidden rounded-lg border border-border/70 bg-card shadow-2xs">
+                  <div className="px-3 py-2 bg-muted/40 border-b border-border/70 flex items-center justify-between">
+                    <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                      <Clock className="size-3.5 text-violet-600 dark:text-violet-400" /> Pricing Approval & Decision Matrix Table
+                    </span>
+                    <span className="text-[10px] text-muted-foreground font-mono">
+                      {combinedApprovalHistory.length} Record{combinedApprovalHistory.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="text-xs w-full text-left">
+                      <thead>
+                        <tr className="bg-muted/30 text-muted-foreground border-b border-border/60 text-[11px]">
+                          <th className="px-3 py-2 font-semibold w-8 text-center">#</th>
+                          <th className="px-3 py-2 font-semibold">Action / Event</th>
+                          <th className="px-3 py-2 font-semibold">Acted By (Role)</th>
+                          <th className="px-3 py-2 font-semibold">Routing Approver</th>
+                          <th className="px-3 py-2 font-semibold">Commercials (Margin & Total)</th>
+                          <th className="px-3 py-2 font-semibold min-w-[200px]">Remarks / Decision Notes</th>
+                          <th className="px-3 py-2 font-semibold">Date & Time</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/50">
+                        {combinedApprovalHistory.map((h, i) => {
+                          const isReq = h.action === 'REQUESTED'
+                          const isAppr = h.action === 'APPROVED'
+                          const isRem = h.action === 'REMINDER'
+                          return (
+                            <tr key={i} className="hover:bg-muted/20 transition-colors">
+                              <td className="px-3 py-2 text-center text-muted-foreground font-mono text-[11px]">{i + 1}</td>
+                              <td className="px-3 py-2">
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border inline-flex items-center gap-1 ${
+                                  isAppr
+                                    ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800'
+                                    : isRem
+                                    ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800'
+                                    : 'bg-indigo-100 text-indigo-800 border-indigo-300 dark:bg-indigo-950/50 dark:text-indigo-300 dark:border-indigo-800'
+                                }`}>
+                                  {isAppr ? '✓ Approved' : isRem ? '🔔 Reminder' : '↗ Approval Requested'}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2">
+                                <div className="font-semibold text-foreground text-xs">{h.by || '—'}</div>
+                                <div className="text-[10px] text-muted-foreground">{h.byRole || 'Executive'}</div>
+                              </td>
+                              <td className="px-3 py-2">
+                                <span className="text-xs text-foreground font-medium">{h.approverName || '—'}</span>
+                              </td>
+                              <td className="px-3 py-2">
+                                {h.total != null || h.marginPct != null ? (
+                                  <div className="font-mono text-xs">
+                                    <span className="font-semibold text-foreground">{fmtMoneyFull(h.total)}</span>
+                                    {h.marginPct != null && (
+                                      <span className="text-[10px] text-muted-foreground ml-1.5 font-sans font-medium">
+                                        ({Number(h.marginPct).toFixed(1)}% margin)
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-muted-foreground text-[11px]">—</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2">
+                                <p className="text-xs text-foreground whitespace-pre-wrap leading-relaxed max-w-md">
+                                  {h.remarks || <span className="text-muted-foreground italic text-[11px]">No remarks entered</span>}
+                                </p>
+                              </td>
+                              <td className="px-3 py-2 text-muted-foreground font-mono text-[11px] whitespace-nowrap">
+                                {fmtDateTime(h.at)}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {false && activity.length > 0 && (
                 <div className="w-full mt-1 overflow-hidden rounded-md border border-border/60">
                   <table className="text-[11px] w-full">
                     <thead>
@@ -3132,7 +3373,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {activity.map((a, i) => (
+                      {activity.map((a, i) =>
                         <tr key={i} className="border-t border-border/60">
                           <td className="px-2 py-1 text-muted-foreground">{i + 1}</td>
                           <td className="px-2 py-1">
@@ -3141,7 +3382,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
                           <td className="px-2 py-1 text-foreground font-medium">{a.by}</td>
                           <td className="px-2 py-1 text-muted-foreground">{fmtDateTime(a.at)}</td>
                         </tr>
-                      ))}
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -3150,11 +3391,11 @@ export function Stage4Workspace({ bid, onRefresh }) {
           )
         })()}
         <div className="mt-2 flex gap-2 flex-wrap">
-          {['INIT', 'AWAITING', 'QUOTING', 'APPROVAL'].map((ph, i) => (
+          {['INIT', 'AWAITING', 'QUOTING', 'APPROVAL'].map((ph, i) =>
             <span key={ph} className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${pricingData.phase === ph ? 'bg-violet-600 text-white' : 'bg-muted text-muted-foreground'}`}>
               {i + 1}. {ph === 'INIT' ? 'Request Not Sent' : ph === 'AWAITING' ? 'Awaiting Response' : ph === 'QUOTING' ? 'Quotes Received' : 'Sent for Approval'}
             </span>
-          ))}
+          )}
         </div>
       </div>
 
@@ -3181,9 +3422,9 @@ export function Stage4Workspace({ bid, onRefresh }) {
                     <div className="flex items-center gap-2">
                       <span className="font-bold text-sm text-foreground">{q.distName}</span>
                       {isL1 && (
-                        <span className="px-2 py-0.5 text-[10px] rounded-full bg-emerald-600 text-white font-bold tracking-wide">
+                        <div className="inline-flex items-center px-2 py-0.5 text-[10px] rounded-full bg-emerald-600 text-white font-bold tracking-wide">
                           ⭐ L1 Lowest Quote
-                        </span>
+                        </div>
                       )}
                     </div>
                     <div className="flex items-center gap-1">
@@ -3221,14 +3462,14 @@ export function Stage4Workspace({ bid, onRefresh }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {q.items.map((it, ii) => (
+                      {q.items.map((it, ii) =>
                         <tr key={ii} className="hover:bg-muted/20">
                           <td className="border border-border p-1.5">{it.desc}</td>
                           <td className="border border-border p-1.5 text-center">{it.qty}</td>
                           <td className="border border-border p-1.5 text-right font-mono">{fmtMoneyFull(it.basicPrice)}</td>
                           <td className="border border-border p-1.5 text-right font-mono font-semibold text-foreground">{fmtMoneyFull((Number(it.basicPrice) || 0) * (Number(it.qty) || 1))}</td>
                         </tr>
-                      ))}
+                      )}
                     </tbody>
                     <tfoot>
                       <tr className="bg-muted/30 font-bold border-t border-border">
@@ -3394,7 +3635,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
                 </tr>
               </thead>
               <tbody>
-                {l1Calculations.items.map((row) => (
+                {l1Calculations.items.map((row) =>
                   <tr key={row.sNo} className="hover:bg-muted/10 transition-colors">
                     <td className="border border-border p-2 text-center font-mono font-bold text-muted-foreground">{row.sNo}</td>
                     <td className="border border-border p-2 font-medium text-foreground">{row.desc}</td>
@@ -3404,7 +3645,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
                     <td className="border border-border p-2 text-center font-semibold text-indigo-600 dark:text-indigo-400">{row.itemMargin}%</td>
                     <td className="border border-border p-2 text-right font-mono text-foreground">
                       {fmtMoneyFull(row.unitPriceExclGst)}
-                      <div className="text-right"><PricingSuggestionHint desc={row.desc} /></div>
+
                     </td>
                     <td className="border border-border p-2 text-right font-mono text-muted-foreground">
                       {fmtMoneyFull(row.unitGst)} <span className="text-[9px] text-muted-foreground/70">({row.itemGstRate}%)</span>
@@ -3412,7 +3653,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
                     <td className="border border-border p-2 text-right font-mono font-bold text-indigo-600 dark:text-indigo-400">{fmtMoneyFull(row.globxUnit)}</td>
                     <td className="border border-border p-2 text-right font-mono font-extrabold text-indigo-700 dark:text-indigo-300 bg-indigo-50/40 dark:bg-indigo-950/20">{fmtMoneyFull(row.globxTotal)}</td>
                   </tr>
-                ))}
+                )}
               </tbody>
               <tfoot>
                 {l1Calculations.buybackValue > 0 && (
@@ -3421,14 +3662,14 @@ export function Stage4Workspace({ bid, onRefresh }) {
                       <td colSpan={9} className="border border-border p-2 text-right text-muted-foreground uppercase tracking-wider">Total Before Buyback (Incl. GST):</td>
                       <td className="border border-border p-2 text-right font-mono font-bold text-foreground">{fmtMoneyFull(l1Calculations.grandTotalBeforeBuyback)}</td>
                     </tr>
-                    {l1Calculations.buybackLines.map(l => (
+                    {l1Calculations.buybackLines.map(l =>
                       <tr key={l.id} className="text-xs">
                         <td colSpan={9} className="border border-border p-2 text-right text-muted-foreground tracking-wider">
                           Less: Buyback — {l.product || 'Item'} ({l.qty} × {fmtMoneyFull(l.unitPrice)})
                         </td>
                         <td className="border border-border p-2 text-right font-mono font-bold text-rose-600 dark:text-rose-400">− {fmtMoneyFull(l.total)}</td>
                       </tr>
-                    ))}
+                    )}
                     {l1Calculations.buybackLines.length > 1 && (
                       <tr className="text-xs">
                         <td colSpan={9} className="border border-border p-2 text-right text-muted-foreground uppercase tracking-wider">Total Buyback:</td>
@@ -3447,6 +3688,29 @@ export function Stage4Workspace({ bid, onRefresh }) {
               </tfoot>
             </table>
           </div>
+
+          {/* Suggested Reference Pricing Benchmark Panel */}
+          {l1Calculations.items.some(r => r.desc) && (
+            <div className="p-3.5 rounded-xl border border-border/80 bg-muted/20 flex flex-col gap-2">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <Sparkles className="size-3.5 text-amber-500" /> Suggested Benchmark Pricing (Historical Won & Approved Deals)
+                </span>
+                <span className="text-[11px] text-muted-foreground">Reference pricing for RM / Approver evaluation</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 pt-1">
+                {l1Calculations.items.map(row =>
+                  <div key={row.sNo} className="p-2.5 rounded-lg border border-border/70 bg-card flex items-center justify-between gap-2 text-xs shadow-2xs">
+                    <div className="truncate min-w-0">
+                      <span className="font-semibold text-foreground block truncate">{row.desc}</span>
+                      <span className="text-[10px] text-muted-foreground font-mono">Offered: {fmtMoneyFull(row.unitPriceExclGst)}</span>
+                    </div>
+                    <PricingSuggestionHint desc={row.desc} />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Quick Metrics Summary Cards — shown below the table so the row-by-row breakdown reads first */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
@@ -3516,7 +3780,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
             </div>
             <div className="space-y-2">
               <Label className="text-xs font-semibold">Line Items</Label>
-              {quoteItems.map((it, ii) => (
+              {quoteItems.map((it, ii) =>
                 <div key={ii} className="grid grid-cols-6 gap-1.5 items-end">
                   <div className="col-span-2 h-8 flex items-center px-2 text-xs font-medium text-foreground truncate" title={it.desc}>{it.desc || '—'}</div>
                   <div className="h-8 flex items-center px-2 text-xs text-muted-foreground truncate" title={it.oem ? `OEM: ${it.oem}` : 'No OEM finalized for this product'}>{it.oem || '—'}</div>
@@ -3524,7 +3788,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
                   <div><Input type="number" value={it.basicPrice} onChange={e => { const a = [...quoteItems]; a[ii].basicPrice = e.target.value; setQuoteItems(a) }} placeholder="Basic Price ₹" className="h-8 text-xs" /></div>
                   <button onClick={() => setQuoteItems(quoteItems.filter((_, i) => i !== ii))} className="h-8 text-destructive border border-border rounded px-2 text-xs">✕</button>
                 </div>
-              ))}
+              )}
             </div>
             <div className="flex gap-2 justify-end">
               <Button size="sm" variant="outline" onClick={() => setShowQuoteDlg(false)}>Cancel</Button>
@@ -3552,7 +3816,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
             </div>
             <div className="space-y-2">
               <Label className="text-xs font-semibold">Line Items</Label>
-              {quoteItems.map((it, ii) => (
+              {quoteItems.map((it, ii) =>
                 <div key={ii} className="grid grid-cols-6 gap-1.5 items-end">
                   <div className="col-span-2 h-8 flex items-center px-2 text-xs font-medium text-foreground truncate" title={it.desc}>{it.desc || '—'}</div>
                   <div className="h-8 flex items-center px-2 text-xs text-muted-foreground truncate" title={it.oem ? `OEM: ${it.oem}` : 'No OEM finalized for this product'}>{it.oem || '—'}</div>
@@ -3560,7 +3824,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
                   <div><Input type="number" value={it.basicPrice} onChange={e => { const a = [...quoteItems]; a[ii].basicPrice = e.target.value; setQuoteItems(a) }} placeholder="Basic Price ₹" className="h-8 text-xs" /></div>
                   <button onClick={() => setQuoteItems(quoteItems.filter((_, i) => i !== ii))} className="h-8 text-destructive border border-border rounded px-2 text-xs">✕</button>
                 </div>
-              ))}
+              )}
             </div>
             <div className="flex gap-2 justify-end">
               <Button size="sm" variant="outline" onClick={() => { setShowEditQuoteDlg(false); setEditingQuoteId(null); setQuoteDistSel(''); setQuoteCustomName(''); setQuoteItems([{ desc: '', qty: 1, basicPrice: '', marginPct: '', oem: '' }]) }}>Cancel</Button>
@@ -3592,9 +3856,9 @@ export function Stage4Workspace({ bid, onRefresh }) {
                 return (
                   <select value={approverSelId} onChange={e => setApproverSelId(e.target.value)} className="w-full text-xs border border-border rounded px-2 py-1.5 bg-background">
                     <option value="">-- Select approver --</option>
-                    {approverOptions.map(opt => (
+                    {approverOptions.map(opt =>
                       <option key={opt.id} value={opt.id}>{opt.label}</option>
-                    ))}
+                    )}
                   </select>
                 )
               })()}
@@ -3618,7 +3882,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
             <h3 className="text-sm font-semibold">Add Margin — {l1Quote.distName} (L1)</h3>
             <p className="text-xs text-muted-foreground">Set a margin per product. Leave blank to use the fallback margin (2.45%) in the calculation.</p>
             <div className="space-y-2">
-              {l1Quote.items.map((it, idx) => (
+              {l1Quote.items.map((it, idx) =>
                 <div key={idx} className="p-2 rounded-md border border-border/60 space-y-1.5">
                   <div className="grid grid-cols-5 gap-2 items-center">
                     <div className="col-span-2 text-xs font-medium text-foreground truncate">{it.desc}</div>
@@ -3636,7 +3900,7 @@ export function Stage4Workspace({ bid, onRefresh }) {
                     <PricingSuggestionHint desc={it.desc} />
                   </div>
                 </div>
-              ))}
+              )}
             </div>
             <div className="flex gap-2 justify-end">
               <Button size="sm" variant="outline" onClick={() => setShowMarginDlg(false)}>Cancel</Button>
@@ -3663,6 +3927,78 @@ export function Stage4Workspace({ bid, onRefresh }) {
           </motion.div>
         </div>
       )}
+
+      {/* RM Commercial Pricing Approval & Decision Remarks Dialog */}
+      <Dialog open={showApproveDlg} onOpenChange={setShowApproveDlg}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-emerald-700 dark:text-emerald-400 flex items-center gap-2 text-base font-bold">
+              <CheckCircle2 className="size-5" /> Confirm Commercial Pricing Approval & Sign-off
+            </DialogTitle>
+            <DialogDescription className="pt-1.5 text-foreground/80 text-xs leading-relaxed">
+              As the approving authority, review the commercial calculation and record your decision remarks before completing approval.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3.5 py-2">
+            <div className="grid grid-cols-3 gap-2 p-3 rounded-lg bg-muted/40 border border-border/80 text-center">
+              <div>
+                <span className="text-[10px] text-muted-foreground uppercase font-semibold block">Base Cost</span>
+                <span className="text-xs font-mono font-bold text-foreground">{fmtMoneyFull(l1Calculations?.grandBaseCost || 0)}</span>
+              </div>
+              <div>
+                <span className="text-[10px] text-muted-foreground uppercase font-semibold block">Effective Margin</span>
+                <span className="text-xs font-mono font-bold text-indigo-600 dark:text-indigo-400">{(l1Calculations?.effectiveMarginPct ?? marginPct).toFixed(2)}%</span>
+              </div>
+              <div>
+                <span className="text-[10px] text-muted-foreground uppercase font-semibold block">Offered Total (w/GST)</span>
+                <span className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400">{fmtMoneyFull(l1Calculations?.grandGlobxTotal || 0)}</span>
+              </div>
+            </div>
+
+            {pricingData.approvalRemarks && (
+              <div className="p-3 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30 text-xs space-y-1">
+                <div className="font-semibold text-amber-900 dark:text-amber-300 flex items-center gap-1.5 text-[11px]">
+                  <MessageSquare className="size-3.5 text-amber-600" />
+                  Pricing Request Remarks (from {pricingData.requestedByName || 'Bid Executive'})
+                </div>
+                <p className="text-amber-950 dark:text-amber-200 text-xs whitespace-pre-wrap pl-5 font-normal">
+                  {pricingData.approvalRemarks}
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-foreground flex items-center justify-between">
+                <span>Pricing Decision Remarks / Approval Notes</span>
+                <span className="text-[10px] text-muted-foreground font-normal">Visible to BE and in Matrix Table</span>
+              </Label>
+              <Textarea
+                value={decisionRemarks}
+                onChange={e => setDecisionRemarks(e.target.value)}
+                placeholder="Enter RM approval notes (e.g. Approved with recommended margin; proceed with tender submission)..."
+                rows={3}
+                className="text-xs leading-relaxed resize-none"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0 pt-2">
+            <Button variant="outline" size="sm" onClick={() => setShowApproveDlg(false)} disabled={approvingLoading}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => handleApprovePricing(decisionRemarks)}
+              disabled={approvingLoading}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 font-semibold"
+            >
+              {approvingLoading ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
+              {pendingApprovalValuesChanged ? 'Update Margins & Approve' : 'Confirm & Approve Pricing'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Quote Confirmation Dialog */}
       <Dialog open={!!quoteToDelete} onOpenChange={(open) => !open && setQuoteToDelete(null)}>
@@ -4023,18 +4359,18 @@ export function Stage6Workspace({ bid, onRefresh }) {
               </tr>
             </thead>
             <tbody>
-              {emdAlertHistory.map((a, i) => (
+              {emdAlertHistory.map((a, i) =>
                 <tr key={i} className="border-t border-border/60">
                   <td className="px-2 py-1 text-muted-foreground">{i + 1}</td>
                   <td className="px-2 py-1">
-                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${a.type === 'ALERT' ? 'bg-muted text-muted-foreground border-border' : 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800'}`}>
+                    <div className={`inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${a.type === 'ALERT' ? 'bg-muted text-muted-foreground border-border' : 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800'}`}>
                       {a.type === 'ALERT' ? 'Alert' : 'Reminder'}
-                    </span>
+                    </div>
                   </td>
                   <td className="px-2 py-1 text-foreground font-medium">{a.by}</td>
                   <td className="px-2 py-1 text-muted-foreground">{fmtDateTime(a.at)}</td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
@@ -4401,7 +4737,7 @@ export function Stage8Workspace({ bid, onRefresh }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {rows.map(r =>
                 <tr key={r.role} className="border-t border-border/60">
                   <td className="px-3 py-2 font-semibold text-foreground">{r.label}</td>
                   <td className="px-3 py-2 text-foreground">{r.person?.full_name || '—'}</td>
@@ -4426,7 +4762,7 @@ export function Stage8Workspace({ bid, onRefresh }) {
                     ) : null}
                   </td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
@@ -4616,14 +4952,14 @@ export function Stage9Workspace({ bid, onRefresh }) {
             <div className="flex items-center justify-between gap-2">
               <Label htmlFor="submitted-price" className="text-xs font-medium">Final Submitted Bid Price (₹)</Label>
               {priceSource === 'approved' && (
-                <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 dark:bg-emerald-950/30 dark:text-emerald-400">
+                <div className="inline-flex items-center text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 dark:bg-emerald-950/30 dark:text-emerald-400">
                   ✓ From Stage 4's approved pricing
-                </span>
+                </div>
               )}
               {priceSource === 'live' && (
-                <span className="text-[10px] font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 dark:bg-amber-950/30 dark:text-amber-400">
+                <div className="inline-flex items-center text-[10px] font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 dark:bg-amber-950/30 dark:text-amber-400">
                   ⚠ Not yet approved — live calculation
-                </span>
+                </div>
               )}
             </div>
             <Input
@@ -5009,10 +5345,10 @@ export function Stage11Workspace({ bid, onRefresh }) {
             {bid.our_rank && <div><span className="text-muted-foreground block">Our Rank</span><span className="font-bold text-foreground">{bid.our_rank}</span></div>}
             {bid.price_diff_pct != null && (
               <div><span className="text-muted-foreground block">Price Difference</span>
-                <span className={`font-bold font-mono ${bid.price_diff_pct > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                <div className={`inline-flex items-center font-bold font-mono ${bid.price_diff_pct > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
                   {bid.price_diff_pct > 0 ? '+' : ''}{bid.price_diff_pct.toFixed(2)}%
                   <span className="ml-1 text-muted-foreground font-normal">{bid.price_diff_pct > 0 ? '(we quoted higher)' : '(we quoted lower)'}</span>
-                </span>
+                </div>
               </div>
             )}
           </div>
@@ -5048,9 +5384,9 @@ export function Stage11Workspace({ bid, onRefresh }) {
               <div className="flex items-center justify-between">
                 <Label className="text-xs font-medium">Our GeM Submitted Price (₹) *</Label>
                 {stage9Price ? (
-                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 dark:bg-emerald-950/30 dark:text-emerald-400">
+                  <div className="inline-flex items-center text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 dark:bg-emerald-950/30 dark:text-emerald-400">
                     ✓ Auto-filled from Stage 8
-                  </span>
+                  </div>
                 ) : (
                   <span className="text-[10px] text-amber-600 italic">Stage 8 price not set — enter manually</span>
                 )}
@@ -5087,9 +5423,9 @@ export function Stage11Workspace({ bid, onRefresh }) {
                   <div className="flex justify-between"><span>L1 Price:</span><span className="font-mono font-bold text-red-600">{fmtMoney(l1PriceNum)}</span></div>
                   <div className="flex justify-between border-t border-border/60 pt-1">
                     <span>Difference:</span>
-                    <span className={`font-mono font-bold ${priceDiffPct > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                    <div className={`inline-flex items-center font-mono font-bold ${priceDiffPct > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
                       {priceDiffPct > 0 ? '+' : ''}{priceDiffPct.toFixed(2)}% {priceDiffPct > 0 ? '(we quoted higher by this %)' : '(we quoted lower)'}
-                    </span>
+                    </div>
                   </div>
                 </div>
               )}

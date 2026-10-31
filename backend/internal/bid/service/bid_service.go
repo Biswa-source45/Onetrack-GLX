@@ -472,6 +472,26 @@ func (s *bidService) CreateBid(ctx context.Context, req *domain.CreateBidRequest
 	params.BGRate = req.BGRate
 	params.Team = req.Team
 	params.ScopeType = req.ScopeType
+	supportType := "GLOBX"
+	if req.SupportType != nil && strings.TrimSpace(*req.SupportType) != "" {
+		supportType = strings.TrimSpace(*req.SupportType)
+	}
+	params.SupportType = &supportType
+	if req.SupportPartnerName != nil && strings.TrimSpace(*req.SupportPartnerName) != "" {
+		trimmed := strings.TrimSpace(*req.SupportPartnerName)
+		params.SupportPartnerName = &trimmed
+	}
+	metaMap := map[string]interface{}{}
+	if len(params.Metadata) > 0 {
+		_ = json.Unmarshal(params.Metadata, &metaMap)
+	}
+	metaMap["support_type"] = supportType
+	if params.SupportPartnerName != nil {
+		metaMap["support_partner_name"] = *params.SupportPartnerName
+	}
+	if mb, err := json.Marshal(metaMap); err == nil {
+		params.Metadata = mb
+	}
 	params.ActivityType = req.ActivityType
 	params.ExcelBidStatus = req.ExcelBidStatus
 	params.SubmissionStatus = req.SubmissionStatus
@@ -847,8 +867,10 @@ func (s *bidService) ListBids(ctx context.Context, params domain.ListBidsParams)
 		ActiveCount:    statusCounts["ACTIVE"],
 		WonCount:       statusCounts["WON"],
 		LostCount:      statusCounts["LOST"],
+		ArchiveCount:   statusCounts["ARCHIVE"],
 		CancelledCount: statusCounts["CANCELLED"],
 		ClosedCount:    statusCounts["CLOSED"],
+		AbortedCount:   statusCounts["ABORTED"],
 		TechEvalCount:  statusCounts["TECHNICAL_EVALUATION"],
 		SubmittedCount: statusCounts["SUBMITTED"],
 	}, nil
@@ -1234,6 +1256,26 @@ func (s *bidService) applyUpdate(ctx context.Context, id string, req *domain.Upd
 			changes = append(changes, fmt.Sprintf("Scope Type: '%s' → '%s'", oldScope, *req.ScopeType))
 		}
 	}
+	if req.SupportType != nil {
+		oldSupport := "GLOBX"
+		if bid.SupportType != nil {
+			oldSupport = *bid.SupportType
+		}
+		if *req.SupportType != oldSupport {
+			changes = append(changes, fmt.Sprintf("Bid Support: '%s' → '%s'", oldSupport, *req.SupportType))
+		}
+	}
+	if req.SupportPartnerName != nil {
+		oldPartner := "—"
+		if bid.SupportPartnerName != nil {
+			oldPartner = *bid.SupportPartnerName
+		}
+		if *req.SupportPartnerName != oldPartner {
+			if true {
+			changes = append(changes, fmt.Sprintf("Support Partner: '%s' → '%s'", oldPartner, *req.SupportPartnerName))
+		}
+		}
+	}
 
 	// Track Account Manager / Pre-Sales reassignment so a real-name change fires
 	// a fresh "you've been assigned" alert to the newly assigned person — the
@@ -1525,6 +1567,7 @@ var fieldLabels = map[string]string{
 	"presales_id": "Pre-Sales", "bid_no": "RFP No.", "gem_bid_no": "GeM Bid No.",
 	"portal_source": "Portal Source", "high_level_scope": "High-Level Scope", "tender_link": "Tender Link", "bg_rate": "BG Rate",
 	"duration_months": "Duration (months)", "start_date": "Start Date", "end_date": "End Date",
+	"support_type": "Bid Support Type", "support_partner_name": "Supporting Partner Organization",
 }
 
 func fieldLabel(field string) string {
@@ -1578,6 +1621,8 @@ func diffRequestFields(orig, final *domain.UpdateBidRequest) []domain.FieldDiff 
 	diffField(&diffs, "duration_months", derefInt(orig.DurationMonths), final.DurationMonths, fmtIntDiff)
 	diffField(&diffs, "start_date", derefStr(orig.StartDate), final.StartDate, fmtStrDiff)
 	diffField(&diffs, "end_date", derefStr(orig.EndDate), final.EndDate, fmtStrDiff)
+	diffField(&diffs, "support_type", derefStr(orig.SupportType), final.SupportType, fmtStrDiff)
+	diffField(&diffs, "support_partner_name", derefStr(orig.SupportPartnerName), final.SupportPartnerName, fmtStrDiff)
 	return diffs
 }
 
@@ -2542,6 +2587,8 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, repor
 		AIExtractionConfidence:    bid.AIExtractionConfidence,
 		Team:                      bid.Team,
 		ScopeType:                 bid.ScopeType,
+		SupportType:               bid.SupportType,
+		SupportPartnerName:        bid.SupportPartnerName,
 		ActivityType:              bid.ActivityType,
 		ExcelBidStatus:            bid.ExcelBidStatus,
 		SubmissionStatus:          bid.SubmissionStatus,
@@ -2659,6 +2706,8 @@ func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary, accou
 		Remarks:                   bid.Remarks,
 		Team:                      bid.Team,
 		ScopeType:                 bid.ScopeType,
+		SupportType:               bid.SupportType,
+		SupportPartnerName:        bid.SupportPartnerName,
 		BGRate:                    bid.BGRate,
 		ActivityType:              bid.ActivityType,
 		TargetMonthDate:           bid.TargetMonthDate,
@@ -2826,6 +2875,8 @@ func diffBidFields(bid *domain.BidWorkspace, req *domain.UpdateBidRequest) []dom
 	// add if a reviewer needs to see those change at a glance too.
 	diffDateField(&diffs, "start_date", bid.StartDate, req.StartDate)
 	diffDateField(&diffs, "end_date", bid.EndDate, req.EndDate)
+	diffField(&diffs, "support_type", derefStr(bid.SupportType), req.SupportType, fmtStrDiff)
+	diffField(&diffs, "support_partner_name", derefStr(bid.SupportPartnerName), req.SupportPartnerName, fmtStrDiff)
 	return diffs
 }
 

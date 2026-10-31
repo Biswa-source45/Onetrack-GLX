@@ -12,12 +12,12 @@
 // workflow_stage (a WON bid's workflow_stage is normally still
 // 'AWARD_HANDOVER' or earlier, not the literal string 'WON').
 export function getEffectiveStage(b) {
-  if (b.bid_status === 'WON' || b.workflow_stage === 'WON' || b.bid_outcome === 'WON') return 'WON'
-  if (b.bid_status === 'LOST' || b.workflow_stage === 'LOST' || b.bid_outcome === 'LOST' || b.technical_result === 'DISQUALIFIED') return 'LOST'
-  if (b.bid_status === 'CANCELLED' || b.workflow_stage === 'CANCELLED' || b.bid_outcome === 'CANCELLED') return 'CANCELLED'
+  if (b.derived_status === 'WON' || b.bid_status === 'WON' || b.workflow_stage === 'WON' || b.bid_outcome === 'WON') return 'WON'
+  if (b.derived_status === 'LOST' || b.bid_status === 'LOST' || b.workflow_stage === 'LOST' || b.bid_outcome === 'LOST' || b.technical_result === 'DISQUALIFIED') return 'LOST'
+  if (b.derived_status === 'CANCELLED' || b.bid_status === 'CANCELLED' || b.workflow_stage === 'CANCELLED' || b.bid_outcome === 'CANCELLED') return 'CANCELLED'
   // Closed without ever being bid. Its workflow_stage is still DISCOVERED, so
   // without this it would be charted as live pipeline.
-  if (b.bid_status === 'CLOSED') return 'CLOSED'
+  if (b.derived_status === 'CLOSED' || b.bid_status === 'CLOSED' || b.bid_outcome === 'CLOSED') return 'CLOSED'
   return b.workflow_stage || 'DISCOVERED'
 }
 

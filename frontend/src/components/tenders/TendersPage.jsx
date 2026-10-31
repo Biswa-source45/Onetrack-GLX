@@ -26,6 +26,7 @@ import {
   Loader2,
   X,
   AlertCircle,
+  AlertTriangle,
   TrendingUp,
   FileText,
   Zap,
@@ -53,6 +54,7 @@ import {
   Globe,
   Info,
   ExternalLink,
+  Handshake,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -240,6 +242,7 @@ async function exportTendersToExcel(params, keep) {
     platform: (b) => b.portal_source,
     quantity: (b) => b.quantity,
     scope_type: (b) => b.scope_type,
+    support_type: (b) => b.support_type === "IN_SUPPORT" ? `In-Support (${b.support_partner_name || "Partner"})` : b.support_type === "OUT_SUPPORT" ? `Out-Support (${b.support_partner_name || "Partner"})` : "GLOBX",
     no_emd: (b) => (b.emd_not_applicable ? "Yes" : "No"),
     emd_exemption: (b) => formatEmdExemption(b),
     bg_rate: (b) => b.bg_rate,
@@ -296,6 +299,7 @@ const STAGE_OPTIONS = [
   { value: "WON", label: "Won" },
   { value: "LOST", label: "Lost" },
   { value: "CANCELLED", label: "Cancelled" },
+
 ];
 
 const STATUS_OPTIONS = [
@@ -303,9 +307,12 @@ const STATUS_OPTIONS = [
   { value: "WON", label: "Won" },
   { value: "LOST", label: "Lost" },
   { value: "CANCELLED", label: "Cancelled" },
+
   // Closed = assessed then dropped without bidding. Not a workflow stage, so it
   // appears here but never in STAGE_OPTIONS above.
-  { value: "CLOSED", label: "Closed (No Bid)" },
+  { value: "ARCHIVE", label: "Archive (Won + Lost)" },
+  { value: "ABORTED", label: "Aborted (Our Side)" },
+  { value: "CLOSED", label: "Closed / Aborted" },
   // Broad "has been submitted" bucket the backend derives (Bid Submission,
   // Tech Eval, or Fin Eval, or otherwise flagged submitted) — matches what the
   // "Submitted" KPI tile above counts. For one exact stage, not the bucket,
@@ -1014,13 +1021,16 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                               <span className="text-sm font-medium text-foreground line-clamp-1 w-full">
                                 {a.bid_title}
                               </span>
+  
                               <span className="text-xs text-muted-foreground w-full truncate">
                                 <span className="font-semibold text-rose-700 dark:text-rose-400">
                                   {APPROVAL_KIND_LABELS[a.kind] || "Approval"}
                                 </span>
+    
                                 {a.requested_by ? ` · ${a.requested_by}` : ""}
                                 {` · ${formatDate(a.requested_at)}`}
                               </span>
+  
                             </DropdownMenuItem>
                           ))}
                         </div>
@@ -1124,7 +1134,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
       )}
 
       {/* ── Stats Row ────────────────────────────────────────────────────── */}
-      <div className={`grid grid-cols-2 sm:grid-cols-4 gap-3 ${todoMode ? "lg:grid-cols-3" : "lg:grid-cols-7"}`}>
+      <div className={`grid grid-cols-2 sm:grid-cols-4 gap-2 2xl:gap-3 ${todoMode ? "lg:grid-cols-3" : "lg:grid-cols-8"}`}>
         {[
           {
             label: "Total Tenders",
@@ -1184,23 +1194,32 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
             color: "text-red-600",
             bg: "bg-red-50/50",
             filterKey: "CANCELLED",
-            explain: "Withdrawn or cancelled before an outcome was decided.",
+            explain: "Tenders cancelled or withdrawn by the issuer.",
           },
           {
-            label: "Closed",
-            value: meta.closed_count ?? 0,
+            label: "Aborted",
+            value: meta.aborted_count ?? meta.closed_count ?? 0,
+            icon: AlertTriangle,
+            color: "text-amber-600",
+            bg: "bg-amber-50/50",
+            filterKey: "ABORTED",
+            explain: "Tenders aborted from our side (Not Eligible or Not Participating).",
+          },
+          {
+            label: "Archive",
+            value: meta.archive_count ?? ((meta.won_count ?? 0) + (meta.lost_count ?? 0)),
             icon: Archive,
             color: "text-zinc-600",
             bg: "bg-zinc-50/50",
-            filterKey: "CLOSED",
-            explain: "Manually closed out, outside the Won/Lost/Cancelled outcomes.",
+            filterKey: "ARCHIVE",
+            explain: "Sum of Won and Lost tenders — the resolved/archived pipeline.",
           },
         ]
           // Quick To-Dos only deals with tenders still in play.
           .filter((stat) => !todoMode || ["Total Tenders", "In Progress", "Submitted"].includes(stat.label))
           .map((stat) => {
           const isActiveFilter =
-            statusFilter === stat.filterKey ||
+            statusFilter === stat.filterKey || (stat.filterKey === "ABORTED" && (statusFilter === "ABORTED" || statusFilter === "CLOSED")) ||
             (!statusFilter && stat.filterKey === "");
           return (
             <motion.div
@@ -1226,7 +1245,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                   );
                 }
               }}
-              className={`relative rounded-xl border p-3.5 flex items-center gap-3 shadow-xs cursor-pointer transition-all ${
+              className={`relative rounded-xl border p-2.5 2xl:p-3 flex items-center gap-2 2xl:gap-2.5 shadow-xs cursor-pointer transition-all ${
                 isActiveFilter
                   ? "border-primary ring-2 ring-primary/30 bg-primary/5 shadow-sm"
                   : "border-border bg-card hover:bg-muted/40 hover:border-muted-foreground/30"
@@ -1238,10 +1257,10 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                     role="button"
                     tabIndex={0}
                     onClick={(e) => e.stopPropagation()}
-                    className="absolute top-1.5 right-1.5 text-muted-foreground/50 hover:text-foreground transition-colors"
+                    className="absolute top-1 right-1 text-muted-foreground/50 hover:text-foreground transition-colors"
                     aria-label={`What does ${stat.label} count?`}
                   >
-                    <Info className="size-3.5" />
+                    <Info className="size-3" />
                   </span>
                 </TooltipTrigger>
                 <TooltipContent side="top" className="max-w-[220px]">
@@ -1249,15 +1268,15 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                 </TooltipContent>
               </Tooltip>
               <div
-                className={`size-9 rounded-lg ${stat.bg} flex items-center justify-center shrink-0`}
+                className={`size-8 2xl:size-9 rounded-lg ${stat.bg} flex items-center justify-center shrink-0`}
               >
-                <stat.icon className={`size-4.5 ${stat.color}`} />
+                <stat.icon className={`size-4 2xl:size-4.5 ${stat.color}`} />
               </div>
-              <div className="min-w-0 flex-1 pr-3.5">
-                <p className="text-xl font-bold font-heading text-foreground leading-none">
+              <div className="min-w-0 flex-1 pr-1.5">
+                <p className="text-lg 2xl:text-xl font-bold font-heading text-foreground leading-none">
                   {stat.value}
                 </p>
-                <p className="text-xs text-muted-foreground mt-1 truncate">
+                <p className="text-[11px] 2xl:text-xs text-muted-foreground mt-1 truncate" title={stat.label}>
                   {stat.label}
                 </p>
               </div>
@@ -1670,12 +1689,19 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                       }
                       className={`group border rounded-xl p-5 shadow-sm hover:shadow-md transition-[border-color,background-color] duration-300 flex flex-col justify-between relative overflow-hidden
                         ${statusStyle(bid.bid_status).tint}
+                        ${bid.support_type === "IN_SUPPORT" ? "!border-indigo-400 dark:!border-indigo-600 bg-indigo-50/20 shadow-indigo-100/30" : bid.support_type === "OUT_SUPPORT" ? "!border-purple-400 dark:!border-purple-600 bg-purple-50/20 shadow-purple-100/30" : ""}
                         ${["CANCELLED", "CLOSED", "LOST", "ARCHIVED"].includes(bid.bid_status) ? "opacity-80" : ""}
                         ${hasPermission("bid.view") ? "cursor-pointer" : ""}`}
                     >
                       {/* Decorative colored top line based on status */}
                       <div
-                        className={`absolute top-0 left-0 right-0 h-1 ${statusStyle(bid.bid_status).accent}`}
+                        className={`absolute top-0 left-0 right-0 h-1 ${
+                          bid.support_type === "IN_SUPPORT"
+                            ? "bg-indigo-500"
+                            : bid.support_type === "OUT_SUPPORT"
+                            ? "bg-purple-500"
+                            : statusStyle(bid.bid_status).accent
+                        }`}
                       />
                       {/* Stamp watermark for terminal status tenders */}
                       {["CANCELLED", "CLOSED", "WON", "LOST"].includes(
@@ -1694,28 +1720,79 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                       <div className="space-y-3.5">
                         {/* Tags / Status */}
                         <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap min-w-0 flex-1">
                             {bid.portal_source && (
                               <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-muted text-muted-foreground border border-border">
                                 {bid.portal_source}
                               </span>
+  
                             )}
                             {(bid.gem_bid_no || bid.bid_no) && (
                               <span className="text-[10px] font-mono text-primary font-semibold">
                                 {bid.gem_bid_no || bid.bid_no}
                               </span>
+  
                             )}
                             {bid.is_imported && <ImportedPill />}
-                            {bid.derived_status === "ACTIVE" && <InProgressPill />}
                           </div>
-                          {inBin && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300 border border-rose-300">
-                              <Clock className="size-3 mr-1 animate-pulse" />
-                              {bid.days_remaining ?? 15}d to purge
-                            </span>
+                          <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+                            {bid.derived_status === "ACTIVE" && <InProgressPill />}
+                            {inBin && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300 border border-rose-300">
+                                <Clock className="size-3 mr-1 animate-pulse" />
+                                {bid.days_remaining ?? 15}d to purge
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        {/*
+  
+  
+
+
+  
+                            )}
+
+
+                          </div>
+
+
+
+
+
                           )}
                         </div>
 
+                        */}
+                        {/* Dedicated Bid Support Badge */}
+                        {(bid.support_type === "IN_SUPPORT" || bid.support_type === "OUT_SUPPORT") && (
+                          <div className="flex items-center">
+                            <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full border shadow-2xs max-w-full ${
+                              bid.support_type === "IN_SUPPORT"
+                                ? "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-800"
+                                : "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800"
+                            }`}>
+                              <span className={`size-1.5 rounded-full shrink-0 ${bid.support_type === "IN_SUPPORT" ? "bg-indigo-500" : "bg-purple-500"}`} />
+                              <span className="shrink-0">{bid.support_type === "IN_SUPPORT" ? "📥 In-Support" : "📤 Out-Support"}</span>
+                              {bid.support_partner_name && (
+                                <>
+                                  <span className="opacity-40 font-normal shrink-0">•</span>
+                                  <span className="font-semibold truncate max-w-[190px]" title={bid.support_partner_name}>
+                                    {bid.support_partner_name}
+                                  </span>
+      
+                                </>
+                              )}
+                            </span>
+                          </div>
+                        )}
+                        {/*
+                              )}
+
+                          </div>
+                        )}
+
+                        */}
                         {/* Title */}
                         <div>
                           <div className="flex items-start gap-1.5 justify-between">
@@ -1730,6 +1807,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
                                 <span className="relative inline-flex rounded-full size-2 bg-emerald-500"></span>
                               </span>
+  
                             ) : bid.bid_status === "WON" ? (
                               <span
                                 className="size-2 rounded-full bg-sky-500 mt-1 shrink-0"
@@ -1761,28 +1839,51 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                               <Building2 className="size-3 text-muted-foreground/75" />{" "}
                               Account Name
                             </span>
+
                             <span className="font-semibold text-foreground truncate max-w-[150px]">
                               {bid.organization_name ?? "—"}
                             </span>
+
                           </div>
+                          {(bid.support_type === "IN_SUPPORT" || bid.support_type === "OUT_SUPPORT") && (
+                            <div className="flex justify-between items-center">
+                              <span className="text-muted-foreground flex items-center gap-1">
+                                <Handshake className="size-3 text-muted-foreground/75" />{" "}
+                                {bid.support_type === "IN_SUPPORT" ? "Support From" : "Support To"}
+                              </span>
+  
+                              <span className={`font-semibold truncate max-w-[150px] ${
+                                bid.support_type === "IN_SUPPORT" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "text-purple-600 dark:text-purple-400 font-bold"
+                              }`} title={bid.support_partner_name}>
+                                {bid.support_partner_name || "Partner"}
+                              </span>
+  
+                            </div>
+                          )}
+
                           <div className="flex justify-between items-center">
                             <span className="text-muted-foreground flex items-center gap-1">
                               <DollarSign className="size-3 text-muted-foreground/75" />{" "}
                               Est. Value
                             </span>
+
                             <span className="font-semibold text-foreground">
                               {formatCurrency(bid.estimated_value)}
                             </span>
+
                           </div>
+
                           {bid.account_manager && (
                             <div className="flex justify-between items-center">
                               <span className="text-muted-foreground flex items-center gap-1">
                                 <UserCheck className="size-3 text-muted-foreground/75" />{" "}
                                 Account Manager
                               </span>
+  
                               <span className="font-semibold text-foreground truncate max-w-[150px]">
                                 {bid.account_manager.full_name}
                               </span>
+  
                             </div>
                           )}
                         </div>
@@ -1793,10 +1894,12 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                             <span className="text-muted-foreground">
                               Workflow Stage
                             </span>
+
                             <span className="font-bold text-primary text-[11px]">
                               {STAGE_LABELS[bid.workflow_stage] ??
                                 bid.workflow_stage}
                             </span>
+
                           </div>
                           <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
                             <div
@@ -1824,6 +1927,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                             <span className="max-w-[70px] truncate">
                               {bid.bid_owner.full_name.split(" ")[0]}
                             </span>
+
                           </div>
                         )}
                       </div>
@@ -1970,6 +2074,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                                       >
                                                         {bid.bid_status}
                                                       </span>
+                          
                                                     </td>
                           ),
                           category: (
@@ -2006,7 +2111,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                           bid_id: (
                         <td key="bid_id" className="p-3 border-r border-border font-mono text-primary font-medium">
                                                       {!isReadOnly ? (
-                                                        <div className="flex items-center gap-1.5">
+                                                        <div className="flex items-center gap-1.5 flex-wrap min-w-0 flex-1">
                                                         <input
                                                           type="text"
                                                           value={bid[bidIdField] || ""}
@@ -2069,6 +2174,9 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                                               <span>
                                                                 {bid.portal_source || "Select Portal"}
                                                               </span>
+     
+      
+                                  
                                                               <ChevronDown className="size-3 text-muted-foreground ml-1" />
                                                             </button>
                                                           </DropdownMenuTrigger>
@@ -2107,7 +2215,13 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                                         }
                                                       }}
                                                       title={isReadOnly ? "Open this tender" : undefined}
-                                                      className={`p-3 border-r border-border truncate max-w-[26rem] sticky left-0 bg-card group-hover/row:bg-[color-mix(in_srgb,var(--muted)_30%,var(--card))] z-10 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)] ${isReadOnly ? "font-semibold text-foreground hover:text-primary hover:underline cursor-pointer" : ""}`}
+                                                      className={`p-3 border-r border-border truncate max-w-[26rem] sticky left-0 ${
+                                                         bid.support_type === "IN_SUPPORT"
+                                                           ? "bg-indigo-50/90 dark:bg-indigo-950/70 border-l-4 !border-l-indigo-500 group-hover/row:bg-indigo-100/90 dark:group-hover/row:bg-indigo-900/70 text-indigo-950 dark:text-indigo-200"
+                                                           : bid.support_type === "OUT_SUPPORT"
+                                                           ? "bg-purple-50/90 dark:bg-purple-950/70 border-l-4 !border-l-purple-500 group-hover/row:bg-purple-100/90 dark:group-hover/row:bg-purple-900/70 text-purple-950 dark:text-purple-200"
+                                                           : "bg-card group-hover/row:bg-[color-mix(in_srgb,var(--muted)_30%,var(--card))]"
+                                                       } z-10 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)] ${isReadOnly ? "font-semibold text-foreground hover:text-primary hover:underline cursor-pointer" : ""}`}
                                                     >
                                                       <div className="flex items-center gap-2 w-full">
                                                         {bid.bid_status === "ACTIVE" ? (
@@ -2117,7 +2231,8 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                                           >
                                                             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
                                                             <span className="relative inline-flex rounded-full size-2 bg-emerald-500"></span>
-                                                          </span>
+                              </span>
+                              
                                                         ) : (
                                                           <span
                                                             className={`size-2 rounded-full shrink-0 ${statusStyle(bid.bid_status).dot}`}
@@ -2130,7 +2245,17 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                      {bid.derived_status === "ACTIVE" && <InProgressPill compact />}
                    </span>
                  )}
-                                                      <div className="min-w-0 flex-1 truncate" title={bid.organization_name || undefined}>
+                  {bid.support_type === "IN_SUPPORT" && (
+                    <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-200/80 text-indigo-900 border border-indigo-300 dark:bg-indigo-900/80 dark:text-indigo-200 dark:border-indigo-700 whitespace-nowrap shadow-xs" title={`In-Support from: ${bid.support_partner_name || "Partner"}`}>
+                      📥 In-Support{bid.support_partner_name ? `: ${bid.support_partner_name}` : ""}
+                    </span>
+                  )}
+                  {bid.support_type === "OUT_SUPPORT" && (
+                    <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-200/80 text-purple-900 border border-purple-300 dark:bg-purple-900/80 dark:text-purple-200 dark:border-purple-700 whitespace-nowrap shadow-xs" title={`Out-Support to: ${bid.support_partner_name || "Partner"}`}>
+                      📤 Out-Support{bid.support_partner_name ? `: ${bid.support_partner_name}` : ""}
+                    </span>
+                  )}
+                  <div className="min-w-0 flex-1 truncate" title={bid.organization_name || undefined}>
                                                       {!isReadOnly ? (
                                                         <input
                                                           type="text"
@@ -2224,6 +2349,23 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                                       )}
                                                     </td>
                           ),
+                          support_type: (
+                        <td key="support_type" className="p-3 border-r border-border">
+                          {bid.support_type === "IN_SUPPORT" ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-300 dark:bg-indigo-950/80 dark:text-indigo-300 whitespace-nowrap">
+                              📥 In-Support
+                            </span>
+
+                          ) : bid.support_type === "OUT_SUPPORT" ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-300 dark:bg-purple-950/80 dark:text-purple-300 whitespace-nowrap">
+                              📤 Out-Support
+                            </span>
+
+                          ) : (
+                            <span className="text-muted-foreground text-xs font-medium">GLOBX</span>
+                          )}
+                        </td>
+                          ),
                           scope_type: (
                         <td key="scope_type" className="p-3 border-r border-border">
                                                       {!isReadOnly ? (
@@ -2310,16 +2452,23 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                                               : "bg-muted hover:bg-muted/80 text-muted-foreground border border-border"
                                                           }`}
                                                         >
-                                                          {bid.emd_not_applicable ? "Yes" : "No"}
+                                                          <span>{bid.emd_not_applicable ? "Yes" : "No"}
+</span>
                                                         </button>
                                                       ) : bid.emd_not_applicable ? (
                                                         <span className="text-slate-600 font-bold flex items-center gap-0.5">
                                                           <Check className="size-3.5" /> Yes
                                                         </span>
+
+
+                            
                                                       ) : (
                                                         <span className="text-muted-foreground">
                                                           No
                                                         </span>
+
+
+                            
                                                       )}
                                                     </td>
                           ),
@@ -2341,7 +2490,8 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                                               : "bg-muted hover:bg-muted/80 text-muted-foreground border border-border"
                                                           }`}
                                                         >
-                                                          {bid.emd_exempted ? "Yes" : "No"}
+                                                          <span>{bid.emd_exempted ? "Yes" : "No"}
+</span>
                                                         </button>
                                                       ) : bid.emd_exempted ? (
                                                         <span
@@ -2351,10 +2501,16 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                                           <Check className="size-3.5" />{" "}
                                                           {formatEmdExemption(bid)}
                                                         </span>
+
+
+                            
                                                       ) : (
                                                         <span className="text-muted-foreground">
                                                           No
                                                         </span>
+
+
+                            
                                                       )}
                                                     </td>
                           ),
@@ -2515,14 +2671,23 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
                                                           <Check className="size-3" /> Qualified
                                                         </span>
+
+
+                            
                                                       ) : bid.technical_result === "DISQUALIFIED" ? (
                                                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
                                                           <XCircle className="size-3" /> Disqualified
                                                         </span>
+
+
+                            
                                                       ) : (
                                                         <span className="text-muted-foreground text-[11px]">
                                                           Pending
                                                         </span>
+
+
+                            
                                                       )}
                                                     </td>
                           ),
@@ -2604,20 +2769,29 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                                               : "bg-muted hover:bg-muted/80 text-muted-foreground border border-border"
                                                           }`}
                                                         >
-                                                          {bid.po_received_status === "PO Received"
+                                                          <span>{bid.po_received_status === "PO Received"
                                                             ? "Yes"
                                                             : "No"}
+</span>
+
+
                                                         </button>
                                                       ) : bid.po_received_status === "PO Received" ? (
                                                         <span className="text-emerald-600 font-bold flex items-center gap-0.5">
                                                           <Check className="size-3.5" /> Yes
                                                         </span>
+
+
+                            
                                                       ) : (
                                                         <span className="text-muted-foreground">
                                                           {getPoRecvStatusVal(bid) === "N/A"
                                                             ? "N/A"
                                                             : "No"}
-                                                        </span>
+</span>
+
+
+                            
                                                       )}
                                                     </td>
                           ),
@@ -2714,6 +2888,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                                                 {bid.bid_owner?.full_name ||
                                                                   "Select Owner"}
                                                               </span>
+                                  
                                                               <ChevronDown className="size-3 text-muted-foreground ml-1" />
                                                             </button>
                                                           </DropdownMenuTrigger>
@@ -2863,6 +3038,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
 
                             {/* 25. Bin Actions */}
                             {inBin && (
+  
                               <td className="p-3 bg-rose-50/20">
                                 <div className="flex flex-col items-center justify-center gap-1">
                                   <div className="flex items-center justify-center gap-1.5">
@@ -2899,6 +3075,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                     >
                                       {bid.delete_reason || bid.outcome_reason}
                                     </span>
+        
                                   )}
                                 </div>
                               </td>
@@ -2995,6 +3172,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                   <span className="text-[9px] font-semibold text-indigo-700 dark:text-indigo-300 bg-white dark:bg-indigo-900/60 px-2 py-0.5 rounded-full border border-indigo-200 dark:border-indigo-800">
                                     {dayLabel}
                                   </span>
+      
                                 </div>
                               )}
                               <div className="px-3.5 py-2.5 text-[11px] space-y-1.5 hover:bg-indigo-100/50 dark:hover:bg-indigo-900/20 transition-colors">
@@ -3005,6 +3183,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                   >
                                     {entry.bid_title}
                                   </span>
+      
                                   <span className="text-muted-foreground text-[10px] shrink-0 ml-1">
                                     {dateStr.toLocaleTimeString("en-IN", {
                                       hour: "2-digit",
@@ -3013,7 +3192,13 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                     })}
                                   </span>
                                 </div>
+                                {/*
+                                      hour12: true,
+                                    })}
+      
+                                </div>
 
+                                */}
                                 <div className="text-[11px] font-medium text-foreground bg-background/90 border border-indigo-100 dark:border-indigo-900/50 rounded-lg p-2 leading-snug shadow-2xs">
                                   {entry.transition_reason || (
                                     <span className="text-indigo-600 dark:text-indigo-400 font-semibold">
@@ -3023,6 +3208,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                         : ""}
                                       {entry.to_stage}
                                     </span>
+        
                                   )}
                                 </div>
 
@@ -3031,9 +3217,11 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                                   <span className="font-semibold text-foreground">
                                     {userName}
                                   </span>
+      
                                   <span className="text-[9px] uppercase font-mono bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 rounded px-1.5 py-0.2 font-semibold">
                                     {userRole}
                                   </span>
+      
                                 </div>
                               </div>
                             </div>
@@ -3050,6 +3238,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                               <Loader2 className="size-3 animate-spin" />{" "}
                               Loading more…
                             </span>
+
                           )}
                         </div>
                       )}

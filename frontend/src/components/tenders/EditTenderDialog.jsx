@@ -51,6 +51,7 @@ import {
   getBid,
   approvePendingEdit,
   rejectPendingEdit,
+  SUPPORT_TYPES,
 } from "../../services/bids";
 import { listUsers } from "../../services/users";
 import { usePermissions } from "../../hooks/usePermissions";
@@ -174,6 +175,8 @@ const FIELD_DIFF_LABELS = {
   duration_months: "Duration (months)",
   start_date: "Start Date",
   end_date: "End Date",
+  support_type: "Bid Support Type",
+  support_partner_name: "Supporting Partner Organization",
 };
 function fieldDiffLabel(field) {
   return FIELD_DIFF_LABELS[field] || field.replace(/_/g, " ");
@@ -241,6 +244,8 @@ export function EditTenderDialog({
     bid_type: "BID",
     category: "",
     scope_type: "Supply",
+    support_type: "GLOBX",
+    support_partner_name: "",
     quantity: "",
     estimated_value: "",
     emd_amount: "",
@@ -382,6 +387,8 @@ export function EditTenderDialog({
             bid_type: b.bid_type || "BID",
             category: b.category || "",
             scope_type: b.scope_type || "Supply",
+            support_type: b.support_type || "GLOBX",
+            support_partner_name: b.support_partner_name || "",
             quantity:
               b.quantity !== undefined && b.quantity !== null
                 ? String(b.quantity)
@@ -466,6 +473,8 @@ export function EditTenderDialog({
         bid_type: bid.bid_type || "BID",
         category: bid.category || "",
         scope_type: bid.scope_type || "Supply",
+        support_type: bid.support_type || "GLOBX",
+        support_partner_name: bid.support_partner_name || "",
         quantity:
           bid.quantity !== undefined && bid.quantity !== null
             ? String(bid.quantity)
@@ -626,6 +635,8 @@ export function EditTenderDialog({
   function validate() {
     const e = {};
     if (!form.title.trim()) e.title = "Tender title is required";
+    if ((form.support_type === "IN_SUPPORT" || form.support_type === "OUT_SUPPORT") && !form.support_partner_name?.trim())
+      e.support_partner_name = "Supporting partner organization name is required";
     if (!form.bid_owner_id) e.bid_owner_id = "Bid owner is required";
     if (form.tender_link.trim() && !isHttpUrl(form.tender_link.trim()))
       e.tender_link = TENDER_LINK_ERROR;
@@ -689,6 +700,8 @@ export function EditTenderDialog({
       const payload = {
         ...form,
         tender_link: form.tender_link.trim(),
+        support_type: form.support_type || "GLOBX",
+        support_partner_name: (form.support_type === "IN_SUPPORT" || form.support_type === "OUT_SUPPORT") && form.support_partner_name?.trim() ? form.support_partner_name.trim() : null,
         quantity: form.quantity ? Number(form.quantity) : null,
         estimated_value: form.estimated_value
           ? Number(form.estimated_value)
@@ -993,6 +1006,50 @@ export function EditTenderDialog({
                               className={inputCls()}
                             />
                           </Field>
+                          <Field label="Bid Support" hint="Own bid vs partner support bid">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="w-full h-8 text-xs font-normal justify-between bg-background border-input text-foreground hover:bg-muted/50 gap-1.5"
+                                >
+                                  <span>
+                                    {SUPPORT_TYPES.find((s) => s.value === form.support_type)?.label || "GLOBX (Own Bid)"}
+                                  </span>
+                                  <ChevronDown className="size-3 text-muted-foreground ml-auto" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent className="w-[260px]">
+                                <DropdownMenuLabel>Bid Support Type</DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                {SUPPORT_TYPES.map((st) => (
+                                  <DropdownMenuItem
+                                    key={st.value}
+                                    onSelect={() => set("support_type", st.value)}
+                                    className="flex flex-col items-start gap-0.5 cursor-pointer"
+                                  >
+                                    <div className="font-medium text-xs">{st.label}</div>
+                                    <div className="text-[10px] text-muted-foreground">{st.description}</div>
+                                  </DropdownMenuItem>
+                                ))}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </Field>
+                          {(form.support_type === "IN_SUPPORT" || form.support_type === "OUT_SUPPORT") && (
+                            <Field
+                              label={form.support_type === "IN_SUPPORT" ? "Taking Support From (Partner Org) *" : "Providing Support To (Partner Org) *"}
+                              error={errors.support_partner_name}
+                            >
+                              <FieldMemoryInput
+                                fieldKey="support_partner_name"
+                                value={form.support_partner_name}
+                                onChange={(v) => set("support_partner_name", v)}
+                                placeholder="Enter supporting partner organization name"
+                                className={inputCls(errors.support_partner_name)}
+                              />
+                            </Field>
+                          )}
                           <Field label="Scope Type">
                             <FieldMemoryInput
                               fieldKey="scope_type"
