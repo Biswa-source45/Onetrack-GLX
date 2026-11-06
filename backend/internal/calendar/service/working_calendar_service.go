@@ -484,6 +484,9 @@ func (s *workingCalendarService) evaluate(ctx context.Context) (*domain.Evaluati
 	if budget := maxNotificationsPerTick - (sum.Notified + sum.Escalated); budget > 0 && ctx.Err() == nil {
 		sum.Notified += s.remindShortfalls(ctx, now, budget)
 	}
+	if budget := maxNotificationsPerTick - (sum.Notified + sum.Escalated); budget > 0 && ctx.Err() == nil {
+		sum.Notified += s.remindTechEvalDates(ctx, now, budget)
+	}
 
 	// The first pass ends baseline mode even when a tender errored: staying in it
 	// would silently swallow every later alert. A tender that failed to baseline
@@ -722,12 +725,20 @@ func (s *workingCalendarService) notifyTender(
 // repeated pass never sends twice and a failed alert releases its claim for a retry.
 // In baseline mode it claims and never sends.
 func (s *workingCalendarService) notifyStakeholders(ctx context.Context, tenderID string, claim domain.TaskNotification, alert alertDomain.Alert, force, baseline bool) (notifyOutcome, error) {
+	return s.notifyStakeholdersWhere(ctx, tenderID, claim, alert, force, baseline, nil)
+}
+
+// notifyStakeholdersWhere is notifyStakeholders limited to the stakeholders keep accepts (nil = all).
+func (s *workingCalendarService) notifyStakeholdersWhere(ctx context.Context, tenderID string, claim domain.TaskNotification, alert alertDomain.Alert, force, baseline bool, keep func(domain.TenderStakeholder) bool) (notifyOutcome, error) {
 	var out notifyOutcome
 	stakeholders, err := s.repo.GetTenderStakeholders(ctx, tenderID)
 	if err != nil {
 		return out, fmt.Errorf("stakeholders: %w", err)
 	}
 	for _, sh := range stakeholders {
+		if keep != nil && !keep(sh) {
+			continue
+		}
 		role := sh.Roles
 		n := claim
 		n.TenderID, n.RecipientUserID, n.RecipientRole = tenderID, sh.UserID, &role

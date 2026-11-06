@@ -68,6 +68,11 @@ func RegisterBidRoutes(router *gin.RouterGroup, handler *BidHandler, importHandl
 		bids.DELETE("/:id/documents/:docId", authMiddleware.RequirePermission("bid.edit"), handler.DeleteDocument)
 		bids.GET("/:id/documents/:docId/file", authMiddleware.RequirePermission("bid.view"), handler.GetDocumentFile)
 
+		// Technical Evaluation: opened explicitly after Bid Submission; then its dates and notes.
+		bids.POST("/:id/tech-eval/open", authMiddleware.RequirePermission("bid.edit"), handler.OpenTechEval)
+		bids.PUT("/:id/tech-eval/dates", authMiddleware.RequirePermission("bid.edit"), handler.SetTechEvalDate)
+		bids.POST("/:id/tech-eval/notes", authMiddleware.RequirePermission("bid.edit"), handler.AddTechEvalNote)
+
 		// Technical Evaluation document shortfall: the documents the team adds for a round.
 		bids.POST("/:id/shortfall/upload", authMiddleware.RequirePermission("bid.edit"), handler.UploadShortfallDoc)
 		bids.GET("/:id/shortfall/file/:filename", authMiddleware.RequirePermission("bid.view"), handler.GetShortfallFile)

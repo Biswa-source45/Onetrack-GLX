@@ -38,6 +38,7 @@ type mockCalendarRepo struct {
 	failedClaims []string
 
 	shortfalls      []domain.ShortfallCandidate
+	techEvalDates   []domain.TechEvalDateCandidate
 	coverage        *domain.DeadlineCoverage
 	escalations     map[string]string // tender|checklist -> claim id
 	releasedEscs    []string
@@ -215,6 +216,9 @@ func (m *mockCalendarRepo) TryLockEvaluation(ctx context.Context) (func(), bool,
 }
 func (m *mockCalendarRepo) ListOpenShortfalls(ctx context.Context) ([]domain.ShortfallCandidate, error) {
 	return m.shortfalls, nil
+}
+func (m *mockCalendarRepo) ListTechEvalDates(ctx context.Context) ([]domain.TechEvalDateCandidate, error) {
+	return m.techEvalDates, nil
 }
 func (m *mockCalendarRepo) GetTenderStakeholders(ctx context.Context, tenderID string) ([]domain.TenderStakeholder, error) {
 	return m.stakeholders, nil
@@ -1250,4 +1254,41 @@ func TestShortfallFailedAlertIsRetriedAndEmptyListIsHarmless(t *testing.T) {
 	repo.shortfalls = nil
 	_, err = svc.EvaluateActiveTenders(context.Background(), domain.RunTriggerManual)
 	require.NoError(t, err)
+}
+
+// ── Technical Evaluation date reminders ──────────────────────────────────────
+
+func TestTechEvalDayBeforeReminderGoesToAMRMPreSalesOnce(t *testing.T) {
+	repo := newMockCalendarRepo()
+	repo.baselined = true
+	repo.techEvalDates = []domain.TechEvalDateCandidate{
+		{TenderID: "t1", Title: "Supply <b>of</b> software", Field: "clarification", Date: "2026-10-15"}, // tomorrow in IST
+		{TenderID: "t1", Title: "Supply of software", Field: "negotiation", Date: "2026-10-16"},          // not yet
+		{TenderID: "t1", Title: "Supply of software", Field: "evaluation", Date: "2026-10-14"},          // today
+		{TenderID: "t1", Title: "Supply of software", Field: "bogus", Date: "2026-10-15"},
+	}
+	alerts := &mockAlertSvc{}
+	svc := newSvc(repo, alerts, testNow)
+	ctx := context.Background()
+
+	sum, err := svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Equal(t, 3, sum.Notified, "reporting manager, account manager and pre-sales only")
+	got := shortfallAlerts(alerts)
+	require.Len(t, got, 3)
+	assert.Contains(t, got[0].Title, "Tomorrow: Technical Clarification")
+	assert.Equal(t, "/dashboard/tenders/t1?tab=stages&stage=TECHNICAL_EVALUATION", got[0].Link)
+	assert.NotContains(t, got[0].Message, "<b>", "tender title must be HTML-escaped")
+
+	sum, err = svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Zero(t, sum.Notified, "the same date never reminds twice")
+
+	// Extending the date to what is now tomorrow reminds again.
+	repo.techEvalDates = []domain.TechEvalDateCandidate{{TenderID: "t1", Title: "T", Field: "clarification", Date: "2026-10-15"}}
+	svc = newSvc(repo, alerts, testNow.AddDate(0, 0, 3)) // 17 Oct; make the new date 18 Oct
+	repo.techEvalDates[0].Date = "2026-10-18"
+	sum, err = svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Equal(t, 3, sum.Notified)
 }

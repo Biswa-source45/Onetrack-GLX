@@ -786,6 +786,35 @@ func (r *postgresCalendarRepo) ListOpenShortfalls(ctx context.Context) ([]domain
 	return out, rows.Err()
 }
 
+// ListTechEvalDates reads bid.bid_workspaces.tech_eval.dates for opened, live tenders whose date
+// is within a day of today (compared as ISO text, so one malformed value can never fail the pass).
+func (r *postgresCalendarRepo) ListTechEvalDates(ctx context.Context) ([]domain.TechEvalDateCandidate, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT b.id::text, b.title, b.calendar_id::text, d.key, d.value
+		FROM bid.bid_workspaces b,
+		     jsonb_each_text(CASE WHEN jsonb_typeof(b.tech_eval->'dates') = 'object' THEN b.tech_eval->'dates' ELSE '{}'::jsonb END) d
+		WHERE b.archived_at IS NULL
+		  AND COALESCE(b.tech_eval->>'openedAt', '') <> ''
+		  AND b.bid_status NOT IN ('WON', 'LOST', 'CANCELLED', 'CLOSED', 'ARCHIVED')
+		  AND COALESCE(b.technical_result, '') NOT IN ('QUALIFIED', 'DISQUALIFIED')
+		  AND d.value BETWEEN to_char(CURRENT_DATE - 1, 'YYYY-MM-DD') AND to_char(CURRENT_DATE + 2, 'YYYY-MM-DD')
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.TechEvalDateCandidate
+	for rows.Next() {
+		var c domain.TechEvalDateCandidate
+		if err := rows.Scan(&c.TenderID, &c.Title, &c.CalendarID, &c.Field, &c.Date); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 func (r *postgresCalendarRepo) GetTenderStakeholders(ctx context.Context, tenderID string) ([]domain.TenderStakeholder, error) {
 	rows, err := r.db.Query(ctx, `
 		WITH raw_stakeholders AS (

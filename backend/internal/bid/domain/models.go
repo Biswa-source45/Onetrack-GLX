@@ -238,6 +238,7 @@ type BidWorkspace struct {
 	PrimaryReview     []byte  `json:"-"` // raw JSONB — Stage 2 Primary Review workspace
 	PostBid           []byte  `json:"-"` // raw JSONB — Stage 8 post-bid contacts (Finance hand-off)
 	DocShortfall      []byte  `json:"-"` // raw JSONB — Technical Evaluation document shortfall rounds
+	TechEval          []byte  `json:"-"` // raw JSONB — Technical Evaluation opening, dates, notes (see tech_eval.go)
 	AlertNote         []byte  `json:"-"` // raw JSONB — {text,label,color} additional info/challenge note
 
 	// Stage tracking
@@ -803,6 +804,7 @@ type BidResponse struct {
 	PostBid                   interface{}        `json:"post_bid"`
 	Contacts                  []TenderContact    `json:"contacts"` // GetBid only; the list endpoint leaves it null
 	DocShortfall              interface{}        `json:"doc_shortfall"`
+	TechEval                  interface{}        `json:"tech_eval"`
 	AlertNote                 interface{}        `json:"alert_note,omitempty"`
 	Members                   []MemberResponse   `json:"members"`
 	Checklists                []BidChecklistItem `json:"checklists"`

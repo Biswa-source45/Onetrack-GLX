@@ -162,7 +162,7 @@ func (r *postgresBidRepo) GetByID(ctx context.Context, id string) (*domain.BidWo
 		       emd_ready_date, delivery_complete, delivery_complete_date,
 		       emd_not_applicable,
 		       account_manager_id, presales_id, location, bg_duration_months,
-		       requested_products, primary_review, alert_note, tender_link, post_bid, doc_shortfall,
+		       requested_products, primary_review, alert_note, tender_link, post_bid, doc_shortfall, tech_eval,
 		       ` + derivedStatusExpr + ` AS derived_status,
 		       calendar_id, calculated_72h_deadline, deadline_remaining_working_hours, deadline_last_computed_at,
 		       b.support_type, b.support_partner_name
@@ -451,7 +451,7 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		       b.emd_ready_date, b.delivery_complete, b.delivery_complete_date,
 		       b.emd_not_applicable,
 		       b.account_manager_id, b.presales_id, b.location, b.bg_duration_months,
-		       b.requested_products, b.primary_review, b.alert_note, b.tender_link, b.post_bid, b.doc_shortfall,
+		       b.requested_products, b.primary_review, b.alert_note, b.tender_link, b.post_bid, b.doc_shortfall, b.tech_eval,
 		       ` + derivedStatusExpr + ` AS derived_status,
 		       b.calendar_id, b.calculated_72h_deadline, b.deadline_remaining_working_hours, b.deadline_last_computed_at,
 		       b.support_type, b.support_partner_name
@@ -908,6 +908,17 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 	tag, err := r.pool.Exec(ctx, query, args...)
 	if err == nil && docRevIdx > 0 && tag.RowsAffected() == 0 {
 		return fmt.Errorf("%w: the document shortfall was changed by someone else", domain.ErrConflict)
+	}
+	return err
+}
+
+func (r *postgresBidRepo) UpdateTechEval(ctx context.Context, id string, doc []byte, expectedRev int) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE bid.bid_workspaces SET tech_eval = $1, updated_at = NOW()
+		 WHERE id = $2 AND archived_at IS NULL AND COALESCE((tech_eval->>'rev')::int, 0) = $3`,
+		doc, id, expectedRev)
+	if err == nil && tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: Technical Evaluation was changed by someone else", domain.ErrConflict)
 	}
 	return err
 }
@@ -1476,7 +1487,7 @@ func scanBidFields(s scannable) (*domain.BidWorkspace, error) {
 		&b.EMDReadyDate, &b.DeliveryComplete, &b.DeliveryCompleteDate,
 		&b.EMDNotApplicable,
 		&b.AccountManagerID, &b.PresalesID, &b.Location, &b.BGDurationMonths,
-		&b.RequestedProducts, &b.PrimaryReview, &b.AlertNote, &b.TenderLink, &b.PostBid, &b.DocShortfall,
+		&b.RequestedProducts, &b.PrimaryReview, &b.AlertNote, &b.TenderLink, &b.PostBid, &b.DocShortfall, &b.TechEval,
 		&b.DerivedStatus,
 		&b.CalendarID, &b.Calculated72hDeadline, &b.DeadlineRemainingWorkingHours, &b.DeadlineLastComputedAt,
 		&b.SupportType, &b.SupportPartnerName,

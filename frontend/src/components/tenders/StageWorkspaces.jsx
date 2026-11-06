@@ -5,7 +5,7 @@ import {
   AlertCircle, CheckCircle2, Send, Upload, Hourglass, Trophy,
   XCircle, Plus, Trash2, ArrowRight, DollarSign, Building2,
   Lock, Sparkles, UserCheck, Bell, Calculator, ExternalLink, RefreshCw, Edit2, Loader2, AlertTriangle,
-  Calendar, Clock, History, MessageSquare, Eye, ChevronRight, Ban, Users, UserPlus
+  Calendar, Clock, History, MessageSquare, Eye, ChevronRight, Ban, Users, UserPlus, Unlock
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -32,6 +32,7 @@ import { OemContactCell, ContactsSummary } from './ContactsTab'
 import { addContact } from '../../services/contacts'
 import { oemRowIds, parseContactText } from '../../lib/contacts'
 import { RaiseShortfallDialog, ShortfallPanel, ShortfallHistory } from './DocShortfall'
+import { TechEvalPanel, OpenTechEvalDialog } from './TechEvalPanel'
 import { addRound, awaitingReeval, lastRound, openRound, patchRound, shortfallRounds } from '../../lib/docShortfall'
 import { buybackLines, buybackTotal, buybackSummary, buybackDraft, newBuybackLine, validateBuybackDraft } from '../../lib/buyback'
 import { ChecklistTab } from './ChecklistTab'
@@ -136,7 +137,8 @@ function buildTenderDetailHtml(bid) {
 // IMPORTANT: This modal ONLY marks stageKey as complete in stage_completions.
 // It does NOT call transitionBidStage — that would move the workflow_stage pointer
 // and cause a cascade overwrite on other stages. Each stage is completed atomically.
-function CompleteStageModal({ title, description, stageKey, bidId, bid, onComplete, onClose, children, hideDefaultRemarks, remarksValue }) {
+// extraPatch is saved in the same PATCH as the completion, so a result and the completion can never be half saved.
+function CompleteStageModal({ title, description, stageKey, bidId, bid, onComplete, onClose, children, hideDefaultRemarks, remarksValue, extraPatch }) {
   const [remarks, setRemarks] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -179,10 +181,11 @@ function CompleteStageModal({ title, description, stageKey, bidId, bid, onComple
           stage_remarks: currentRemarks,
           stage_reviews: currentReviews,
           workflow_stage: nextStage,
+          ...extraPatch,
         }
         const res = await updateBid(bidId, patchData)
         if (!res.ok) {
-          toast.error(res.error?.message || 'Failed to save stage completion')
+          toast.error(res.status === 409 ? 'Someone else just changed this tender. Close this and reload, then try again.' : (res.error?.message || 'Failed to save stage completion'))
           return
         }
       }
@@ -282,13 +285,14 @@ const STAGES_GATED_BY_PRIMARY_REVIEW = [
   'EMD_PROCESSING',
 ]
 
-export function logStageInteraction(bidId, stageKey, actionReason, userOverride) {
+export function logStageInteraction(bidId, stageKey, actionReason, userOverride, details = null) {
   if (!bidId) return
   logStageMicroEvent(bidId, {
     fromStage: stageKey,
     toStage: stageKey,
     eventType: 'STAGE_CHANGE',
-    transitionReason: actionReason
+    transitionReason: actionReason,
+    details,
   })
 }
 
@@ -337,7 +341,9 @@ export function checkStageState(bid, stageKey) {
   //    tenders already in flight. Internal Approval is the sign-off on the
   //    finished bid pack, so it can't be opened — or shown as "pending" — before
   //    Checklist Prep (and EMD, if any) are done.
-  let isLocked = false
+  // Technical Evaluation also stays closed until someone opens it from Bid Submission (tech_eval.openedAt;
+  // tenders that were already past Bid Submission when this shipped were marked opened by the migration).
+  let isLocked = stageKey === 'TECHNICAL_EVALUATION' && !isTerminal && !bid?.tech_eval?.openedAt
   const primaryReviewDone = completions['PRIMARY_REVIEW'] === true || currentIdx > 1 || (!bid?.account_manager && !bid?.account_manager_id && currentIdx !== 1)
   if (!isTerminal && STAGES_GATED_BY_PRIMARY_REVIEW.includes(stageKey) && !primaryReviewDone) {
     isLocked = true
@@ -4814,7 +4820,9 @@ export function Stage9Workspace({ bid, onRefresh }) {
   const [showSubmit, setShowSubmit] = useState(false)
   const [priceInput, setPriceInput] = useState('')
   const priceNum = Number(priceInput.replace(/,/g, ''))
-  const priceOk = priceInput.trim() !== '' && Number.isFinite(priceNum) && priceNum > 0
+  const priceOk = priceInput.trim() !== '' && Number.isFinite(priceNum) && priceNum > 0 && priceNum <= 1e12
+  const savingRef = useRef(false) // Enter and a click can arrive before `busy` re-renders
+  const [showOpenTE, setShowOpenTE] = useState(false)
   const openSubmit = () => {
     // Pricing Request's final value as a plain number (e.g. 230000, not 2.3 L); the bid person may round it before submitting.
     const start = finalPriceNum ?? bid?.quoted_price
@@ -4823,7 +4831,9 @@ export function Stage9Workspace({ bid, onRefresh }) {
   }
   const markSubmitted = () => {
     stageGuard.guardAction(async () => {
-      if (!priceOk) { toast.error('Enter the final submitted price'); return }
+      if (!priceOk) { toast.error('Enter a final submitted price above 0 and up to ₹1,00,00,00,00,000'); return }
+      if (savingRef.current) return
+      savingRef.current = true
       setBusy(true)
       try {
         const now = new Date().toISOString()
@@ -4833,7 +4843,7 @@ export function Stage9Workspace({ bid, onRefresh }) {
         logStageInteraction(bid.id, 'GEM_SUBMISSION', `Bid submitted on GeM at ${fmtMoneyFull(priceNum)} (confirmed by ${actorName})`, null, { quoted_price: priceNum })
         setShowSubmit(false)
         onRefresh()
-      } finally { setBusy(false) }
+      } finally { savingRef.current = false; setBusy(false) }
     })
   }
 
@@ -4867,7 +4877,7 @@ export function Stage9Workspace({ bid, onRefresh }) {
         confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } })
       }
     } catch { /* non-fatal animation */ }
-    onRefresh()
+    await onRefresh()
 
     return {
       customReason: submittedPrice
@@ -4939,6 +4949,29 @@ export function Stage9Workspace({ bid, onRefresh }) {
           <ContactsSummary contacts={bid.contacts} />
         </div>
       )}
+
+      {submitted && (
+        <div className="p-4 rounded-xl border border-border bg-card space-y-3">
+          <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Technical Evaluation</h4>
+          {bid.tech_eval?.openedAt ? (
+            <p className="text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5 flex-wrap">
+              <CheckCircle2 className="size-3.5" /> Opened{bid.tech_eval.openedBy ? ` by ${bid.tech_eval.openedBy}` : ''} · {fmtDateTime(bid.tech_eval.openedAt)}
+              <Link to={{ search: '?tab=stages&stage=TECHNICAL_EVALUATION' }} className="text-primary hover:underline ml-1">Go to Technical Evaluation</Link>
+            </p>
+          ) : (
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-xs text-muted-foreground max-w-xl">
+                Technical Evaluation stays closed until it is opened here with its date and a remark.
+              </p>
+              <Button size="sm" disabled={!stageCompleted} onClick={() => setShowOpenTE(true)} title={stageCompleted ? undefined : 'Complete this stage first'} className="gap-1.5 text-xs bg-teal-600 hover:bg-teal-700 text-white">
+                <Unlock className="size-3.5" /> Open Technical Evaluation
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showOpenTE && <OpenTechEvalDialog bid={bid} onClose={() => setShowOpenTE(false)} onDone={() => { setShowOpenTE(false); onRefresh() }} />}
 
       <Dialog open={showSubmit} onOpenChange={(open) => !busy && setShowSubmit(open)}>
         <DialogContent className="sm:max-w-md">
@@ -5021,6 +5054,8 @@ export function Stage10Workspace({ bid, onRefresh }) {
   const busyRef = useRef(false)
   const revRef = useRef(0)
   revRef.current = ds?.rev || 0
+  const teRevRef = useRef(0)
+  teRevRef.current = bid?.tech_eval?.rev || 0
 
   // Everyone on the tender works on the same shortfall, so keep this view current: check
   // for a newer revision when the tab regains focus and every 20 seconds, and reload only
@@ -5031,7 +5066,8 @@ export function Stage10Workspace({ bid, onRefresh }) {
       if (document.hidden || busyRef.current) return
       try {
         const res = await getBid(bid.id)
-        if (res.ok && (res.data?.doc_shortfall?.rev || 0) !== revRef.current && !busyRef.current) onRefresh()
+        const changed = (res.data?.doc_shortfall?.rev || 0) !== revRef.current || (res.data?.tech_eval?.rev || 0) !== teRevRef.current
+        if (res.ok && changed && !busyRef.current) onRefresh()
       } catch { /* try again on the next tick */ }
     }
     const timer = setInterval(check, 20000)
@@ -5099,29 +5135,21 @@ export function Stage10Workspace({ bid, onRefresh }) {
     return ok
   }
 
-  const handleResult = async (remarks) => {
-    // The re-evaluation answers the last shortfall round, if there was one.
-    const closeRound = last && !last.outcome ? { doc_shortfall: JSON.stringify({ ...patchRound(ds, last.n, { outcome: status }), rev: (ds?.rev || 0) + 1, updatedAt: new Date().toISOString() }) } : {}
-    let res
-    if (status === 'QUALIFIED') {
-      confetti({ particleCount: 100, spread: 60 })
-      // Stage 9 completion is handled atomically by CompleteStageModal
-      res = await updateBid(bid.id, { technical_result: 'QUALIFIED', ...closeRound })
-    } else {
-      // Setting technical_result to DISQUALIFIED triggers the backend's
-      // auto-disqualification rule: it forces bid_status/bid_outcome to LOST,
-      // writes stage history, and sets workflow_stage to the terminal LOST
-      // state directly — so Financial Evaluation and Award & Handover are
-      // correctly locked out instead of being left reachable.
-      res = await updateBid(bid.id, {
-        technical_result: 'DISQUALIFIED',
-        disqualification_reason: disqualifyReason,
-        ...closeRound,
-      })
-    }
-    if (!res.ok) toast.error(res.status === 409 ? 'Someone else just changed this document shortfall. It has been reloaded, please record the result again.' : (res.error?.message || 'The result could not be saved'))
-    onRefresh()
+  // The result is saved in the same PATCH as the stage completion (CompleteStageModal extraPatch), so a
+  // completed stage can never be left without its result. The re-evaluation answers the last shortfall round.
+  // Setting technical_result to DISQUALIFIED triggers the backend's auto-disqualification rule (bid_status
+  // LOST, workflow_stage set to the terminal LOST state); workflow_stage is therefore left out of that PATCH
+  // so the modal's "advance to Financial Evaluation" cannot overwrite it.
+  const closeRound = last && !last.outcome ? { doc_shortfall: JSON.stringify({ ...patchRound(ds, last.n, { outcome: status }), rev: (ds?.rev || 0) + 1, updatedAt: new Date().toISOString() }) } : {}
+  const resultPatch = status === 'QUALIFIED'
+    ? { technical_result: 'QUALIFIED', ...closeRound }
+    : { technical_result: 'DISQUALIFIED', disqualification_reason: disqualifyReason.trim(), workflow_stage: undefined, ...closeRound }
+  const closeResultModal = () => { setShowModal(false); setStatus('QUALIFIED'); setDisqualifyReason('') }
+  const handleResult = async () => {
+    if (status === 'QUALIFIED') confetti({ particleCount: 100, spread: 60 })
+    await onRefresh()
   }
+  const techEnded = bid?.stage_completions?.TECHNICAL_EVALUATION === true || ['WON', 'LOST', 'CANCELLED', 'CLOSED', 'ARCHIVED'].includes(bid?.bid_status)
 
   return (
     <div className="space-y-6">
@@ -5148,6 +5176,8 @@ export function Stage10Workspace({ bid, onRefresh }) {
           />
         </div>
       </div>
+
+      <TechEvalPanel bid={bid} readOnly={techEnded} onRefresh={onRefresh} />
 
       {!supported && (
         <p role="alert" className="text-xs text-amber-900 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-900 rounded-xl p-3">
@@ -5178,8 +5208,9 @@ export function Stage10Workspace({ bid, onRefresh }) {
           stageKey="TECHNICAL_EVALUATION"
           bidId={bid.id}
           bid={bid}
-          onClose={() => setShowModal(false)}
+          onClose={closeResultModal}
           onComplete={handleResult}
+          extraPatch={resultPatch}
           hideDefaultRemarks={status === 'DISQUALIFIED'}
           remarksValue={status === 'DISQUALIFIED' ? disqualifyReason : undefined}
         >
@@ -5200,6 +5231,7 @@ export function Stage10Workspace({ bid, onRefresh }) {
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">Disqualification Reason *</Label>
               <Textarea value={disqualifyReason} onChange={e => setDisqualifyReason(e.target.value)} placeholder="Specify reason..." required />
+              <p role="alert" className="text-[11px] text-destructive">Confirming marks this tender as Lost — it will not go to Financial Evaluation.</p>
             </div>
           )}
         </CompleteStageModal>
@@ -6013,6 +6045,7 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
     ...(currentUser?.role ? [currentUser.role] : [])
   ].map(r => String(r).toUpperCase()))
 
+  const [showOpenTE, setShowOpenTE] = useState(false)
   const stage = selectedStage || bid.workflow_stage
   const { isLocked, stageIdx } = checkStageState(bid, stage)
 
@@ -6073,6 +6106,7 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
   if (isLocked) {
     const priorStageKey = WORKFLOW_STAGES_ORDERED[stageIdx - 1]
     const gatedByPrimaryReview = STAGES_GATED_BY_PRIMARY_REVIEW.includes(stage)
+    const awaitingOpen = stage === 'TECHNICAL_EVALUATION' && bid?.stage_completions?.GEM_SUBMISSION === true
     return (
       <div className="p-8 rounded-xl border border-amber-200 bg-amber-50/50 dark:bg-amber-950/20 dark:border-amber-900/50 text-center space-y-4 max-w-2xl mx-auto my-6">
         <div className="size-14 rounded-full bg-amber-100 dark:bg-amber-900/50 flex items-center justify-center mx-auto text-amber-600 dark:text-amber-400 border border-amber-300 dark:border-amber-800 shadow-sm">
@@ -6081,16 +6115,26 @@ export function DynamicStageWorkspace({ bid, selectedStage, onRefresh }) {
         <div className="space-y-1">
           <h3 className="text-base font-bold text-foreground">Stage {stageIdx + 1} ({stage.replace(/_/g, ' ')}) is Locked</h3>
           <p className="text-xs text-muted-foreground leading-relaxed max-w-md mx-auto">
-            {gatedByPrimaryReview
+            {awaitingOpen
+              ? 'Technical Evaluation has not been opened yet. Choose its date and add a remark to open it.'
+              : gatedByPrimaryReview
               ? 'This section opens once the Account Manager completes Primary Review (Go decision).'
               : `Strict enterprise stage-gating is active. All preceding stage sections (Stages 1 through ${stageIdx}) must be completed before Stage ${stageIdx + 1} can be accessed.`}
           </p>
         </div>
         <div className="pt-2">
           <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
-            <Lock className="size-3.5" /> Pending Completion of {gatedByPrimaryReview ? 'Primary Review' : `Stage ${stageIdx} (${priorStageKey?.replace(/_/g, ' ')})`}
+            <Lock className="size-3.5" /> {awaitingOpen ? 'Awaiting Open Technical Evaluation' : `Pending Completion of ${gatedByPrimaryReview ? 'Primary Review' : `Stage ${stageIdx} (${priorStageKey?.replace(/_/g, ' ')})`}`}
           </span>
         </div>
+        {awaitingOpen && (
+          <>
+            <Button size="sm" onClick={() => setShowOpenTE(true)} className="gap-1.5 text-xs bg-teal-600 hover:bg-teal-700 text-white">
+              <Unlock className="size-3.5" /> Open Technical Evaluation
+            </Button>
+            {showOpenTE && <OpenTechEvalDialog bid={bid} onClose={() => setShowOpenTE(false)} onDone={() => { setShowOpenTE(false); onRefresh() }} />}
+          </>
+        )}
       </div>
     )
   }

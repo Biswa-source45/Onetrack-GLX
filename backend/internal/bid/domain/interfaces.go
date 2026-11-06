@@ -14,6 +14,9 @@ type BidRepository interface {
 	List(ctx context.Context, params ListBidsParams) ([]BidWorkspace, int, map[string]int, error)
 	Update(ctx context.Context, id string, req *UpdateBidRequest) error
 	UpdateStage(ctx context.Context, id string, stage string, status string) error
+	// UpdateTechEval stores the tech_eval document only if the stored rev still equals
+	// expectedRev (else ErrConflict); doc carries rev expectedRev+1.
+	UpdateTechEval(ctx context.Context, id string, doc []byte, expectedRev int) error
 	UpdateOutcome(ctx context.Context, id string, req *RecordOutcomeRequest) error
 	SoftDelete(ctx context.Context, id string, reason string) error
 	Restore(ctx context.Context, id string) error
@@ -156,6 +159,11 @@ type BidService interface {
 
 	// Tender contacts. Adding or editing refuses a second contact with the same email or phone number
 	// (ErrConflict); a ban needs a reason; ReorderContacts saves a drag-and-drop result.
+	// Technical Evaluation: open it after Bid Submission, track its dates and notes. Errors are
+	// ErrValidation / ErrForbidden / ErrConflict; author and time are set here, never trusted.
+	OpenTechEval(ctx context.Context, bidID string, req *OpenTechEvalRequest, actorID string) (*TechEval, error)
+	SetTechEvalDate(ctx context.Context, bidID string, req *SetTechEvalDateRequest, actorID string) (*TechEval, error)
+	AddTechEvalNote(ctx context.Context, bidID string, req *AddTechEvalNoteRequest, actorID string) (*TechEval, error)
 	ListContacts(ctx context.Context, bidID string) ([]TenderContact, error)
 	AddContact(ctx context.Context, bidID string, req *SaveContactRequest, actorID string) (*TenderContact, error)
 	UpdateContact(ctx context.Context, bidID, contactID string, req *UpdateContactRequest, actorID string) (*TenderContact, error)

@@ -67,6 +67,9 @@ type WorkingCalendarRepository interface {
 	// ListOpenShortfalls returns every document-shortfall round still waiting on the
 	// team (not yet sent to the customer) on a tender in Technical Evaluation.
 	ListOpenShortfalls(ctx context.Context) ([]ShortfallCandidate, error)
+	// ListTechEvalDates returns the Technical Evaluation dates (opened, live tenders) falling
+	// within about a day of today; the service picks the ones due tomorrow in the calendar's zone.
+	ListTechEvalDates(ctx context.Context) ([]TechEvalDateCandidate, error)
 	// GetTenderCandidate applies the same eligibility rules without the time window; nil when ineligible.
 	GetTenderCandidate(ctx context.Context, tenderID string) (*TenderDeadlineCandidate, error)
 }
@@ -99,6 +102,16 @@ type ShortfallCandidate struct {
 	Status     string
 	DocsTotal  int
 	DocsAdded  int
+}
+
+// TechEvalDateCandidate is one Technical Evaluation / Clarification / Negotiation / Reverse
+// Auction date (Date is YYYY-MM-DD) the day-before reminder checks.
+type TechEvalDateCandidate struct {
+	TenderID   string
+	Title      string
+	CalendarID *string
+	Field      string
+	Date       string
 }
 
 type WorkingCalendarService interface {

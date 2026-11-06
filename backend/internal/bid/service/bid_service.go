@@ -927,6 +927,9 @@ func shortfallRounds(raw []byte) []shortfallRound {
 // (anything but SUBMITTED). Marking the bid disqualified is always allowed, and an
 // admin may do any of it.
 func checkDocShortfall(bid *domain.BidWorkspace, req *domain.UpdateBidRequest, actorID string, actorRoles []string) error {
+	if req.DocShortfall != nil && (len(*req.DocShortfall) > 1<<20 || !json.Valid([]byte(*req.DocShortfall))) {
+		return fmt.Errorf("%w: the document shortfall is not valid or is too large", domain.ErrValidation)
+	}
 	// The whole shortfall is saved at once, so a save must be based on the latest revision
 	// (it also holds for admins). The repository enforces the same atomically.
 	if req.DocShortfall != nil && shortfallRev([]byte(*req.DocShortfall)) != shortfallRev(bid.DocShortfall)+1 {
@@ -1008,6 +1011,9 @@ func (s *bidService) applyUpdate(ctx context.Context, id string, req *domain.Upd
 	}
 
 	if err := checkDocShortfall(bid, req, actorID, actorRoles); err != nil {
+		return err
+	}
+	if err := checkTechEvalOpened(bid, req); err != nil {
 		return err
 	}
 
@@ -2519,6 +2525,11 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, repor
 		_ = json.Unmarshal(bid.DocShortfall, &docShortfall)
 	}
 
+	var techEval interface{}
+	if len(bid.TechEval) > 0 {
+		_ = json.Unmarshal(bid.TechEval, &techEval)
+	}
+
 	var alertNote interface{}
 	if len(bid.AlertNote) > 0 {
 		_ = json.Unmarshal(bid.AlertNote, &alertNote)
@@ -2579,6 +2590,7 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, repor
 		PrimaryReview:             primaryReview,
 		PostBid:                   postBid,
 		DocShortfall:              docShortfall,
+		TechEval:                  techEval,
 		AlertNote:                 alertNote,
 		Members:                   members,
 		Checklists:                checklists,

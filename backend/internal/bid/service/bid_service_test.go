@@ -50,6 +50,8 @@ type fakeBidRepo struct {
 	checklists  []domain.BidChecklist
 	lastToggled string // status ToggleChecklist was asked to set
 	contacts    []domain.TenderContact
+
+	techEvalConflicts int // UpdateTechEval fails with ErrConflict this many times first
 }
 
 type memberCall struct {
@@ -75,6 +77,14 @@ func (f *fakeBidRepo) Update(ctx context.Context, id string, req *domain.UpdateB
 }
 func (f *fakeBidRepo) UpdateStage(ctx context.Context, id string, stage string, status string) error {
 	f.lastStage, f.lastStatus = stage, status
+	return nil
+}
+func (f *fakeBidRepo) UpdateTechEval(ctx context.Context, id string, doc []byte, expectedRev int) error {
+	if f.techEvalConflicts > 0 {
+		f.techEvalConflicts--
+		return fmt.Errorf("%w: test", domain.ErrConflict)
+	}
+	f.bid.TechEval = doc
 	return nil
 }
 func (f *fakeBidRepo) UpdateOutcome(ctx context.Context, id string, req *domain.RecordOutcomeRequest) error {
@@ -1661,7 +1671,8 @@ func TestUpdateBid_DocShortfallRules(t *testing.T) {
 	rm, am := "rm-1", "am-1"
 	try := func(roles []string, actor, stored string, req *domain.UpdateBidRequest) error {
 		bid := &domain.BidWorkspace{ID: "bid-1", Title: "T", WorkflowStage: domain.StageTechnicalEvaluation, CreationMode: domain.CreationModeManual,
-			BidOwnerID: "owner-1", ReportingManagerID: &rm, AccountManagerID: &am, StageCompletions: []byte(`{}`)}
+			BidOwnerID: "owner-1", ReportingManagerID: &rm, AccountManagerID: &am, StageCompletions: []byte(`{}`),
+			TechEval: []byte(`{"openedAt":"2026-01-01T00:00:00Z"}`)}
 		if stored != "" {
 			bid.DocShortfall = []byte(stored)
 		}

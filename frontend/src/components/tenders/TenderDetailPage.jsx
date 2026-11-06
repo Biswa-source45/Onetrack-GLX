@@ -1194,30 +1194,9 @@ function StageSectionsTab({ bid, onRefresh, onAdvance, searchParams, setSearchPa
   // Action states for selected stage
   const [checkedActions, setCheckedActions] = useState({})
   const [stageNotes, setStageNotes] = useState('')
-  const [updatingStage, setUpdatingStage] = useState(false)
 
   const isSelectedCompleted = selectedIdx < currentIdx || (isTerminal && selectedIdx <= currentIdx)
   const isSelectedCurrent = selectedIdx === currentIdx && !isTerminal
-
-  async function handleSetCurrentStage(targetStage) {
-    setUpdatingStage(true)
-    try {
-      const res = await transitionBidStage(bid.id, {
-        target_stage: targetStage,
-        remarks: `Navigated directly to stage: ${STAGE_LABELS[targetStage] || targetStage}`,
-      })
-      if (res.ok) {
-        toast.success(`Workflow stage updated to ${STAGE_LABELS[targetStage] || targetStage}`)
-        if (onRefresh) onRefresh()
-      } else {
-        toast.error(res.error?.message ?? 'Failed to update workflow stage')
-      }
-    } catch {
-      toast.error('Network error')
-    } finally {
-      setUpdatingStage(false)
-    }
-  }
 
   const toggleAction = (idx) => {
     setCheckedActions(prev => ({
