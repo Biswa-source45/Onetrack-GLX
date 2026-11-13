@@ -14,6 +14,8 @@ import {
   Shuffle,
   Check,
   CheckCircle2,
+  History,
+  Clock,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -60,6 +62,7 @@ import { actsAs } from "../../lib/roles";
 import { RejectReasonDialog } from "./RejectReasonDialog";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import { StageModificationWarningDialog } from "./StageModificationWarningDialog";
+import { EndDateHistoryModal } from "./EndDateHistoryModal";
 import {
   BID_TYPES,
   SCOPE_TYPES,
@@ -284,6 +287,7 @@ export function EditTenderDialog({
   const [rejecting, setRejecting] = useState(false);
   const [showUnsavedPrompt, setShowUnsavedPrompt] = useState(false);
   const [showStageWarning, setShowStageWarning] = useState(false);
+  const [showEndDateHistory, setShowEndDateHistory] = useState(false);
   const initialSnapshotRef = useRef(null);
 
   const isDirty = initialSnapshotRef.current !== null && JSON.stringify(form) !== initialSnapshotRef.current;
@@ -800,6 +804,7 @@ export function EditTenderDialog({
           triggerRedZoneNotification(bid.id, false).catch(() => {});
         }
         onUpdated(res.data);
+        window.dispatchEvent(new Event("onetrack_history_updated"));
         onClose();
       } else {
         toast.error(res.error?.message ?? "Failed to update tender");
@@ -1522,6 +1527,22 @@ export function EditTenderDialog({
                               }
                               className={inputCls()}
                             />
+                            {((bid?.closing_date_change_count > 0) || (Array.isArray(bid?.closing_date_history) && bid.closing_date_history.length > 0)) && (
+                              <div className="flex items-center justify-between mt-1.5 text-[11px] px-0.5">
+                                <span className="text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
+                                  <Clock className="size-3" />
+                                  Changed {bid.closing_date_change_count || bid.closing_date_history.length} time{((bid.closing_date_change_count || bid.closing_date_history.length) > 1 ? 's' : '')}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowEndDateHistory(true)}
+                                  className="text-primary hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+                                >
+                                  <History className="size-3" />
+                                  View History
+                                </button>
+                              </div>
+                            )}
                           </Field>
                         </div>
                       </section>
@@ -2023,6 +2044,16 @@ export function EditTenderDialog({
               executeSave();
             }}
             onCancel={() => setShowStageWarning(false)}
+          />
+
+          <EndDateHistoryModal
+            open={showEndDateHistory}
+            onClose={() => setShowEndDateHistory(false)}
+            tenderTitle={bid?.title}
+            tenderNumber={bid?.gem_bid_no || bid?.bid_no}
+            currentEndDate={bid?.closing_date || bid?.end_date}
+            history={bid?.closing_date_history}
+            changeCount={bid?.closing_date_change_count}
           />
         </div>
       )}

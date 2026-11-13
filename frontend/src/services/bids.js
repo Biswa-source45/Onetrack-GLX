@@ -293,6 +293,8 @@ export const STAGE_LABELS = {
   LOST:                           'Lost',
   CANCELLED:                      'Cancelled',
   SUBMITTED:                      'Submitted',
+  DATE_CHANGED:                   'End Date Revision',
+  END_DATE_CHANGED:               'End Date Revision',
 }
 
 /** Stage color map for badges */
@@ -312,6 +314,8 @@ export const STAGE_COLORS = {
   LOST:                           'bg-orange-50 text-orange-700 border-orange-200',
   CANCELLED:                      'bg-slate-100 text-slate-600 border-slate-200',
   SUBMITTED:                      'bg-lime-50 text-lime-700 border-lime-200',
+  DATE_CHANGED:                   'bg-amber-50 text-amber-700 border-amber-200',
+  END_DATE_CHANGED:               'bg-amber-50 text-amber-700 border-amber-200',
 }
 
 /**

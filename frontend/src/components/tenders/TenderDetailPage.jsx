@@ -47,6 +47,7 @@ import { ShortfallHistoryCard } from './DocShortfall'
 import { ContactsTab } from './ContactsTab'
 import { DocsTab } from './DocsTab'
 import { triggerRedZoneNotification, getTenderWorkingDeadline } from '../../services/calendar'
+import { EndDateHistoryModal } from './EndDateHistoryModal'
 
 // Module scope (not runtime-dependent) so the URL-backed tab state below can
 // validate against it before the component has even loaded a bid.
@@ -107,8 +108,8 @@ function getBidEndDate(bid) {
 
 function fmtMoney(v) {
   if (!v && v !== 0) return '—'
-  if (v >= 10000000) return `₹${(v/10000000).toFixed(1)}Cr`
-  if (v >= 100000) return `₹${(v/100000).toFixed(1)}L`
+  if (v >= 10000000) return `₹${(v / 10000000).toFixed(1)}Cr`
+  if (v >= 100000) return `₹${(v / 100000).toFixed(1)}L`
   return `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
 }
 
@@ -125,7 +126,7 @@ function InfoRows({ rows }) {
 // "Compliance & Critical Dates". EMD shows what the Account Manager confirmed in
 // Primary Review (the emd_* columns it writes); until then it says so and shows
 // what the tender document offered instead of pretending the mode is ONLINE.
-function ComplianceCard({ bid }) {
+function ComplianceCard({ bid, onShowEndDateHistory }) {
   const emdDecided = !!(bid.emd_type || bid.emd_exempted || bid.emd_not_applicable)
   const emdMode = bid.emd_not_applicable ? 'NOT APPLICABLE' : bid.emd_exempted ? 'EXEMPTED' : bid.emd_type
   const offered = Array.isArray(bid.emd_exemption_types) ? bid.emd_exemption_types.filter(Boolean) : []
@@ -137,6 +138,7 @@ function ComplianceCard({ bid }) {
     ? [['Beneficiary', bid.emd_beneficiary], ['Payable At', bid.emd_payable_at]] : []
   const details = [...bank, ...dd].filter(([, v]) => v)
   const bgParts = [bid.bg_rate != null && `${bid.bg_rate}%`, bid.bg_duration_months && `${bid.bg_duration_months} months`].filter(Boolean)
+  const endChangeCount = bid?.closing_date_change_count || (Array.isArray(bid?.closing_date_history) ? bid.closing_date_history.length : 0)
 
   return (
     <div className="rounded-lg border border-border p-4 space-y-3 bg-card shadow-sm">
@@ -157,7 +159,23 @@ function ComplianceCard({ bid }) {
           ...(!emdDecided && offered.length ? [['Exemptions offered (per tender)', offered.join(', ')]] : []),
           ['Bank Guarantee', bid.bg_required ? ['Required', ...bgParts].join(' · ') : 'Not required'],
           ['Start Date', getBidStartDate(bid)],
-          ['End Date', getBidEndDate(bid)],
+          [
+            'End Date',
+            endChangeCount > 0 ? (
+              <div className="flex items-center justify-end gap-1.5">
+                <span>{getBidEndDate(bid)}</span>
+                <button
+                  type="button"
+                  onClick={() => onShowEndDateHistory?.()}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25 border border-amber-500/20 transition-colors cursor-pointer"
+                  title={`End date changed ${endChangeCount} times. Click to view history.`}
+                >
+                  <History className="size-2.5" />
+                  History. {endChangeCount}x
+                </button>
+              </div>
+            ) : getBidEndDate(bid)
+          ],
           ['Target Month', fmt(bid.target_month_date, 'Not Specified')],
         ]} />
         {details.length > 0 && (
@@ -238,6 +256,13 @@ function StageBadge({ stage }) {
       </span>
     )
   }
+  if (stage === 'DATE_CHANGED' || stage === 'END_DATE_CHANGED') {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/20 dark:text-amber-400 dark:border-amber-900/50">
+        End Date Revision
+      </span>
+    )
+  }
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border ${STAGE_COLORS[stage] ?? 'bg-gray-100 text-gray-600 border-gray-200'}`}>
       {STAGE_LABELS[stage] ?? stage}
@@ -253,15 +278,15 @@ function WorkflowStepper({ currentStage, stageCompletions = {} }) {
       <div className="flex items-center gap-0 min-w-max">
         {WORKFLOW_STAGES_ORDERED.map((stage, i) => {
           const isExplicitlyDone = stageCompletions[stage] === true
-          const done   = i < idx || isExplicitlyDone
+          const done = i < idx || isExplicitlyDone
           const active = i === idx && !isExplicitlyDone
           return (
             <React.Fragment key={stage}>
               <div className="flex flex-col items-center gap-1">
                 <div className={`size-6 rounded-full flex items-center justify-center text-xs font-semibold border-2 transition-all
-                  ${done   ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
-                  : active ? 'bg-primary/10 border-primary text-primary ring-2 ring-primary/20 font-bold'
-                           : 'bg-background border-border text-muted-foreground'}`}>
+                  ${done ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
+                    : active ? 'bg-primary/10 border-primary text-primary ring-2 ring-primary/20 font-bold'
+                      : 'bg-background border-border text-muted-foreground'}`}>
                   {done ? <CheckCircle2 className="size-3.5" /> : i + 1}
                 </div>
                 <span className={`text-[10px] font-medium max-w-[60px] text-center leading-tight
@@ -306,18 +331,18 @@ function TransitionDialog({ bid, onClose, onDone }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         className="absolute inset-0 bg-foreground/25 backdrop-blur-sm" onClick={onClose} />
       <motion.div
-        initial={{opacity:0,scale:0.95,y:10}} animate={{opacity:1,scale:1,y:0}}
-        exit={{opacity:0,scale:0.95,y:10}}
-        transition={{type:'spring',stiffness:400,damping:30}}
+        initial={{ opacity: 0, scale: 0.95, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+        transition={{ type: 'spring', stiffness: 400, damping: 30 }}
         className="relative z-10 w-full max-w-md bg-card border border-border rounded-xl shadow-xl p-6 space-y-4"
-        onClick={e=>e.stopPropagation()}
+        onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
           <h3 className="font-heading font-semibold text-foreground">Advance Stage</h3>
-          <button onClick={onClose} className="p-1 rounded-md hover:bg-muted text-muted-foreground"><X className="size-4"/></button>
+          <button onClick={onClose} className="p-1 rounded-md hover:bg-muted text-muted-foreground"><X className="size-4" /></button>
         </div>
         <p className="text-xs text-muted-foreground">Current: <StageBadge stage={bid.workflow_stage} /></p>
         <form onSubmit={submit} className="space-y-3">
@@ -351,7 +376,7 @@ function TransitionDialog({ bid, onClose, onDone }) {
             </Label>
             <Textarea
               value={reason}
-              onChange={e=>setReason(e.target.value)}
+              onChange={e => setReason(e.target.value)}
               placeholder={target === 'CANCELLED' ? 'Explain why this tender is being cancelled…' : 'Briefly describe why this stage is being advanced…'}
               className="text-sm min-h-[60px]"
               required={target === 'CANCELLED'}
@@ -360,7 +385,7 @@ function TransitionDialog({ bid, onClose, onDone }) {
           <div className="flex gap-2 pt-1">
             <Button type="button" variant="outline" size="sm" className="flex-1" onClick={onClose} disabled={loading}>Cancel</Button>
             <Button type="submit" size="sm" className="flex-1" disabled={loading || allowed.length === 0}>
-              {loading && <Loader2 className="size-3.5 animate-spin mr-1"/>}Move Stage
+              {loading && <Loader2 className="size-3.5 animate-spin mr-1" />}Move Stage
             </Button>
           </div>
         </form>
@@ -372,21 +397,23 @@ function TransitionDialog({ bid, onClose, onDone }) {
 // ── Stage History Tab ────────────────────────────────────────────────────────
 // ── Stage History Tab ────────────────────────────────────────────────────────
 const STAGE_ICONS = {
-  DISCOVERED:             Search,
-  QUALIFICATION_REVIEW:   ShieldCheck,
-  DOCUMENT_COMPILATION:   FileText,
-  OEM_COORDINATION:       Share2,
+  DISCOVERED: Search,
+  QUALIFICATION_REVIEW: ShieldCheck,
+  DOCUMENT_COMPILATION: FileText,
+  OEM_COORDINATION: Share2,
   COMMERCIAL_PREPARATION: Coins,
-  INTERNAL_REVIEW:        Eye,
-  FINAL_APPROVAL:         CheckCircle2,
-  READY_FOR_SUBMISSION:   Send,
-  SUBMITTED:              Upload,
-  RA_ACTIVE:              Activity,
-  AWAITING_RESULT:        Hourglass,
-  WON:                    Trophy,
-  LOST:                   XCircle,
-  CANCELLED:              Ban,
-  CHECKLIST_UPDATE:       CheckSquare,
+  INTERNAL_REVIEW: Eye,
+  FINAL_APPROVAL: CheckCircle2,
+  READY_FOR_SUBMISSION: Send,
+  SUBMITTED: Upload,
+  RA_ACTIVE: Activity,
+  AWAITING_RESULT: Hourglass,
+  WON: Trophy,
+  LOST: XCircle,
+  CANCELLED: Ban,
+  CHECKLIST_UPDATE: CheckSquare,
+  DATE_CHANGED: Calendar,
+  END_DATE_CHANGED: Calendar,
 }
 
 function getUserDisplayName(actor) {
@@ -450,6 +477,8 @@ function getEventTypeBadge(type) {
     case 'MEMBER_ADDED':
     case 'MEMBER_REMOVED':
       return { label: 'Team Change', class: 'bg-violet-100 text-violet-800 dark:bg-violet-950/60 dark:text-violet-300 border-violet-200' }
+    case 'END_DATE_CHANGED':
+      return { label: 'End Date / Extension', class: 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200' }
     case 'STAGE_CHANGE':
     default:
       return { label: 'Stage Transition', class: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200' }
@@ -459,7 +488,7 @@ function getEventTypeBadge(type) {
 function extractCommercialDetails(entry, bid) {
   if (!entry) return { hasCommercialData: false }
   const details = entry.details || {}
-  
+
   let quotedPrice = details.quoted_price || details.final_price || details.offered_price || details.finalPrice
   let l1Price = details.l1_price || details.l1Price
   let l1Company = details.l1_company_name || details.l1Name || details.l1Distributor
@@ -582,9 +611,8 @@ function StageDetailCard({ entry, isLatest, bid }) {
               <Coins className="size-3.5 text-emerald-600 dark:text-emerald-400" /> Commercial &amp; Final Submitted Value
             </span>
             {comm.outcome && (
-              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider border ${
-                comm.outcome === 'WON' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200' : 'bg-red-100 text-red-800 border-red-300 dark:bg-red-950 dark:text-red-200'
-              }`}>
+              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider border ${comm.outcome === 'WON' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200' : 'bg-red-100 text-red-800 border-red-300 dark:bg-red-950 dark:text-red-200'
+                }`}>
                 {comm.outcome === 'WON' ? '🏆 WON / L1' : '❌ LOST'}
               </span>
             )}
@@ -666,6 +694,42 @@ function StageDetailCard({ entry, isLatest, bid }) {
         </div>
       )}
 
+      {/* End Date Change Details */}
+      {(entry.event_type === 'END_DATE_CHANGED' || entry.to_stage === 'DATE_CHANGED') && entry.details && (
+        <div className="pt-3 border-t border-border/60 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400 flex items-center gap-1">
+              <Calendar className="size-3.5 text-amber-600 dark:text-amber-400" /> End Date Revision Details
+            </span>
+            {entry.details.change_count && (
+              <span className="text-[10px] font-extrabold px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200 border border-amber-300">
+                Change #{entry.details.change_count}
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-2.5 bg-amber-50/60 dark:bg-amber-950/20 p-3 rounded-lg border border-amber-200 dark:border-amber-900/50">
+            <div>
+              <span className="text-[10px] text-muted-foreground font-semibold block">Previous End Date</span>
+              <span className="font-mono text-xs text-muted-foreground line-through decoration-destructive/50">
+                {entry.details.old_date || 'N/A'}
+              </span>
+            </div>
+            <div>
+              <span className="text-[10px] text-muted-foreground font-semibold block">New Revised End Date</span>
+              <span className="font-mono font-bold text-xs text-amber-800 dark:text-amber-300">
+                {entry.details.new_date || 'N/A'}
+              </span>
+            </div>
+            {entry.details.reason && (
+              <div className="col-span-2 pt-1 border-t border-amber-200/50 dark:border-amber-800/40">
+                <span className="text-[10px] text-muted-foreground font-semibold block">Reason for Extension</span>
+                <span className="text-xs text-foreground italic">{entry.details.reason}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Reason / Micro-Log Summary */}
       <div className="pt-3 border-t border-border/60 space-y-1">
         <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider block">Micro Event / Transition Summary</span>
@@ -722,6 +786,8 @@ function StageHistoryTab({ bidId, bid }) {
     if (!derivedType) {
       if (item.to_stage === 'CHECKLIST_UPDATE' || item.transition_reason?.toLowerCase().includes('checklist')) {
         derivedType = 'CHECKLIST'
+      } else if (item.to_stage === 'DATE_CHANGED' || item.to_stage === 'END_DATE_CHANGED' || item.transition_reason?.toLowerCase().includes('end date') || item.transition_reason?.toLowerCase().includes('closing date')) {
+        derivedType = 'END_DATE_CHANGED'
       } else if (item.transition_reason?.toLowerCase().includes('pricing') || item.transition_reason?.toLowerCase().includes('quote')) {
         derivedType = 'PRICING'
       } else if (item.transition_reason?.toLowerCase().includes('oem')) {
@@ -747,7 +813,45 @@ function StageHistoryTab({ bidId, bid }) {
         const localHistoryKey = `onetrack_checklist_history_${bidId}`
         const localEvents = JSON.parse(localStorage.getItem(localHistoryKey) || '[]')
 
-        const combined = [...backendData, ...localEvents]
+        const closingHistoryEvents = (Array.isArray(bid?.closing_date_history) ? bid.closing_date_history : [])
+          .filter(c => {
+            const cTime = new Date(c.changed_at || 0).getTime()
+            return !backendData.some(b => {
+              if (b.event_type !== 'END_DATE_CHANGED' && b.to_stage !== 'DATE_CHANGED' && b.to_stage !== 'END_DATE_CHANGED') return false
+              const bTime = new Date(b.created_at || 0).getTime()
+              return Math.abs(bTime - cTime) < 5000
+            })
+          })
+          .map((c, idx) => {
+            const oldStr = c.old_date ? formatFullDateTime(c.old_date) : 'N/A'
+            const newStr = c.new_date ? formatFullDateTime(c.new_date) : 'N/A'
+            const reason = c.reason
+              ? `End date changed from ${oldStr} to ${newStr} (Change #${idx + 1}): ${c.reason}`
+              : `End date changed from ${oldStr} to ${newStr} by ${c.changed_by_name || 'User'} (Change #${idx + 1})`
+            return {
+              id: `closing-date-${c.changed_at || idx}`,
+              from_stage: bid?.workflow_stage,
+              to_stage: bid?.workflow_stage || 'DATE_CHANGED',
+              event_type: 'END_DATE_CHANGED',
+              transition_reason: reason,
+              transitioned_by: {
+                id: c.changed_by_id,
+                full_name: c.changed_by_name || 'User',
+                username: c.changed_by_name || 'user',
+                role: 'USER',
+              },
+              details: {
+                old_date: oldStr,
+                new_date: newStr,
+                change_count: idx + 1,
+                changed_by: c.changed_by_name,
+                reason: c.reason,
+              },
+              created_at: c.changed_at || new Date().toISOString()
+            }
+          })
+
+        const combined = [...backendData, ...localEvents, ...closingHistoryEvents]
           .map(deriveEventType)
           .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
 
@@ -764,7 +868,7 @@ function StageHistoryTab({ bidId, bid }) {
     loadFirstPage()
     window.addEventListener('onetrack_history_updated', loadFirstPage)
     return () => { cancelled = true; window.removeEventListener('onetrack_history_updated', loadFirstPage) }
-  }, [bidId])
+  }, [bidId, bid?.closing_date_change_count, bid?.closing_date_history])
 
   const loadMore = useCallback(() => {
     if (loadingMore || !hasMore) return
@@ -798,11 +902,14 @@ function StageHistoryTab({ bidId, bid }) {
     return () => observer.disconnect()
   }, [hasMore, loadMore])
 
-  if (loading) return <div className="flex justify-center py-12"><Loader2 className="size-6 animate-spin text-primary"/></div>
+  if (loading) return <div className="flex justify-center py-12"><Loader2 className="size-6 animate-spin text-primary" /></div>
 
   // Filter history
   const filteredHistory = history.filter(item => {
     if (filterType === 'DOCUMENTS') { if (!String(item.event_type).startsWith('DOCUMENT_')) return false }
+    else if (filterType === 'END_DATE_CHANGED') {
+      if (item.event_type !== 'END_DATE_CHANGED' && item.to_stage !== 'DATE_CHANGED' && item.to_stage !== 'END_DATE_CHANGED') return false
+    }
     else if (filterType !== 'ALL' && item.event_type !== filterType) return false
     if (selectedStageFilter && item.to_stage !== selectedStageFilter && item.from_stage !== selectedStageFilter) return false
     if (searchQuery.trim()) {
@@ -887,13 +994,12 @@ function StageHistoryTab({ bidId, bid }) {
               <button
                 key={stg}
                 onClick={() => setSelectedStageFilter(isFilterActive ? null : stg)}
-                className={`p-2 rounded-lg border text-left transition-all text-xs flex flex-col justify-between h-16 ${
-                  isFilterActive
-                    ? 'border-primary bg-primary/10 shadow-sm ring-2 ring-primary/20'
-                    : count > 0
+                className={`p-2 rounded-lg border text-left transition-all text-xs flex flex-col justify-between h-16 ${isFilterActive
+                  ? 'border-primary bg-primary/10 shadow-sm ring-2 ring-primary/20'
+                  : count > 0
                     ? 'border-border bg-muted/20 hover:border-primary/50'
                     : 'border-border/40 bg-muted/5 opacity-60 hover:opacity-100'
-                }`}
+                  }`}
               >
                 <div className="flex items-center justify-between w-full">
                   <span className="font-mono text-[9px] font-bold text-muted-foreground">S{i + 1}</span>
@@ -917,6 +1023,7 @@ function StageHistoryTab({ bidId, bid }) {
         {[
           { id: 'ALL', label: `All Events (${history.length})` },
           { id: 'STAGE_CHANGE', label: 'Stage Transitions' },
+          { id: 'END_DATE_CHANGED', label: 'End Date Changes' },
           { id: 'TENDER_EDITED', label: 'Tender Edits' },
           { id: 'OEM', label: 'OEM Matrix' },
           { id: 'PRICING', label: 'Pricing & Quotes' },
@@ -928,11 +1035,10 @@ function StageHistoryTab({ bidId, bid }) {
           <button
             key={cat.id}
             onClick={() => setFilterType(cat.id)}
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors border ${
-              filterType === cat.id
-                ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-                : 'bg-card border-border text-muted-foreground hover:text-foreground hover:bg-muted/30'
-            }`}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors border ${filterType === cat.id
+              ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+              : 'bg-card border-border text-muted-foreground hover:text-foreground hover:bg-muted/30'
+              }`}
           >
             {cat.label}
           </button>
@@ -979,16 +1085,16 @@ function StageHistoryTab({ bidId, bid }) {
                         ${isSelected
                           ? 'border-primary ring-4 ring-primary/10 scale-110'
                           : isLatest
-                          ? 'border-emerald-500 ring-2 ring-emerald-500/10'
-                          : 'border-border group-hover:border-muted-foreground'
+                            ? 'border-emerald-500 ring-2 ring-emerald-500/10'
+                            : 'border-border group-hover:border-muted-foreground'
                         }`}
                     >
                       <IconComponent className={`size-3 transition-colors
                         ${isSelected
                           ? 'text-primary'
                           : isLatest
-                          ? 'text-emerald-500'
-                          : 'text-muted-foreground group-hover:text-foreground'
+                            ? 'text-emerald-500'
+                            : 'text-muted-foreground group-hover:text-foreground'
                         }`}
                       />
                     </div>
@@ -1049,15 +1155,31 @@ function StageHistoryTab({ bidId, bid }) {
                               </span>
                             )}
                             {c.outcome && (
-                              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded border uppercase tracking-wider ${
-                                c.outcome === 'WON' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200' : 'bg-red-100 text-red-800 border-red-300 dark:bg-red-950 dark:text-red-200'
-                              }`}>
+                              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded border uppercase tracking-wider ${c.outcome === 'WON' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200' : 'bg-red-100 text-red-800 border-red-300 dark:bg-red-950 dark:text-red-200'
+                                }`}>
                                 {c.outcome === 'WON' ? 'WON / L1' : 'LOST'}
                               </span>
                             )}
                           </div>
                         )
                       })()}
+
+                      {/* End Date Revision Chip */}
+                      {(h.event_type === 'END_DATE_CHANGED' || h.to_stage === 'DATE_CHANGED' || h.to_stage === 'END_DATE_CHANGED') && h.details && (h.details.old_date || h.details.new_date) && (
+                        <div className="flex items-center gap-1.5 flex-wrap pt-1 text-xs">
+                          <span className="inline-flex items-center gap-1.5 text-[11px] font-mono px-2 py-1 rounded-md bg-amber-50 text-amber-900 dark:bg-amber-950/60 dark:text-amber-200 border border-amber-300/70 font-medium">
+                            <Calendar className="size-3 text-amber-600 dark:text-amber-400" />
+                            <span className="line-through text-muted-foreground">{h.details.old_date || 'N/A'}</span>
+                            <ArrowRight className="size-3 text-amber-600" />
+                            <span className="font-bold text-amber-800 dark:text-amber-300">{h.details.new_date}</span>
+                            {h.details.change_count && (
+                              <span className="ml-1 text-[9px] bg-amber-200 dark:bg-amber-800 text-amber-900 dark:text-amber-100 px-1.5 py-0.2 rounded font-bold">
+                                #{h.details.change_count}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      )}
 
                       <div className="flex items-center justify-between text-[10px] text-muted-foreground border-t border-border/40 pt-1.5">
                         <span className="font-semibold text-primary/90 flex items-center gap-1">
@@ -1115,8 +1237,8 @@ function MembersTab({ bid, onRefresh }) {
     <div className="space-y-4">
       <div className="space-y-2">
         {(bid.members ?? []).length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No members yet.</p>}
-        {(bid.members ?? []).map((m,i)=>(
-          <motion.div key={m.user_id} initial={{opacity:0,y:4}} animate={{opacity:1,y:0}} transition={{delay:i*0.04}}
+        {(bid.members ?? []).map((m, i) => (
+          <motion.div key={m.user_id} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
             className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors">
             <div className="flex items-center gap-3">
               <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary">
@@ -1131,9 +1253,9 @@ function MembersTab({ bid, onRefresh }) {
               ['OWNER', 'ACCOUNT_MANAGER'].includes(m.role) ? (
                 <span className="text-[10px] text-muted-foreground/70 italic px-1">Reassign via Edit Tender</span>
               ) : (
-                <button onClick={()=>handleRemove(m.user_id)}
+                <button onClick={() => handleRemove(m.user_id)}
                   className="p-1 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors">
-                  <X className="size-3.5"/>
+                  <X className="size-3.5" />
                 </button>
               )
             )}
@@ -1247,7 +1369,7 @@ function StageSectionsTab({ bid, onRefresh, onAdvance, searchParams, setSearchPa
             </button>
           </div>
         </div>
-        
+
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
           {WORKFLOW_STAGES_ORDERED.map((stageKey, idx) => {
             const { isCompleted, isCurrent: isCurrentWorkflow, isLocked, isInReview, isEmdExempt, emdSkipReason } = checkStageState(bid, stageKey)
@@ -1266,42 +1388,40 @@ function StageSectionsTab({ bid, onRefresh, onAdvance, searchParams, setSearchPa
                   }
                   setSelectedStage(stageKey)
                 }}
-                className={`flex flex-col items-start p-2.5 rounded-xl border text-left transition-all relative overflow-hidden group ${
-                  isEmdExempt
-                    ? 'border-border/40 bg-muted/10 opacity-50 cursor-not-allowed'
-                    : isSelected
+                className={`flex flex-col items-start p-2.5 rounded-xl border text-left transition-all relative overflow-hidden group ${isEmdExempt
+                  ? 'border-border/40 bg-muted/10 opacity-50 cursor-not-allowed'
+                  : isSelected
                     ? isInReview
                       ? 'border-orange-500 ring-2 ring-orange-500/60 bg-gradient-to-br from-amber-500/20 via-orange-500/25 to-rose-500/20 shadow-md'
                       : isCompleted
-                      ? 'border-emerald-500 ring-2 ring-emerald-500/40 bg-emerald-50/60 dark:bg-emerald-950/30 shadow-sm'
-                      : isCurrentWorkflow
-                      ? 'border-primary ring-2 ring-primary/40 bg-primary/10 shadow-sm'
-                      : 'border-primary ring-2 ring-primary/20 bg-primary/10 shadow-sm'
+                        ? 'border-emerald-500 ring-2 ring-emerald-500/40 bg-emerald-50/60 dark:bg-emerald-950/30 shadow-sm'
+                        : isCurrentWorkflow
+                          ? 'border-primary ring-2 ring-primary/40 bg-primary/10 shadow-sm'
+                          : 'border-primary ring-2 ring-primary/20 bg-primary/10 shadow-sm'
                     : isInReview
-                    ? 'border-orange-400/90 bg-gradient-to-br from-amber-500/10 via-orange-500/15 to-rose-500/10 dark:from-amber-950/40 dark:via-orange-950/40 dark:to-rose-950/40 dark:border-orange-700 shadow-xs hover:border-orange-500'
-                    : isCompleted
-                    ? 'border-emerald-200 bg-emerald-50/40 hover:bg-emerald-50 dark:bg-emerald-950/15 dark:border-emerald-900/40'
-                    : isCurrentWorkflow
-                    ? 'border-indigo-300 bg-indigo-50/40 hover:bg-indigo-50 dark:bg-indigo-950/20'
-                    : isLocked
-                    ? 'border-amber-200/70 bg-amber-50/20 opacity-80 hover:opacity-100 dark:bg-amber-950/10 dark:border-amber-900/40'
-                    : 'border-border/60 bg-card hover:bg-muted/40'
-                }`}
+                      ? 'border-orange-400/90 bg-gradient-to-br from-amber-500/10 via-orange-500/15 to-rose-500/10 dark:from-amber-950/40 dark:via-orange-950/40 dark:to-rose-950/40 dark:border-orange-700 shadow-xs hover:border-orange-500'
+                      : isCompleted
+                        ? 'border-emerald-200 bg-emerald-50/40 hover:bg-emerald-50 dark:bg-emerald-950/15 dark:border-emerald-900/40'
+                        : isCurrentWorkflow
+                          ? 'border-indigo-300 bg-indigo-50/40 hover:bg-indigo-50 dark:bg-indigo-950/20'
+                          : isLocked
+                            ? 'border-amber-200/70 bg-amber-50/20 opacity-80 hover:opacity-100 dark:bg-amber-950/10 dark:border-amber-900/40'
+                            : 'border-border/60 bg-card hover:bg-muted/40'
+                  }`}
               >
                 <div className="flex items-center justify-between w-full mb-1">
-                  <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${
-                    isEmdExempt
-                      ? 'bg-muted text-muted-foreground/70'
-                      : isInReview
+                  <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${isEmdExempt
+                    ? 'bg-muted text-muted-foreground/70'
+                    : isInReview
                       ? 'bg-gradient-to-r from-orange-500 to-rose-500 text-white shadow-xs'
                       : isLocked
-                      ? 'bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-200'
-                      : isCompleted
-                      ? 'bg-emerald-500 text-white'
-                      : isCurrentWorkflow
-                      ? 'bg-primary text-white'
-                      : 'bg-muted text-muted-foreground'
-                  }`}>
+                        ? 'bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-200'
+                        : isCompleted
+                          ? 'bg-emerald-500 text-white'
+                          : isCurrentWorkflow
+                            ? 'bg-primary text-white'
+                            : 'bg-muted text-muted-foreground'
+                    }`}>
                     #{idx + 1}
                   </span>
 
@@ -1318,31 +1438,29 @@ function StageSectionsTab({ bid, onRefresh, onAdvance, searchParams, setSearchPa
                   ) : null}
                 </div>
 
-                <span className={`text-xs font-bold line-clamp-1 ${
-                  isEmdExempt
-                    ? 'text-muted-foreground'
-                    : isInReview
+                <span className={`text-xs font-bold line-clamp-1 ${isEmdExempt
+                  ? 'text-muted-foreground'
+                  : isInReview
                     ? 'text-orange-950 dark:text-orange-200 font-extrabold'
                     : isSelected
-                    ? 'text-primary'
-                    : isCompleted
-                    ? 'text-emerald-950 dark:text-emerald-200'
-                    : 'text-foreground'
-                }`}>
+                      ? 'text-primary'
+                      : isCompleted
+                        ? 'text-emerald-950 dark:text-emerald-200'
+                        : 'text-foreground'
+                  }`}>
                   {guide?.title?.split('.')[1]?.trim() || STAGE_LABELS[stageKey] || stageKey}
                 </span>
 
-                <span className={`text-[9px] mt-0.5 truncate w-full ${
-                  isEmdExempt
-                    ? 'text-muted-foreground/70'
-                    : isInReview
+                <span className={`text-[9px] mt-0.5 truncate w-full ${isEmdExempt
+                  ? 'text-muted-foreground/70'
+                  : isInReview
                     ? 'text-orange-600 dark:text-orange-400 font-extrabold flex items-center gap-0.5'
                     : isCompleted
-                    ? 'text-emerald-600 dark:text-emerald-400 font-medium'
-                    : isCurrentWorkflow
-                    ? 'text-primary font-medium'
-                    : 'text-muted-foreground'
-                }`}>
+                      ? 'text-emerald-600 dark:text-emerald-400 font-medium'
+                      : isCurrentWorkflow
+                        ? 'text-primary font-medium'
+                        : 'text-muted-foreground'
+                  }`}>
                   {isEmdExempt ? (emdSkipReason === 'NOT_APPLICABLE' ? '🚫 No EMD' : '🚫 EMD Exempted') : isInReview ? '⚠️ Marked for Review' : isLocked ? '🔒 Locked' : isCompleted ? '✓ Completed' : isCurrentWorkflow ? '● Active Workflow' : 'Available Stage'}
                 </span>
               </button>
@@ -1684,13 +1802,12 @@ function StageActionPanel({ bid, onSelectStage }) {
                   key={stg.stageKey}
                   type="button"
                   onClick={() => onSelectStage && onSelectStage(stg.stageKey)}
-                  className={`group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-all shadow-2xs cursor-pointer active:scale-95 ${
-                    stg.isCurrent
-                      ? 'bg-primary/15 text-primary border border-primary/40 font-bold hover:bg-primary/20'
-                      : stg.isLocked
+                  className={`group inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-all shadow-2xs cursor-pointer active:scale-95 ${stg.isCurrent
+                    ? 'bg-primary/15 text-primary border border-primary/40 font-bold hover:bg-primary/20'
+                    : stg.isLocked
                       ? 'bg-muted/30 text-muted-foreground/60 border border-border/50 hover:bg-muted/50'
                       : 'bg-muted/60 text-muted-foreground border border-border hover:bg-muted hover:text-foreground'
-                  }`}
+                    }`}
                 >
                   {stg.isCurrent ? (
                     <span className="relative flex size-2 shrink-0">
@@ -1733,13 +1850,12 @@ function OutcomePanel({ bid }) {
     <div className="rounded-lg border border-border p-4 space-y-3 bg-muted/10">
       <div className="flex items-center justify-between">
         <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Recorded Outcome</p>
-        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold border ${
-          bid.bid_outcome === 'WON'
-            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-900/50'
-            : bid.bid_outcome === 'LOST'
+        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold border ${bid.bid_outcome === 'WON'
+          ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-900/50'
+          : bid.bid_outcome === 'LOST'
             ? 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/20 dark:text-red-400 dark:border-red-900/50'
             : 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-800'
-        }`}>
+          }`}>
           {bid.bid_outcome === 'WON' ? '🏆 Won' : bid.bid_outcome === 'LOST' ? '❌ Lost' : '🛑 Cancelled'}
         </span>
       </div>
@@ -1776,8 +1892,8 @@ function OutcomePanel({ bid }) {
                     {priceDiffPct > 0
                       ? '(GlobX quoted higher than L1)'
                       : priceDiffPct < 0
-                      ? '(GlobX quoted lower than L1)'
-                      : '(Same price as L1)'}
+                        ? '(GlobX quoted lower than L1)'
+                        : '(Same price as L1)'}
                   </span>
                 </span>
               </div>
@@ -2115,11 +2231,10 @@ function OutcomeDialog({ bid, options = ['WON', 'LOST', 'CANCELLED'], onClose, o
                     role="radio"
                     aria-checked={form.bid_outcome === o}
                     onClick={() => setForm(f => ({ ...f, bid_outcome: o }))}
-                    className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
-                      form.bid_outcome === o
-                        ? 'bg-card text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
+                    className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${form.bid_outcome === o
+                      ? 'bg-card text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                      }`}
                   >
                     {isExitDialog || o !== 'CANCELLED' ? OUTCOME_LABELS[o] : '🛑 Cancelled'}
                   </button>
@@ -2218,7 +2333,7 @@ function OutcomeDialog({ bid, options = ['WON', 'LOST', 'CANCELLED'], onClose, o
               {/* Competitor Info Section */}
               <div className="space-y-2 border-t border-border pt-3">
                 <Label className="text-xs font-semibold text-foreground">Competitor Information</Label>
-                
+
                 {form.competitor_info.length > 0 && (
                   <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
                     {form.competitor_info.map((comp, idx) => (
@@ -2310,13 +2425,13 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
   const onBack = propOnBack || (() => navigate('/dashboard/tenders'))
 
   const { hasPermission, hasRole, isAdmin, user } = usePermissions()
-  const [bid, setBid]               = useState(null)
+  const [bid, setBid] = useState(null)
   const [pendingEdit, setPendingEdit] = useState(null)
   const [reviewingEdit, setReviewingEdit] = useState(false)
   const [showPendingRejectDlg, setShowPendingRejectDlg] = useState(false)
   const [decidingPending, setDecidingPending] = useState(false)
-  const [loading, setLoading]       = useState(true)
-  const [error, setError]           = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   // Backed by the URL (?tab=&stage=) instead of local state, so refreshing
   // the page or hitting Back lands back on the same page-tab and stage
   // instead of always resetting to Overview / the tender's workflow stage.
@@ -2340,6 +2455,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
   const [showCancel, setShowCancel] = useState(false)
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false)
   const [notifyingRedZone, setNotifyingRedZone] = useState(false)
+  const [showEndDateHistory, setShowEndDateHistory] = useState(false)
 
   const loadBid = useCallback(async (showLoader = false) => {
     setLoading(prev => (prev || showLoader ? true : false))
@@ -2355,8 +2471,8 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
             setBid(prev => prev ? ({
               ...prev,
               calculated_72h_deadline: dlRes.data.calculated_deadline || prev.calculated_72h_deadline,
-              deadline_remaining_working_hours: dlRes.data.remaining_working_hours !== undefined 
-                ? dlRes.data.remaining_working_hours 
+              deadline_remaining_working_hours: dlRes.data.remaining_working_hours !== undefined
+                ? dlRes.data.remaining_working_hours
                 : prev.deadline_remaining_working_hours,
               deadline_remaining_working_days: dlRes.data.remaining_working_days,
               deadline_working_day_hours: dlRes.data.working_day_hours,
@@ -2401,12 +2517,12 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
 
   if (loading) return (
     <div className="flex items-center justify-center h-64 gap-3 text-muted-foreground">
-      <Loader2 className="size-5 animate-spin"/><span className="text-sm">Loading tender…</span>
+      <Loader2 className="size-5 animate-spin" /><span className="text-sm">Loading tender…</span>
     </div>
   )
   if (error) return (
     <div className="flex flex-col items-center justify-center h-64 gap-3 text-muted-foreground">
-      <AlertCircle className="size-8 text-destructive/60"/><p className="text-sm">{error}</p>
+      <AlertCircle className="size-8 text-destructive/60" /><p className="text-sm">{error}</p>
       <Button variant="outline" size="sm" onClick={onBack}>Go Back</Button>
     </div>
   )
@@ -2441,9 +2557,9 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
-            <ArrowLeft className="size-4"/>Tenders
+            <ArrowLeft className="size-4" />Tenders
           </button>
-          <ChevronRight className="size-3.5 text-muted-foreground"/>
+          <ChevronRight className="size-3.5 text-muted-foreground" />
           <span className="text-sm text-foreground font-medium truncate max-w-[300px]">{bid.title}</span>
         </div>
       </div>
@@ -2468,68 +2584,68 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
         }
         return (
           <>
-          <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 flex items-center justify-between gap-4 text-amber-900 shadow-sm dark:bg-amber-950/20 dark:border-amber-900/50 dark:text-amber-300">
-            <div className="flex items-start gap-3">
-              <Clock className="size-5 shrink-0 text-amber-600 dark:text-amber-500 mt-0.5" />
-              <div className="space-y-0.5">
-                <p className="font-semibold text-sm">
-                  {isApprover
-                    ? `A ${actionLabel} by ${requesterName} is awaiting your approval`
-                    : `Your ${actionLabel} is awaiting approval`}
-                </p>
-                <p className="text-xs text-amber-700 dark:text-amber-400">
-                  {actionType === 'EDIT'
-                    ? `${pendingEdit.diff?.length ?? 0} field${(pendingEdit.diff?.length ?? 0) === 1 ? '' : 's'} changed — nothing has been applied yet.`
-                    : 'Nothing has been applied yet.'}
-                </p>
-                {actionType === 'CANCEL' && (pendingEdit.payload?.outcome_reason || pendingEdit.payload?.reason) && (
-                  <p className="text-xs text-amber-800 dark:text-amber-300"><span className="font-semibold">Reason:</span> {pendingEdit.payload.outcome_reason || pendingEdit.payload.reason}</p>
-                )}
-                {actionType === 'DELETE' && (pendingEdit.payload?.reason || pendingEdit.payload?.delete_reason) && (
-                  <p className="text-xs text-amber-800 dark:text-amber-300"><span className="font-semibold">Reason for deletion:</span> {pendingEdit.payload.reason || pendingEdit.payload.delete_reason}</p>
-                )}
+            <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 flex items-center justify-between gap-4 text-amber-900 shadow-sm dark:bg-amber-950/20 dark:border-amber-900/50 dark:text-amber-300">
+              <div className="flex items-start gap-3">
+                <Clock className="size-5 shrink-0 text-amber-600 dark:text-amber-500 mt-0.5" />
+                <div className="space-y-0.5">
+                  <p className="font-semibold text-sm">
+                    {isApprover
+                      ? `A ${actionLabel} by ${requesterName} is awaiting your approval`
+                      : `Your ${actionLabel} is awaiting approval`}
+                  </p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    {actionType === 'EDIT'
+                      ? `${pendingEdit.diff?.length ?? 0} field${(pendingEdit.diff?.length ?? 0) === 1 ? '' : 's'} changed — nothing has been applied yet.`
+                      : 'Nothing has been applied yet.'}
+                  </p>
+                  {actionType === 'CANCEL' && (pendingEdit.payload?.outcome_reason || pendingEdit.payload?.reason) && (
+                    <p className="text-xs text-amber-800 dark:text-amber-300"><span className="font-semibold">Reason:</span> {pendingEdit.payload.outcome_reason || pendingEdit.payload.reason}</p>
+                  )}
+                  {actionType === 'DELETE' && (pendingEdit.payload?.reason || pendingEdit.payload?.delete_reason) && (
+                    <p className="text-xs text-amber-800 dark:text-amber-300"><span className="font-semibold">Reason for deletion:</span> {pendingEdit.payload.reason || pendingEdit.payload.delete_reason}</p>
+                  )}
+                </div>
               </div>
+              {isApprover && (actionType === 'EDIT' ? (
+                <Button
+                  size="sm"
+                  className="gap-1.5 shrink-0 bg-amber-600 hover:bg-amber-700 text-white"
+                  onClick={() => setReviewingEdit(true)}
+                >
+                  <Eye className="size-3.5" />
+                  Review
+                </Button>
+              ) : (
+                <div className="flex gap-2 shrink-0">
+                  <Button size="sm" variant="outline" className="border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-300" onClick={() => setShowPendingRejectDlg(true)}>
+                    Reject
+                  </Button>
+                  <Button size="sm" className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white" onClick={approveNow}>
+                    <Check className="size-3.5" />
+                    Approve
+                  </Button>
+                </div>
+              ))}
             </div>
-            {isApprover && (actionType === 'EDIT' ? (
-              <Button
-                size="sm"
-                className="gap-1.5 shrink-0 bg-amber-600 hover:bg-amber-700 text-white"
-                onClick={() => setReviewingEdit(true)}
-              >
-                <Eye className="size-3.5" />
-                Review
-              </Button>
-            ) : (
-              <div className="flex gap-2 shrink-0">
-                <Button size="sm" variant="outline" className="border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-300" onClick={() => setShowPendingRejectDlg(true)}>
-                  Reject
-                </Button>
-                <Button size="sm" className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white" onClick={approveNow}>
-                  <Check className="size-3.5" />
-                  Approve
-                </Button>
-              </div>
-            ))}
-          </div>
-          <RejectReasonDialog
-            open={showPendingRejectDlg}
-            title={`Reject this ${actionLabel}`}
-            description={`${requesterName} will be notified this ${actionLabel} was not approved, with your reason if you give one.`}
-            loading={decidingPending}
-            onCancel={() => setShowPendingRejectDlg(false)}
-            onConfirm={async (reason) => {
-              setDecidingPending(true)
-              const res = await rejectPendingEdit(pendingEdit.id, reason)
-              setDecidingPending(false)
-              if (res.ok) {
-                setShowPendingRejectDlg(false)
-                toast.success(`${actionLabel[0].toUpperCase()}${actionLabel.slice(1)} rejected`)
-                loadBid()
-              } else {
-                toast.error(res.error?.message ?? 'Failed to reject')
-              }
-            }}
-          />
+            <RejectReasonDialog
+              open={showPendingRejectDlg}
+              title={`Reject this ${actionLabel}`}
+              description={`${requesterName} will be notified this ${actionLabel} was not approved, with your reason if you give one.`}
+              loading={decidingPending}
+              onCancel={() => setShowPendingRejectDlg(false)}
+              onConfirm={async (reason) => {
+                setDecidingPending(true)
+                const res = await rejectPendingEdit(pendingEdit.id, reason)
+                setDecidingPending(false)
+                if (res.ok) {
+                  setShowPendingRejectDlg(false)
+                  toast.success(`${actionLabel[0].toUpperCase()}${actionLabel.slice(1)} rejected`)
+                  loadBid()
+                } else {
+                  toast.error(res.error?.message ?? 'Failed to reject')
+                }
+              }}
+            />
           </>
         )
       })()}
@@ -2738,10 +2854,10 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            <Button size="sm" variant="outline" className="gap-1.5" disabled={printing} onClick={()=>setPrinting(true)}>
-              {printing ? <Loader2 className="size-3.5 animate-spin"/> : <Printer className="size-3.5 text-primary"/>}Print / PDF
+            <Button size="sm" variant="outline" className="gap-1.5" disabled={printing} onClick={() => setPrinting(true)}>
+              {printing ? <Loader2 className="size-3.5 animate-spin" /> : <Printer className="size-3.5 text-primary" />}Print / PDF
             </Button>
-            {printing && <TenderPrintSheet bid={bid} onDone={()=>setPrinting(false)} />}
+            {printing && <TenderPrintSheet bid={bid} onDone={() => setPrinting(false)} />}
             {isBinned && (hasPermission('bid.edit') || hasPermission('bid.delete') || isAdmin || hasRole('MANAGER') || hasRole('BID_MANAGER')) && (
               <Button
                 size="sm"
@@ -2764,24 +2880,24 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
               </Button>
             )}
             {!isBinned && hasPermission('bid.edit') && !exited && !['ARCHIVED', 'WON', 'LOST'].includes(bid.bid_status) && (
-              <Button size="sm" variant="outline" className="gap-1.5 border-primary/20 hover:border-primary/50 text-foreground" onClick={()=>setShowEdit(true)}>
-                <Edit2 className="size-3.5 text-primary"/>Edit Tender
+              <Button size="sm" variant="outline" className="gap-1.5 border-primary/20 hover:border-primary/50 text-foreground" onClick={() => setShowEdit(true)}>
+                <Edit2 className="size-3.5 text-primary" />Edit Tender
               </Button>
             )}
 
             {!isBinned && hasPermission('bid.edit') && !exited && !['WON', 'LOST'].includes(bid.bid_status) && !['WON', 'LOST'].includes(bid.workflow_stage) && (
-              <Button size="sm" variant="outline" className="gap-1.5 border-red-200 hover:border-red-500 text-red-600 hover:bg-red-50/50 dark:border-red-900/50 dark:hover:bg-red-950/20" onClick={()=>setShowCancel(true)}>
-                <XCircle className="size-3.5"/>Cancel / Abort
+              <Button size="sm" variant="outline" className="gap-1.5 border-red-200 hover:border-red-500 text-red-600 hover:bg-red-50/50 dark:border-red-900/50 dark:hover:bg-red-950/20" onClick={() => setShowCancel(true)}>
+                <XCircle className="size-3.5" />Cancel / Abort
               </Button>
             )}
             {!isBinned && ['SUBMITTED', 'RA_ACTIVE', 'AWAITING_RESULT'].includes(bid.workflow_stage) && bid.bid_status === 'ACTIVE' && hasPermission('bid.edit') && (
-              <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={()=>setShowOutcome(true)}>
-                <Target className="size-3.5"/>Outcome
+              <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => setShowOutcome(true)}>
+                <Target className="size-3.5" />Outcome
               </Button>
             )}
             {!isBinned && hasPermission('bid.delete') && !['ARCHIVED', 'CANCELLED', 'WON', 'LOST'].includes(bid.bid_status) && (
-              <Button size="sm" variant="outline" className="border-destructive/20 hover:border-destructive text-destructive hover:bg-destructive/5 p-2 h-8" title="Move to Tender Bin" onClick={()=>setShowArchiveConfirm(true)}>
-                <Trash2 className="size-3.5"/>
+              <Button size="sm" variant="outline" className="border-destructive/20 hover:border-destructive text-destructive hover:bg-destructive/5 p-2 h-8" title="Move to Tender Bin" onClick={() => setShowArchiveConfirm(true)}>
+                <Trash2 className="size-3.5" />
               </Button>
             )}
           </div>
@@ -2795,17 +2911,49 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
         {/* Quick meta */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
           {[
-            { label:'Estimated Value', value: fmtMoney(bid.estimated_value), icon:DollarSign },
-            { label:'EMD Amount',      value: bid.emd_not_applicable ? 'Not Applicable' : bid.emd_exempted ? 'Exempted' : fmtMoney(bid.emd_amount), icon:Target },
-            { label:'Ending Date',      value: getBidEndDate(bid), icon:Calendar },
-            { label:'Owner',           value: bid.bid_owner?.full_name ?? 'Unassigned', icon:Users },
-          ].map(m=>(
-            <div key={m.label} className="rounded-lg bg-muted/40 p-3">
-              <div className="flex items-center gap-1.5 mb-1">
-                <m.icon className="size-3 text-muted-foreground"/>
-                <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">{m.label}</span>
+            { label: 'Estimated Value', value: fmtMoney(bid.estimated_value), icon: DollarSign },
+            { label: 'EMD Amount', value: bid.emd_not_applicable ? 'Not Applicable' : bid.emd_exempted ? 'Exempted' : fmtMoney(bid.emd_amount), icon: Target },
+            {
+              label: 'Ending Date',
+              value: getBidEndDate(bid),
+              icon: Calendar,
+              changeCount: bid.closing_date_change_count || (Array.isArray(bid.closing_date_history) ? bid.closing_date_history.length : 0),
+              onHistoryClick: () => setShowEndDateHistory(true),
+            },
+            { label: 'Owner', value: bid.bid_owner?.full_name ?? 'Unassigned', icon: Users },
+          ].map(m => (
+            <div key={m.label} className="rounded-lg bg-muted/40 p-3 flex flex-col justify-between">
+              <div className="flex items-center justify-between gap-1.5 mb-1">
+                <div className="flex items-center gap-1.5">
+                  <m.icon className="size-3 text-muted-foreground" />
+                  <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">{m.label}</span>
+                </div>
+                {m.changeCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={m.onHistoryClick}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25 border border-amber-500/30 transition-all cursor-pointer shadow-xs hover:scale-105 active:scale-95 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+                    title={`End date modified ${m.changeCount} time${m.changeCount > 1 ? 's' : ''}. Click to view complete change history.`}
+                  >
+                    <History className="size-2.5 text-amber-600 dark:text-amber-400" />
+                    <span>History. {m.changeCount}x</span>
+                  </button>
+                )}
               </div>
-              <p className="text-sm font-semibold text-foreground">{m.value}</p>
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="text-sm font-semibold text-foreground truncate" title={m.value}>{m.value}</p>
+                {/* Secondary history link commented out to keep single sleek indicator badge above
+                {m.changeCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={m.onHistoryClick}
+                    className="text-[10px] text-amber-600 dark:text-amber-400 hover:underline shrink-0 font-medium"
+                  >
+                    History
+                  </button>
+                )}
+                */}
+              </div>
             </div>
           ))}
         </div>
@@ -2845,17 +2993,15 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
           )
 
           return (
-            <div className={`relative overflow-hidden rounded-2xl border p-4 sm:p-5 shadow-xs transition-all ${
-              isClosed
-                ? 'border-border/80 bg-muted/20 text-muted-foreground'
-                : isRedZone
-                  ? 'border-rose-200/90 dark:border-rose-900/60 bg-gradient-to-br from-rose-50/90 via-white to-rose-50/40 dark:from-rose-950/30 dark:via-card dark:to-rose-950/15'
-                  : 'border-emerald-200/70 dark:border-emerald-900/50 bg-gradient-to-br from-emerald-50/60 via-white to-emerald-50/30 dark:from-emerald-950/20 dark:via-card dark:to-emerald-950/10'
-            }`}>
+            <div className={`relative overflow-hidden rounded-2xl border p-4 sm:p-5 shadow-xs transition-all ${isClosed
+              ? 'border-border/80 bg-muted/20 text-muted-foreground'
+              : isRedZone
+                ? 'border-rose-200/90 dark:border-rose-900/60 bg-gradient-to-br from-rose-50/90 via-white to-rose-50/40 dark:from-rose-950/30 dark:via-card dark:to-rose-950/15'
+                : 'border-emerald-200/70 dark:border-emerald-900/50 bg-gradient-to-br from-emerald-50/60 via-white to-emerald-50/30 dark:from-emerald-950/20 dark:via-card dark:to-emerald-950/10'
+              }`}>
               {/* Left Accent Status Strip */}
-              <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${
-                isClosed ? 'bg-muted-foreground/30' : isRedZone ? 'bg-rose-500' : 'bg-emerald-500'
-              }`} />
+              <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${isClosed ? 'bg-muted-foreground/30' : isRedZone ? 'bg-rose-500' : 'bg-emerald-500'
+                }`} />
 
               <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4 pl-1.5">
                 {/* Left Info & Status Badge */}
@@ -2863,22 +3009,20 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                   <div className="flex items-center gap-2.5 flex-wrap">
                     {/* Solid Sticky Indicator Dot (No blinking) */}
                     <span className="relative flex h-2.5 w-2.5 items-center justify-center shrink-0">
-                      <span className={`h-2.5 w-2.5 rounded-full ${
-                        isClosed 
-                          ? 'bg-zinc-400 dark:bg-zinc-600 ring-2 ring-zinc-300 dark:ring-zinc-700' 
-                          : isRedZone 
-                            ? 'bg-rose-600 ring-4 ring-rose-500/25 shadow-xs shadow-rose-500/40' 
-                            : 'bg-emerald-500 ring-4 ring-emerald-500/25'
-                      }`} />
+                      <span className={`h-2.5 w-2.5 rounded-full ${isClosed
+                        ? 'bg-zinc-400 dark:bg-zinc-600 ring-2 ring-zinc-300 dark:ring-zinc-700'
+                        : isRedZone
+                          ? 'bg-rose-600 ring-4 ring-rose-500/25 shadow-xs shadow-rose-500/40'
+                          : 'bg-emerald-500 ring-4 ring-emerald-500/25'
+                        }`} />
                     </span>
 
-                    <span className={`text-xs font-bold uppercase tracking-wider ${
-                      isClosed
-                        ? 'text-muted-foreground'
-                        : isRedZone
-                          ? 'text-rose-700 dark:text-rose-400 font-extrabold'
-                          : 'text-emerald-700 dark:text-emerald-400'
-                    }`}>
+                    <span className={`text-xs font-bold uppercase tracking-wider ${isClosed
+                      ? 'text-muted-foreground'
+                      : isRedZone
+                        ? 'text-rose-700 dark:text-rose-400 font-extrabold'
+                        : 'text-emerald-700 dark:text-emerald-400'
+                      }`}>
                       {isClosed
                         ? 'Tender Submission Deadline Passed'
                         : isRedZone
@@ -2886,13 +3030,12 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                           : 'Working Calendar Engine'}
                     </span>
 
-                    <Badge variant="outline" className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${
-                      isClosed
-                        ? 'border-border bg-muted/40 text-muted-foreground'
-                        : isRedZone
-                          ? 'border-rose-200 dark:border-rose-800/80 bg-rose-100/80 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300'
-                          : 'border-emerald-200 dark:border-emerald-800/80 bg-emerald-100/80 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300'
-                    }`}>
+                    <Badge variant="outline" className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${isClosed
+                      ? 'border-border bg-muted/40 text-muted-foreground'
+                      : isRedZone
+                        ? 'border-rose-200 dark:border-rose-800/80 bg-rose-100/80 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300'
+                        : 'border-emerald-200 dark:border-emerald-800/80 bg-emerald-100/80 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300'
+                      }`}>
                       {isClosed ? 'Tender Closed' : isRedZone ? `${thresholdLabel} Reached` : 'Within Normal Schedule'}
                     </Badge>
                   </div>
@@ -2927,20 +3070,18 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
 
                   {/* Remaining Working Days Capsule */}
                   {remHours !== null && (
-                    <div className={`flex items-center gap-3 rounded-xl border bg-white/95 dark:bg-card/90 px-3.5 py-2 shadow-2xs ${
-                      isClosed
-                        ? 'border-border/70'
-                        : isRedZone
-                          ? 'border-rose-200 dark:border-rose-900/60'
-                          : 'border-emerald-200/80 dark:border-emerald-900/60'
-                    }`}>
-                      <div className={`p-2 rounded-lg ${
-                        isClosed
-                          ? 'bg-muted text-muted-foreground'
-                          : isRedZone
-                            ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400'
-                            : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400'
+                    <div className={`flex items-center gap-3 rounded-xl border bg-white/95 dark:bg-card/90 px-3.5 py-2 shadow-2xs ${isClosed
+                      ? 'border-border/70'
+                      : isRedZone
+                        ? 'border-rose-200 dark:border-rose-900/60'
+                        : 'border-emerald-200/80 dark:border-emerald-900/60'
                       }`}>
+                      <div className={`p-2 rounded-lg ${isClosed
+                        ? 'bg-muted text-muted-foreground'
+                        : isRedZone
+                          ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400'
+                          : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400'
+                        }`}>
                         <Clock className="size-4 shrink-0" />
                       </div>
                       <div>
@@ -2948,13 +3089,12 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                           Working Days Left
                         </span>
                         <div className="flex items-baseline gap-1.5 whitespace-nowrap">
-                          <span className={`text-xs font-extrabold ${
-                            isClosed
-                              ? 'text-muted-foreground'
-                              : isRedZone
-                                ? 'text-rose-600 dark:text-rose-400'
-                                : 'text-emerald-600 dark:text-emerald-400'
-                          }`}>
+                          <span className={`text-xs font-extrabold ${isClosed
+                            ? 'text-muted-foreground'
+                            : isRedZone
+                              ? 'text-rose-600 dark:text-rose-400'
+                              : 'text-emerald-600 dark:text-emerald-400'
+                            }`}>
                             {isClosed
                               ? '0.0 days'
                               : remHours * 60 < 1.0
@@ -2979,11 +3119,10 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                       variant={isRedZone ? 'default' : 'outline'}
                       size="sm"
                       disabled={notifyingRedZone}
-                      className={`h-9 px-4 rounded-xl text-xs font-semibold shrink-0 gap-1.5 shadow-xs transition-all ${
-                        isRedZone
-                          ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-500/20'
-                          : 'hover:bg-primary/5 border-primary/30 text-primary'
-                      }`}
+                      className={`h-9 px-4 rounded-xl text-xs font-semibold shrink-0 gap-1.5 shadow-xs transition-all ${isRedZone
+                        ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-500/20'
+                        : 'hover:bg-primary/5 border-primary/30 text-primary'
+                        }`}
                       onClick={async () => {
                         setNotifyingRedZone(true)
                         try {
@@ -3023,33 +3162,32 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
 
       {/* Tabs */}
       <div className="border-b border-border">
-       {/* The row scrolls sideways when the tabs do not fit (phones, narrow windows). */}
-       <div className="flex gap-1 overflow-x-auto">
-        {TABS.map(tab=>(
-          <button key={tab.id}
-            onClick={()=> !tab.disabled && setActiveTab(tab.id)}
-            disabled={tab.disabled}
-            className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors
+        {/* The row scrolls sideways when the tabs do not fit (phones, narrow windows). */}
+        <div className="flex gap-1 overflow-x-auto">
+          {TABS.map(tab => (
+            <button key={tab.id}
+              onClick={() => !tab.disabled && setActiveTab(tab.id)}
+              disabled={tab.disabled}
+              className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 sm:px-4 py-2.5 text-sm font-medium border-b-2 transition-colors
               ${tab.disabled ? 'border-transparent text-muted-foreground/40 cursor-not-allowed' :
-                activeTab===tab.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
-            <tab.icon className="size-3.5"/>{tab.label}
-          </button>
-        ))}
-       </div>
+                  activeTab === tab.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
+              <tab.icon className="size-3.5" />{tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Tab content */}
       <AnimatePresence mode="wait">
-        <motion.div key={activeTab} initial={{opacity:0,y:6}} animate={{opacity:1,y:0}} exit={{opacity:0}} transition={{duration:0.15}}>
+        <motion.div key={activeTab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
           {activeTab === 'overview' && (
             <div className="space-y-5">
               {/* Bid Support Highlight Box */}
               {(bid.support_type === 'IN_SUPPORT' || bid.support_type === 'OUT_SUPPORT') && (
-                <div className={`rounded-xl border p-4 shadow-sm transition-all ${
-                  bid.support_type === 'IN_SUPPORT'
-                    ? 'border-indigo-300 bg-indigo-50/50 dark:border-indigo-800 dark:bg-indigo-950/20'
-                    : 'border-purple-300 bg-purple-50/50 dark:border-purple-800 dark:bg-purple-950/20'
-                }`}>
+                <div className={`rounded-xl border p-4 shadow-sm transition-all ${bid.support_type === 'IN_SUPPORT'
+                  ? 'border-indigo-300 bg-indigo-50/50 dark:border-indigo-800 dark:bg-indigo-950/20'
+                  : 'border-purple-300 bg-purple-50/50 dark:border-purple-800 dark:bg-purple-950/20'
+                  }`}>
                   <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-indigo-200/50 dark:border-indigo-800/50">
                     <div className="flex items-center gap-2">
                       <span className="text-xl">
@@ -3058,11 +3196,10 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                       <div>
                         <h4 className="text-sm font-bold text-foreground flex items-center gap-2">
                           {bid.support_type === 'IN_SUPPORT' ? 'In-Support Bid (Taking Support from Partner)' : 'Out-Support Bid (Providing Support to Partner)'}
-                          <Badge variant="outline" className={`text-[11px] font-semibold ${
-                            bid.support_type === 'IN_SUPPORT'
-                              ? 'border-indigo-400 text-indigo-700 bg-indigo-100/60 dark:text-indigo-300 dark:bg-indigo-900/40'
-                              : 'border-purple-400 text-purple-700 bg-purple-100/60 dark:text-purple-300 dark:bg-purple-900/40'
-                          }`}>
+                          <Badge variant="outline" className={`text-[11px] font-semibold ${bid.support_type === 'IN_SUPPORT'
+                            ? 'border-indigo-400 text-indigo-700 bg-indigo-100/60 dark:text-indigo-300 dark:bg-indigo-900/40'
+                            : 'border-purple-400 text-purple-700 bg-purple-100/60 dark:text-purple-300 dark:bg-purple-900/40'
+                            }`}>
                             {bid.support_type === 'IN_SUPPORT' ? 'Direction: Taking Support' : 'Direction: Providing Support'}
                           </Badge>
                         </h4>
@@ -3128,7 +3265,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
                     ]} />
                   </div>
                 </div>
-                <ComplianceCard bid={bid} />
+                <ComplianceCard bid={bid} onShowEndDateHistory={() => setShowEndDateHistory(true)} />
               </div>
               <ScopeProductsCard bid={bid} />
               <ShortfallHistoryCard bid={bid} />
@@ -3143,23 +3280,23 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
             </div>
           )}
           {activeTab === 'stages' && <StageSectionsTab bid={bid} onRefresh={loadBid} onAdvance={() => setShowTransition(true)} searchParams={searchParams} setSearchParams={setSearchParams} />}
-          {activeTab === 'checklist' && <ChecklistTab bid={bid} onRefresh={loadBid}/>}
-          {activeTab === 'docs' && <DocsTab bid={bid}/>}
+          {activeTab === 'checklist' && <ChecklistTab bid={bid} onRefresh={loadBid} />}
+          {activeTab === 'docs' && <DocsTab bid={bid} />}
           {activeTab === 'history' && <StageHistoryTab bidId={bid.id} bid={bid} />}
-          {activeTab === 'contacts' && <ContactsTab bid={bid} onRefresh={loadBid}/>}
-          {activeTab === 'members' && <MembersTab bid={bid} onRefresh={loadBid}/>}
+          {activeTab === 'contacts' && <ContactsTab bid={bid} onRefresh={loadBid} />}
+          {activeTab === 'members' && <MembersTab bid={bid} onRefresh={loadBid} />}
         </motion.div>
       </AnimatePresence>
-        
+
       {/* Transition Dialog */}
       <AnimatePresence>
         {showTransition && (
-          <TransitionDialog bid={bid} onClose={()=>setShowTransition(false)} onDone={()=>{setShowTransition(false);loadBid()}}/>
+          <TransitionDialog bid={bid} onClose={() => setShowTransition(false)} onDone={() => { setShowTransition(false); loadBid() }} />
         )}
       </AnimatePresence>
 
       {/* Edit Tender Dialog */}
-      <EditTenderDialog open={showEdit} onClose={()=>setShowEdit(false)} bid={bid} onUpdated={loadBid} />
+      <EditTenderDialog open={showEdit} onClose={() => setShowEdit(false)} bid={bid} onUpdated={loadBid} />
       {(reviewingEdit || autoReview) && pendingEdit && (
         <EditTenderDialog
           open
@@ -3173,23 +3310,34 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
       {/* Outcome Dialog */}
       <AnimatePresence>
         {showOutcome && (
-          <OutcomeDialog bid={bid} onClose={()=>setShowOutcome(false)} onDone={()=>{setShowOutcome(false);loadBid()}} />
+          <OutcomeDialog bid={bid} onClose={() => setShowOutcome(false)} onDone={() => { setShowOutcome(false); loadBid() }} />
         )}
       </AnimatePresence>
 
       {/* Cancel / Abort Dialog */}
       <AnimatePresence>
         {showCancel && (
-          <OutcomeDialog bid={bid} options={EXIT_OPTIONS} onClose={()=>setShowCancel(false)} onDone={()=>{setShowCancel(false);loadBid()}} />
+          <OutcomeDialog bid={bid} options={EXIT_OPTIONS} onClose={() => setShowCancel(false)} onDone={() => { setShowCancel(false); loadBid() }} />
         )}
       </AnimatePresence>
 
       {/* Archive Confirmation Dialog */}
       <AnimatePresence>
         {showArchiveConfirm && (
-          <ArchiveConfirmDialog bid={bid} onClose={()=>setShowArchiveConfirm(false)} onDone={()=>{setShowArchiveConfirm(false);loadBid()}} />
+          <ArchiveConfirmDialog bid={bid} onClose={() => setShowArchiveConfirm(false)} onDone={() => { setShowArchiveConfirm(false); loadBid() }} />
         )}
       </AnimatePresence>
+
+      {/* End Date History Modal */}
+      <EndDateHistoryModal
+        open={showEndDateHistory}
+        onClose={() => setShowEndDateHistory(false)}
+        tenderTitle={bid?.title}
+        tenderNumber={bid?.gem_bid_no || bid?.bid_no}
+        currentEndDate={bid?.closing_date || bid?.end_date}
+        history={bid?.closing_date_history}
+        changeCount={bid?.closing_date_change_count}
+      />
     </div>
   )
 }

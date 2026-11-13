@@ -2598,25 +2598,35 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
                           ),
                           end_date: (
                         <td key="end_date" className="p-3 border-r border-border text-muted-foreground">
-                                                      {!isReadOnly ? (
-                                                        <input
-                                                          type="datetime-local"
-                                                          value={safeDateTimeInputFormat(
-                                                            bid.closing_date,
-                                                          )}
-                                                          onChange={(e) =>
-                                                            handleImmediateChangeAndSave(
-                                                              bid.id,
-                                                              "closing_date",
-                                                              e.target.value,
-                                                            )
-                                                          }
-                                                          className="bg-transparent border-none text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary p-0.5 rounded"
-                                                        />
-                                                      ) : (
-                                                        formatDateTime(bid.closing_date)
-                                                      )}
-                                                    </td>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {!isReadOnly ? (
+                              <input
+                                type="datetime-local"
+                                value={safeDateTimeInputFormat(
+                                  bid.closing_date,
+                                )}
+                                onChange={(e) =>
+                                  handleImmediateChangeAndSave(
+                                    bid.id,
+                                    "closing_date",
+                                    e.target.value,
+                                  )
+                                }
+                                className="bg-transparent border-none text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary p-0.5 rounded"
+                              />
+                            ) : (
+                              <span>{formatDateTime(bid.closing_date)}</span>
+                            )}
+                            {(bid.closing_date_change_count > 0 || (Array.isArray(bid.closing_date_history) && bid.closing_date_history.length > 0)) && (
+                              <span
+                                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shadow-xs shrink-0"
+                                title={`End date changed ${bid.closing_date_change_count || bid.closing_date_history.length} times`}
+                              >
+                                Ext. {bid.closing_date_change_count || bid.closing_date_history.length}x
+                              </span>
+                            )}
+                          </div>
+                        </td>
                           ),
                           estimated_value: (
                         <td key="estimated_value" className="p-3 border-r border-border font-medium text-foreground">

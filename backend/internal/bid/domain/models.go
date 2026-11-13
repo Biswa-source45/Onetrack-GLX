@@ -671,6 +671,11 @@ type UpdateBidRequest struct {
 	// needs Reporting Manager approval before it lands — field presence
 	// alone can't tell the two save paths apart since they share every field.
 	FullEditSubmission bool `json:"full_edit_submission,omitempty"`
+
+	// Closing / End date change audit
+	EditReason             *string             `json:"edit_reason,omitempty"`
+	ClosingDateHistory     []ClosingDateChange `json:"closing_date_history,omitempty"`
+	ClosingDateChangeCount *int                `json:"closing_date_change_count,omitempty"`
 }
 
 type TransitionStageRequest struct {
@@ -740,6 +745,15 @@ type StageHistoryResponse struct {
 	EventType        *string         `json:"event_type,omitempty"`
 	Details          json.RawMessage `json:"details,omitempty"`
 	CreatedAt        time.Time       `json:"created_at"`
+}
+
+type ClosingDateChange struct {
+	ChangedByID   string     `json:"changed_by_id"`
+	ChangedByName string     `json:"changed_by_name"`
+	ChangedAt     time.Time  `json:"changed_at"`
+	OldDate       *time.Time `json:"old_date"`
+	NewDate       time.Time  `json:"new_date"`
+	Reason        string     `json:"reason,omitempty"`
 }
 
 type BidResponse struct {
@@ -862,6 +876,10 @@ type BidResponse struct {
 	Calculated72hDeadline         *time.Time `json:"calculated_72h_deadline,omitempty"`
 	DeadlineRemainingWorkingHours *float64   `json:"deadline_remaining_working_hours,omitempty"`
 	DeadlineLastComputedAt        *time.Time `json:"deadline_last_computed_at,omitempty"`
+
+	// Closing / End date extension & change tracking
+	ClosingDateHistory     []ClosingDateChange `json:"closing_date_history,omitempty"`
+	ClosingDateChangeCount int                 `json:"closing_date_change_count"`
 }
 
 type BidListItem struct {
@@ -931,6 +949,10 @@ type BidListItem struct {
 	ArchivedAt                *time.Time   `json:"archived_at,omitempty"`
 	DeleteReason              *string      `json:"delete_reason,omitempty"`
 	DaysRemaining             *int         `json:"days_remaining,omitempty"`
+
+	// Closing / End date extension & change tracking
+	ClosingDateHistory     []ClosingDateChange `json:"closing_date_history,omitempty"`
+	ClosingDateChangeCount int                 `json:"closing_date_change_count"`
 }
 
 type BidListResponse struct {

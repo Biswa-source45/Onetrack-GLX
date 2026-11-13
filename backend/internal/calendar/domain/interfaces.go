@@ -70,6 +70,8 @@ type WorkingCalendarRepository interface {
 	// ListTechEvalDates returns the Technical Evaluation dates (opened, live tenders) falling
 	// within about a day of today; the service picks the ones due tomorrow in the calendar's zone.
 	ListTechEvalDates(ctx context.Context) ([]TechEvalDateCandidate, error)
+	// ListTechEvalFollowUpCandidates returns open Stage 9 tenders to check for overdue follow-up remarks.
+	ListTechEvalFollowUpCandidates(ctx context.Context) ([]TechEvalFollowUpCandidate, error)
 	// GetTenderCandidate applies the same eligibility rules without the time window; nil when ineligible.
 	GetTenderCandidate(ctx context.Context, tenderID string) (*TenderDeadlineCandidate, error)
 }
@@ -112,6 +114,19 @@ type TechEvalDateCandidate struct {
 	CalendarID *string
 	Field      string
 	Date       string
+}
+
+// TechEvalFollowUpCandidate is an open Stage 9 tender candidate for checking timely daily follow-up.
+type TechEvalFollowUpCandidate struct {
+	TenderID     string
+	Title        string
+	CalendarID   *string
+	OpenedAt     string
+	LastRemarkAt string
+	LastRemarkBy string
+	EvalDate     string
+	ClarDate     string
+	ExtDate      string
 }
 
 type WorkingCalendarService interface {

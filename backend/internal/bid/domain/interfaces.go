@@ -160,10 +160,12 @@ type BidService interface {
 	// Tender contacts. Adding or editing refuses a second contact with the same email or phone number
 	// (ErrConflict); a ban needs a reason; ReorderContacts saves a drag-and-drop result.
 	// Technical Evaluation: open it after Bid Submission, track its dates and notes. Errors are
-	// ErrValidation / ErrForbidden / ErrConflict; author and time are set here, never trusted.
 	OpenTechEval(ctx context.Context, bidID string, req *OpenTechEvalRequest, actorID string) (*TechEval, error)
 	SetTechEvalDate(ctx context.Context, bidID string, req *SetTechEvalDateRequest, actorID string) (*TechEval, error)
 	AddTechEvalNote(ctx context.Context, bidID string, req *AddTechEvalNoteRequest, actorID string) (*TechEval, error)
+	AddTechEvalDailyRemark(ctx context.Context, bidID string, req *AddTechEvalDailyRemarkRequest, actorID string) (*TechEval, error)
+	GetTechEvalFollowUpStatus(ctx context.Context, bidID string) (*TechEvalFollowUpStatus, error)
+	TriggerTechEvalFollowUpReminder(ctx context.Context, bidID string, actorID string) error
 	ListContacts(ctx context.Context, bidID string) ([]TenderContact, error)
 	AddContact(ctx context.Context, bidID string, req *SaveContactRequest, actorID string) (*TenderContact, error)
 	UpdateContact(ctx context.Context, bidID, contactID string, req *UpdateContactRequest, actorID string) (*TenderContact, error)

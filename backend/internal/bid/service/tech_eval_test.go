@@ -35,12 +35,11 @@ func TestOpenTechEval(t *testing.T) {
 
 	s, repo, alerts := techEvalFixture(false)
 	for name, req := range map[string]domain.OpenTechEvalRequest{
-		"empty remark":     {Date: today, Remark: "   "},
-		"long remark":      {Date: today, Remark: strings.Repeat("x", 1001)},
-		"bad date":         {Date: "2026-13-45", Remark: "ok"},
-		"date has no day":  {Date: "2026-11", Remark: "ok"},
-		"before submitted": {Date: "2001-01-01", Remark: "ok"},
-		"too far ahead":    {Date: "2099-01-01", Remark: "ok"},
+		"empty remark":    {Date: today, Remark: "   "},
+		"long remark":     {Date: today, Remark: strings.Repeat("x", 1001)},
+		"bad date":        {Date: "2026-13-45", Remark: "ok"},
+		"date has no day": {Date: "2026-11", Remark: "ok"},
+		"too far ahead":   {Date: "2099-01-01", Remark: "ok"},
 	} {
 		if _, err := s.OpenTechEval(ctx, "bid-1", &req, "exec-1"); !isValidation(err) {
 			t.Errorf("%s: want ErrValidation, got %v", name, err)
@@ -50,6 +49,17 @@ func TestOpenTechEval(t *testing.T) {
 		t.Fatal("a rejected request must not write anything")
 	}
 
+	// Opening without a date is valid (dates are optional).
+	teNoDate, err := s.OpenTechEval(ctx, "bid-1", &domain.OpenTechEvalRequest{Remark: "Opened without date"}, "exec-1")
+	if err != nil {
+		t.Fatalf("open without date: %v", err)
+	}
+	if teNoDate.OpenedAt == "" || teNoDate.Dates["evaluation"] != "" || len(teNoDate.Log) != 1 || teNoDate.Log[0].Kind != domain.TechLogOpen {
+		t.Fatalf("unexpected state for open without date %+v", teNoDate)
+	}
+
+	// Reset fixture for full open test
+	s, repo, alerts = techEvalFixture(false)
 	te, err := s.OpenTechEval(ctx, "bid-1", &domain.OpenTechEvalRequest{Date: future, Remark: " Opened <b>today</b> "}, "exec-1")
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -112,16 +122,14 @@ func TestSetTechEvalDate(t *testing.T) {
 	if len(alerts.created) != 3 {
 		t.Errorf("date set should mail AM/RM/Pre-Sales, got %d", len(alerts.created))
 	}
-	// A change needs a reason and must differ.
-	if _, err := set("clarification", "2030-02-09", " "); !isValidation(err) {
-		t.Errorf("extend without reason: %v", err)
-	}
-	if _, err := set("clarification", "2030-02-01", "same"); !isValidation(err) {
-		t.Errorf("unchanged date: %v", err)
-	}
-	te, err = set("clarification", "2030-02-09", "customer asked for more time")
+	// A change does not require a reason and can extend without reason.
+	te, err = set("clarification", "2030-02-09", "")
 	if err != nil || te.Log[len(te.Log)-1].Change != domain.TechChangeExtend || te.Log[len(te.Log)-1].From != "2030-02-01" {
-		t.Fatalf("extend: %v %+v", err, te)
+		t.Fatalf("extend without reason: %v %+v", err, te)
+	}
+	// Same date does not error.
+	if _, err := set("clarification", "2030-02-09", ""); err != nil {
+		t.Errorf("same date should not error: %v", err)
 	}
 	te, err = set("clarification", "2030-02-05", "moved up")
 	if err != nil || te.Log[len(te.Log)-1].Change != domain.TechChangePrepone {
@@ -131,7 +139,7 @@ func TestSetTechEvalDate(t *testing.T) {
 	if err != nil || te.Dates["clarification"] != "" || te.Log[len(te.Log)-1].Change != domain.TechChangeClear {
 		t.Fatalf("clear: %v %+v", err, te)
 	}
-	if te.Rev != 5 {
+	if te.Rev != 6 {
 		t.Errorf("rev should advance once per write, got %d", te.Rev)
 	}
 
@@ -183,5 +191,105 @@ func TestUpdateBid_TechResultNeedsOpenedTechEval(t *testing.T) {
 	s, _, _ = techEvalFixture(true)
 	if err := s.UpdateBid(ctx, "bid-1", req(), "exec-1", nil); err != nil {
 		t.Errorf("result after opening: %v", err)
+	}
+}
+
+func TestAddTechEvalDailyRemark_ProcessFlow(t *testing.T) {
+	ctx := context.Background()
+	s, _, alerts := techEvalFixture(true)
+
+	if _, err := s.AddTechEvalDailyRemark(ctx, "bid-1", &domain.AddTechEvalDailyRemarkRequest{Text: "   "}, "be-1"); !isValidation(err) {
+		t.Errorf("empty daily remark: want ErrValidation, got %v", err)
+	}
+
+	te, err := s.AddTechEvalDailyRemark(ctx, "bid-1", &domain.AddTechEvalDailyRemarkRequest{Text: "Followed up with authority officer; clarifications submitted"}, "be-1")
+	if err != nil {
+		t.Fatalf("add daily remark: %v", err)
+	}
+	if te.DailyRemarksCount != 1 || te.LastDailyRemarkText == "" || te.LastDailyRemarkAt == "" {
+		t.Fatalf("unexpected state %+v", te)
+	}
+	if len(te.Log) != 1 || te.Log[0].Kind != domain.TechLogDailyRemark {
+		t.Fatalf("log entry missing or wrong kind: %+v", te.Log)
+	}
+
+	// Verify Process Flow: BE -> Notification to AM (and PM/Pre-Sales/RM)
+	if len(alerts.created) != 3 {
+		t.Fatalf("expected alerts to AM, RM, and Pre-Sales, got %d", len(alerts.created))
+	}
+	alertFound := false
+	for _, a := range alerts.created {
+		if strings.Contains(a.Title, "Daily Remark") && strings.Contains(a.Message, "Followed up with authority") {
+			alertFound = true
+			break
+		}
+	}
+	if !alertFound {
+		t.Errorf("expected daily remark alert content in created alerts")
+	}
+}
+
+func TestSetTechEvalDate_BidExtension(t *testing.T) {
+	ctx := context.Background()
+	s, _, alerts := techEvalFixture(true)
+
+	future := time.Now().UTC().AddDate(0, 0, 15).Format("2006-01-02")
+	te, err := s.SetTechEvalDate(ctx, "bid-1", &domain.SetTechEvalDateRequest{
+		Field:  "bidExtension",
+		Date:   future,
+		Reason: "Authority extended bid validity by 15 days",
+	}, "be-1")
+	if err != nil {
+		t.Fatalf("set bid extension date: %v", err)
+	}
+	if te.Dates["bidExtension"] != future {
+		t.Errorf("expected bidExtension to be %s, got %s", future, te.Dates["bidExtension"])
+	}
+
+	// Stakeholders alerted
+	if len(alerts.created) != 3 {
+		t.Errorf("expected 3 alerts, got %d", len(alerts.created))
+	}
+}
+
+func TestGetTechEvalFollowUpStatus_SLA(t *testing.T) {
+	ctx := context.Background()
+	s, repo, _ := techEvalFixture(true)
+
+	// Brand new open tech eval (opened in 2026-01-01 -> >24h overdue)
+	status, err := s.GetTechEvalFollowUpStatus(ctx, "bid-1")
+	if err != nil {
+		t.Fatalf("get follow-up status: %v", err)
+	}
+	if !status.IsFollowUpDue || !status.IsOverdue {
+		t.Errorf("expected overdue status when >24 hours, got %+v", status)
+	}
+
+	// Log a fresh remark today
+	freshTime := time.Now().UTC().Format(time.RFC3339)
+	repo.bid.TechEval = []byte(`{"rev":2,"openedAt":"2026-01-01T00:00:00Z","lastDailyRemarkAt":"` + freshTime + `","lastDailyRemarkBy":"BE John","dates":{},"log":[]}`)
+
+	status, err = s.GetTechEvalFollowUpStatus(ctx, "bid-1")
+	if err != nil {
+		t.Fatalf("get follow-up status: %v", err)
+	}
+	if status.IsFollowUpDue || status.IsOverdue {
+		t.Errorf("expected timely status within 24 hours, got %+v", status)
+	}
+}
+
+func TestTriggerTechEvalFollowUpReminder(t *testing.T) {
+	ctx := context.Background()
+	s, _, alerts := techEvalFixture(true)
+
+	err := s.TriggerTechEvalFollowUpReminder(ctx, "bid-1", "be-1")
+	if err != nil {
+		t.Fatalf("trigger reminder: %v", err)
+	}
+	if len(alerts.created) != 3 {
+		t.Fatalf("expected 3 alerts to AM/PM/RM, got %d", len(alerts.created))
+	}
+	if !strings.Contains(alerts.created[0].Title, "Follow-up") {
+		t.Errorf("expected follow-up in alert title, got %s", alerts.created[0].Title)
 	}
 }

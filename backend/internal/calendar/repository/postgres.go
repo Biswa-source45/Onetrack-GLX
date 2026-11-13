@@ -815,6 +815,37 @@ func (r *postgresCalendarRepo) ListTechEvalDates(ctx context.Context) ([]domain.
 	return out, rows.Err()
 }
 
+func (r *postgresCalendarRepo) ListTechEvalFollowUpCandidates(ctx context.Context) ([]domain.TechEvalFollowUpCandidate, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT b.id::text, b.title, b.calendar_id::text,
+		       COALESCE(b.tech_eval->>'openedAt', ''),
+		       COALESCE(b.tech_eval->>'lastDailyRemarkAt', ''),
+		       COALESCE(b.tech_eval->>'lastDailyRemarkBy', ''),
+		       COALESCE(b.tech_eval->'dates'->>'evaluation', ''),
+		       COALESCE(b.tech_eval->'dates'->>'clarification', ''),
+		       COALESCE(b.tech_eval->'dates'->>'bidExtension', '')
+		FROM bid.bid_workspaces b
+		WHERE b.archived_at IS NULL
+		  AND COALESCE(b.tech_eval->>'openedAt', '') <> ''
+		  AND b.bid_status NOT IN ('WON', 'LOST', 'CANCELLED', 'CLOSED', 'ARCHIVED')
+		  AND COALESCE(b.technical_result, '') NOT IN ('QUALIFIED', 'DISQUALIFIED')
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.TechEvalFollowUpCandidate
+	for rows.Next() {
+		var c domain.TechEvalFollowUpCandidate
+		if err := rows.Scan(&c.TenderID, &c.Title, &c.CalendarID, &c.OpenedAt, &c.LastRemarkAt, &c.LastRemarkBy, &c.EvalDate, &c.ClarDate, &c.ExtDate); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 func (r *postgresCalendarRepo) GetTenderStakeholders(ctx context.Context, tenderID string) ([]domain.TenderStakeholder, error) {
 	rows, err := r.db.Query(ctx, `
 		WITH raw_stakeholders AS (

@@ -879,6 +879,7 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 			addSet("support_partner_name", *req.SupportPartnerName)
 		}
 	}
+	var metaFragments []string
 	if req.SupportType != nil || req.SupportPartnerName != nil {
 		st := "GLOBX"
 		if req.SupportType != nil {
@@ -888,11 +889,27 @@ func (r *postgresBidRepo) Update(ctx context.Context, id string, req *domain.Upd
 		if req.SupportPartnerName != nil {
 			spn = *req.SupportPartnerName
 		}
-		sets = append(sets, fmt.Sprintf("metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('support_type', $%d::text, 'support_partner_name', $%d::text)", idx, idx+1))
+		metaFragments = append(metaFragments, fmt.Sprintf("jsonb_build_object('support_type', $%d::text, 'support_partner_name', $%d::text)", idx, idx+1))
 		args = append(args, st, spn)
 		idx += 2
-		if false {
+	}
+
+	if req.ClosingDateHistory != nil {
+		histBytes, _ := json.Marshal(req.ClosingDateHistory)
+		addSet("closing_date_history", histBytes)
+		count := len(req.ClosingDateHistory)
+		if req.ClosingDateChangeCount != nil {
+			count = *req.ClosingDateChangeCount
 		}
+		addSet("closing_date_change_count", count)
+
+		metaFragments = append(metaFragments, fmt.Sprintf("jsonb_build_object('closing_date_history', $%d::jsonb, 'closing_date_change_count', $%d::int)", idx, idx+1))
+		args = append(args, histBytes, count)
+		idx += 2
+	}
+
+	if len(metaFragments) > 0 {
+		sets = append(sets, fmt.Sprintf("metadata = COALESCE(metadata, '{}'::jsonb) || %s", strings.Join(metaFragments, " || ")))
 	}
 
 

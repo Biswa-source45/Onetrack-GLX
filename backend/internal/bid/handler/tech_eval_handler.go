@@ -72,3 +72,35 @@ func (h *BidHandler) AddTechEvalNote(c *gin.Context) {
 	}
 	response.Success(c, http.StatusCreated, "Note added", te)
 }
+
+func (h *BidHandler) AddTechEvalDailyRemark(c *gin.Context) {
+	var req domain.AddTechEvalDailyRemarkRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request", nil)
+		return
+	}
+	te, err := h.svc.AddTechEvalDailyRemark(c.Request.Context(), c.Param("id"), &req, c.GetString("user_id"))
+	if err != nil {
+		techEvalError(c, err)
+		return
+	}
+	response.Success(c, http.StatusCreated, "Daily remark added and notified to Account Manager", te)
+}
+
+func (h *BidHandler) GetTechEvalFollowUpStatus(c *gin.Context) {
+	status, err := h.svc.GetTechEvalFollowUpStatus(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		techEvalError(c, err)
+		return
+	}
+	response.Success(c, http.StatusOK, "Follow-up status retrieved", status)
+}
+
+func (h *BidHandler) TriggerTechEvalFollowUpReminder(c *gin.Context) {
+	err := h.svc.TriggerTechEvalFollowUpReminder(c.Request.Context(), c.Param("id"), c.GetString("user_id"))
+	if err != nil {
+		techEvalError(c, err)
+		return
+	}
+	response.Success(c, http.StatusOK, "Follow-up reminder email sent to AM/PM", nil)
+}

@@ -37,9 +37,10 @@ type mockCalendarRepo struct {
 	cacheWrites  int
 	failedClaims []string
 
-	shortfalls      []domain.ShortfallCandidate
-	techEvalDates   []domain.TechEvalDateCandidate
-	coverage        *domain.DeadlineCoverage
+	shortfalls         []domain.ShortfallCandidate
+	techEvalDates      []domain.TechEvalDateCandidate
+	followUpCandidates []domain.TechEvalFollowUpCandidate
+	coverage           *domain.DeadlineCoverage
 	escalations     map[string]string // tender|checklist -> claim id
 	releasedEscs    []string
 	delayed         []string
@@ -219,6 +220,9 @@ func (m *mockCalendarRepo) ListOpenShortfalls(ctx context.Context) ([]domain.Sho
 }
 func (m *mockCalendarRepo) ListTechEvalDates(ctx context.Context) ([]domain.TechEvalDateCandidate, error) {
 	return m.techEvalDates, nil
+}
+func (m *mockCalendarRepo) ListTechEvalFollowUpCandidates(ctx context.Context) ([]domain.TechEvalFollowUpCandidate, error) {
+	return m.followUpCandidates, nil
 }
 func (m *mockCalendarRepo) GetTenderStakeholders(ctx context.Context, tenderID string) ([]domain.TenderStakeholder, error) {
 	return m.stakeholders, nil
@@ -1291,4 +1295,38 @@ func TestTechEvalDayBeforeReminderGoesToAMRMPreSalesOnce(t *testing.T) {
 	sum, err = svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
 	require.NoError(t, err)
 	assert.Equal(t, 3, sum.Notified)
+}
+
+func TestTechEvalFollowUpReminder_24HourSLA(t *testing.T) {
+	repo := newMockCalendarRepo()
+	repo.baselined = true
+	// Tender t1 opened 48 hours ago without daily remark update -> overdue
+	openedPast := testNow.Add(-48 * time.Hour).Format(time.RFC3339)
+	repo.followUpCandidates = []domain.TechEvalFollowUpCandidate{
+		{
+			TenderID:   "t1",
+			Title:      "Defense Tender Alpha",
+			OpenedAt:   openedPast,
+			EvalDate:   "2026-10-25",
+			ClarDate:   "2026-10-20",
+		},
+	}
+	alerts := &mockAlertSvc{}
+	svc := newSvc(repo, alerts, testNow)
+	ctx := context.Background()
+
+	sum, err := svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Equal(t, 3, sum.Notified, "automated follow-up email triggers to AM, PM (Pre-Sales), and RM")
+
+	got := shortfallAlerts(alerts)
+	require.Len(t, got, 3)
+	assert.Contains(t, got[0].Title, "Follow-up Required: Technical Evaluation")
+	assert.Contains(t, got[0].Message, "SLA threshold: 24h")
+	assert.Equal(t, "/dashboard/tenders/t1?tab=stages&stage=TECHNICAL_EVALUATION", got[0].Link)
+
+	// Second pass on same day does not duplicate
+	sum, err = svc.EvaluateActiveTenders(ctx, domain.RunTriggerManual)
+	require.NoError(t, err)
+	assert.Zero(t, sum.Notified, "deduplicated per day")
 }

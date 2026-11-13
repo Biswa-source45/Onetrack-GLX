@@ -147,7 +147,22 @@ const RENDER = [
   },
   {
     key: 'end_date', label: 'End Date', minWidth: 170,
-    render: (b) => formatDateTime(b.closing_date || b.end_date)
+    render: (b) => {
+      const count = b.closing_date_change_count || (Array.isArray(b.closing_date_history) ? b.closing_date_history.length : 0)
+      return (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span>{formatDateTime(b.closing_date || b.end_date)}</span>
+          {count > 0 && (
+            <span
+              className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shadow-xs"
+              title={`End date changed ${count} time${count > 1 ? 's' : ''}`}
+            >
+              Ext. {count}x
+            </span>
+          )}
+        </div>
+      )
+    }
   },
   {
     key: 'estimated_value', label: 'Estimated Tender Value (₹)', minWidth: 130,

@@ -25,12 +25,14 @@ export const awaitingReeval = (ds) => {
 let seq = 0
 const docId = () => `d${Date.now().toString(36)}${seq++}`
 
-/** Error message per field (empty object = ready to raise). */
+/** Error message per field (empty object = ready to raise). Deadline is optional. */
 export function validateRaise({ deadline, docs = [] } = {}, now = Date.now()) {
   const errors = {}
-  const t = new Date(deadline).getTime()
-  if (!deadline || Number.isNaN(t)) errors.deadline = 'Choose the date and time the customer gave'
-  else if (t <= now) errors.deadline = 'The deadline must be in the future'
+  if (deadline) {
+    const t = new Date(deadline).getTime()
+    if (Number.isNaN(t)) errors.deadline = 'Choose a valid date and time'
+    else if (t <= now) errors.deadline = 'The deadline must be in the future'
+  }
   if (!docs.some((d) => String(d?.name ?? '').trim())) errors.docs = 'List at least one document the customer asked for'
   return errors
 }
@@ -43,7 +45,7 @@ export function addRound(ds, { deadline, note, docs, by, byId }, now = new Date(
   return {
     ...ds,
     rounds: [...rounds, {
-      n: rounds.length + 1, status: 'COLLECTING', deadline: new Date(deadline).toISOString(), note: String(note ?? '').trim(),
+      n: rounds.length + 1, status: 'COLLECTING', deadline: deadline ? new Date(deadline).toISOString() : '', note: String(note ?? '').trim(),
       raisedAt: now.toISOString(), raisedBy: by, raisedById: byId, outcome: '',
       docs: docs.filter((d) => String(d.name ?? '').trim()).map((d) => ({ id: docId(), name: d.name.trim(), note: String(d.note ?? '').trim(), file: null })),
     }],

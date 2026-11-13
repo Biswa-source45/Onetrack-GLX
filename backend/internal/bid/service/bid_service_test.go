@@ -1746,3 +1746,148 @@ func TestUpdateBid_DocShortfallRules(t *testing.T) {
 		t.Fatalf("no shortfall at all: %v", err)
 	}
 }
+
+func TestUpdateBid_ClosingDateChangeHistory(t *testing.T) {
+	initialDate, _ := time.Parse("2006-01-02", "2026-11-10")
+	repo := &fakeBidRepo{
+		bid: &domain.BidWorkspace{
+			ID:            "bid-1",
+			Title:         "Test Tender",
+			WorkflowStage: domain.StageDiscovered,
+			ClosingDate:   &initialDate,
+			EndDate:       &initialDate,
+			Metadata:      []byte(`{}`),
+		},
+		userSummaries: map[string]*domain.UserSummary{
+			"user-1": {ID: "user-1", FullName: "John Doe", Role: "ADMIN"},
+		},
+	}
+	svc := &bidService{repo: repo}
+
+	// 1. Update closing date with new date string
+	newDateStr := "2026-11-20T18:00:00Z"
+	req := &domain.UpdateBidRequest{
+		ClosingDate: &newDateStr,
+	}
+
+	err := svc.UpdateBid(context.Background(), "bid-1", req, "user-1", []string{"ADMIN"})
+	if err != nil {
+		t.Fatalf("UpdateBid failed: %v", err)
+	}
+
+	if repo.lastUpdate == nil {
+		t.Fatalf("expected lastUpdate to be recorded")
+	}
+	if repo.lastUpdate.ClosingDateChangeCount == nil || *repo.lastUpdate.ClosingDateChangeCount != 1 {
+		t.Fatalf("expected ClosingDateChangeCount to be 1, got %v", repo.lastUpdate.ClosingDateChangeCount)
+	}
+	if len(repo.lastUpdate.ClosingDateHistory) != 1 {
+		t.Fatalf("expected 1 history item, got %d", len(repo.lastUpdate.ClosingDateHistory))
+	}
+	h := repo.lastUpdate.ClosingDateHistory[0]
+	if h.ChangedByID != "user-1" {
+		t.Errorf("expected ChangedByID=user-1, got %s", h.ChangedByID)
+	}
+	if h.ChangedByName != "John Doe" {
+		t.Errorf("expected ChangedByName='John Doe', got %s", h.ChangedByName)
+	}
+	if h.OldDate == nil || h.OldDate.Format("2006-01-02") != "2026-11-10" {
+		t.Errorf("expected OldDate 2026-11-10, got %v", h.OldDate)
+	}
+	if h.NewDate.Format("2006-01-02") != "2026-11-20" {
+		t.Errorf("expected NewDate 2026-11-20, got %v", h.NewDate)
+	}
+
+	// Check that stage history recorded the event
+	foundDateChange := false
+	for _, hist := range repo.addedHistory {
+		if hist.EventType != nil && *hist.EventType == "END_DATE_CHANGED" {
+			foundDateChange = true
+			break
+		}
+	}
+	if !foundDateChange {
+		t.Errorf("expected stage history entry with EventType END_DATE_CHANGED")
+	}
+}
+
+func TestUpdateBid_MultipleClosingDateChangesStack(t *testing.T) {
+	d1, _ := time.Parse("2006-01-02", "2026-11-10")
+	repo := &fakeBidRepo{
+		bid: &domain.BidWorkspace{
+			ID:            "bid-multi",
+			Title:         "Multi Change Tender",
+			WorkflowStage: domain.StageDiscovered,
+			ClosingDate:   &d1,
+			EndDate:       &d1,
+			Metadata:      []byte(`{}`),
+		},
+		userSummaries: map[string]*domain.UserSummary{
+			"user-1": {ID: "user-1", FullName: "Alice Admin", Role: "ADMIN"},
+			"user-2": {ID: "user-2", FullName: "Bob Manager", Role: "MANAGER"},
+		},
+	}
+	svc := &bidService{repo: repo}
+
+	// 1st Change by Alice (user-1): extend to 2026-11-20
+	d2Str := "2026-11-20T18:00:00Z"
+	d2, _ := time.Parse(time.RFC3339, d2Str)
+	err := svc.UpdateBid(context.Background(), "bid-multi", &domain.UpdateBidRequest{ClosingDate: &d2Str}, "user-1", []string{"ADMIN"})
+	if err != nil {
+		t.Fatalf("1st UpdateBid failed: %v", err)
+	}
+	if repo.lastUpdate == nil || repo.lastUpdate.ClosingDateChangeCount == nil || *repo.lastUpdate.ClosingDateChangeCount != 1 {
+		t.Fatalf("expected count 1, got %v", repo.lastUpdate.ClosingDateChangeCount)
+	}
+
+	// Simulate repo saving the update onto bid workspace
+	histBytes, _ := json.Marshal(map[string]interface{}{
+		"closing_date_history":      repo.lastUpdate.ClosingDateHistory,
+		"closing_date_change_count": *repo.lastUpdate.ClosingDateChangeCount,
+	})
+	repo.bid.Metadata = histBytes
+	repo.bid.ClosingDate = &d2
+	repo.bid.EndDate = &d2
+
+	// 2nd Change by Bob (user-2): extend to 2026-11-30
+	d3Str := "2026-11-30T18:00:00Z"
+	err = svc.UpdateBid(context.Background(), "bid-multi", &domain.UpdateBidRequest{ClosingDate: &d3Str}, "user-2", []string{"MANAGER"})
+	if err != nil {
+		t.Fatalf("2nd UpdateBid failed: %v", err)
+	}
+	if repo.lastUpdate.ClosingDateChangeCount == nil || *repo.lastUpdate.ClosingDateChangeCount != 2 {
+		t.Fatalf("expected count 2, got %v", repo.lastUpdate.ClosingDateChangeCount)
+	}
+	if len(repo.lastUpdate.ClosingDateHistory) != 2 {
+		t.Fatalf("expected 2 history items, got %d", len(repo.lastUpdate.ClosingDateHistory))
+	}
+	// Verify 2nd change details
+	entry2 := repo.lastUpdate.ClosingDateHistory[1]
+	if entry2.ChangedByName != "Bob Manager" || entry2.ChangedByID != "user-2" {
+		t.Errorf("expected Bob Manager, got %s", entry2.ChangedByName)
+	}
+	if entry2.OldDate == nil || entry2.OldDate.Format("2006-01-02") != "2026-11-20" {
+		t.Errorf("expected OldDate 2026-11-20, got %v", entry2.OldDate)
+	}
+	if entry2.NewDate.Format("2006-01-02") != "2026-11-30" {
+		t.Errorf("expected NewDate 2026-11-30, got %v", entry2.NewDate)
+	}
+
+	// 3rd Update with no closing date change (only remarks) - must NOT increment
+	histBytes2, _ := json.Marshal(map[string]interface{}{
+		"closing_date_history":      repo.lastUpdate.ClosingDateHistory,
+		"closing_date_change_count": *repo.lastUpdate.ClosingDateChangeCount,
+	})
+	repo.bid.Metadata = histBytes2
+	remarks := "Just updating notes"
+	repo.lastUpdate = nil
+	err = svc.UpdateBid(context.Background(), "bid-multi", &domain.UpdateBidRequest{Remarks: &remarks}, "user-1", []string{"ADMIN"})
+	if err != nil {
+		t.Fatalf("3rd UpdateBid failed: %v", err)
+	}
+	if repo.lastUpdate != nil && repo.lastUpdate.ClosingDateChangeCount != nil {
+		t.Errorf("expected ClosingDateChangeCount to be nil when date not modified, got %v", repo.lastUpdate.ClosingDateChangeCount)
+	}
+}
+
+

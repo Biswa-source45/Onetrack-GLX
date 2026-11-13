@@ -487,6 +487,9 @@ func (s *workingCalendarService) evaluate(ctx context.Context) (*domain.Evaluati
 	if budget := maxNotificationsPerTick - (sum.Notified + sum.Escalated); budget > 0 && ctx.Err() == nil {
 		sum.Notified += s.remindTechEvalDates(ctx, now, budget)
 	}
+	if budget := maxNotificationsPerTick - (sum.Notified + sum.Escalated); budget > 0 && ctx.Err() == nil {
+		sum.Notified += s.remindTechEvalFollowUp(ctx, now, budget)
+	}
 
 	// The first pass ends baseline mode even when a tender errored: staying in it
 	// would silently swallow every later alert. A tender that failed to baseline

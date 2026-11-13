@@ -6,13 +6,13 @@ import { openRound, lastRound, awaitingReeval, validateRaise, addRound, patchRou
 const NOW = Date.parse('2026-10-12T10:00:00Z')
 const raise = (ds, extra = {}) => addRound(ds, { deadline: '2026-10-20T10:00:00Z', note: ' hurry ', docs: [{ name: ' PAN card ' }, { name: '' }, { name: 'GST certificate', note: 'latest' }], by: 'Asha', byId: 'u1', ...extra }, new Date(NOW))
 
-test('validateRaise needs a future deadline and at least one named document', () => {
+test('validateRaise requires at least one named document; deadline is optional', () => {
   assert.deepEqual(validateRaise({ deadline: '2026-10-20T10:00', docs: [{ name: 'PAN' }] }, NOW), {})
-  assert.match(validateRaise({ docs: [{ name: 'PAN' }] }, NOW).deadline, /date and time/)
-  assert.match(validateRaise({ deadline: 'nope', docs: [{ name: 'PAN' }] }, NOW).deadline, /date and time/)
+  assert.deepEqual(validateRaise({ docs: [{ name: 'PAN' }] }, NOW), {})
+  assert.match(validateRaise({ deadline: 'nope', docs: [{ name: 'PAN' }] }, NOW).deadline, /valid date and time/)
   assert.match(validateRaise({ deadline: '2026-10-01T10:00', docs: [{ name: 'PAN' }] }, NOW).deadline, /future/)
   assert.match(validateRaise({ deadline: '2026-10-20T10:00', docs: [{ name: '  ' }] }, NOW).docs, /at least one/)
-  assert.deepEqual(Object.keys(validateRaise({}, NOW)).sort(), ['deadline', 'docs'])
+  assert.deepEqual(Object.keys(validateRaise({}, NOW)).sort(), ['docs'])
 })
 
 test('addRound trims, drops blank documents and numbers the rounds', () => {

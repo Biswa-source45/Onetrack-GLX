@@ -1390,6 +1390,113 @@ func (s *bidService) applyUpdate(ctx context.Context, id string, req *domain.Upd
 		}
 	}
 
+	// Audit end date changes: track change count and who changed the tender end date
+	var incomingEndDateStr *string
+	if req.EndDate != nil && strings.TrimSpace(*req.EndDate) != "" {
+		incomingEndDateStr = req.EndDate
+	} else if req.ClosingDate != nil && strings.TrimSpace(*req.ClosingDate) != "" {
+		incomingEndDateStr = req.ClosingDate
+	}
+
+	if incomingEndDateStr != nil {
+		newEndTime, parseErr := parseDateFlexible(*incomingEndDateStr)
+		if parseErr == nil && newEndTime != nil {
+			var oldEndTime *time.Time
+			if bid.EndDate != nil {
+				oldEndTime = bid.EndDate
+			} else if bid.ClosingDate != nil {
+				oldEndTime = bid.ClosingDate
+			}
+
+			isDateChanged := false
+			if oldEndTime == nil {
+				isDateChanged = true
+			} else if !oldEndTime.UTC().Truncate(time.Minute).Equal(newEndTime.UTC().Truncate(time.Minute)) {
+				isDateChanged = true
+			}
+
+			if isDateChanged {
+				actorName := actorID
+				if actorID == "SYSTEM" {
+					actorName = "System"
+				} else if u, _ := s.repo.GetUserSummary(ctx, actorID); u != nil {
+					if strings.TrimSpace(u.FullName) != "" {
+						actorName = u.FullName
+					} else if strings.TrimSpace(u.Username) != "" {
+						actorName = u.Username
+					}
+				}
+
+				var existingHistory []domain.ClosingDateChange
+				existingCount := 0
+				if len(bid.Metadata) > 0 {
+					var metaMap map[string]interface{}
+					if err := json.Unmarshal(bid.Metadata, &metaMap); err == nil {
+						if rawHist, ok := metaMap["closing_date_history"]; ok {
+							if histBytes, err := json.Marshal(rawHist); err == nil {
+								_ = json.Unmarshal(histBytes, &existingHistory)
+							}
+						}
+						if rawCount, ok := metaMap["closing_date_change_count"].(float64); ok {
+							existingCount = int(rawCount)
+						}
+					}
+				}
+				if len(existingHistory) > existingCount {
+					existingCount = len(existingHistory)
+				}
+
+				newCount := existingCount + 1
+				reasonText := ""
+				if req.EditReason != nil {
+					reasonText = *req.EditReason
+				}
+				changeEntry := domain.ClosingDateChange{
+					ChangedByID:   actorID,
+					ChangedByName: actorName,
+					ChangedAt:     time.Now().UTC(),
+					OldDate:       oldEndTime,
+					NewDate:       *newEndTime,
+					Reason:        reasonText,
+				}
+				newHistory := append(existingHistory, changeEntry)
+				req.ClosingDateHistory = newHistory
+				req.ClosingDateChangeCount = &newCount
+
+				// Record micro-event in stage history for timeline and audit visibility
+				oldStr := "N/A"
+				if oldEndTime != nil {
+					oldStr = oldEndTime.Format("02-Jan-2006 15:04")
+				}
+				newStr := newEndTime.Format("02-Jan-2006 15:04")
+				reason := fmt.Sprintf("End date changed from %s to %s by %s (Change #%d)", oldStr, newStr, actorName, newCount)
+				if reasonText != "" {
+					reason = fmt.Sprintf("End date changed from %s to %s by %s (Change #%d): %s", oldStr, newStr, actorName, newCount, reasonText)
+				}
+				eventType := "END_DATE_CHANGED"
+				detailsBytes, _ := json.Marshal(map[string]interface{}{
+					"old_date":     oldStr,
+					"new_date":     newStr,
+					"old_date_raw": oldEndTime,
+					"new_date_raw": newEndTime,
+					"change_count": newCount,
+					"changed_by":   actorName,
+					"reason":       reasonText,
+				})
+				_ = s.repo.AddStageHistory(ctx, &domain.BidStageHistory{
+					BidID:            id,
+					BidTitle:         bid.Title,
+					FromStage:        &bid.WorkflowStage,
+					ToStage:          bid.WorkflowStage,
+					EventType:        &eventType,
+					TransitionReason: &reason,
+					Details:          detailsBytes,
+					TransitionedBy:   actorID,
+				})
+			}
+		}
+	}
+
 	if err := s.repo.Update(ctx, id, req); err != nil {
 		return err
 	}
@@ -1632,6 +1739,90 @@ func diffRequestFields(orig, final *domain.UpdateBidRequest) []domain.FieldDiff 
 	return diffs
 }
 
+// mergePendingEditRequests creates the final request to apply when approving an edit.
+// If final is empty/nil (e.g. one-click approval where no corrections were made),
+// it applies orig in full. Otherwise, it uses orig as the baseline and overlays
+// any fields explicitly corrected in final.
+func mergePendingEditRequests(orig, final *domain.UpdateBidRequest) *domain.UpdateBidRequest {
+	if orig == nil {
+		if final == nil {
+			return &domain.UpdateBidRequest{}
+		}
+		return final
+	}
+	if final == nil {
+		merged := *orig
+		return &merged
+	}
+
+	merged := *orig
+
+	if final.CalendarID != nil { merged.CalendarID = final.CalendarID }
+	if final.Title != nil { merged.Title = final.Title }
+	if final.BidNo != nil { merged.BidNo = final.BidNo }
+	if final.GemBidNo != nil { merged.GemBidNo = final.GemBidNo }
+	if final.OrganizationName != nil { merged.OrganizationName = final.OrganizationName }
+	if final.DepartmentName != nil { merged.DepartmentName = final.DepartmentName }
+	if final.PortalSource != nil { merged.PortalSource = final.PortalSource }
+	if final.BidType != nil { merged.BidType = final.BidType }
+	if final.GemBidType != nil { merged.GemBidType = final.GemBidType }
+	if final.Category != nil { merged.Category = final.Category }
+	if final.Quantity != nil { merged.Quantity = final.Quantity }
+	if final.OurRank != nil { merged.OurRank = final.OurRank }
+	if final.EstimatedValue != nil { merged.EstimatedValue = final.EstimatedValue }
+	if final.EMDAmount != nil { merged.EMDAmount = final.EMDAmount }
+	if final.EMDType != nil { merged.EMDType = final.EMDType }
+	if final.EMDExempted != nil { merged.EMDExempted = final.EMDExempted }
+	if final.EMDNotApplicable != nil { merged.EMDNotApplicable = final.EMDNotApplicable }
+	if final.EMDExemptionType != nil { merged.EMDExemptionType = final.EMDExemptionType }
+	if final.EMDExemptionReason != nil { merged.EMDExemptionReason = final.EMDExemptionReason }
+	if len(final.EMDExemptionTypes) > 0 { merged.EMDExemptionTypes = final.EMDExemptionTypes }
+	if final.EMDBankName != nil { merged.EMDBankName = final.EMDBankName }
+	if final.EMDAccountNumber != nil { merged.EMDAccountNumber = final.EMDAccountNumber }
+	if final.EMDIFSCCode != nil { merged.EMDIFSCCode = final.EMDIFSCCode }
+	if final.EMDBranch != nil { merged.EMDBranch = final.EMDBranch }
+	if final.EMDBeneficiary != nil { merged.EMDBeneficiary = final.EMDBeneficiary }
+	if final.EMDPayableAt != nil { merged.EMDPayableAt = final.EMDPayableAt }
+	if final.HighLevelScope != nil { merged.HighLevelScope = final.HighLevelScope }
+	if final.TenderLink != nil { merged.TenderLink = final.TenderLink }
+	if final.BGRequired != nil { merged.BGRequired = final.BGRequired }
+	if final.BGRate != nil { merged.BGRate = final.BGRate }
+	if final.StartDate != nil { merged.StartDate = final.StartDate }
+	if final.EndDate != nil { merged.EndDate = final.EndDate }
+	if final.OpeningDate != nil { merged.OpeningDate = final.OpeningDate }
+	if final.ClosingDate != nil { merged.ClosingDate = final.ClosingDate }
+	if final.EditReason != nil { merged.EditReason = final.EditReason }
+	if final.DurationMonths != nil { merged.DurationMonths = final.DurationMonths }
+	if final.Authority != nil { merged.Authority = final.Authority }
+	if final.BidOwnerID != nil { merged.BidOwnerID = final.BidOwnerID }
+	if final.ReportingManagerID != nil { merged.ReportingManagerID = final.ReportingManagerID }
+	if final.AccountManagerID != nil { merged.AccountManagerID = final.AccountManagerID }
+	if final.PresalesID != nil { merged.PresalesID = final.PresalesID }
+	if final.Location != nil { merged.Location = final.Location }
+	if final.BGDurationMonths != nil { merged.BGDurationMonths = final.BGDurationMonths }
+	if final.RequestedProducts != nil { merged.RequestedProducts = final.RequestedProducts }
+	if final.AlertNote != nil { merged.AlertNote = final.AlertNote }
+	if final.Remarks != nil { merged.Remarks = final.Remarks }
+	if final.TechComplianceStatus != nil { merged.TechComplianceStatus = final.TechComplianceStatus }
+	if final.QualificationStatus != nil { merged.QualificationStatus = final.QualificationStatus }
+	if final.WorkflowStage != nil { merged.WorkflowStage = final.WorkflowStage }
+	if final.BidStatus != nil { merged.BidStatus = final.BidStatus }
+	if final.BidOutcome != nil { merged.BidOutcome = final.BidOutcome }
+	if final.Team != nil { merged.Team = final.Team }
+	if final.ScopeType != nil { merged.ScopeType = final.ScopeType }
+	if final.SupportType != nil { merged.SupportType = final.SupportType }
+	if final.SupportPartnerName != nil { merged.SupportPartnerName = final.SupportPartnerName }
+	if final.ActivityType != nil { merged.ActivityType = final.ActivityType }
+	if final.ExcelBidStatus != nil { merged.ExcelBidStatus = final.ExcelBidStatus }
+	if final.SubmissionStatus != nil { merged.SubmissionStatus = final.SubmissionStatus }
+	if final.FinancialEvaluationStatus != nil { merged.FinancialEvaluationStatus = final.FinancialEvaluationStatus }
+	if final.POReceivedStatus != nil { merged.POReceivedStatus = final.POReceivedStatus }
+	if final.BidResult != nil { merged.BidResult = final.BidResult }
+
+	return &merged
+}
+
+
 // submitPendingAction is the shared write path behind submitPendingEdit,
 // submitPendingCancel and submitPendingDelete: one PENDING row per bid (the
 // unique index on bid.tender_edit_approvals enforces that regardless of
@@ -1846,12 +2037,13 @@ func (s *bidService) ApprovePendingEdit(ctx context.Context, editID string, fina
 	_ = json.Unmarshal(edit.Payload, &origReq)
 	decisionDiff := diffRequestFields(&origReq, finalReq)
 
-	finalReq.FullEditSubmission = false
-	if err := s.applyUpdate(ctx, edit.BidID, finalReq, edit.RequestedBy.ID, actorRoles); err != nil {
+	mergedReq := mergePendingEditRequests(&origReq, finalReq)
+	mergedReq.FullEditSubmission = false
+	if err := s.applyUpdate(ctx, edit.BidID, mergedReq, edit.RequestedBy.ID, actorRoles); err != nil {
 		return err
 	}
 
-	decidedPayloadJSON, _ := json.Marshal(finalReq)
+	decidedPayloadJSON, _ := json.Marshal(mergedReq)
 	if err := s.repo.DecidePendingEdit(ctx, editID, domain.EditApprovalApproved, decidedPayloadJSON, decisionDiff, comment, actorID); err != nil {
 		return err
 	}
@@ -2652,6 +2844,8 @@ func buildBidResponse(bid *domain.BidWorkspace, owner *domain.UserSummary, repor
 		Calculated72hDeadline:         bid.Calculated72hDeadline,
 		DeadlineRemainingWorkingHours: bid.DeadlineRemainingWorkingHours,
 		DeadlineLastComputedAt:        bid.DeadlineLastComputedAt,
+		ClosingDateHistory:            func() []domain.ClosingDateChange { h, _ := extractClosingDateHistory(bid.Metadata); return h }(),
+		ClosingDateChangeCount:        func() int { _, c := extractClosingDateHistory(bid.Metadata); return c }(),
 	}
 }
 
@@ -2669,6 +2863,23 @@ func isImportedBid(metadata []byte) bool {
 		return false
 	}
 	return m.Imported
+}
+
+func extractClosingDateHistory(metadata []byte) ([]domain.ClosingDateChange, int) {
+	if len(metadata) == 0 {
+		return nil, 0
+	}
+	var m struct {
+		ClosingDateHistory     []domain.ClosingDateChange `json:"closing_date_history"`
+		ClosingDateChangeCount int                        `json:"closing_date_change_count"`
+	}
+	if err := json.Unmarshal(metadata, &m); err != nil {
+		return nil, 0
+	}
+	if m.ClosingDateChangeCount == 0 && len(m.ClosingDateHistory) > 0 {
+		m.ClosingDateChangeCount = len(m.ClosingDateHistory)
+	}
+	return m.ClosingDateHistory, m.ClosingDateChangeCount
 }
 
 func calcDaysRemaining(archivedAt *time.Time) *int {
@@ -2750,6 +2961,8 @@ func buildBidListItem(bid *domain.BidWorkspace, owner *domain.UserSummary, accou
 		ArchivedAt:                bid.ArchivedAt,
 		DeleteReason:              bid.DeleteReason,
 		DaysRemaining:             calcDaysRemaining(bid.ArchivedAt),
+		ClosingDateHistory:        func() []domain.ClosingDateChange { h, _ := extractClosingDateHistory(bid.Metadata); return h }(),
+		ClosingDateChangeCount:    func() int { _, c := extractClosingDateHistory(bid.Metadata); return c }(),
 	}
 }
 
@@ -2885,8 +3098,25 @@ func diffBidFields(bid *domain.BidWorkspace, req *domain.UpdateBidRequest) []dom
 	// request carries an RFC3339 string) — deep EMD/BG sub-fields and raw
 	// JSON blobs (requested_products, alert_note) stay undiffed for v1,
 	// add if a reviewer needs to see those change at a glance too.
-	diffDateField(&diffs, "start_date", bid.StartDate, req.StartDate)
-	diffDateField(&diffs, "end_date", bid.EndDate, req.EndDate)
+	reqStart := req.StartDate
+	if reqStart == nil {
+		reqStart = req.OpeningDate
+	}
+	bidStart := bid.StartDate
+	if bidStart == nil {
+		bidStart = bid.OpeningDate
+	}
+	diffDateField(&diffs, "start_date", bidStart, reqStart)
+
+	reqEnd := req.EndDate
+	if reqEnd == nil {
+		reqEnd = req.ClosingDate
+	}
+	bidEnd := bid.EndDate
+	if bidEnd == nil {
+		bidEnd = bid.ClosingDate
+	}
+	diffDateField(&diffs, "end_date", bidEnd, reqEnd)
 	diffField(&diffs, "support_type", derefStr(bid.SupportType), req.SupportType, fmtStrDiff)
 	diffField(&diffs, "support_partner_name", derefStr(bid.SupportPartnerName), req.SupportPartnerName, fmtStrDiff)
 	return diffs
@@ -2901,8 +3131,8 @@ func diffDateField(diffs *[]domain.FieldDiff, field string, oldVal *time.Time, n
 	if newP == nil {
 		return
 	}
-	newT, err := time.Parse(time.RFC3339, *newP)
-	if err != nil {
+	newT, err := parseDateFlexible(*newP)
+	if err != nil || newT == nil {
 		return
 	}
 	oldStr, newStr := "", newT.Format("2006-01-02")

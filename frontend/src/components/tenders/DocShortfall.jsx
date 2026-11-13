@@ -79,7 +79,7 @@ export function RaiseShortfallDialog({ busy, onRaise, onClose }) {
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
-            <Label htmlFor="shortfall-deadline" className="text-xs font-medium">Submit documents by *</Label>
+            <Label htmlFor="shortfall-deadline" className="text-xs font-medium">Submit documents by (optional)</Label>
             <Input id="shortfall-deadline" type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} className="h-9 text-xs" />
             {errors.deadline && <p role="alert" className="text-xs text-destructive">{errors.deadline}</p>}
           </div>
@@ -190,7 +190,11 @@ export function ShortfallPanel({ bid, round, busy, user, isAdmin, onSave, onLost
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <span className={`${CHIP} ${STATUS_STYLE[round.status]}`}>{ROUND_STATUS_LABEL[round.status]}</span>
-          <span className={`${CHIP} ${DUE_STYLE[due.state]} flex items-center gap-1`}><Clock className="size-3" /> Due {formatDateTime(round.deadline)}{due.label ? ` · ${due.label}` : ''}</span>
+          {round.deadline ? (
+            <span className={`${CHIP} ${DUE_STYLE[due.state]} flex items-center gap-1`}><Clock className="size-3" /> Due {formatDateTime(round.deadline)}{due.label ? ` · ${due.label}` : ''}</span>
+          ) : (
+            <span className={`${CHIP} bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700 flex items-center gap-1`}><Clock className="size-3" /> No deadline</span>
+          )}
         </div>
       </div>
       {round.note && <p className="text-xs text-foreground bg-background/60 border border-border rounded-lg p-2.5">“{round.note}”</p>}
@@ -340,7 +344,7 @@ export function ShortfallHistory({ ds }) {
               <TableRow key={r.n} data-testid={`shortfall-round-${r.n}`}>
                 <TableCell className="text-xs font-semibold">#{r.n}</TableCell>
                 <TableCell className="text-xs">{formatDateTime(r.raisedAt)}<br /><span className="text-muted-foreground">{r.raisedBy}</span></TableCell>
-                <TableCell className="text-xs">{formatDateTime(r.deadline)}</TableCell>
+                <TableCell className="text-xs">{r.deadline ? formatDateTime(r.deadline) : '—'}</TableCell>
                 <TableCell className="text-xs">
                   {r.docs.map((d) => (
                     <div key={d.id} className="flex items-center gap-1">
