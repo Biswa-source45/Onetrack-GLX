@@ -221,6 +221,15 @@ var derivedStatuses = map[string]bool{
 	"TECHNICAL_EVALUATION": true, "SUBMITTED": true, "ACTIVE": true,
 }
 
+// memberCond matches a tender the user is part of in any capacity ("My Tenders"):
+// the owner, the Reporting / Account Manager, Pre-Sales, or anyone on the
+// Members tab. The named columns are checked too so a tender whose members
+// rows were never back-filled still shows up for the people it names.
+func memberCond(n int) string {
+	return fmt.Sprintf(`(b.bid_owner_id = $%[1]d OR b.reporting_manager_id = $%[1]d OR b.account_manager_id = $%[1]d OR b.presales_id = $%[1]d
+		OR EXISTS (SELECT 1 FROM bid.bid_workspace_members m WHERE m.bid_id = b.id AND m.user_id = $%[1]d))`, n)
+}
+
 func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams) ([]domain.BidWorkspace, int, map[string]int, error) {
 	conditions := []string{}
 	if params.InBin {
@@ -286,6 +295,11 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 		// owner kept seeing the tender under their own owner filter forever.)
 		conditions = append(conditions, fmt.Sprintf("b.bid_owner_id = $%d", idx))
 		args = append(args, params.BidOwnerID)
+		idx++
+	}
+	if params.MemberID != "" {
+		conditions = append(conditions, memberCond(idx))
+		args = append(args, params.MemberID)
 		idx++
 	}
 	if params.Category != "" {
@@ -375,6 +389,11 @@ func (r *postgresBidRepo) List(ctx context.Context, params domain.ListBidsParams
 	if params.BidOwnerID != "" {
 		baseConditions = append(baseConditions, fmt.Sprintf("b.bid_owner_id = $%d", baseIdx))
 		baseArgs = append(baseArgs, params.BidOwnerID)
+		baseIdx++
+	}
+	if params.MemberID != "" {
+		baseConditions = append(baseConditions, memberCond(baseIdx))
+		baseArgs = append(baseArgs, params.MemberID)
 		baseIdx++
 	}
 	// In Quick To-Dos the tiles count the very window the list shows (any status),

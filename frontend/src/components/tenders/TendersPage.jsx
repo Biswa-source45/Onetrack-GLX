@@ -166,20 +166,11 @@ function safeDateInputFormat(dt) {
 }
 
 // ── Client-side list filters ─────────────────────────────────────────────────
-// Applied on top of the server query: the owned view also counts tenders the
-// user created, and "Others" portal source means "none of the known portals".
-// Shared by the list render and the Excel export so both show the same rows.
-function isBidOwnedByUser(bid, user) {
-  if (!user || !user.id) return true;
-  const ownerId = bid.bid_owner?.id || bid.bid_owner_id;
-  const creatorId = bid.created_by;
-  return (ownerId && ownerId === user.id) || (creatorId && creatorId === user.id);
-}
-
-function matchesClientFilters(bid, { isOwnedView, currentUser, portalSourceFilter }) {
-  if (isOwnedView && currentUser?.id) {
-    if (!isBidOwnedByUser(bid, currentUser)) return false;
-  }
+// Applied on top of the server query: "Others" portal source means "none of the
+// known portals". The owned view is decided by the server (member_id), so it is
+// not re-checked here. Shared by the list render and the Excel export so both
+// show the same rows.
+function matchesClientFilters(bid, { portalSourceFilter }) {
   if (portalSourceFilter) {
     const src = (bid.portal_source || "").toLowerCase().trim();
     const filter = portalSourceFilter.toLowerCase().trim();
@@ -615,7 +606,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
   // re-deriving them client-side from free text made a card's own status
   // disagree with the stat-card counts (which come from the same server
   // truth via meta.*_count).
-  const clientFilters = { isOwnedView, currentUser, portalSourceFilter };
+  const clientFilters = { portalSourceFilter };
   const filteredBids = bids.filter((bid) => matchesClientFilters(bid, clientFilters));
 
   // ── Column Sorting ──────────────────────────────────────────────────────────
@@ -1045,7 +1036,7 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
             {inBin
               ? "Soft-deleted tender workspaces. Items are retained for 15 days before permanent auto-purge."
               : isOwnedView
-                ? `Displaying tenders assigned to or created by ${currentUser?.full_name || currentUser?.username || "your account"}.`
+                ? `Displaying tenders owned by or shared with ${currentUser?.full_name || currentUser?.username || "your account"} as a team member.`
                 : "Manage and track all organizational bid workspaces and GeM tenders."}
           </p>
         </div>
@@ -1616,12 +1607,12 @@ export function TendersPage({ initialScope = "all", todoMode = false }) {
           <div className="text-center">
             <p className="font-semibold text-sm text-foreground">
               {isOwnedView
-                ? "No Owned Tenders Found"
+                ? "No Tenders Found"
                 : "No matching tenders found"}
             </p>
             <p className="text-xs text-muted-foreground mt-1 max-w-md">
               {isOwnedView
-                ? "You do not currently own or have not created any tenders matching the applied filters."
+                ? "You are not the owner or a team member of any tender matching the applied filters."
                 : searchInput || stageFilter || statusFilter
                   ? "Refine your query filters or criteria."
                   : "Create your first tender to spin up a workflow workspace."}

@@ -185,6 +185,10 @@ export const useBidStore = create((set, get) => ({
     if (ownerFilterId) {
       finalOwnerId = ownerFilterId
     }
+    // "My Tenders" = every tender the user is part of (owner, RM/AM/Pre-Sales, any
+    // member), so the owned view filters by membership; only the management
+    // Owner cross-filter stays a strict owner match.
+    const mine = scope === 'owned' && !ownerFilterId
     const quick = todoMode && todoFilter && todoFilter !== 'alert' && todoFilter !== 'shortfall' ? todoFilter : endDateFilter
     // Any filter in play (or the To-Do view) puts the tender ending soonest first;
     // an unfiltered list stays newest-added-first.
@@ -195,7 +199,8 @@ export const useBidStore = create((set, get) => ({
       workflow_stage: stageFilter,
       bid_status: statusFilter === 'ABORTED' ? 'CLOSED' : statusFilter,
       portal_source: portalSourceFilter || undefined,
-      bid_owner_id: (scope === 'owned' || finalOwnerId) ? finalOwnerId : undefined,
+      bid_owner_id: mine ? undefined : (finalOwnerId || undefined),
+      member_id: mine ? (finalOwnerId || undefined) : undefined,
       closing_after,
       closing_before,
       in_bin: inBin,

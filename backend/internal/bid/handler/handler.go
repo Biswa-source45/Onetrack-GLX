@@ -125,6 +125,7 @@ func (h *BidHandler) ListBids(c *gin.Context) {
 		BidStatus:     c.Query("bid_status"),
 		BidOutcome:    c.Query("bid_outcome"),
 		BidOwnerID:    c.Query("bid_owner_id"),
+		MemberID:      c.Query("member_id"),
 		Category:      c.Query("category"),
 		PortalSource:  c.Query("portal_source"),
 		CreationMode:  c.Query("creation_mode"),

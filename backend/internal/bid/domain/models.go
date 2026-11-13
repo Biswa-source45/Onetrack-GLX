@@ -1069,6 +1069,9 @@ type ListBidsParams struct {
 	BidStatus     string
 	BidOutcome    string
 	BidOwnerID    string
+	// MemberID ("My Tenders"): tenders this user is part of in any capacity —
+	// owner, Reporting/Account Manager, Pre-Sales, or any row in the Members tab.
+	MemberID      string
 	Category      string
 	PortalSource  string
 	CreationMode  string
