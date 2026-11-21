@@ -31,6 +31,7 @@ export async function listBids({
   bid_status = '',
   bid_outcome = '',
   bid_owner_id = '',
+  member_id = '',
   category = '',
   portal_source = '',
   creation_mode = '',
@@ -51,6 +52,7 @@ export async function listBids({
   if (bid_status)     params.set('bid_status', bid_status)
   if (bid_outcome)    params.set('bid_outcome', bid_outcome)
   if (bid_owner_id)   params.set('bid_owner_id', bid_owner_id)
+  if (member_id)      params.set('member_id', member_id)
   if (category)       params.set('category', category)
   if (portal_source)  params.set('portal_source', portal_source)
   if (creation_mode)  params.set('creation_mode', creation_mode)
