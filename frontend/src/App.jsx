@@ -12,6 +12,7 @@ import { TendersPage } from "./components/tenders/TendersPage"
 import { MasterSheetPage } from "./components/tenders/MasterSheetPage"
 import { AddTenderPage } from "./components/tenders/AddTenderPage"
 import { TenderDetailPage } from "./components/tenders/TenderDetailPage"
+import { TenderChatHistoryPage } from "./components/tenders/TenderChatHistoryPage"
 import { EmdDetailsPage } from "./components/tenders/EmdDetailsPage"
 import { EMD_VIEW_ROLES } from "./lib/emdAccess"
 import { UserManagement } from "./components/admin/UserManagement"
@@ -111,6 +112,8 @@ export default function App() {
                 <Route path="tenders/master" element={<MasterSheetPage />} />
                 <Route path="tenders/master/:drillId" element={<MasterSheetPage />} />
                 <Route path="tenders/:bidId" element={<TenderDetailPage />} />
+                <Route path="tenders/:bidId/chat-history" element={<TenderChatHistoryPage />} />
+                <Route path="chat-history" element={<TenderChatHistoryPage />} />
                 <Route path="alerts" element={<AlertsPage />} />
               </Route>
 

@@ -31,6 +31,9 @@ import (
 	calendarHandler "github.com/onetrack/backend/internal/calendar/handler"
 	calendarRepo "github.com/onetrack/backend/internal/calendar/repository"
 	calendarService "github.com/onetrack/backend/internal/calendar/service"
+	chatHandler "github.com/onetrack/backend/internal/chat/handler"
+	chatRepo "github.com/onetrack/backend/internal/chat/repository"
+	chatService "github.com/onetrack/backend/internal/chat/service"
 	"github.com/onetrack/backend/internal/middleware"
 	"github.com/onetrack/backend/internal/platform/config"
 	"github.com/onetrack/backend/internal/platform/database"
@@ -164,6 +167,12 @@ func main() {
 	// Leads — standalone pre-tender pipeline, own schema, no bid coupling.
 	leadHdlr := leadHandler.NewLeadHandler(leadRepo.NewPostgresLeadRepository(dbPool), cfg.LeadsUploadDir, alertSvc)
 	leadHandler.RegisterLeadRoutes(v1, leadHdlr, authMiddleware)
+
+	// Initialize Chat module — dedicated team discussion & mentions for tenders
+	chatRepository := chatRepo.NewPostgresRepository(dbPool)
+	chatSvc := chatService.NewChatService(chatRepository, alertSvc)
+	chatHdlr := chatHandler.NewChatHandler(chatSvc)
+	chatHandler.RegisterRoutes(v1, chatHdlr, authMiddleware)
 
 	// My Accounts (Account Managers) and My OEMs (Pre-Sales): private per-owner lists with contacts.
 	directory.RegisterRoutes(v1, directory.NewHandler(directory.NewRepo(dbPool)), authMiddleware)

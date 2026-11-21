@@ -6,7 +6,7 @@ import {
   Users, LayoutDashboard, Menu, X, ChevronRight,
   FileText, TrendingUp, Activity, BarChart2, ShieldCheck, Bell,
   Award, XCircle, AlertTriangle, Clock, Calendar, Filter, IndianRupee, Search, UserCheck, RefreshCw, Pencil,
-  FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass, ScrollText, Settings, Target, ListChecks, Building2, Factory
+  FileSpreadsheet, Archive, Ban, MessageSquarePlus, Ticket, Hourglass, ScrollText, Settings, Target, ListChecks, Building2, Factory, MessagesSquare
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { toBlob } from 'html-to-image'
@@ -66,6 +66,13 @@ const NAV_ITEMS = [
       { id: 'tenders-todos', label: 'Quick To-Dos', icon: ListChecks, path: '/dashboard/tenders/todos' },
       { id: 'tenders-owned', label: 'My Tenders', icon: UserCheck, path: '/dashboard/tenders/owned' }
     ]
+  },
+  {
+    id: 'chat-history',
+    label: 'Chat & History',
+    icon: MessagesSquare,
+    permission: 'bid.view',
+    path: '/dashboard/chat-history',
   },
   {
     id: 'emd-details',
@@ -1886,7 +1893,9 @@ export default function Dashboard() {
     return <ForcePasswordChangeGuard onDone={() => navigate('/login')} />
   }
 
-  const activeSection = location.pathname.includes('/analytics')
+  const activeSection = location.pathname.includes('/chat-history')
+    ? 'chat-history'
+    : location.pathname.includes('/analytics')
     ? 'analytics'
     : location.pathname.includes('/leads')
       ? 'leads'

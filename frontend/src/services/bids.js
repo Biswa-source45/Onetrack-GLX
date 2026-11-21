@@ -430,6 +430,26 @@ export const WORKFLOW_STAGES_ORDERED = [
   'AWARD_HANDOVER',
 ]
 
+/** Returns true if the tender stage is after Stage 5 (i.e. Stage 6: EMD_PROCESSING onwards) */
+export const isStageAfterStage5 = (stage) => {
+  if (!stage) return false
+  const s = String(stage).toUpperCase().trim()
+  const idx = WORKFLOW_STAGES_ORDERED.indexOf(s)
+  if (idx !== -1) {
+    return idx > 4
+  }
+  return [
+    'EMD_PROCESSING',
+    'INTERNAL_APPROVAL',
+    'GEM_SUBMISSION',
+    'TECHNICAL_EVALUATION',
+    'FINANCIAL_EVALUATION',
+    'AWARD_HANDOVER',
+    'COMPLETED',
+    'CLOSED',
+  ].includes(s)
+}
+
 export const SUPPORT_TYPES = [
   { value: 'GLOBX', label: 'GLOBX : Our own bidding entry', shortLabel: 'GLOBX', desc: 'Our own bidding entry', description: 'Our own bidding entry' },
   { value: 'IN_SUPPORT', label: 'In-Support : We are taking support from other partner', shortLabel: 'In-Support', desc: 'We are taking support from other partner', description: 'We are taking support from other partner' },

@@ -7,7 +7,7 @@ import {
   XCircle, Edit2, Save, X, MoreHorizontal, Calendar,
   FileText, Activity, History, UserPlus, Target, ChevronDown, MessageSquare,
   RotateCcw, Trash2, Trophy, Search, ShieldCheck, Share2, Coins, Eye,
-  Send, Upload, Hourglass, Ban, ArrowRight, Layers, Lock, Check, Sparkles, AlertTriangle, UserCheck, RefreshCw, ExternalLink, Printer, Contact
+  Send, Upload, Hourglass, Ban, ArrowRight, Layers, Lock, Check, Sparkles, AlertTriangle, UserCheck, RefreshCw, ExternalLink, Printer, Contact, MessagesSquare
 } from 'lucide-react'
 import { isHttpUrl } from '../../lib/tenderSpec'
 import { TenderPrintSheet } from './TenderPrintSheet'
@@ -48,6 +48,8 @@ import { ContactsTab } from './ContactsTab'
 import { DocsTab } from './DocsTab'
 import { triggerRedZoneNotification, getTenderWorkingDeadline } from '../../services/calendar'
 import { EndDateHistoryModal } from './EndDateHistoryModal'
+import { TenderChatHistoryPage } from './TenderChatHistoryPage'
+import { TenderDynamicChatWindow } from './TenderDynamicChatWindow'
 
 // Module scope (not runtime-dependent) so the URL-backed tab state below can
 // validate against it before the component has even loaded a bid.
@@ -57,6 +59,7 @@ const TABS = [
   { id: 'checklist', label: 'Checklist', icon: CheckSquare },
   { id: 'docs', label: 'Docs', icon: FileText },
   { id: 'history', label: 'Stage History', icon: History },
+  { id: 'chat-history', label: 'Chat & History', icon: MessagesSquare },
   { id: 'contacts', label: 'Contacts', icon: Contact },
   { id: 'members', label: 'Members', icon: Users },
 ]
@@ -2456,6 +2459,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false)
   const [notifyingRedZone, setNotifyingRedZone] = useState(false)
   const [showEndDateHistory, setShowEndDateHistory] = useState(false)
+  const [showDynamicChatDrawer, setShowDynamicChatDrawer] = useState(false)
 
   const loadBid = useCallback(async (showLoader = false) => {
     setLoading(prev => (prev || showLoader ? true : false))
@@ -3283,6 +3287,7 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
           {activeTab === 'checklist' && <ChecklistTab bid={bid} onRefresh={loadBid} />}
           {activeTab === 'docs' && <DocsTab bid={bid} />}
           {activeTab === 'history' && <StageHistoryTab bidId={bid.id} bid={bid} />}
+          {activeTab === 'chat-history' && <TenderChatHistoryPage bid={bid} bidId={bid.id} />}
           {activeTab === 'contacts' && <ContactsTab bid={bid} onRefresh={loadBid} />}
           {activeTab === 'members' && <MembersTab bid={bid} onRefresh={loadBid} />}
         </motion.div>
@@ -3338,6 +3343,51 @@ export function TenderDetailPage({ bidId: propBidId, onBack: propOnBack }) {
         history={bid?.closing_date_history}
         changeCount={bid?.closing_date_change_count}
       />
+
+      {/* Dynamic Floating Tender Chat Trigger (available across all tabs) */}
+      {activeTab !== 'chat-history' && (
+        <div className="fixed bottom-6 right-6 z-40 animate-in fade-in zoom-in duration-200">
+          <button
+            type="button"
+            onClick={() => setShowDynamicChatDrawer(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-teal-600 hover:bg-teal-700 text-white font-semibold text-xs shadow-xl transition-all hover:scale-105 active:scale-95 group border border-teal-400/30"
+            title="Open Dynamic Tender Chat Window"
+          >
+            <MessagesSquare className="size-4 group-hover:rotate-6 transition-transform" />
+            <span>Tender Chat</span>
+          </button>
+        </div>
+      )}
+
+      {/* Dynamic Slide-Over Chat Drawer */}
+      <AnimatePresence>
+        {showDynamicChatDrawer && (
+          <div className="fixed inset-0 z-50 flex justify-end">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowDynamicChatDrawer(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-xs"
+            />
+            <motion.div
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 26, stiffness: 260 }}
+              className="relative w-full max-w-lg h-full bg-background border-l border-border shadow-2xl flex flex-col z-10 p-3 sm:p-4"
+            >
+              <TenderDynamicChatWindow
+                bid={bid}
+                bidId={bid?.id}
+                onClose={() => setShowDynamicChatDrawer(false)}
+                isDrawer={true}
+                className="h-full border-0 shadow-none rounded-xl"
+              />
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
