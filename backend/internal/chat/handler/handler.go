@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -22,9 +23,11 @@ func RegisterRoutes(r *gin.RouterGroup, h *ChatHandler, authMiddleware *middlewa
 	bids := r.Group("/bids/:id/chat")
 	bids.Use(authMiddleware.Authenticate())
 	{
-		bids.GET("", h.ListMessages)
-		bids.POST("", h.SendMessage)
-		bids.GET("/members", h.GetMembers)
+		// Same gate as viewing the tender itself.
+		view := authMiddleware.RequirePermission("bid.view")
+		bids.GET("", view, h.ListMessages)
+		bids.POST("", view, h.SendMessage)
+		bids.GET("/members", view, h.GetMembers)
 	}
 }
 
@@ -78,6 +81,10 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 	}
 
 	msg, err := h.svc.SendMessage(c.Request.Context(), bidID, userID, &req)
+	if errors.Is(err, domain.ErrBidNotFound) {
+		response.NotFound(c, "Tender not found")
+		return
+	}
 	if err != nil {
 		response.BadRequest(c, err.Error(), nil)
 		return

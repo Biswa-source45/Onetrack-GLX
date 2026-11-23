@@ -2,8 +2,12 @@ package domain
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrBidNotFound is returned when the tender does not exist.
+var ErrBidNotFound = errors.New("tender not found")
 
 type ChatMessage struct {
 	ID          string           `json:"id"`

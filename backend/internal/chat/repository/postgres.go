@@ -3,7 +3,10 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onetrack/backend/internal/chat/domain"
@@ -70,20 +73,24 @@ func (r *postgresChatRepo) GetMessagesByBidID(ctx context.Context, bidID string,
 		offset = 0
 	}
 
+	// Newest page first (so a long chat shows the latest messages), re-sorted oldest-first for display.
 	query := `
-		SELECT m.id, m.bid_id, m.sender_id,
-		       COALESCE(u.full_name, u.username, 'User') as sender_name,
-		       COALESCE(u.email, '') as sender_email,
-		       COALESCE(
-		         (SELECT r.name FROM auth.user_roles ur JOIN auth.roles r ON r.id = ur.role_id WHERE ur.user_id = u.id ORDER BY ur.is_primary DESC, ur.role_order ASC LIMIT 1),
-		         'MEMBER'
-		       ) as sender_role,
-		       m.content, m.message_type, m.mentions, m.attachments, m.created_at, m.updated_at
-		FROM bid.tender_chat_messages m
-		LEFT JOIN auth.users u ON u.id = m.sender_id
-		WHERE m.bid_id = $1
-		ORDER BY m.created_at ASC
-		LIMIT $2 OFFSET $3
+		SELECT * FROM (
+			SELECT m.id, m.bid_id, m.sender_id,
+			       COALESCE(u.full_name, u.username, 'User') as sender_name,
+			       COALESCE(u.email, '') as sender_email,
+			       COALESCE(
+			         (SELECT r.name FROM auth.user_roles ur JOIN auth.roles r ON r.id = ur.role_id WHERE ur.user_id = u.id ORDER BY ur.is_primary DESC, ur.role_order ASC LIMIT 1),
+			         'MEMBER'
+			       ) as sender_role,
+			       m.content, m.message_type, m.mentions, m.attachments, m.created_at, m.updated_at
+			FROM bid.tender_chat_messages m
+			LEFT JOIN auth.users u ON u.id = m.sender_id
+			WHERE m.bid_id = $1
+			ORDER BY m.created_at DESC, m.id DESC
+			LIMIT $2 OFFSET $3
+		) latest
+		ORDER BY created_at ASC, id ASC
 	`
 
 	rows, err := r.pool.Query(ctx, query, bidID, limit, offset)
@@ -131,6 +138,9 @@ func (r *postgresChatRepo) GetMessagesByBidID(ctx context.Context, bidID string,
 
 		messages = append(messages, &msg)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read chat messages: %w", err)
+	}
 
 	return messages, nil
 }
@@ -170,17 +180,23 @@ func (r *postgresChatRepo) GetEligibleMembers(ctx context.Context, bidID string)
 		}
 		members = append(members, &m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read members: %w", err)
+	}
 
 	return members, nil
 }
 
 func (r *postgresChatRepo) GetBidSummary(ctx context.Context, bidID string) (string, string, string, string, error) {
 	query := `
-		SELECT title, COALESCE(bid_no, gem_bid_no, 'N/A'), created_by, COALESCE(workflow_stage, 'DISCOVERED')
+		SELECT title, COALESCE(bid_no, gem_bid_no, 'N/A'), COALESCE(created_by::text, ''), COALESCE(workflow_stage, 'DISCOVERED')
 		FROM bid.bid_workspaces
 		WHERE id = $1
 	`
 	var title, bidNo, createdBy, stage string
 	err := r.pool.QueryRow(ctx, query, bidID).Scan(&title, &bidNo, &createdBy, &stage)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = domain.ErrBidNotFound
+	}
 	return title, bidNo, createdBy, stage, err
 }
