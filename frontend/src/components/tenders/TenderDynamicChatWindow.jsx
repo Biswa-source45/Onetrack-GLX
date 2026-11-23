@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   Send,
   MessagesSquare,
@@ -11,8 +11,6 @@ import {
   Loader2,
   RefreshCw,
   FileText,
-  Pin,
-  ChevronDown,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -20,15 +18,13 @@ import { Input } from '@/components/ui/input'
 import { getTenderChatMessages, sendTenderChatMessage, getTenderChatMembers } from '../../services/chat'
 import { isStageAfterStage5 } from '../../services/bids'
 import { formatDateTime } from '../../lib/tenderFormat'
-import { usePermissions } from '../../hooks/usePermissions'
+import { renderMentions, teamMemberCount } from '../../lib/chatMentions'
 
-export function TenderDynamicChatWindow({ bid, bidId, onClose, isDrawer = false, className = '' }) {
+export function TenderDynamicChatWindow({ bid, bidId, onClose, className = '' }) {
   const currentBidId = bidId || bid?.id || ''
-  const tenderBidNo = bid?.bid_number || bid?.bid_no || 'Tender Room'
-  const tenderTitle = bid?.title || 'Tender Workspace'
+  const tenderBidNo = bid?.bid_no || bid?.gem_bid_no || 'Tender Room'
   const tenderStage = bid?.current_stage || bid?.workflow_stage || 'DISCOVERED'
   const isPostStage5 = isStageAfterStage5(tenderStage)
-  const { user } = usePermissions()
 
   const [chatMessages, setChatMessages] = useState([])
   const [loadingChat, setLoadingChat] = useState(false)
@@ -43,17 +39,17 @@ export function TenderDynamicChatWindow({ bid, bidId, onClose, isDrawer = false,
   const messagesEndRef = useRef(null)
 
   // 1. Fetch messages and members from backend
-  const loadChat = async (targetId) => {
+  const loadChat = async (targetId, withMembers = true) => {
     if (!targetId) return
     try {
       const [chatRes, membersRes] = await Promise.all([
         getTenderChatMessages(targetId),
-        getTenderChatMembers(targetId),
+        withMembers ? getTenderChatMembers(targetId) : Promise.resolve(null),
       ])
       if (chatRes.ok && Array.isArray(chatRes.data)) {
         setChatMessages(chatRes.data)
       }
-      if (membersRes.ok && Array.isArray(membersRes.data)) {
+      if (membersRes?.ok && Array.isArray(membersRes.data)) {
         setEligibleMembers(membersRes.data)
       }
     } catch (err) {
@@ -66,9 +62,9 @@ export function TenderDynamicChatWindow({ bid, bidId, onClose, isDrawer = false,
     setLoadingChat(true)
     loadChat(currentBidId).finally(() => setLoadingChat(false))
 
-    // Real-time polling every 4 seconds
+    // Poll messages only (members rarely change) and not while the tab is hidden
     const interval = setInterval(() => {
-      loadChat(currentBidId)
+      if (!document.hidden) loadChat(currentBidId, false)
     }, 4000)
 
     return () => clearInterval(interval)
@@ -123,22 +119,10 @@ export function TenderDynamicChatWindow({ bid, bidId, onClose, isDrawer = false,
 
     setSendingChat(true)
     try {
-      const mentions = []
-      eligibleMembers.forEach((m) => {
-        if (m.username && text.toLowerCase().includes(`@${m.username.toLowerCase()}`)) {
-          mentions.push(m.username)
-        } else if (m.full_name && text.toLowerCase().includes(`@${m.full_name.toLowerCase()}`)) {
-          mentions.push(m.full_name)
-        }
-      })
-      if (text.toLowerCase().includes('@everyone') || text.toLowerCase().includes('@team')) {
-        if (!mentions.includes('everyone')) mentions.push('everyone')
-      }
 
       const payload = {
         content: text,
         message_type: isQuestionMode ? 'QUESTION' : text.endsWith('?') ? 'QUESTION' : 'CHAT',
-        mentions,
         attachments: [],
       }
 
@@ -148,11 +132,10 @@ export function TenderDynamicChatWindow({ bid, bidId, onClose, isDrawer = false,
         setInputMessage('')
         setIsQuestionMode(false)
         setShowMentionMenu(false)
-        toast.success(isQuestionMode ? 'Question posted to team' : 'Message sent')
       } else {
         toast.error(res.message || 'Failed to post message')
       }
-    } catch (err) {
+    } catch {
       toast.error('Network error posting message')
     } finally {
       setSendingChat(false)
@@ -177,33 +160,7 @@ export function TenderDynamicChatWindow({ bid, bidId, onClose, isDrawer = false,
     return 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
   }
 
-  // Render mentions nicely in text
-  const renderMessageContent = (content) => {
-    if (!content) return null
-    const tokens = content.split(/(@[\w\s.-]+)/g)
-    return tokens.map((part, idx) => {
-      if (part.startsWith('@')) {
-        const isEveryone =
-          part.toLowerCase().includes('everyone') ||
-          part.toLowerCase().includes('team') ||
-          part.toLowerCase().includes('all')
-        return (
-          <span
-            key={idx}
-            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-bold text-[11px] mx-0.5 border ${
-              isEveryone
-                ? 'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/80 dark:text-amber-200 dark:border-amber-700'
-                : 'bg-indigo-100 text-indigo-800 border-indigo-200 dark:bg-indigo-950/80 dark:text-indigo-200 dark:border-indigo-700'
-            }`}
-          >
-            {isEveryone ? <Users className="size-3 text-amber-600 shrink-0" /> : <AtSign className="size-3 text-indigo-600 shrink-0" />}
-            <span>{part}</span>
-          </span>
-        )
-      }
-      return <span key={idx}>{part}</span>
-    })
-  }
+  const renderMessageContent = (content) => renderMentions(content, eligibleMembers)
 
   return (
     <div className={`bg-card border border-border rounded-2xl flex flex-col overflow-hidden shadow-sm relative ${className}`}>
@@ -220,7 +177,7 @@ export function TenderDynamicChatWindow({ bid, bidId, onClose, isDrawer = false,
             </h3>
             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
               <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-              <span className="truncate">Live Sync · {eligibleMembers.length} Members</span>
+              <span className="truncate">Live Sync · {teamMemberCount(eligibleMembers)} Members</span>
             </div>
           </div>
         </div>

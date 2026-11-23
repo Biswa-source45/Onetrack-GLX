@@ -37,6 +37,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { listBids, getBid, getBidStageHistory, STAGE_LABELS, WORKFLOW_STAGES_ORDERED, isStageAfterStage5 } from '../../services/bids'
 import { getTenderChatMessages, sendTenderChatMessage, getTenderChatMembers } from '../../services/chat'
+import { renderMentions, teamMemberCount } from '../../lib/chatMentions'
 import { formatDateTime, formatDate, formatCurrency } from '../../lib/tenderFormat'
 import { usePermissions } from '../../hooks/usePermissions'
 
@@ -282,17 +283,17 @@ export function TenderChatHistoryPage({ bid: propBid, bidId: propBidId }) {
   }
 
   // 3. Load Real Backend Chat Messages & Mention Members
-  const loadChatFromBackend = async (targetBidId) => {
+  const loadChatFromBackend = async (targetBidId, withMembers = true) => {
     if (!targetBidId) return
     try {
       const [chatRes, membersRes] = await Promise.all([
         getTenderChatMessages(targetBidId),
-        getTenderChatMembers(targetBidId),
+        withMembers ? getTenderChatMembers(targetBidId) : Promise.resolve(null),
       ])
       if (chatRes.ok && Array.isArray(chatRes.data)) {
         setChatMessages(chatRes.data)
       }
-      if (membersRes.ok && Array.isArray(membersRes.data)) {
+      if (membersRes?.ok && Array.isArray(membersRes.data)) {
         setEligibleMembers(membersRes.data)
       }
     } catch (err) {
@@ -306,13 +307,20 @@ export function TenderChatHistoryPage({ bid: propBid, bidId: propBidId }) {
     setLoadingChat(true)
     loadChatFromBackend(selectedBid.id).finally(() => setLoadingChat(false))
 
-    // Background live sync interval every 4 seconds to pull teammate updates
+    // Poll messages only (members rarely change) and not while the tab is hidden
     const interval = setInterval(() => {
-      loadChatFromBackend(selectedBid.id)
+      if (!document.hidden) loadChatFromBackend(selectedBid.id, false)
     }, 4000)
 
     return () => clearInterval(interval)
   }, [selectedBid?.id])
+
+  // Chat feeds (oldest first) follow the newest message, like any chat
+  useEffect(() => {
+    document.querySelectorAll('[data-chat-feed]').forEach((el) => {
+      el.scrollTop = el.scrollHeight
+    })
+  }, [chatMessages.length, activeConcept, isChatWindowOpen, drawerTab])
 
   const handleSelectTender = (e) => {
     const id = e.target.value
@@ -378,30 +386,16 @@ export function TenderChatHistoryPage({ bid: propBid, bidId: propBidId }) {
 
     setSendingChat(true)
     try {
-      // Extract mentions
-      const mentions = []
-      eligibleMembers.forEach((m) => {
-        if (m.username && msgText.toLowerCase().includes(`@${m.username.toLowerCase()}`)) {
-          mentions.push(m.username)
-        } else if (m.full_name && msgText.toLowerCase().includes(`@${m.full_name.toLowerCase()}`)) {
-          mentions.push(m.full_name)
-        }
-      })
-      if (msgText.toLowerCase().includes('@everyone') || msgText.toLowerCase().includes('@team')) {
-        if (!mentions.includes('everyone')) mentions.push('everyone')
-      }
 
       const payload = {
         content: msgText,
         message_type: isQuestionMode ? 'QUESTION' : msgText.endsWith('?') ? 'QUESTION' : 'CHAT',
-        mentions,
         attachments: [],
       }
 
       const res = await sendTenderChatMessage(selectedBid.id, payload)
       if (res.ok && res.data) {
         setChatMessages((prev) => [...prev, res.data])
-        toast.success(isQuestionMode ? 'Tender question posted to team' : 'Message posted to tender discussion')
         if (conceptNumber === 1) setInputMessage1('')
         if (conceptNumber === 2) setInputMessage2('')
         if (conceptNumber === 3) setInputMessage3('')
@@ -446,36 +440,11 @@ export function TenderChatHistoryPage({ bid: propBid, bidId: propBidId }) {
     return 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
   }
 
-  // Helper to render mentions nicely inside message text
-  const renderMessageContent = (content) => {
-    if (!content) return null
-    const tokens = content.split(/(@[\w\s.-]+)/g)
-    return tokens.map((part, idx) => {
-      if (part.startsWith('@')) {
-        const isEveryone =
-          part.toLowerCase().includes('everyone') ||
-          part.toLowerCase().includes('team') ||
-          part.toLowerCase().includes('all')
-        return (
-          <span
-            key={idx}
-            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-bold text-[11px] mx-0.5 border ${isEveryone
-              ? 'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/80 dark:text-amber-200 dark:border-amber-700'
-              : 'bg-indigo-100 text-indigo-800 border-indigo-200 dark:bg-indigo-950/80 dark:text-indigo-200 dark:border-indigo-700'
-              }`}
-          >
-            {isEveryone ? <Users className="size-3 text-amber-600 shrink-0" /> : <AtSign className="size-3 text-indigo-600 shrink-0" />}
-            <span>{part}</span>
-          </span>
-        )
-      }
-      return <span key={idx}>{part}</span>
-    })
-  }
+  const renderMessageContent = (content) => renderMentions(content, eligibleMembers)
 
   // Tender Display Info
   const tenderDisplayTitle = selectedBid?.title || 'Tender Workspace'
-  const tenderBidNo = selectedBid?.bid_number || selectedBid?.bid_no || 'GLX-95920'
+  const tenderBidNo = selectedBid?.bid_no || selectedBid?.gem_bid_no || 'Tender'
   const tenderStage = selectedBid?.current_stage || selectedBid?.workflow_stage || 'DISCOVERED'
   const tenderStageLabel = STAGE_LABELS[tenderStage] || tenderStage
   const isPostStage5 = isStageAfterStage5(tenderStage)
@@ -521,13 +490,9 @@ export function TenderChatHistoryPage({ bid: propBid, bidId: propBidId }) {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card border border-border p-5 rounded-2xl shadow-sm">
         <div className="space-y-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-teal-50 text-teal-700 border border-teal-200 dark:bg-teal-950/50 dark:text-teal-300 dark:border-teal-800">
-              Live Backend Connected
-            </span>
-            <span className="text-xs text-muted-foreground">PostgreSQL Chat Module</span>
             <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
               <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              {eligibleMembers.length} Members Available for Mentions
+              {teamMemberCount(eligibleMembers)} Team Members
             </span>
           </div>
 
@@ -537,7 +502,7 @@ export function TenderChatHistoryPage({ bid: propBid, bidId: propBidId }) {
           </h1>
 
           <p className="text-xs md:text-sm text-muted-foreground">
-            Explore 4 production UI designs connected to the dedicated backend chat module with @mentions and immutable audit history.
+            Stage history, date changes and the team discussion for this tender, with @mentions.
           </p>
 
           {/* Tender Selector (when opened from standalone sidebar) */}
@@ -554,7 +519,7 @@ export function TenderChatHistoryPage({ bid: propBid, bidId: propBidId }) {
               >
                 {bidsList.map((b) => (
                   <option key={b.id} value={b.id}>
-                    {b.bid_number || b.bid_no || 'Tender'} - {b.title?.slice(0, 36)}...
+                    {b.bid_no || b.gem_bid_no || 'Tender'} - {b.title?.slice(0, 36)}...
                   </option>
                 ))}
               </select>
@@ -563,7 +528,7 @@ export function TenderChatHistoryPage({ bid: propBid, bidId: propBidId }) {
                 <Link
                   to={`/dashboard/tenders/${selectedBid.id}`}
                   className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-teal-600 hover:bg-teal-700 text-white shadow-xs transition-colors cursor-pointer"
-                  title={`Go to ${selectedBid.bid_number || selectedBid.bid_no || 'Tender'}`}
+                  title={`Go to ${selectedBid.bid_no || selectedBid.gem_bid_no || 'Tender'}`}
                 >
                   <span>Go To Tender</span>
                   <ExternalLink className="size-3.5" />
@@ -854,7 +819,7 @@ export function TenderChatHistoryPage({ bid: propBid, bidId: propBidId }) {
                 </div>
 
                 {/* Chat Messages Body */}
-                <div className="p-4 overflow-y-auto space-y-3.5 max-h-[440px] flex-1 bg-card">
+                <div data-chat-feed className="p-4 overflow-y-auto space-y-3.5 max-h-[440px] flex-1 bg-card">
                   {loadingChat && chatMessages.length === 0 ? (
                     <div className="py-12 flex flex-col items-center justify-center text-muted-foreground gap-2">
                       <Loader2 className="size-6 animate-spin text-teal-600" />
@@ -1118,7 +1083,7 @@ export function TenderChatHistoryPage({ bid: propBid, bidId: propBidId }) {
                   <Link
                     to={`/dashboard/tenders/${selectedBid.id}`}
                     className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-teal-600 hover:bg-teal-700 text-white shadow-xs transition-colors cursor-pointer ml-1"
-                    title={`Go to ${selectedBid.bid_number || selectedBid.bid_no || 'Tender'}`}
+                    title={`Go to ${selectedBid.bid_no || selectedBid.gem_bid_no || 'Tender'}`}
                   >
                     <span>Go To Tender</span>
                     <ExternalLink className="size-3" />
@@ -1465,7 +1430,7 @@ export function TenderChatHistoryPage({ bid: propBid, bidId: propBidId }) {
 
               {/* Drawer Content: Real Chat */}
               {drawerTab === 'chat' && (
-                <div className="flex-1 p-4 overflow-y-auto space-y-3 bg-muted/20 max-h-[380px]">
+                <div data-chat-feed className="flex-1 p-4 overflow-y-auto space-y-3 bg-muted/20 max-h-[380px]">
                   {chatMessages.length === 0 ? (
                     <p className="text-xs text-muted-foreground text-center py-8">No messages in room yet.</p>
                   ) : (
