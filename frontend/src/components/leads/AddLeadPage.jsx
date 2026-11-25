@@ -10,13 +10,19 @@ import {
   Loader2,
   Megaphone,
   EyeOff,
+  Sparkles,
+  CheckCircle2,
+  FileUp,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { FieldMemoryInput } from "@/components/ui/field-memory-input";
+import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Field } from "../tenders/tenderFormParts";
 import { TenderDetailsFields } from "./TenderDetailsFields";
 import {
@@ -24,14 +30,15 @@ import {
   STANDARD_CATEGORY_OPTIONS,
   inputCls,
 } from "../../lib/tenderSpec";
-import { emptyDocs, toUploadItems, uploadAll, validateDocs } from "../../lib/leadDocs";
+import { emptyDocs, toUploadItems, uploadAll, validateDocs, formatBytes } from "../../lib/leadDocs";
 import { PUBLISHED_BLANK, blankProducts, buildPublishedDetails, validatePublished } from "../../lib/leadPublish";
 import { LeadDocumentPicker } from "./LeadDocumentPicker";
 import { UserSelect } from "./UserSelect";
-import { createLead, getLead, updateLead } from "../../services/leads";
+import { createLead, getLead, updateLead, extractLeadDocument } from "../../services/leads";
 import { tokenStorage } from "../../services/auth";
 import { useBidStore } from "../../store/useBidStore";
 import { UnsavedChangesDialog } from "../tenders/UnsavedChangesDialog";
+import { actsAs } from "../../lib/roles";
 
 const STATUS_OPTIONS = [
   {
@@ -97,16 +104,12 @@ function leadToForm(lead, blank) {
   form.reporting_manager_id = lead.reporting_manager?.id ?? "";
   if (d.start_date) form.start_date = d.start_date.slice(0, 10);
   if (d.end_date) {
-    // ISO (UTC) -> the local "YYYY-MM-DDTHH:mm" a datetime-local input needs.
     const t = new Date(d.end_date);
     form.end_date = new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   }
   return form;
 }
 
-// Also the Edit Lead page: /leads/:leadId/edit renders this with the lead
-// loaded into the form. Documents are managed on the lead's own page, so
-// the picker only appears when creating.
 export function AddLeadPage() {
   const navigate = useNavigate();
   const { leadId } = useParams();
@@ -128,7 +131,6 @@ export function AddLeadPage() {
     scope_type: "",
     category: "",
     estimated_value: "",
-    // Published only: the tender details (lib/leadPublish.js), not already captured above.
     ...PUBLISHED_BLANK,
     lead_owner_id: currentUser?.id ?? "",
     reporting_manager_id: "",
@@ -139,10 +141,203 @@ export function AddLeadPage() {
   const [docs, setDocs] = useState(emptyDocs);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState("");
-  const [loadState, setLoadState] = useState(editing ? "loading" : "ready"); // loading | ready | error
+  const [loadState, setLoadState] = useState(editing ? "loading" : "ready");
   const [initialSnapshot, setInitialSnapshot] = useState(null);
   const [showDiscardDialog, setShowDiscardDialog] = useState(false);
   const [pendingDiscardTarget, setPendingDiscardTarget] = useState(null);
+  const [showExtractionSuccessDialog, setShowExtractionSuccessDialog] = useState(false);
+
+  // AI extraction loading state
+  const [extractingLead, setExtractingLead] = useState(false);
+
+  const handleExtractLeadDocument = async () => {
+    // Find candidate procurement file from docs.rows (e.g. RFP row) or docs.bulk
+    const rfpRow =
+      docs.rows.find((r) => /rfp|tender/i.test(r.category) && r.files.length > 0) ||
+      docs.rows.find((r) => r.files.length > 0);
+    const targetFile = rfpRow?.files?.[0] || docs.bulk?.[0];
+
+    if (!targetFile) {
+      toast.error("Please upload an RFP or procurement document first.");
+      return;
+    }
+    setExtractingLead(true);
+    try {
+      const res = await extractLeadDocument(targetFile);
+      if (!res.ok || !res.data) {
+        toast.error(res.message || "Failed to extract lead data from document.");
+        return;
+      }
+      const data = res.data;
+
+      // Populate Lead Details & Published Tender Details from extraction
+      setForm((prev) => {
+        const next = { ...prev };
+
+        // Lead Details fields
+        if (data.account_name) next.account_name = data.account_name;
+        if (data.department_name) next.department_name = data.department_name;
+        if (data.location) next.location = data.location;
+        if (data.high_level_scope) next.high_level_scope = data.high_level_scope;
+        if (data.scope_type) next.scope_type = data.scope_type;
+        if (data.category) next.category = data.category;
+        if (data.lead_type) next.lead_type = data.lead_type;
+        if (data.expected_date) {
+          next.expected_date = String(data.expected_date).trim().split("T")[0];
+        } else if (data.end_date) {
+          next.expected_date = String(data.end_date).trim().split("T")[0];
+        } else if (data.start_date) {
+          next.expected_date = String(data.start_date).trim().split("T")[0];
+        }
+
+        if (data.estimated_value !== null && data.estimated_value !== undefined && String(data.estimated_value).trim() !== "" && Number(data.estimated_value) > 0) {
+          next.estimated_value = String(Math.round(Number(data.estimated_value)));
+        } else if (data.emd_amount && Number(data.emd_amount) > 0) {
+          next.estimated_value = String(Math.round(Number(data.emd_amount) * 50));
+        }
+
+        // Published section fields (Tender Details)
+        if (data.title) next.title = data.title;
+        if (data.gem_bid_no) next.gem_bid_no = data.gem_bid_no;
+        if (data.portal_source && data.portal_source !== "Other") next.portal_source = data.portal_source;
+        if (data.tender_link) next.tender_link = data.tender_link;
+        if (data.bid_type) next.bid_type = data.bid_type === "GEM" ? "BID" : data.bid_type;
+
+        // Format start_date for HTML5 date input (YYYY-MM-DD)
+        if (data.start_date) {
+          next.start_date = String(data.start_date).trim().split("T")[0];
+        } else if (data.end_date) {
+          try {
+            const endPart = String(data.end_date).trim().split("T")[0];
+            const endD = new Date(endPart);
+            if (!isNaN(endD.getTime())) {
+              endD.setDate(endD.getDate() - 14);
+              next.start_date = endD.toISOString().slice(0, 10);
+            }
+          } catch {
+            // fallback
+          }
+        }
+
+        // Format end_date for HTML5 datetime-local input (YYYY-MM-DDTHH:mm)
+        if (data.end_date) {
+          const strEnd = String(data.end_date).trim();
+          let formattedEnd = strEnd;
+          if (strEnd.includes("T")) {
+            const parts = strEnd.split("T");
+            const timePart = parts[1] ? parts[1].slice(0, 5) : "16:00";
+            formattedEnd = `${parts[0]}T${timePart}`;
+          } else if (/^\d{4}-\d{2}-\d{2}$/.test(strEnd)) {
+            formattedEnd = `${strEnd}T16:00`;
+          }
+          next.end_date = formattedEnd;
+        }
+
+        // Quantity
+        if (data.quantity !== undefined && data.quantity !== null && String(data.quantity).trim() !== "") {
+          next.quantity = String(data.quantity);
+        } else if (data.products && Array.isArray(data.products) && data.products.length > 0) {
+          const firstQty = Number(data.products[0].qty || data.products[0].quantity);
+          if (!isNaN(firstQty) && firstQty > 0) {
+            next.quantity = String(firstQty);
+          }
+        }
+
+        // EMD
+        if (data.emd_not_applicable) {
+          next.emd_not_applicable = true;
+          next.emd_amount = "";
+        } else if (data.emd_amount !== undefined && data.emd_amount !== null && String(data.emd_amount).trim() !== "") {
+          next.emd_not_applicable = false;
+          next.emd_amount = String(data.emd_amount);
+        }
+
+        if (data.emd_bank_name) next.emd_bank_name = data.emd_bank_name;
+        if (data.emd_beneficiary) next.emd_beneficiary = data.emd_beneficiary;
+        if (data.emd_payable_at) next.emd_payable_at = data.emd_payable_at;
+        if (data.emd_account_number) next.emd_account_number = data.emd_account_number;
+        if (data.emd_ifsc_code) next.emd_ifsc_code = data.emd_ifsc_code;
+        if (data.emd_branch) next.emd_branch = data.emd_branch;
+
+        if (data.emd_bank_name || data.emd_beneficiary || data.emd_payable_at || data.emd_account_number) {
+          setEmdDdOn(true);
+        }
+        if (data.emd_online) setEmdOnlineOn(true);
+
+        // Performance Security (BG)
+        const hasBgRate = data.bg_rate !== undefined && data.bg_rate !== null && String(data.bg_rate).trim() !== "";
+        const hasBgDur = data.bg_duration_months !== undefined && data.bg_duration_months !== null && String(data.bg_duration_months).trim() !== "";
+
+        if (data.bg_required !== undefined) {
+          next.bg_required = Boolean(data.bg_required);
+        } else if (hasBgRate || hasBgDur) {
+          next.bg_required = true;
+        }
+
+        if (next.bg_required) {
+          if (hasBgRate) {
+            const cleanRate = String(data.bg_rate).replace(/[^\d.]/g, "").trim();
+            next.bg_rate = cleanRate || "10";
+          } else {
+            next.bg_rate = "10"; // standard default when BG is required
+          }
+
+          if (hasBgDur) {
+            const cleanDur = String(data.bg_duration_months).replace(/[^\d]/g, "").trim();
+            next.bg_duration_months = cleanDur || "12";
+          } else {
+            next.bg_duration_months = "12"; // standard default when BG is required
+          }
+        } else {
+          next.bg_rate = "";
+          next.bg_duration_months = "";
+        }
+
+        // Ownership auto-assignment if empty
+        if (!next.lead_owner_id && currentUser?.id) {
+          next.lead_owner_id = currentUser.id;
+        } else if (!next.lead_owner_id && orgUsers.length > 0) {
+          next.lead_owner_id = orgUsers[0].id;
+        }
+        if (!next.reporting_manager_id) {
+          const candidateManager =
+            orgUsers.find((u) => u.id === currentUser?.reporting_manager_id) ||
+            orgUsers.find(
+              (u) =>
+                u.id !== (next.lead_owner_id || currentUser?.id) &&
+                (actsAs(u, "MANAGER") || actsAs(u, "ADMIN") || actsAs(u, "SUPER_ADMIN"))
+            ) ||
+            orgUsers.find(
+              (u) =>
+                actsAs(u, "MANAGER") || actsAs(u, "ADMIN") || actsAs(u, "SUPER_ADMIN")
+            );
+          if (candidateManager) next.reporting_manager_id = candidateManager.id;
+        }
+
+        return next;
+      });
+
+      // Populate products in Published section
+      if (data.products && Array.isArray(data.products) && data.products.length > 0) {
+        setProducts(
+          data.products.map((p, idx) => ({
+            id: Date.now() + idx,
+            product: p.product || p.name || "",
+            description: p.description || p.specifications || "",
+            qty: String(p.qty || p.quantity || "1"),
+            oem: p.oem || p.oem_name || "",
+          }))
+        );
+      }
+
+      setShowExtractionSuccessDialog(true);
+    } catch (err) {
+      console.error("Extraction error:", err);
+      toast.error("Failed to extract document. Please check microservice connectivity.");
+    } finally {
+      setExtractingLead(false);
+    }
+  };
 
   useEffect(() => {
     if (!editing) return;
@@ -192,39 +387,40 @@ export function AddLeadPage() {
 
   const isDirty = editing
     ? Boolean(
-        initialSnapshot &&
-        JSON.stringify({ form, products, emdOnlineOn, emdDdOn }) !== initialSnapshot
-      )
+      initialSnapshot &&
+      JSON.stringify({ form, products, emdOnlineOn, emdDdOn }) !== initialSnapshot
+    )
     : Boolean(
-        form.publish_status ||
-        form.account_name?.trim() ||
-        form.department_name?.trim() ||
-        form.location?.trim() ||
-        form.high_level_scope?.trim() ||
-        form.expected_date ||
-        form.scope_type?.trim() ||
-        form.category?.trim() ||
-        form.estimated_value ||
-        form.lead_type !== "GOV" ||
-        form.reporting_manager_id ||
-        form.title?.trim() ||
-        form.gem_bid_no?.trim() ||
-        form.tender_link?.trim() ||
-        form.start_date ||
-        form.end_date ||
-        form.quantity ||
-        form.emd_amount ||
-        form.emd_bank_name?.trim() ||
-        form.emd_beneficiary?.trim() ||
-        form.emd_payable_at?.trim() ||
-        form.bg_required ||
-        form.bg_rate ||
-        emdOnlineOn ||
-        emdDdOn ||
-        products.length > 1 ||
-        Boolean(products[0]?.product?.trim() || products[0]?.description?.trim() || products[0]?.qty || products[0]?.oem?.trim()) ||
-        Object.values(docs || {}).some((arr) => Array.isArray(arr) && arr.length > 0)
-      );
+      form.publish_status ||
+      form.account_name?.trim() ||
+      form.department_name?.trim() ||
+      form.location?.trim() ||
+      form.high_level_scope?.trim() ||
+      form.expected_date ||
+      form.scope_type?.trim() ||
+      form.category?.trim() ||
+      form.estimated_value ||
+      form.lead_type !== "GOV" ||
+      form.reporting_manager_id ||
+      form.title?.trim() ||
+      form.gem_bid_no?.trim() ||
+      form.tender_link?.trim() ||
+      form.start_date ||
+      form.end_date ||
+      form.quantity ||
+      form.emd_amount ||
+      form.emd_bank_name?.trim() ||
+      form.emd_beneficiary?.trim() ||
+      form.emd_payable_at?.trim() ||
+      form.bg_required ||
+      form.bg_rate ||
+      emdOnlineOn ||
+      emdDdOn ||
+      products.length > 1 ||
+      Boolean(products[0]?.product?.trim() || products[0]?.description?.trim() || products[0]?.qty || products[0]?.oem?.trim()) ||
+      docs.bulk?.length > 0 ||
+      docs.rows?.some((r) => r.files?.length > 0)
+    );
 
   useEffect(() => {
     setUnsavedFormDirty(isDirty, {
@@ -251,13 +447,12 @@ export function AddLeadPage() {
   }, [isDirty]);
 
   useEffect(() => {
-    if (!isDirty) return;
-    window.history.pushState({ trapUnsaved: true }, "", window.location.href);
-
-    const handlePopState = () => {
-      setPendingDiscardTarget(backTo);
-      setShowDiscardDialog(true);
-      window.history.pushState({ trapUnsaved: true }, "", window.location.href);
+    const handlePopState = (e) => {
+      if (isDirty) {
+        window.history.pushState(null, "", window.location.href);
+        setPendingDiscardTarget(backTo);
+        setShowDiscardDialog(true);
+      }
     };
 
     window.addEventListener("popstate", handlePopState);
@@ -266,12 +461,12 @@ export function AddLeadPage() {
     };
   }, [isDirty, backTo]);
 
-  const handleSafeBack = (target = backTo) => {
+  const handleSafeBack = (targetUrl) => {
     if (isDirty) {
-      setPendingDiscardTarget(target);
+      setPendingDiscardTarget(targetUrl);
       setShowDiscardDialog(true);
     } else {
-      navigate(target);
+      navigate(targetUrl);
     }
   };
 
@@ -335,7 +530,6 @@ export function AddLeadPage() {
     if (Object.keys(e).length) {
       setErrors(e);
       toast.error("Please fix the highlighted fields");
-      // Errors can sit far up a long form (e.g. EMD); bring the first into view.
       requestAnimationFrame(() =>
         document
           .querySelector("form p.text-destructive, form p.text-red-500")
@@ -354,36 +548,35 @@ export function AddLeadPage() {
         }
         setUnsavedFormDirty(false, null);
         toast.success("Lead updated");
-        navigate(backTo);
+        navigate(`/dashboard/leads/${leadId}`);
         return;
       }
+
       const res = await createLead(buildPayload());
       if (!res.ok) {
         toast.error(res.error?.message ?? "Could not create the lead");
         return;
       }
-      const lead = res.data;
+      const created = res.data;
       const items = isPublished ? toUploadItems(docs) : [];
       if (items.length) {
-        const failed = await uploadAll(lead.id, items, (i, n) => setSaving(`Uploading ${i} of ${n}…`));
+        setSaving(`Uploading 0 of ${items.length} documents…`);
+        const failed = await uploadAll(created.id, items, (done, total) =>
+          setSaving(`Uploading ${done} of ${total} documents…`),
+        );
+        setUnsavedFormDirty(false, null);
         if (failed.length) {
-          // The lead itself is saved; send the user to it so they can retry.
-          toast.warning(
-            `Lead saved, but ${failed.length} file${failed.length > 1 ? "s" : ""} failed: ${failed
-              .map((f) => `${f.file.name} (${f.reason})`)
-              .join(", ")}. Re-upload from the lead page.`,
-            { duration: 10000 },
-          );
-          setUnsavedFormDirty(false, null);
-          navigate(`/dashboard/leads/${lead.id}`);
-          return;
+          toast.warning(`Lead created, but ${failed.length} document(s) could not be uploaded`);
+        } else {
+          toast.success(`Lead created with ${items.length} document${items.length === 1 ? "" : "s"}`);
         }
+      } else {
+        setUnsavedFormDirty(false, null);
+        toast.success("Lead created");
       }
-      setUnsavedFormDirty(false, null);
-      toast.success(items.length ? `Lead created with ${items.length} document${items.length > 1 ? "s" : ""}` : "Lead created");
-      navigate(`/dashboard/leads/${lead.id}`);
+      navigate(`/dashboard/leads/${created.id}`);
     } catch {
-      toast.error("Network error. Please try again.");
+      toast.error("Network error while saving the lead");
     } finally {
       setSaving("");
     }
@@ -431,7 +624,6 @@ export function AddLeadPage() {
           {isPublished ? "A published lead cannot go back to unpublished." : "When the RFP comes out, use Publish Lead on the lead page to add its tender details."}
         </p>
       ) : (
-        // Lead status: drives which sections appear below.
         <section aria-labelledby="lead-status-label" className="space-y-2">
           <p id="lead-status-label" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Lead Status <span className="font-bold text-destructive">*</span>
@@ -462,6 +654,44 @@ export function AddLeadPage() {
           </div>
           {errors.publish_status && <p className="text-xs font-medium text-destructive">{errors.publish_status}</p>}
         </section>
+      )}
+
+      {/* When the lead is published, bring the Documents section to the top with Extract Document */}
+      {!editing && isPublished && (
+        <Panel icon={FolderOpen} title="Documents">
+          <p className="-mt-1 text-xs text-muted-foreground">
+            Attach the RFP and anything that came with it. Upload your document and click <strong className="text-foreground font-medium">Extract Document</strong> to auto-fill fields. Files are saved to this lead's own folder.
+          </p>
+          <LeadDocumentPicker
+            value={docs}
+            onChange={(d) => {
+              setDocs(d);
+              setErrors((e) => ({ ...e, docs: undefined }));
+            }}
+            error={errors.docs}
+            action={
+              <Button
+                id="extract-lead-doc-btn"
+                type="button"
+                disabled={extractingLead}
+                onClick={handleExtractLeadDocument}
+                className="shrink-0 gap-2 font-medium px-4 h-9 shadow-xs transition-all active:scale-95 text-xs sm:text-sm"
+              >
+                {extractingLead ? (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <span>Extracting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="size-3.5" />
+                    <span>Extract Document</span>
+                  </>
+                )}
+              </Button>
+            }
+          />
+        </Panel>
       )}
 
       <Panel icon={Building2} title="Lead Details">
@@ -516,13 +746,6 @@ export function AddLeadPage() {
                 setEmdDdOn={setEmdDdOn}
               />
             </Panel>
-
-            {!editing && <Panel icon={FolderOpen} title="Documents">
-              <p className="-mt-1 text-xs text-muted-foreground">
-                Attach the RFP and anything that came with it. Files are saved to this lead's own folder.
-              </p>
-              <LeadDocumentPicker value={docs} onChange={(d) => { setDocs(d); setErrors((e) => ({ ...e, docs: undefined })); }} error={errors.docs} />
-            </Panel>}
           </motion.div>
         )}
       </AnimatePresence>
@@ -560,6 +783,37 @@ export function AddLeadPage() {
         onConfirm={handleConfirmDiscard}
         onCancel={() => setShowDiscardDialog(false)}
       />
+
+      {/* Document Extraction Success Dialog */}
+      <Dialog open={showExtractionSuccessDialog} onOpenChange={setShowExtractionSuccessDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600">
+                <CheckCircle2 className="size-5" />
+              </div>
+              <DialogTitle className="text-base font-semibold text-foreground">
+                Document Extracted Successfully
+              </DialogTitle>
+            </div>
+            <DialogDescription className="pt-2 text-sm text-foreground/85 leading-relaxed">
+              Document processing completed successfully! Lead information has been automatically populated. You can now review and make any necessary changes.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4">
+            <DialogClose asChild>
+              <Button
+                id="confirm-extraction-success-btn"
+                type="button"
+                onClick={() => setShowExtractionSuccessDialog(false)}
+                className="w-full sm:w-auto min-w-24"
+              >
+                OK
+              </Button>
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </form>
   );
 }

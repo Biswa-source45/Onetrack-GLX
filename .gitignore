@@ -40,3 +40,22 @@ backend/bin/
 dump.rdb
 memurai-log.txt
 
+# Node modules & Python virtual environments
+node_modules/
+**/node_modules/
+ai_service/venv/
+ai_service/.venv/
+**/__pycache__/
+*.pyc
+
+# Local scratch & test files
+create_test_files.py
+run_e2e_tests.py
+test_openai.go
+test_real_user_docs.py
+test_tender_sample.*
+verify_end_to_end_flow.py
+sample_unstructured_tender_document.pdf
+scripts/
+
+

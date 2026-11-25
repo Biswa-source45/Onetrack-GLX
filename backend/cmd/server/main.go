@@ -34,6 +34,7 @@ import (
 	chatHandler "github.com/onetrack/backend/internal/chat/handler"
 	chatRepo "github.com/onetrack/backend/internal/chat/repository"
 	chatService "github.com/onetrack/backend/internal/chat/service"
+	"github.com/onetrack/backend/internal/extractor"
 	"github.com/onetrack/backend/internal/middleware"
 	"github.com/onetrack/backend/internal/platform/config"
 	"github.com/onetrack/backend/internal/platform/database"
@@ -185,6 +186,11 @@ func main() {
 	calendarHdlr := calendarHandler.NewCalendarHandler(calendarRepository, calendarSvc, googleSyncSvc, cfg.CalendarSchedulerEnabled)
 	calendarHandler.RegisterCalendarRoutes(v1, calendarHdlr, authMiddleware)
 
+	// Initialize AI Document Extraction Module (OpenAI powered)
+	extractorSvc := extractor.NewService(cfg.OpenAIAPIKey)
+	extractorHdlr := extractor.NewHandler(extractorSvc)
+	extractor.RegisterRoutes(v1, extractorHdlr, authMiddleware)
+
 	// The deadline engine sends alerts, so it only runs when CALENDAR_SCHEDULER_ENABLED=true.
 	if cfg.CalendarSchedulerEnabled {
 		deadlineScheduler := calendarService.NewBackgroundScheduler(calendarSvc, calendarRepository)
@@ -192,13 +198,13 @@ func main() {
 		defer deadlineScheduler.Stop()
 	}
 
-	// Start server
+	// Start server (allowing ample time for AI extraction workflows)
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Server.Port),
 		Handler:      router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:  120 * time.Second,
+		WriteTimeout: 120 * time.Second,
+		IdleTimeout:  180 * time.Second,
 	}
 
 	// Graceful shutdown

@@ -41,6 +41,8 @@ type Config struct {
 	CalendarSchedulerEnabled bool
 	// GoogleCalendarAPIKey is the key for the Google holiday sync; wins over a key stored in the DB.
 	GoogleCalendarAPIKey string
+	// OpenAIAPIKey is the API key for OpenAI tender document extraction.
+	OpenAIAPIKey string
 }
 
 type ServerConfig struct {
@@ -133,6 +135,7 @@ func Load() (*Config, error) {
 
 		CalendarSchedulerEnabled: getEnv("CALENDAR_SCHEDULER_ENABLED", "false") == "true",
 		GoogleCalendarAPIKey:     getEnv("GOOGLE_CALENDAR_API_KEY", ""),
+		OpenAIAPIKey:             getEnv("OPENAI_API_KEY", ""),
 	}
 
 	return cfg, nil

@@ -86,3 +86,14 @@ export async function downloadLeadDocument(leadId, doc) {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
   return true
 }
+
+// AI document extraction for lead / opportunity creation.
+// Dispatches document to backend Go endpoint /api/v1/leads/extract-document which forwards to AI extractor.
+export async function extractLeadDocument(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return json(await apiFetch(`${BASE}/extract-document`, {
+    method: 'POST',
+    body: formData,
+  }))
+}

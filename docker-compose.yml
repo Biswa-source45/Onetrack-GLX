@@ -39,6 +39,27 @@ services:
     networks:
       - onetrack-network
 
+  # Python AI Tender & Lead Extraction Microservice
+  ai-service:
+    image: ghcr.io/biswa-source45/onetrack-ai-service:latest
+    build:
+      context: ./ai_service
+      dockerfile: Dockerfile
+    container_name: onetrack-ai-service
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - onetrack-network
+
   # Go Backend microservice
   backend:
     image: ghcr.io/biswa-source45/onetrack-backend:latest
@@ -94,10 +115,15 @@ services:
       # run after enabling only records already-in-window tenders; it sends nothing.
       - CALENDAR_SCHEDULER_ENABLED=${CALENDAR_SCHEDULER_ENABLED:-false}
       - GOOGLE_CALENDAR_API_KEY=${GOOGLE_CALENDAR_API_KEY:-}
+      # AI Document Extraction Microservice Integration
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - EXTRACTOR_SERVICE_URL=http://ai-service:8000/api/v1/extract-document
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      ai-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8081/health"]

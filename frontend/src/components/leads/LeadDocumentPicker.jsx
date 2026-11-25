@@ -85,7 +85,7 @@ function DropZone({ onFiles, compact = false, label }) {
  *
  * value: { bulk: File[], rows: [{ key, category, files: File[] }] }
  */
-export function LeadDocumentPicker({ value, onChange, error }) {
+export function LeadDocumentPicker({ value, onChange, error, action }) {
   // A file dropped anywhere outside a DropZone falls through to the
   // browser's default, which navigates away to open the file (the app goes
   // white and only Back + refresh recovers it). While the picker is on
@@ -157,6 +157,11 @@ export function LeadDocumentPicker({ value, onChange, error }) {
               ))}
             </ul>
           )}
+          {action && (
+            <div className="flex items-center justify-end pt-1">
+              {action}
+            </div>
+          )}
         </div>
       ) : (
         <div className="space-y-3" role="tabpanel">
@@ -203,9 +208,12 @@ export function LeadDocumentPicker({ value, onChange, error }) {
               )}
             </div>
           ))}
-          <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => setRows([...value.rows, newCategoryRow()])}>
-            <Plus className="size-3.5" /> Add document type
-          </Button>
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+            <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => setRows([...value.rows, newCategoryRow()])}>
+              <Plus className="size-3.5" /> Add document type
+            </Button>
+            {action && <div>{action}</div>}
+          </div>
         </div>
       )}
       {error && <p className="text-xs font-medium text-destructive">{error}</p>}

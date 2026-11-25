@@ -120,7 +120,7 @@ export function ProductsTable({ products, setProducts }) {
                 <Input
                   type="number"
                   min="1"
-                  value={p.qty}
+                  value={p.qty !== undefined && p.qty !== null ? String(p.qty).replace(/[^\d.]/g, "") : ""}
                   onChange={(e) =>
                     updateProductRow(p.id, "qty", e.target.value)
                   }
@@ -495,7 +495,7 @@ export function EmdBgSection({
                 <Input
                   type="number"
                   step="any"
-                  value={form.bg_rate}
+                  value={form.bg_rate !== undefined && form.bg_rate !== null ? String(form.bg_rate).replace(/[^\d.]/g, "") : ""}
                   onChange={(e) => set("bg_rate", e.target.value)}
                   placeholder="BG Rate (%) e.g. 2.5"
                   className={inputCls()}
@@ -507,7 +507,7 @@ export function EmdBgSection({
                 <Input
                   type="number"
                   min="1"
-                  value={form.bg_duration_months}
+                  value={form.bg_duration_months !== undefined && form.bg_duration_months !== null ? String(form.bg_duration_months).replace(/[^\d]/g, "") : ""}
                   onChange={(e) =>
                     set("bg_duration_months", e.target.value)
                   }

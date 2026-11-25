@@ -20,6 +20,8 @@ import {
   ArrowLeft,
   Shuffle,
   FileUp,
+  Sparkles,
+  CheckCircle2,
 } from "lucide-react";
 import {
   ACCEPTED_TENDER_DOCS,
@@ -40,6 +42,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FieldMemoryInput } from "@/components/ui/field-memory-input";
+import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -59,7 +62,7 @@ import {
   isHttpUrl,
   validateEmd,
 } from "../../lib/tenderSpec";
-import { createBid, SUPPORT_TYPES } from "../../services/bids";
+import { createBid, extractTenderDocument, SUPPORT_TYPES } from "../../services/bids";
 import { tokenStorage } from "../../services/auth";
 import { useBidStore } from "../../store/useBidStore";
 import { actsAs } from "../../lib/roles";
@@ -171,6 +174,220 @@ export function AddTenderPage() {
   const [alertNoteLabel, setAlertNoteLabel] = useState("");
   const [alertNoteColor, setAlertNoteColor] = useState("amber");
 
+  // AI Extraction State
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [extractionResult, setExtractionResult] = useState(null);
+  const [showExtractionSuccessDialog, setShowExtractionSuccessDialog] = useState(false);
+
+  const handleExtractWithAi = async () => {
+    if (!docFile) {
+      toast.error("Please choose a tender document file (.pdf, .docx, or .txt) first.");
+      return;
+    }
+    setIsExtracting(true);
+    try {
+      const res = await extractTenderDocument(docFile);
+      if (res.ok && res.success) {
+        setExtractionResult(res);
+        // Automatically bind and pre-fill all fields directly!
+        handleApplyExtraction(res.data);
+        setShowExtractionSuccessDialog(true);
+      } else {
+        toast.error(res.error?.message || res.detail || res.message || "Failed to extract tender data.");
+      }
+    } catch (err) {
+      toast.error("Error communicating with AI microservice: " + err.message);
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
+  const handleApplyExtraction = (data) => {
+    if (!data) return;
+    setForm((prev) => {
+      const u = { ...prev };
+      if (data.title) u.title = data.title;
+      if (data.high_level_scope) u.high_level_scope = data.high_level_scope;
+      if (data.gem_bid_no) u.gem_bid_no = data.gem_bid_no;
+      if (data.organization_name) u.organization_name = data.organization_name;
+      if (data.department_name) u.department_name = data.department_name;
+      if (data.location) u.location = data.location;
+      if (data.portal_source && data.portal_source !== "Other") u.portal_source = data.portal_source;
+      if (data.bid_type) u.bid_type = data.bid_type === "GEM" ? "BID" : data.bid_type;
+      if (data.category) u.category = data.category;
+      if (data.scope_type) u.scope_type = data.scope_type;
+      if (data.tender_link) u.tender_link = data.tender_link;
+
+      if (data.estimated_value !== null && data.estimated_value !== undefined && String(data.estimated_value).trim() !== "" && Number(data.estimated_value) > 0) {
+        u.estimated_value = String(Math.round(Number(data.estimated_value)));
+      } else if (data.emd_amount && Number(data.emd_amount) > 0) {
+        // Under standard procurement rules (GFR 170), EMD is typically 2% of estimated value
+        u.estimated_value = String(Math.round(Number(data.emd_amount) * 50));
+      }
+
+      if (data.emd_not_applicable) {
+        u.emd_not_applicable = true;
+        u.emd_amount = "";
+      } else if (data.emd_amount) {
+        u.emd_not_applicable = false;
+        u.emd_amount = String(data.emd_amount);
+      }
+
+      if (data.emd_beneficiary || data.emd_payable_at) {
+        setEmdDdOn(true);
+        if (data.emd_beneficiary) u.emd_beneficiary = data.emd_beneficiary;
+        if (data.emd_payable_at) u.emd_payable_at = data.emd_payable_at;
+      }
+
+      if (data.bg_required) {
+        u.bg_required = true;
+        if (data.bg_rate) u.bg_rate = String(data.bg_rate).replace(/[^\d.]/g, "").trim() || "10";
+        if (data.bg_duration_months) u.bg_duration_months = String(data.bg_duration_months).replace(/[^\d]/g, "").trim() || "12";
+      }
+
+      // Format start_date for HTML5 date input (YYYY-MM-DD)
+      if (data.start_date) {
+        const cleanStart = String(data.start_date).trim().split("T")[0];
+        u.start_date = cleanStart;
+        if (!u.opening_date) u.opening_date = cleanStart;
+      }
+      // Format end_date for HTML5 datetime-local input (YYYY-MM-DDTHH:mm)
+      if (data.end_date) {
+        const strEnd = String(data.end_date).trim();
+        let formattedEnd = strEnd;
+        if (strEnd.includes("T")) {
+          const parts = strEnd.split("T");
+          const timePart = parts[1] ? parts[1].slice(0, 5) : "16:00";
+          formattedEnd = `${parts[0]}T${timePart}`;
+        } else if (/^\d{4}-\d{2}-\d{2}$/.test(strEnd)) {
+          formattedEnd = `${strEnd}T16:00`;
+        }
+        u.end_date = formattedEnd;
+        if (!u.closing_date) u.closing_date = formattedEnd;
+      }
+
+      // Quantity mapping: bind primary product quantity to overall tender quantity
+      if (data.products && Array.isArray(data.products) && data.products.length > 0) {
+        const firstQty = Number(data.products[0].quantity);
+        if (!isNaN(firstQty) && firstQty > 0) {
+          u.quantity = String(firstQty);
+        }
+      }
+
+      if (data.oem_required !== undefined) {
+        u.oem_required = Boolean(data.oem_required);
+      }
+
+      // Populate Remarks & Internal Notes in Section 2
+      if (data.remarks) {
+        u.remarks = data.remarks;
+      } else if (data.high_level_scope) {
+        const parts = [`Scope: ${data.high_level_scope}.`];
+        if (data.location) parts.push(`Consignee Location: ${data.location}.`);
+        if (data.bg_rate) parts.push(`Performance Security: ${data.bg_rate}% deduction from bills.`);
+        if (data.minimum_annual_turnover) parts.push(`Turnover: Min ₹${Number(data.minimum_annual_turnover).toLocaleString('en-IN')} average annual turnover.`);
+        if (data.emd_amount) parts.push(`EMD: ₹${Number(data.emd_amount).toLocaleString('en-IN')}${data.emd_beneficiary ? ' payable to ' + data.emd_beneficiary : ''}.`);
+        u.remarks = parts.join(" ");
+      }
+
+      // Auto-assign Team in Section 2 if unassigned
+      if (!u.bid_owner_id && currentUser?.id) {
+        u.bid_owner_id = currentUser.id;
+      }
+      if (!u.reporting_manager_id) {
+        const candidateManager =
+          users.find((usr) => usr.id === currentUser?.reporting_manager_id) ||
+          users.find(
+            (usr) =>
+              usr.id !== (u.bid_owner_id || currentUser?.id) &&
+              (actsAs(usr, "MANAGER") ||
+                actsAs(usr, "ADMIN") ||
+                actsAs(usr, "SUPER_ADMIN") ||
+                actsAs(usr, "REVIEWER")),
+          ) ||
+          users.find((usr) => usr.id !== (u.bid_owner_id || currentUser?.id));
+        if (candidateManager) {
+          u.reporting_manager_id = candidateManager.id;
+        }
+      }
+      if (!u.account_manager_id && accountManagers.length > 0) {
+        u.account_manager_id = accountManagers[0].id;
+      }
+      if (!u.presales_id && presalesUsers.length > 0) {
+        u.presales_id = presalesUsers[0].id;
+      }
+
+      return u;
+    });
+
+    // Auto-fill Additional Info / Challenge in Section 2
+    if (data.challenge_text || data.challenge_label) {
+      setShowAlertNote(true);
+      setAlertNoteLabel(data.challenge_label || "Attention");
+      setAlertNoteText(data.challenge_text || "");
+      setAlertNoteColor(data.challenge_color || "amber");
+    } else {
+      const allChecks = [...(data.bidder_checklists || []), ...(data.oem_checklists || [])];
+      const hurdle = allChecks.find((c) =>
+        /service facility|turnover|local|blacklisted|criminal|jurisdiction/i.test(c.title || c.description)
+      ) || allChecks[0];
+      if (hurdle) {
+        setShowAlertNote(true);
+        const lbl = hurdle.title && hurdle.title.length <= 25 ? hurdle.title : "Eligibility Condition";
+        setAlertNoteLabel(lbl);
+        setAlertNoteText(hurdle.description || hurdle.title || "");
+        setAlertNoteColor("amber");
+      }
+    }
+
+    // Populate Products / BOQ rows with clean numeric quantity
+    if (data.products && Array.isArray(data.products) && data.products.length > 0) {
+      setProducts(
+        data.products.map((p, idx) => {
+          const rawNum = p.quantity !== null && p.quantity !== undefined ? Number(p.quantity) : 1;
+          const cleanQty = isNaN(rawNum) || rawNum <= 0 ? 1 : rawNum;
+          return {
+            id: Date.now() + idx,
+            product: p.name || "",
+            description: p.specifications || (p.units ? `Unit: ${p.units}` : ""),
+            qty: String(cleanQty),
+            oem: p.oem_name || "",
+          };
+        })
+      );
+    }
+
+    // Populate Checklists
+    if (data.bidder_checklists && Array.isArray(data.bidder_checklists) && data.bidder_checklists.length > 0) {
+      const itemsToAdd = data.bidder_checklists
+        .map((c) => c.title || c.description)
+        .filter(Boolean);
+      setBidderChecklists((prev) => {
+        const set = new Set(prev);
+        itemsToAdd.forEach((item) => set.add(item));
+        return Array.from(set);
+      });
+    }
+
+    if (data.oem_checklists && Array.isArray(data.oem_checklists) && data.oem_checklists.length > 0) {
+      const oemToAdd = data.oem_checklists
+        .map((c) => c.title || c.description)
+        .filter(Boolean);
+      setOemChecklists((prev) => {
+        const set = new Set(prev);
+        oemToAdd.forEach((item) => set.add(item));
+        return Array.from(set);
+      });
+    }
+
+    setErrors((prev) => ({
+      ...prev,
+      title: undefined,
+      main_doc: undefined,
+      bid_type: undefined,
+    }));
+  };
+
   // Account Manager is required (approving authority); Pre-Sales is optional —
   // both filtered to users holding that role as primary or secondary.
   const accountManagers = users.filter((u) => actsAs(u, "ACCOUNT_MANAGER"));
@@ -264,12 +481,45 @@ export function AddTenderPage() {
 
   const requireAmPresales = systemConfigs?.stage2_require_am_presales !== false;
 
-  // Pre-fill bid owner if users loaded
+  // Pre-fill default team assignments when users or current user load
   useEffect(() => {
-    if (currentUser?.id && !form.bid_owner_id) {
-      setForm((f) => ({ ...f, bid_owner_id: currentUser.id }));
+    if (currentUser?.id || users.length > 0) {
+      setForm((f) => {
+        let changed = false;
+        const u = { ...f };
+        if (!u.bid_owner_id && currentUser?.id) {
+          u.bid_owner_id = currentUser.id;
+          changed = true;
+        }
+        if (!u.reporting_manager_id && users.length > 0) {
+          const candidateManager =
+            users.find((usr) => usr.id === currentUser?.reporting_manager_id) ||
+            users.find(
+              (usr) =>
+                usr.id !== (u.bid_owner_id || currentUser?.id) &&
+                (actsAs(usr, "MANAGER") ||
+                  actsAs(usr, "ADMIN") ||
+                  actsAs(usr, "SUPER_ADMIN") ||
+                  actsAs(usr, "REVIEWER")),
+            ) ||
+            users.find((usr) => usr.id !== (u.bid_owner_id || currentUser?.id));
+          if (candidateManager) {
+            u.reporting_manager_id = candidateManager.id;
+            changed = true;
+          }
+        }
+        if (!u.account_manager_id && accountManagers.length > 0) {
+          u.account_manager_id = accountManagers[0].id;
+          changed = true;
+        }
+        if (!u.presales_id && presalesUsers.length > 0) {
+          u.presales_id = presalesUsers[0].id;
+          changed = true;
+        }
+        return changed ? u : f;
+      });
     }
-  }, [currentUser, form.bid_owner_id]);
+  }, [currentUser, users, accountManagers, presalesUsers]);
 
   function set(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -565,6 +815,107 @@ export function AddTenderPage() {
               {/* SECTION 1: Core Specifications, Financials & Dates */}
               {step === 1 && (
                 <div className="space-y-5">
+                  {/* HERO RFP DOCUMENT & ONE-CLICK AI EXTRACTION CARD AT THE TOP */}
+                  <div className="rounded-xl border border-border/70 bg-muted/20 p-4 sm:p-5 space-y-4 shadow-xs">
+                    <div className="flex items-center gap-3 border-b border-border/50 pb-3.5">
+                      <div className="size-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                        <FileText className="size-4.5" />
+                      </div>
+                      <div className="space-y-0.5">
+                        <h3 className="text-sm font-semibold text-foreground">
+                          Tender RFP Document & Auto-Fill
+                        </h3>
+                        <p className="text-xs text-muted-foreground">
+                          Upload your procurement document (.PDF, .DOCX, or .TXT) and click <strong className="text-foreground font-medium">Extract Document</strong> to auto-populate fields.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Document Selector, Tag & Extract Document in the same line */}
+                    <div className="grid grid-cols-1 md:grid-cols-[150px_1fr_auto] items-end gap-3">
+                      <div>
+                        <Label className="text-xs font-semibold text-foreground mb-1.5 block truncate" title="Document Tag / Label">
+                          Document Tag <span className="text-destructive">*</span>
+                        </Label>
+                        <FieldMemoryInput
+                          fieldKey="tender_doc_name"
+                          presetOptions={DOC_NAME_PRESETS}
+                          value={docName}
+                          onChange={(v) => {
+                            setDocName(v.slice(0, MAX_DOC_NAME));
+                            setErrors((e) => ({ ...e, main_doc: undefined }));
+                          }}
+                          placeholder="e.g. RFP"
+                          aria-label="Main document name"
+                          className={`h-11 text-sm w-full bg-background ${errors.main_doc && !docName.trim() ? "border-destructive focus-visible:ring-destructive/30" : ""}`}
+                        />
+                      </div>
+
+                      <div className="min-w-0">
+                        <Label className="text-xs font-semibold text-foreground mb-1.5 block">
+                          Main RFP File (.PDF, .DOCX, .TXT up to 25 MB) <span className="text-destructive">*</span>
+                        </Label>
+                        <label className="relative flex h-11 cursor-pointer items-center gap-3 rounded-lg border border-dashed border-input bg-background/90 hover:bg-accent/40 px-3.5 text-sm hover:border-primary/50 transition-colors focus-within:ring-2 focus-within:ring-ring">
+                          <FileUp className="size-5 shrink-0 text-primary" aria-hidden />
+                          <span className="truncate font-medium text-foreground text-xs sm:text-sm" title={docFile?.name}>
+                            {docFile ? `${docFile.name} (${formatBytes(docFile.size)})` : "Choose RFP / Tender document file..."}
+                          </span>
+                          <input
+                            type="file"
+                            accept={ACCEPTED_TENDER_DOCS}
+                            aria-label="Main document file"
+                            className="sr-only"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0] || null;
+                              e.target.value = "";
+                              if (!f) return;
+                              const bad = checkTenderDoc(f);
+                              if (bad) { toast.error(bad); return; }
+                              setDocFile(f);
+                              setErrors((er) => ({ ...er, main_doc: undefined }));
+                            }}
+                          />
+                          {docFile && (
+                            <button
+                              type="button"
+                              aria-label="Remove main document"
+                              onClick={(e) => { e.preventDefault(); setDocFile(null); }}
+                              className="ml-auto rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                            >
+                              <X className="size-4" />
+                            </button>
+                          )}
+                        </label>
+                      </div>
+
+                      <div>
+                        <Button
+                          id="extract-tender-doc-btn"
+                          type="button"
+                          disabled={isExtracting}
+                          onClick={handleExtractWithAi}
+                          className="w-full md:w-auto shrink-0 gap-2 font-medium px-5 h-11 shadow-xs transition-all active:scale-95 text-sm"
+                        >
+                          {isExtracting ? (
+                            <>
+                              <Loader2 className="size-4 animate-spin" />
+                              <span>Extracting...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="size-4" />
+                              <span>Extract Document</span>
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {errors.main_doc && (
+                      <p role="alert" className="text-xs font-medium text-destructive">{errors.main_doc}</p>
+                    )}
+                  </div>
+
                   <div className="flex items-center gap-2 border-b border-border/60 pb-2.5">
                     <FileText className="size-4 text-primary" />
                     <h3 className="text-sm font-semibold text-foreground">
@@ -716,63 +1067,7 @@ export function AddTenderPage() {
                         />
                       </Field>
 
-                      {/* Main tender document — required; the rest of the
-                        tender's documents are managed from its Docs tab. */}
-                      <div className="md:col-span-2 space-y-2 rounded-lg border border-border bg-muted/20 p-3">
-                        <div>
-                          <p className="text-xs font-medium text-foreground">
-                            Main tender document <span className="text-destructive">*</span>
-                          </p>
-                          <p className="text-[11px] text-muted-foreground">
-                            The tender's main document (RFP, bid document…). PDF, DOCX or TXT, up to 25 MB.
-                          </p>
-                        </div>
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[220px_1fr]">
-                          <FieldMemoryInput
-                            fieldKey="tender_doc_name"
-                            presetOptions={DOC_NAME_PRESETS}
-                            value={docName}
-                            onChange={(v) => { setDocName(v.slice(0, MAX_DOC_NAME)); setErrors((e) => ({ ...e, main_doc: undefined })); }}
-                            placeholder="Document name, e.g. RFP"
-                            aria-label="Main document name"
-                            className={inputCls(errors.main_doc && !docName.trim())}
-                          />
-                          <label className="relative flex h-9 cursor-pointer items-center gap-2 rounded-md border border-dashed border-input bg-background px-3 text-xs hover:border-primary/50 focus-within:ring-2 focus-within:ring-ring">
-                            <FileUp className="size-3.5 shrink-0 text-primary" aria-hidden />
-                            <span className="truncate" title={docFile?.name}>
-                              {docFile ? `${docFile.name} (${formatBytes(docFile.size)})` : "Choose file (PDF, DOCX or TXT)"}
-                            </span>
-                            <input
-                              type="file"
-                              accept={ACCEPTED_TENDER_DOCS}
-                              aria-label="Main document file"
-                              className="sr-only"
-                              onChange={(e) => {
-                                const f = e.target.files?.[0] || null;
-                                e.target.value = "";
-                                if (!f) return;
-                                const bad = checkTenderDoc(f);
-                                if (bad) { toast.error(bad); return; }
-                                setDocFile(f);
-                                setErrors((er) => ({ ...er, main_doc: undefined }));
-                              }}
-                            />
-                            {docFile && (
-                              <button
-                                type="button"
-                                aria-label="Remove main document"
-                                onClick={(e) => { e.preventDefault(); setDocFile(null); }}
-                                className="ml-auto rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
-                              >
-                                <X className="size-3.5" />
-                              </button>
-                            )}
-                          </label>
-                        </div>
-                        {errors.main_doc && (
-                          <p role="alert" className="text-xs font-medium text-destructive">{errors.main_doc}</p>
-                        )}
-                      </div>
+
 
                       {/* Bid Type (BID / BID_TO_RA) */}
                       <Field label="Bid Type" error={errors.bid_type} required>
@@ -1551,6 +1846,37 @@ export function AddTenderPage() {
         }}
         onCancel={() => setShowDiscardDialog(false)}
       />
+
+      {/* Document Extraction Success Dialog */}
+      <Dialog open={showExtractionSuccessDialog} onOpenChange={setShowExtractionSuccessDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600">
+                <CheckCircle2 className="size-5" />
+              </div>
+              <DialogTitle className="text-base font-semibold text-foreground">
+                Document Extracted Successfully
+              </DialogTitle>
+            </div>
+            <DialogDescription className="pt-2 text-sm text-foreground/85 leading-relaxed">
+              Document processing completed successfully! Tender information has been automatically populated. You can now review and make any necessary changes.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4">
+            <DialogClose asChild>
+              <Button
+                id="confirm-tender-extraction-success-btn"
+                type="button"
+                onClick={() => setShowExtractionSuccessDialog(false)}
+                className="w-full sm:w-auto min-w-24"
+              >
+                OK
+              </Button>
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

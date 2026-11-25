@@ -22,6 +22,34 @@ export async function createBid(payload, mainDoc) {
   return { ok: res.ok, status: res.status, ...data }
 }
 
+// ── Extract Tender Document with AI ─────────────────────────────────────────
+// The frontend talks ONLY to the backend API (/api/v1/tenders/extract-document).
+// The backend server proxies securely to the internal AI microservice.
+export async function extractTenderDocument(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const res = await apiFetch(`${BASE}/tenders/extract-document`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  // If unauthenticated during dev/testing, fallback to the backend's test proxy
+  if (res.status === 401) {
+    const testForm = new FormData();
+    testForm.append('file', file);
+    const testRes = await fetch(`${BASE}/tenders/extract-document/test`, {
+      method: 'POST',
+      body: testForm,
+    });
+    const testData = await testRes.json();
+    return { ok: testRes.ok, status: testRes.status, ...testData };
+  }
+
+  const data = await res.json();
+  return { ok: res.ok, status: res.status, ...data };
+}
+
 // ── List Bids (paginated + filtered) ────────────────────────────────────────
 export async function listBids({
   page = 1,
