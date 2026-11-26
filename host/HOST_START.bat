@@ -6,7 +6,7 @@ cd /d "%~dp0"
 :: Where the host fetches the latest docker-compose.yml from (public repo, no git
 :: needed on this PC). Every release that changes volumes or settings reaches this
 :: machine on its next sync, without anyone copying files by hand.
-set "COMPOSE_URL=https://raw.githubusercontent.com/Biswa-source45/Onetrack-GLX/main/docker-compose.yml"
+set "COMPOSE_URL=https://raw.githubusercontent.com/dilliprout/Onetrack-GLX/main/docker-compose.yml"
 
 echo =======================================================
 echo   OneTrack Enterprise Host System Launcher

@@ -41,7 +41,7 @@ services:
 
   # Python AI Tender & Lead Extraction Microservice
   ai-service:
-    image: ghcr.io/biswa-source45/onetrack-ai-service:latest
+    image: ghcr.io/dilliprout/onetrack-ai-service:latest
     build:
       context: ./ai_service
       dockerfile: Dockerfile
@@ -62,7 +62,7 @@ services:
 
   # Go Backend microservice
   backend:
-    image: ghcr.io/biswa-source45/onetrack-backend:latest
+    image: ghcr.io/dilliprout/onetrack-backend:latest
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -136,7 +136,7 @@ services:
 
   # React Frontend container with built-in Nginx proxy
   frontend:
-    image: ghcr.io/biswa-source45/onetrack-frontend:latest
+    image: ghcr.io/dilliprout/onetrack-frontend:latest
     build:
       context: ./frontend
       dockerfile: Dockerfile
