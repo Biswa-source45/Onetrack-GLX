@@ -30,6 +30,12 @@ func (h *LeadHandler) forActor(l *domain.Lead, a domain.Actor) {
 	l.CanEdit = l.EditableBy(a)
 	l.CanDelete = l.DeletableBy(a)
 	l.CanPublish = l.PublishNext(a) == nil
+	if err := l.ConvertNext(a); err == nil {
+		l.CanConvert = true
+	} else if l.Stage == domain.StageGo && l.ConvertedTender == nil {
+		msg := strings.TrimPrefix(err.Error(), domain.ErrValidation.Error()+": ")
+		l.ConvertBlocker = strings.TrimPrefix(msg, domain.ErrForbidden.Error()+": ")
+	}
 	l.Prebid.Actions = l.PrebidActionsFor(a)
 	l.Prebid.Editable = l.PrebidEditableFields(a)
 }

@@ -59,9 +59,14 @@ type Lead struct {
 	CanPublish     bool         `json:"can_publish"`
 	// Prebid query round — see prebid.go. Stage and Assignee come with the
 	// list too (for the badge); Items and the caller's rights only on detail.
-	Prebid    PrebidState `json:"prebid"`
-	CreatedAt time.Time   `json:"created_at"`
-	UpdatedAt      time.Time    `json:"updated_at"`
+	Prebid PrebidState `json:"prebid"`
+	// Conversion to a tender — see convert.go. CanConvert / ConvertBlocker are
+	// computed for the caller on the detail response.
+	ConvertedTender *ConvertedTender `json:"converted_tender"`
+	CanConvert      bool             `json:"can_convert"`
+	ConvertBlocker  string           `json:"convert_blocker,omitempty"`
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
 }
 
 type Document struct {

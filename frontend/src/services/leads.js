@@ -40,6 +40,11 @@ export async function publishLead(id, payload) {
   return json(await apiFetch(`${BASE}/${id}/publish`, { method: 'POST', body: JSON.stringify(payload) }))
 }
 
+// Turns a Go lead into a tender. Answers { lead, skipped_documents }.
+export async function convertLead(id) {
+  return json(await apiFetch(`${BASE}/${id}/convert`, { method: 'POST' }))
+}
+
 // Prebid queries. A step is { action, assignee_id?, note? } and answers with the
 // updated lead; the lead's own prebid.actions says which actions the user may send.
 export async function prebidTransition(id, payload) {

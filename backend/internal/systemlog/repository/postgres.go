@@ -103,6 +103,7 @@ var logSources = []logSource{
 		           WHEN 'PREBID_RETURN' THEN 'Returned prebid sheet to the Account Manager'
 		           WHEN 'PREBID_MARK_SENT' THEN 'Marked prebid queries as sent to the customer'
 		           WHEN 'PREBID_CLOSE' THEN 'Closed prebid queries'
+		           WHEN 'CONVERTED' THEN 'Converted lead to tender'
 		           ELSE t.event_type
 		       END || ': ' || COALESCE(NULLIF(l.title, ''), l.account_name) || COALESCE(' — ' || NULLIF(t.note, ''), ''),
 		       NULL::jsonb, NULL::uuid, NULL::uuid, ''`,

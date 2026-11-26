@@ -115,6 +115,9 @@ func (l *Lead) PrebidNext(action string, a Actor) (string, error) {
 	if l.Stage == StageNoGo {
 		return "", fmt.Errorf("%w: this lead was cancelled (No-Go)", ErrValidation)
 	}
+	if l.ConvertedTender != nil {
+		return "", fmt.Errorf("%w: this lead was converted to a tender", ErrValidation)
+	}
 	if !contains(r.from, l.Prebid.Stage) {
 		return "", fmt.Errorf("%w: the prebid sheet is no longer at a stage where that is possible — reload the page", ErrValidation)
 	}
@@ -142,7 +145,7 @@ func (l *Lead) PrebidActionsFor(a Actor) []string {
 // "product" may also add and delete rows — see CanChangePrebidRows.
 func (l *Lead) PrebidEditableFields(a Actor) []string {
 	none := []string{}
-	if l.PublishStatus != StatusPublished || l.Stage == StageNoGo {
+	if l.PublishStatus != StatusPublished || l.Stage == StageNoGo || l.ConvertedTender != nil {
 		return none
 	}
 	switch l.Prebid.Stage {

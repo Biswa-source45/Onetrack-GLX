@@ -127,11 +127,11 @@ func (l *Lead) ActionsFor(a Actor) []string {
 }
 
 // EditableBy: the Reporting Manager, the approver, and Admin/Manager roles —
-// until the lead is cancelled. The lead's owner can also correct their own
+// until the lead is cancelled or converted to a tender. The lead's owner can also correct their own
 // lead, but only while it is still with the Reporting Manager: once it has
 // gone for approval, what the approver is judging must not shift under them.
 func (l *Lead) EditableBy(a Actor) bool {
-	if l.Stage == StageNoGo {
+	if l.Stage == StageNoGo || l.ConvertedTender != nil {
 		return false
 	}
 	if l.Stage == StageRMReview && l.LeadOwner.ID == a.ID {

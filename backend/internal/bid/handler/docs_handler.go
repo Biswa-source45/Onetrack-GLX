@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -242,8 +243,35 @@ func (h *BidHandler) storeNewDoc(c *gin.Context, bidID, titleHint, name string, 
 		return nil, err
 	}
 	defer f.Close()
+	return h.addDoc(c.Request.Context(), bidID, titleHint, name, fh.Filename, f, fh.Size, ct, c.GetString("user_id"))
+}
 
-	ctx := c.Request.Context()
+// ImportDocument copies a file already on disk (a lead's document) onto a
+// tender, under the same type and size rules as an upload.
+func (h *BidHandler) ImportDocument(ctx context.Context, bidID, bidTitle, name, original, srcPath, userID string) error {
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return errors.New("could not read the source file")
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(f, head)
+	ct, err := validateTenderDoc(info.Size(), original, head[:n])
+	if err != nil {
+		return err
+	}
+	if name = cleanDocName(name); name == "" {
+		name = "Document"
+	}
+	_, err = h.addDoc(ctx, bidID, bidTitle, name, original, f, info.Size(), ct, userID)
+	return err
+}
+
+func (h *BidHandler) addDoc(ctx context.Context, bidID, titleHint, name, original string, f io.ReadSeeker, size int64, ct, userID string) (*domain.TenderDocument, error) {
 	if titleHint == "" {
 		if b, err := h.svc.GetBid(ctx, bidID); err == nil {
 			titleHint = b.Title
@@ -253,13 +281,13 @@ func (h *BidHandler) storeNewDoc(c *gin.Context, bidID, titleHint, name string, 
 	if err != nil {
 		return nil, errors.New("could not prepare the tender's document folder")
 	}
-	rel, err := h.writeTenderDoc(f, folder, name, fh.Filename)
+	rel, err := h.writeTenderDoc(f, folder, name, original)
 	if err != nil {
 		return nil, err
 	}
 	doc, err := h.docs.Add(ctx, &domain.TenderDocument{
-		BidID: bidID, Name: name, OriginalName: filepath.Base(fh.Filename), StoredPath: rel,
-		ContentType: ct, SizeBytes: fh.Size, UploadedBy: c.GetString("user_id"),
+		BidID: bidID, Name: name, OriginalName: filepath.Base(original), StoredPath: rel,
+		ContentType: ct, SizeBytes: size, UploadedBy: userID,
 	})
 	if err != nil {
 		_ = os.Remove(h.docPath(folder, rel))

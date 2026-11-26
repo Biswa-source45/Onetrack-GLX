@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -56,13 +57,17 @@ const leadSelect = `
 		(SELECT COUNT(*) FROM leads.lead_documents d WHERE d.lead_id = l.id),
 		l.created_at, l.updated_at,
 		l.stage, l.approver_id, COALESCE(a.full_name, a.username, ''),
-		l.prebid_stage, l.prebid_assignee_id, COALESCE(pa.full_name, pa.username, ''), l.prebid_sent_at
+		l.prebid_stage, l.prebid_assignee_id, COALESCE(pa.full_name, pa.username, ''), l.prebid_sent_at,
+		l.converted_bid_id::text,
+		COALESCE(NULLIF(b.gem_bid_no, ''), NULLIF(b.bid_no, ''), UPPER(LEFT(b.id::text, 8)), ''),
+		l.converted_at
 	FROM leads.leads l
 	LEFT JOIN auth.users o ON o.id = l.lead_owner_id
 	LEFT JOIN auth.users m ON m.id = l.reporting_manager_id
 	LEFT JOIN auth.users c ON c.id = l.created_by
 	LEFT JOIN auth.users a ON a.id = l.approver_id
 	LEFT JOIN auth.users pa ON pa.id = l.prebid_assignee_id
+	LEFT JOIN bid.bid_workspaces b ON b.id = l.converted_bid_id
 `
 
 func scanLead(row pgx.Row) (*domain.Lead, error) {
@@ -70,6 +75,9 @@ func scanLead(row pgx.Row) (*domain.Lead, error) {
 	var details []byte
 	var managerID, approverID, prebidAssigneeID *string
 	var managerName, approverName, prebidAssigneeName string
+	var tenderID *string
+	var tenderRef string
+	var convertedAt *time.Time
 	if err := row.Scan(&l.ID, &l.PublishStatus, &l.LeadType, &l.AccountName, &l.DepartmentName, &l.Location,
 		&l.HighLevelScope, &l.ExpectedDate, &l.ScopeType, &l.Category,
 		&l.EstimatedValue, &l.Title, &details,
@@ -78,8 +86,12 @@ func scanLead(row pgx.Row) (*domain.Lead, error) {
 		&l.CreatedBy.ID, &l.CreatedBy.FullName,
 		&l.FolderName, &l.DocumentCount, &l.CreatedAt, &l.UpdatedAt,
 		&l.Stage, &approverID, &approverName,
-		&l.Prebid.Stage, &prebidAssigneeID, &prebidAssigneeName, &l.Prebid.SentAt); err != nil {
+		&l.Prebid.Stage, &prebidAssigneeID, &prebidAssigneeName, &l.Prebid.SentAt,
+		&tenderID, &tenderRef, &convertedAt); err != nil {
 		return nil, err
+	}
+	if tenderID != nil {
+		l.ConvertedTender = &domain.ConvertedTender{ID: *tenderID, Ref: tenderRef, ConvertedAt: convertedAt}
 	}
 	if prebidAssigneeID != nil {
 		l.Prebid.Assignee = &domain.UserSummary{ID: *prebidAssigneeID, FullName: prebidAssigneeName}
@@ -264,6 +276,41 @@ func (r *Repo) Publish(ctx context.Context, id string, title *string, details []
 		return fmt.Errorf("%w: this lead was just changed by someone else — reload the page", domain.ErrValidation)
 	}
 	return nil
+}
+
+// ClaimConversion reserves the lead for one conversion, so two clicks (or two
+// people) can't make two tenders. A claim left behind by a crashed server
+// expires after five minutes.
+func (r *Repo) ClaimConversion(ctx context.Context, id string) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE leads.leads SET converted_at = NOW()
+		WHERE id = $1 AND converted_bid_id IS NULL
+		  AND (converted_at IS NULL OR converted_at < NOW() - INTERVAL '5 minutes')
+	`, id)
+	if err == nil && tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: this lead is already being converted — reload the page", domain.ErrValidation)
+	}
+	return err
+}
+
+// ReleaseConversion gives the claim back after the tender could not be created.
+func (r *Repo) ReleaseConversion(ctx context.Context, id string) error {
+	_, err := r.pool.Exec(ctx, `UPDATE leads.leads SET converted_at = NULL WHERE id = $1 AND converted_bid_id IS NULL`, id)
+	return err
+}
+
+// FinishConversion links the lead to its tender and records the step.
+func (r *Repo) FinishConversion(ctx context.Context, id, bidID, actorID string) error {
+	_, err := r.pool.Exec(ctx, `
+		WITH upd AS (
+			UPDATE leads.leads SET converted_bid_id = $2, converted_at = NOW(), updated_at = NOW()
+			WHERE id = $1
+			RETURNING id
+		)
+		INSERT INTO leads.lead_events (lead_id, actor_id, event_type)
+		SELECT id, $3, $4 FROM upd
+	`, id, bidID, actorID, domain.EventConverted)
+	return err
 }
 
 // Delete removes the lead (its documents and history rows cascade) together

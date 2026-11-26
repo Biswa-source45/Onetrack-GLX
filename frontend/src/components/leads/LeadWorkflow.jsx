@@ -73,6 +73,7 @@ const EVENT_LABELS = {
   NO_GO: "cancelled the lead (No-Go)",
   EDITED: "edited the lead details",
   PUBLISHED: "published the lead and added its tender details",
+  CONVERTED: "converted the lead to a tender",
 };
 
 // Prebid steps have their own activity cards on the Prebid Queries tab; this card is the approval only.

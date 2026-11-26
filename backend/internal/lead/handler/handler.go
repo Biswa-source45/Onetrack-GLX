@@ -30,6 +30,10 @@ type LeadHandler struct {
 	repo    *repository.Repo
 	rootDir string
 	alerts  alertDomain.AlertService // nil = no notifications
+
+	// Set by EnableConversion; see convert.go.
+	createTender CreateTender
+	attachDoc    AttachTenderDoc
 }
 
 func NewLeadHandler(repo *repository.Repo, rootDir string, alerts alertDomain.AlertService) *LeadHandler {
@@ -49,6 +53,7 @@ func RegisterLeadRoutes(rg *gin.RouterGroup, h *LeadHandler, auth *middleware.Au
 		leads.PUT("/:id", auth.RequirePermission("lead.view"), h.Update)
 		leads.POST("/:id/transition", auth.RequirePermission("lead.view"), h.Transition)
 		leads.POST("/:id/publish", auth.RequirePermission("lead.view"), h.Publish)
+		leads.POST("/:id/convert", auth.RequirePermission("lead.view"), auth.RequirePermission("bid.create"), h.Convert)
 		leads.DELETE("/:id", auth.RequirePermission("lead.view"), h.Delete)
 		leads.POST("/:id/documents", auth.RequirePermission("lead.create"), h.UploadDocument)
 		leads.GET("/:id/documents/:docId", auth.RequirePermission("lead.view"), h.DownloadDocument)

@@ -167,6 +167,7 @@ func main() {
 
 	// Leads — standalone pre-tender pipeline, own schema, no bid coupling.
 	leadHdlr := leadHandler.NewLeadHandler(leadRepo.NewPostgresLeadRepository(dbPool), cfg.LeadsUploadDir, alertSvc)
+	leadHdlr.EnableConversion(bidSvc.CreateBid, bidHdlr.ImportDocument)
 	leadHandler.RegisterLeadRoutes(v1, leadHdlr, authMiddleware)
 
 	// Initialize Chat module — dedicated team discussion & mentions for tenders

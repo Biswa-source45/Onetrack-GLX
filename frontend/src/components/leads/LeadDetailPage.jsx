@@ -37,6 +37,7 @@ import { emptyDocs, formatBytes, toUploadItems, uploadAll, validateDocs } from "
 import { LeadDocumentPicker } from "./LeadDocumentPicker";
 import { LeadStageBadge, LeadStatusBadge, LeadTypeBadge } from "./leadBadges";
 import { LeadWorkflow } from "./LeadWorkflow";
+import { ConvertToTender } from "./ConvertToTender";
 import { PrebidPanel } from "./PrebidPanel";
 import { PublishLeadDialog } from "./PublishLeadDialog";
 
@@ -223,7 +224,7 @@ export function LeadDetailPage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <LeadStageBadge stage={lead.stage} />
+            <LeadStageBadge stage={lead.converted_tender ? "CONVERTED" : lead.stage} />
             <LeadStatusBadge status={lead.publish_status} />
             <LeadTypeBadge type={lead.lead_type} />
           </div>
@@ -257,8 +258,9 @@ export function LeadDetailPage() {
       {/* A step returns the updated lead; a refused one (someone else got
           there first) passes nothing, so reload to show where it stands. */}
       <LeadWorkflow lead={lead} onChanged={(updated) => (updated ? setLead(updated) : load())} />
+      <ConvertToTender key={lead.id} lead={lead} onChanged={(updated) => (updated ? setLead(updated) : load())} />
 
-      {!isPublished && lead.stage !== "NO_GO" && (
+      {!isPublished && lead.stage !== "NO_GO" && !lead.converted_tender && (
         <div className="flex items-start gap-3 rounded-xl border border-dashed border-primary/40 bg-primary/5 px-4 py-3">
           <Megaphone className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
           <div>
