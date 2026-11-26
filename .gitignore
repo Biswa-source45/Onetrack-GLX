@@ -18,6 +18,10 @@ backend/.env
 
 # graphify local-only output (graphify-out/ itself is committed so the team shares one map)
 graphify-out/cost.json
+graphify-out/.graphify_build_state.json
+graphify-out/.graphify_labels.pending.json
+graphify-out/20??-??-??/
+graphify-out/cache/hook_sessions/
 
 # Feedback screenshot/photo uploads — bind-mounted host folder (see
 # docker-compose.yml), user-uploaded content, not repo content.

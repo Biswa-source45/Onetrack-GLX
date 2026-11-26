@@ -5,12 +5,6 @@
     "ast_hash": "3ac995fbf93552a991ecab9b63f776aa",
     "semantic_hash": "3ac995fbf93552a991ecab9b63f776aa"
   },
-  ".claude/settings.local.json": {
-    "mtime": 1787036663.0985582,
-    "seen": 1790141128.4531522,
-    "ast_hash": "db66c4bf0e323020ca6a0d487139d584",
-    "semantic_hash": "db66c4bf0e323020ca6a0d487139d584"
-  },
   ".impeccable/config.json": {
     "mtime": 1788935015.6470785,
     "seen": 1790141128.4531522,
@@ -138,21 +132,21 @@
     "semantic_hash": "2533d11b565b55ad827f4fadc3a25c7a"
   },
   "backend/internal/bid/domain/interfaces.go": {
-    "mtime": 1793006954.9397662,
-    "seen": 1793082852.0960882,
-    "ast_hash": "14b36eb47af6d58d2c5a21367129aeb1",
+    "mtime": 1793979083.1048405,
+    "seen": 1793980350.4138606,
+    "ast_hash": "f68e129e7aaca4e04535db1af1b320ef",
     "semantic_hash": ""
   },
   "backend/internal/bid/domain/models.go": {
-    "mtime": 1793006937.7367804,
-    "seen": 1793082852.0960882,
-    "ast_hash": "e26b293167bb8b19e1d387bb31be18c5",
+    "mtime": 1793979081.4712467,
+    "seen": 1793980350.4138606,
+    "ast_hash": "ecfb90005d6743ae0b884faf13af0e85",
     "semantic_hash": ""
   },
   "backend/internal/bid/handler/handler.go": {
-    "mtime": 1793076941.3402474,
-    "seen": 1793082852.097165,
-    "ast_hash": "5177a94055d228eb73279c06c7f0eb79",
+    "mtime": 1793343977.9425578,
+    "seen": 1793442414.774806,
+    "ast_hash": "f7a31b33cbd6d3a3bbaaeacf8c45ef28",
     "semantic_hash": ""
   },
   "backend/internal/bid/handler/import_handler.go": {
@@ -162,9 +156,9 @@
     "semantic_hash": "403d8563db999dad5a49ebf1d5759f47"
   },
   "backend/internal/bid/handler/routes.go": {
-    "mtime": 1792049764.1797438,
-    "seen": 1792052107.4500813,
-    "ast_hash": "249e2f1efc1e61fa00f5ca9be2902926",
+    "mtime": 1793979186.7751677,
+    "seen": 1793980350.4148598,
+    "ast_hash": "a02faedac50e84c66e7847716413fbb7",
     "semantic_hash": ""
   },
   "backend/internal/bid/importer/dashboard.go": {
@@ -204,21 +198,21 @@
     "semantic_hash": "bbd02730ec575b33f5aa9a6249cf4d14"
   },
   "backend/internal/bid/repository/postgres.go": {
-    "mtime": 1793007039.6016479,
-    "seen": 1793082852.0993552,
-    "ast_hash": "05c00f248b2b5549734c56ae72b2e6be",
+    "mtime": 1793979099.573407,
+    "seen": 1793980350.4168599,
+    "ast_hash": "ec5d79d93745f273af29b25fc739f3af",
     "semantic_hash": ""
   },
   "backend/internal/bid/service/bid_service.go": {
-    "mtime": 1793007106.4585533,
-    "seen": 1793082852.0993552,
-    "ast_hash": "8ad589e4353ea3cd151b872535f4d1e3",
+    "mtime": 1793979421.6018033,
+    "seen": 1793980350.4168599,
+    "ast_hash": "8b78cebb52dada6f2c6019052665d29e",
     "semantic_hash": ""
   },
   "backend/internal/bid/service/bid_service_test.go": {
-    "mtime": 1793007186.2180934,
-    "seen": 1793082852.0993552,
-    "ast_hash": "5153e38799fe76497cd08695bd586670",
+    "mtime": 1793979248.5061612,
+    "seen": 1793980350.4168599,
+    "ast_hash": "d9229ba26f46cfb26bd572b7276fafe2",
     "semantic_hash": ""
   },
   "backend/internal/bid/service/transitions.go": {
@@ -480,9 +474,9 @@
     "semantic_hash": "25c0b79e53faa80412a395d7a0190d27"
   },
   "frontend/src/components/Dashboard.jsx": {
-    "mtime": 1793009373.9804015,
-    "seen": 1793082852.1439278,
-    "ast_hash": "478f2909b9a86b44ca02178c5935dcf8",
+    "mtime": 1793344824.265242,
+    "seen": 1793442414.889709,
+    "ast_hash": "9e7a5b66733afe7c15349551c49fdcbd",
     "semantic_hash": ""
   },
   "frontend/src/components/Landing.jsx": {
@@ -642,27 +636,27 @@
     "semantic_hash": "39fea30b816bc3140283262544d3fac4"
   },
   "frontend/src/components/tenders/AddTenderDialog.jsx": {
-    "mtime": 1789797582.5618424,
-    "seen": 1790141128.4531522,
-    "ast_hash": "77533045af7d714f6d6a4c75e7e2ab98",
-    "semantic_hash": "77533045af7d714f6d6a4c75e7e2ab98"
+    "mtime": 1793250913.2942922,
+    "seen": 1793442414.9071717,
+    "ast_hash": "c9ac93ab8a06372cf40e386375f4c56e",
+    "semantic_hash": ""
   },
   "frontend/src/components/tenders/AddTenderPage.jsx": {
-    "mtime": 1792049882.6225295,
-    "seen": 1792052107.4947171,
-    "ast_hash": "73a2b711c1361c990c14024751758aa9",
+    "mtime": 1793353439.0498672,
+    "seen": 1793442414.9071717,
+    "ast_hash": "fe2ed3a66c9b8b3a733a90b8f8f98430",
     "semantic_hash": ""
   },
   "frontend/src/components/tenders/ChecklistTab.jsx": {
-    "mtime": 1791541323.0883422,
-    "seen": 1791786672.6608825,
-    "ast_hash": "bec44730f14f04b366eaca62aa9b825e",
+    "mtime": 1793250913.315577,
+    "seen": 1793442414.9071717,
+    "ast_hash": "d20f48cfb83ddd76fcc381822c85756d",
     "semantic_hash": ""
   },
   "frontend/src/components/tenders/EditTenderDialog.jsx": {
-    "mtime": 1791702477.9104,
-    "seen": 1791786672.6608825,
-    "ast_hash": "c91da39d2567eb7f9e235849835c7edc",
+    "mtime": 1793355516.4965084,
+    "seen": 1793442414.9091663,
+    "ast_hash": "3cfc062ea38783c61a972f5c48ac7855",
     "semantic_hash": ""
   },
   "frontend/src/components/tenders/ImportedPill.jsx": {
@@ -678,9 +672,9 @@
     "semantic_hash": "6fe5b5641dddf7b9e26398f47ae6e335"
   },
   "frontend/src/components/tenders/MasterSheetPage.jsx": {
-    "mtime": 1793082392.5611064,
-    "seen": 1793082852.1554432,
-    "ast_hash": "7f58c6496b87434012f406afdfad449e",
+    "mtime": 1793356175.8080068,
+    "seen": 1793442414.912184,
+    "ast_hash": "c13e94b999b3e4f53a05ece9b0c8e055",
     "semantic_hash": ""
   },
   "frontend/src/components/tenders/PricingSuggestionHint.jsx": {
@@ -696,21 +690,21 @@
     "semantic_hash": "bbc9257dcd7476ea7b2c17a173e779bf"
   },
   "frontend/src/components/tenders/StageWorkspaces.jsx": {
-    "mtime": 1792145786.4120505,
-    "seen": 1792566740.698976,
-    "ast_hash": "e8d425b7ba1511c71919bef4e62aa0a2",
+    "mtime": 1793979627.852321,
+    "seen": 1793980350.44543,
+    "ast_hash": "eab83d59a480694a5431032ca97ce6e9",
     "semantic_hash": ""
   },
   "frontend/src/components/tenders/TenderDetailPage.jsx": {
-    "mtime": 1793008715.7860925,
-    "seen": 1793082852.15645,
-    "ast_hash": "98026c2f2a0070b1d85c8fbf20bfb9f7",
+    "mtime": 1793979647.7276645,
+    "seen": 1793980350.44543,
+    "ast_hash": "7da2126be012bceeed4c801d25f8b811",
     "semantic_hash": ""
   },
   "frontend/src/components/tenders/TendersPage.jsx": {
-    "mtime": 1793082358.5144775,
-    "seen": 1793082852.15645,
-    "ast_hash": "dca69092051188c412decf2626535eaa",
+    "mtime": 1793358363.1408248,
+    "seen": 1793442414.9131799,
+    "ast_hash": "0f749be359958773a4f6b4554a9230d8",
     "semantic_hash": ""
   },
   "frontend/src/components/ui/FaqSection.jsx": {
@@ -918,16 +912,16 @@
     "semantic_hash": "19429069cded50e116208cab196280e4"
   },
   "frontend/src/lib/pipelineMetrics.js": {
-    "mtime": 1791438216.7134707,
-    "seen": 1791438227.9090528,
-    "ast_hash": "8d3a6783e9fd01ab29247f09193d0c1b",
+    "mtime": 1793342580.5668213,
+    "seen": 1793442414.940094,
+    "ast_hash": "6d454e72ba1939774ee4195da16020b4",
     "semantic_hash": ""
   },
   "frontend/src/lib/tenderDisplay.jsx": {
-    "mtime": 1788326338.0004268,
-    "seen": 1790141128.4531522,
-    "ast_hash": "258662ec6684fdacb32a1c72acae9d77",
-    "semantic_hash": "258662ec6684fdacb32a1c72acae9d77"
+    "mtime": 1793343979.73592,
+    "seen": 1793442414.941188,
+    "ast_hash": "0e45d2c8eb874e98bc06475e9019d2da",
+    "semantic_hash": ""
   },
   "frontend/src/lib/tenderFormat.js": {
     "mtime": 1791870672.1322796,
@@ -972,9 +966,9 @@
     "semantic_hash": "84a78ce6b54750bad77891f7c35f8518"
   },
   "frontend/src/services/bids.js": {
-    "mtime": 1793008560.5504284,
-    "seen": 1793082852.1707594,
-    "ast_hash": "10f601afac90f580207b1ecc6f64e6c8",
+    "mtime": 1793355517.0366836,
+    "seen": 1793442414.9453647,
+    "ast_hash": "29e238c304f5c0aa9c1da85030eea720",
     "semantic_hash": ""
   },
   "frontend/src/services/systemConfig.js": {
@@ -1002,9 +996,9 @@
     "semantic_hash": "1a3702a6e098b4252808255d72302631"
   },
   "frontend/src/store/useBidStore.js": {
-    "mtime": 1792145786.4266067,
-    "seen": 1792566740.698976,
-    "ast_hash": "b6633fd3ff662959776175e73375f0c2",
+    "mtime": 1793344263.9383988,
+    "seen": 1793442414.950098,
+    "ast_hash": "8fb6966000f532a74a6250d582c8b329",
     "semantic_hash": ""
   },
   "frontend/src/store/useFeedbackDraftStore.js": {
@@ -1022,529 +1016,529 @@
   "backend/cmd/emdfix/apply.sql": {
     "mtime": 1788760753.9037547,
     "seen": 1791443988.5434587,
-    "ast_hash": "89480311bea194d5f74761962e17bc13",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/cmd/emdfix/dryrun.sql": {
     "mtime": 1788760743.0656934,
     "seen": 1791443988.5434587,
-    "ast_hash": "8284254b1d4d97b92a616a24ff187286",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000001_create_auth_schema.down.sql": {
     "mtime": 1779871533.0095854,
     "seen": 1791443988.5593083,
-    "ast_hash": "15a5d8bfa254b24d06399275bdae4922",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000001_create_auth_schema.up.sql": {
     "mtime": 1779871533.0095854,
     "seen": 1791443988.5593083,
-    "ast_hash": "11c1d3fdd8ab03907486d7213880a9cf",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000002_seed_auth_data.down.sql": {
     "mtime": 1779871533.0095854,
     "seen": 1791443988.5593083,
-    "ast_hash": "dd2cec08fd420e6da85600404e5d721a",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000002_seed_auth_data.up.sql": {
     "mtime": 1779871533.0095854,
     "seen": 1791443988.5593083,
-    "ast_hash": "e85c20ad605da75c936862f477836595",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000003_add_user_profile_fields.down.sql": {
     "mtime": 1779963793.6479673,
     "seen": 1791443988.5593083,
-    "ast_hash": "d1a3e4f0e4564c8166f14423e1063f06",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000003_add_user_profile_fields.up.sql": {
     "mtime": 1779963793.6479673,
     "seen": 1791443988.5593083,
-    "ast_hash": "31dbfbb0d71ca9a5fc9c150146323788",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000004_create_bid_schema.down.sql": {
     "mtime": 1780386395.779854,
     "seen": 1791443988.5593083,
-    "ast_hash": "5556e61462f45176cda615515ebdf4bb",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000004_create_bid_schema.up.sql": {
     "mtime": 1780386395.7850988,
     "seen": 1791443988.5593083,
-    "ast_hash": "45650a36f7c80d6796abdc0ea9ffb117",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000005_create_task_schema.down.sql": {
     "mtime": 1780386395.79048,
     "seen": 1791443988.5593083,
-    "ast_hash": "899c0f1f429f82b1df94f5f0c7abbb97",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000005_create_task_schema.up.sql": {
     "mtime": 1780386395.7965956,
     "seen": 1791443988.5593083,
-    "ast_hash": "eaeb8062aa89a1488629d765a4e3f655",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000006_seed_role_permissions.down.sql": {
     "mtime": 1780386395.8024974,
     "seen": 1791443988.5593083,
-    "ast_hash": "c6f42227db714e957f6a95885e912ede",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000006_seed_role_permissions.up.sql": {
     "mtime": 1784870879.6195145,
     "seen": 1791443988.5593083,
-    "ast_hash": "b66039d6eef02e20b7e7adba6b54eb09",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000007_v1_bid_checklists.down.sql": {
     "mtime": 1781678428.5076945,
     "seen": 1791443988.5593083,
-    "ast_hash": "6c6cb9fc3eedc72226b9d5d13c8c7632",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000007_v1_bid_checklists.up.sql": {
     "mtime": 1784871086.0717742,
     "seen": 1791443988.5593083,
-    "ast_hash": "8f72105372191d6afcb8bbeb3fe4d308",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000008_add_excel_bid_fields.down.sql": {
     "mtime": 1784722902.264852,
     "seen": 1791443988.5593083,
-    "ast_hash": "669c1ed7454d6d0dac38711fb2d600f5",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000008_add_excel_bid_fields.up.sql": {
     "mtime": 1784722895.9185908,
     "seen": 1791443988.5593083,
-    "ast_hash": "01e82603e7fbc646c63eae91bb735620",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000009_grant_user_view_to_team_roles.down.sql": {
     "mtime": 1784870872.1853428,
     "seen": 1791443988.5593083,
-    "ast_hash": "1685040323dbf53e9b7297c8029e1b91",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000009_grant_user_view_to_team_roles.up.sql": {
     "mtime": 1784870867.9097674,
     "seen": 1791443988.5593083,
-    "ast_hash": "c77b2c1ea9cc8c7db11c0f5a502cb6bb",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000010_migration_v2_schema.down.sql": {
     "mtime": 1785572921.294504,
     "seen": 1791443988.5593083,
-    "ast_hash": "fab7a16eb1a9048c7fd73cef8213c066",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000010_migration_v2_schema.up.sql": {
     "mtime": 1785572914.5562932,
     "seen": 1791443988.5593083,
-    "ast_hash": "526aaa6abd713f7ff024f57345ffe6a0",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000011_clean_v2_users_and_otp.down.sql": {
     "mtime": 1785574086.901858,
     "seen": 1791443988.5593083,
-    "ast_hash": "0359d39e5963ee2a28dfe19e6e87ba10",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000011_clean_v2_users_and_otp.up.sql": {
     "mtime": 1785580921.5567443,
     "seen": 1791443988.5593083,
-    "ast_hash": "31ac626aa4a7435427209c43ef5957eb",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000012_allow_nullable_user_fk.up.sql": {
     "mtime": 1785575423.703313,
     "seen": 1791443988.5593083,
-    "ast_hash": "253a75a39bb2f9735928bd205d46d8f9",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000013_purge_old_data_seed_v2.up.sql": {
     "mtime": 1785578100.9785044,
     "seen": 1791443988.5593083,
-    "ast_hash": "e9fa8c74dba7f07213f6b3edd49c8e08",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000014_v2_stage_completion_tracking.up.sql": {
     "mtime": 1785579488.035101,
     "seen": 1791443988.5593083,
-    "ast_hash": "8991fa4d568f3d322a22f2cfc8dda080",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000015_fix_bg_rate_numeric_precision.down.sql": {
     "mtime": 1785825004.4365635,
     "seen": 1791443988.5593083,
-    "ast_hash": "6dd56a499b9f27517a1ed0a205c873ce",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000015_fix_bg_rate_numeric_precision.up.sql": {
     "mtime": 1785824999.7254174,
     "seen": 1791443988.5593083,
-    "ast_hash": "504df5e54aeea9cc6a1468fe47152d22",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000016_add_stage_reviews.up.sql": {
     "mtime": 1785830828.6218824,
     "seen": 1791443988.5593083,
-    "ast_hash": "c914a698b0f22fe7cc6ee908298da449",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000017_purge_all_tenders_and_users_except_sadmin.up.sql": {
     "mtime": 1787634229.691868,
     "seen": 1791443988.5593083,
-    "ast_hash": "4e9233b3628b8efe7236f2503517c01f",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000018_ensure_checklist_group.up.sql": {
     "mtime": 1786097951.5468738,
     "seen": 1791443988.5593083,
-    "ast_hash": "0929b59bc375497c1cfcbe380533481e",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000019_add_pricing_workspace.up.sql": {
     "mtime": 1786380117.093483,
     "seen": 1791443988.5593083,
-    "ast_hash": "339813623bfacd4fa34177479519c98f",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000020_add_oem_workspace.up.sql": {
     "mtime": 1786519293.2984886,
     "seen": 1791443988.5593083,
-    "ast_hash": "0ee40552f28041e80b72b778d3b95f31",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000021_cleanup_unnecessary_permissions.up.sql": {
     "mtime": 1786531741.0402398,
     "seen": 1791443988.5593083,
-    "ast_hash": "f34b8506177a9c297fcad6e1da318ff7",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000022_user_roles_primary_secondary.down.sql": {
     "mtime": 1786556999.9572368,
     "seen": 1791443988.5593083,
-    "ast_hash": "722099cdd87bfc8738d9d3671024d843",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000022_user_roles_primary_secondary.up.sql": {
     "mtime": 1786556696.7553372,
     "seen": 1791443988.5593083,
-    "ast_hash": "507bcc7878071f1a528d2e0ea6499c8a",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000023_add_emd_bank_details.up.sql": {
     "mtime": 1786960042.0653954,
     "seen": 1791443988.5593083,
-    "ast_hash": "34da8ec86de476b0c8e4a1c0442b7cd6",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000024_drop_task_schema.down.sql": {
     "mtime": 1787036055.0335128,
     "seen": 1791443988.5593083,
-    "ast_hash": "dcf894dcfa007c9b7641f91ea47e4df7",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000024_drop_task_schema.up.sql": {
     "mtime": 1787036033.7141154,
     "seen": 1791443988.5593083,
-    "ast_hash": "2de233234dbf9234768931181291038c",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000025_add_award_delivery_dates.down.sql": {
     "mtime": 1787040381.227528,
     "seen": 1791443988.5593083,
-    "ast_hash": "ba9af630025821b86d3fe5d79d97504f",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000025_add_award_delivery_dates.up.sql": {
     "mtime": 1787040373.2088702,
     "seen": 1791443988.5593083,
-    "ast_hash": "5102130045dded9c64ebd87a898e0b53",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000026_add_emd_ready_and_delivery_complete.down.sql": {
     "mtime": 1787143225.1984062,
     "seen": 1791443988.5593083,
-    "ast_hash": "6ed5829e8cb1f9e81907a3a252538946",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000026_add_emd_ready_and_delivery_complete.up.sql": {
     "mtime": 1787143217.6545298,
     "seen": 1791443988.5593083,
-    "ast_hash": "fcd2fc8cffbe2d7faa4f5b90e616affc",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000027_add_stage_history_event_details.down.sql": {
     "mtime": 1787208706.4339488,
     "seen": 1791443988.5593083,
-    "ast_hash": "3bbc1664d9864b940441294effd8f2f0",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000027_add_stage_history_event_details.up.sql": {
     "mtime": 1787208701.3131237,
     "seen": 1791443988.5593083,
-    "ast_hash": "ad1acf27556fddedd4d19a5bc1e227d2",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000028_add_emd_exemption_detail.down.sql": {
     "mtime": 1787726565.7782452,
     "seen": 1791443988.5593083,
-    "ast_hash": "fbb06c3be2e9c51b3a562cb33d3c67cb",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000028_add_emd_exemption_detail.up.sql": {
     "mtime": 1787726562.445889,
     "seen": 1791443988.5593083,
-    "ast_hash": "18f967cba46c4cb37516335863f8a0a5",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000029_rename_technical_manager_to_reporting_manager.down.sql": {
     "mtime": 1787727051.7647054,
     "seen": 1791443988.5593083,
-    "ast_hash": "e113abae3873926b2ee842c47857229b",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000029_rename_technical_manager_to_reporting_manager.up.sql": {
     "mtime": 1787727048.4548006,
     "seen": 1791443988.5593083,
-    "ast_hash": "6996a3c20caf476ec7578e538cb2545b",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000030_add_emd_not_applicable.down.sql": {
     "mtime": 1787808399.850147,
     "seen": 1791443988.5593083,
-    "ast_hash": "fb4a8ba430d5ec81ae4a5b30014be63b",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000030_add_emd_not_applicable.up.sql": {
     "mtime": 1787808394.4071674,
     "seen": 1791443988.5593083,
-    "ast_hash": "b52b0813d0980a73c9ce5ccc62725caa",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000031_unique_tender_identifiers.down.sql": {
     "mtime": 1788151984.7147112,
     "seen": 1791443988.5593083,
-    "ast_hash": "f5a6d934a2a6082d552857d1eb222891",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000031_unique_tender_identifiers.up.sql": {
     "mtime": 1788151984.7161646,
     "seen": 1791443988.5593083,
-    "ast_hash": "ddc424aaafe0963bf2047f80a53b96e2",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000032_add_closed_bid_status.down.sql": {
     "mtime": 1788151984.717183,
     "seen": 1791443988.5593083,
-    "ast_hash": "d9a2768332f32f91c407b9c5352b0131",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000032_add_closed_bid_status.up.sql": {
     "mtime": 1788151984.7185264,
     "seen": 1791443988.5593083,
-    "ast_hash": "73c2518940d85a3c169952186dba2f8c",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000033_add_quantity_and_rank.down.sql": {
     "mtime": 1788151984.7190647,
     "seen": 1791443988.5593083,
-    "ast_hash": "307b1a025d173b7969d0d803f3f1a92b",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000033_add_quantity_and_rank.up.sql": {
     "mtime": 1788151984.719599,
     "seen": 1791443988.5593083,
-    "ast_hash": "d871f137e3cf9aa8305e1d620654e363",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000034_add_account_manager_and_primary_review.down.sql": {
     "mtime": 1788249846.750471,
     "seen": 1791443988.5593083,
-    "ast_hash": "775a1b7ee1b9bc19b5afde07ce6413f5",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000034_add_account_manager_and_primary_review.up.sql": {
     "mtime": 1788249841.6976264,
     "seen": 1791443988.5593083,
-    "ast_hash": "32e573a3d9184e0605cfd19705ca408c",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000035_add_emd_exemption_types.down.sql": {
     "mtime": 1788266249.6841824,
     "seen": 1791443988.5593083,
-    "ast_hash": "d64e735ba010360bb72da75019984ade",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000035_add_emd_exemption_types.up.sql": {
     "mtime": 1788266341.150359,
     "seen": 1791443988.5593083,
-    "ast_hash": "f38da631ad2414b2325460cd146f6c24",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000036_backfill_am_presales_members.down.sql": {
     "mtime": 1788334236.1184971,
     "seen": 1791443988.5593083,
-    "ast_hash": "6a2e2aff86c1cf578d6d459aca498789",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000036_backfill_am_presales_members.up.sql": {
     "mtime": 1788334230.9431102,
     "seen": 1791443988.5593083,
-    "ast_hash": "2306f15093083c7b5df19d668e778653",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000037_add_alert_note_and_fix_category_spelling.down.sql": {
     "mtime": 1788777311.649884,
     "seen": 1791443988.5593083,
-    "ast_hash": "8f99fb2b2bef0b2207e34cb942a3fc9b",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000037_add_alert_note_and_fix_category_spelling.up.sql": {
     "mtime": 1788777304.3150568,
     "seen": 1791443988.5593083,
-    "ast_hash": "0fee74e9d22f4c81a84e8d46bf975d25",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000038_add_field_suggestions.down.sql": {
     "mtime": 1788936165.421537,
     "seen": 1791443988.5593083,
-    "ast_hash": "f9caadf44e1b2ea2799eee9ccf7b4300",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000038_add_field_suggestions.up.sql": {
     "mtime": 1788936162.1869578,
     "seen": 1791443988.5593083,
-    "ast_hash": "63d6c41a48c6b7ebf02a6a960b043dae",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000039_action_ledger.down.sql": {
     "mtime": 1788939532.2925322,
     "seen": 1791443988.5593083,
-    "ast_hash": "f1f3838b223b1af87f8ba9e727d30ea8",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000039_action_ledger.up.sql": {
     "mtime": 1788939526.4117346,
     "seen": 1791443988.5593083,
-    "ast_hash": "ed8fd5130c2fb636363b14b71389e280",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000040_create_feedback_schema.down.sql": {
     "mtime": 1788947011.7694235,
     "seen": 1791443988.5593083,
-    "ast_hash": "c914b5cab98da465c628afedb1edb6fa",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000040_create_feedback_schema.up.sql": {
     "mtime": 1788947001.9729824,
     "seen": 1791443988.5593083,
-    "ast_hash": "5122358747c143a3b22a274c451d3aa5",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000041_stage_access_control.down.sql": {
     "mtime": 1789017912.749852,
     "seen": 1791443988.5593083,
-    "ast_hash": "283c8e59e8da95578515861e09690de5",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000041_stage_access_control.up.sql": {
     "mtime": 1789018233.345126,
     "seen": 1791443988.5593083,
-    "ast_hash": "acc8988c571a928a7145152db3eef58e",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000042_backfill_new_field_suggestions.down.sql": {
     "mtime": 1789036858.9567318,
     "seen": 1791443988.5593083,
-    "ast_hash": "2b562de7124dd22716559645c5065ed8",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000042_backfill_new_field_suggestions.up.sql": {
     "mtime": 1789036854.6038642,
     "seen": 1791443988.5593083,
-    "ast_hash": "6cbf3c7970c0bc62c7e40809c32292a1",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000043_system_configurations.down.sql": {
     "mtime": 1789729042.2381926,
     "seen": 1791443988.5593083,
-    "ast_hash": "13223be50690557e18530ee1df5a1753",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000043_system_configurations.up.sql": {
     "mtime": 1789729032.8814757,
     "seen": 1791443988.5593083,
-    "ast_hash": "628c90f143b5b38e754eb5946dcd5850",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000044_heal_legacy_tenders_and_primary_review.down.sql": {
     "mtime": 1789736187.0707264,
     "seen": 1791443988.5593083,
-    "ast_hash": "672275c3f64cc00653b0d1c4423adcd6",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000044_heal_legacy_tenders_and_primary_review.up.sql": {
     "mtime": 1789736181.743458,
     "seen": 1791443988.5593083,
-    "ast_hash": "39a8dfb240c620b78e638eb6b7cdd2b1",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000045_tender_edit_approvals.down.sql": {
     "mtime": 1789970726.344669,
     "seen": 1791443988.5593083,
-    "ast_hash": "53f8493956fdabd5e31edc2e539feff7",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000045_tender_edit_approvals.up.sql": {
     "mtime": 1789970722.6041217,
     "seen": 1791443988.5593083,
-    "ast_hash": "2da1012b31156f8766e6644bcd1d694a",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000046_add_ticket_image.down.sql": {
     "mtime": 1789976544.632696,
     "seen": 1791443988.5593083,
-    "ast_hash": "79c06eb2ab212b6e51a1edddfd35cc24",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000046_add_ticket_image.up.sql": {
     "mtime": 1789976539.6968553,
     "seen": 1791443988.5593083,
-    "ast_hash": "7b79db69d6d9fd75b7ce17674c4050ce",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000047_generalize_tender_approvals.down.sql": {
     "mtime": 1790055748.501249,
     "seen": 1791443988.5593083,
-    "ast_hash": "7f8ea1923b68d86b2cfe733238222548",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000047_generalize_tender_approvals.up.sql": {
     "mtime": 1790055743.0296824,
     "seen": 1791443988.5593083,
-    "ast_hash": "1424702c7028b85065d1354ff2686e83",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000048_pricing_suggestion_window.down.sql": {
     "mtime": 1790062775.5365882,
     "seen": 1791443988.5593083,
-    "ast_hash": "c485338405250b89c09440e16d85e817",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000048_pricing_suggestion_window.up.sql": {
     "mtime": 1790062772.4795756,
     "seen": 1791443988.5593083,
-    "ast_hash": "18a95ca5d0ba7263599156e9eb5f757d",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "frontend/src/lib/checklistExport.js": {
@@ -1808,25 +1802,25 @@
   "backend/migrations/000049_alert_links.down.sql": {
     "mtime": 1790577162.9713948,
     "seen": 1791443988.5593083,
-    "ast_hash": "deef90b8179acc90f31b184ef5e72c86",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000049_alert_links.up.sql": {
     "mtime": 1790577162.970376,
     "seen": 1791443988.5593083,
-    "ast_hash": "22d6f06381ac46b343d3c8c86cb03345",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000050_skip_emd_stage_when_not_required.down.sql": {
     "mtime": 1790661949.5835743,
     "seen": 1791443988.5593083,
-    "ast_hash": "ece8b954554b40e3e70aca5c97c70321",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000050_skip_emd_stage_when_not_required.up.sql": {
     "mtime": 1790661948.5353255,
     "seen": 1791443988.5593083,
-    "ast_hash": "7f887d36eaf334e9b5cc951b66029321",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/internal/bid/domain/emd_models.go": {
@@ -1860,9 +1854,9 @@
     "semantic_hash": ""
   },
   "backend/internal/calendar/domain/interfaces.go": {
-    "mtime": 1791787789.2405868,
-    "seen": 1791788407.437096,
-    "ast_hash": "64ab5618ce75ee99cee839720b68cc99",
+    "mtime": 1793979335.8404374,
+    "seen": 1793980350.4183657,
+    "ast_hash": "a719489990307c168d461aad3371ce4c",
     "semantic_hash": ""
   },
   "backend/internal/calendar/domain/models.go": {
@@ -1896,9 +1890,9 @@
     "semantic_hash": ""
   },
   "backend/internal/calendar/repository/postgres.go": {
-    "mtime": 1791787798.509885,
-    "seen": 1791788407.437096,
-    "ast_hash": "75b8c99f72c70c6e07ed0929fa744320",
+    "mtime": 1793979362.4336548,
+    "seen": 1793980350.4188707,
+    "ast_hash": "a9cbdc4985e517326b7778d750512253",
     "semantic_hash": ""
   },
   "backend/internal/calendar/repository/postgres_test.go": {
@@ -1926,15 +1920,15 @@
     "semantic_hash": ""
   },
   "backend/internal/calendar/service/working_calendar_service.go": {
-    "mtime": 1791787789.2415936,
-    "seen": 1791788407.437096,
-    "ast_hash": "77d761cd0ff7c8fe0b696a917460c7a1",
+    "mtime": 1793979334.1854484,
+    "seen": 1793980350.4198775,
+    "ast_hash": "f0971a9da0443a8067e1fc17e8d99001",
     "semantic_hash": ""
   },
   "backend/internal/calendar/service/working_calendar_service_test.go": {
-    "mtime": 1791787836.1226642,
-    "seen": 1791788407.437096,
-    "ast_hash": "00c6696c81187ea3b049d1a49b0208d0",
+    "mtime": 1793979381.3597257,
+    "seen": 1793980350.4198775,
+    "ast_hash": "e3e03f12aecc04db14c023905c281be6",
     "semantic_hash": ""
   },
   "backend/internal/lead/domain/models.go": {
@@ -1982,97 +1976,97 @@
   "backend/migrations/000051_create_leads_schema.down.sql": {
     "mtime": 1791438216.6846218,
     "seen": 1791443988.5593083,
-    "ast_hash": "de0a3bd63c724427310e5f39a62c430b",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000051_create_leads_schema.up.sql": {
     "mtime": 1791438216.6846218,
     "seen": 1791443988.5593083,
-    "ast_hash": "f33fa4aa0038ced09cc19e1beedeeaeb",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000052_allow_closed_bid_outcome.down.sql": {
     "mtime": 1791438216.6863675,
     "seen": 1791443988.5593083,
-    "ast_hash": "c26d5128c72b861b7e4cf6c47132fe0c",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000052_allow_closed_bid_outcome.up.sql": {
     "mtime": 1791438216.6863675,
     "seen": 1791443988.5593083,
-    "ast_hash": "5d56da2cbbe8564592351d16adb63140",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000053_lead_workflow.down.sql": {
     "mtime": 1791438216.6863675,
     "seen": 1791443988.5593083,
-    "ast_hash": "95f1c5923d2a3df2fe27928a80004d2f",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000053_lead_workflow.up.sql": {
     "mtime": 1791438216.6873796,
     "seen": 1791443988.5593083,
-    "ast_hash": "e11092808a0eb546c390a24a1d036bcb",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000054_add_tender_link.down.sql": {
     "mtime": 1791438216.6873796,
     "seen": 1791443988.5593083,
-    "ast_hash": "30404a91e19f2f1468de4ac593f119f2",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000054_add_tender_link.up.sql": {
     "mtime": 1791438216.6873796,
     "seen": 1791443988.5593083,
-    "ast_hash": "527ba81f7fd36030da4124082dd26dc3",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000055_working_calendar_and_deadline_engine.down.sql": {
     "mtime": 1791438216.688377,
     "seen": 1791443988.5593083,
-    "ast_hash": "c180b80818ab2d5c830b598a37926d8d",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000055_working_calendar_and_deadline_engine.up.sql": {
     "mtime": 1791438216.688377,
     "seen": 1791443988.5593083,
-    "ast_hash": "eb90ef70ca0903be36771b76cf97e9b7",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000056_red_zone_stakeholder_notifications.down.sql": {
     "mtime": 1791438216.6893744,
     "seen": 1791443988.5593083,
-    "ast_hash": "e44a3c2d0c4c1b8688a49cb6ddb20bc3",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000056_red_zone_stakeholder_notifications.up.sql": {
     "mtime": 1791438216.6898797,
     "seen": 1791443988.5593083,
-    "ast_hash": "066e5864df9927e633589ef345dae07c",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000057_customizable_deadline_and_scheduler_interval.down.sql": {
     "mtime": 1791438216.6898797,
     "seen": 1791443988.5593083,
-    "ast_hash": "a9781a1ad5c5ae7ef80dcd82f8ad07ff",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000057_customizable_deadline_and_scheduler_interval.up.sql": {
     "mtime": 1791438216.6898797,
     "seen": 1791443988.5593083,
-    "ast_hash": "49ca3027acf772e0a54190109ee943bb",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000058_emd_approval_payment_refund.down.sql": {
     "mtime": 1791438216.6913896,
     "seen": 1791443988.5593083,
-    "ast_hash": "0620d5eb4b298f78bf37118a8dba9904",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000058_emd_approval_payment_refund.up.sql": {
     "mtime": 1791438216.6913896,
     "seen": 1791443988.5593083,
-    "ast_hash": "77f4bb7834267bd3e090fef5423ed775",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "frontend/src/components/RouteErrorBoundary.jsx": {
@@ -2088,9 +2082,9 @@
     "semantic_hash": ""
   },
   "frontend/src/components/leads/AddLeadPage.jsx": {
-    "mtime": 1792145786.3949044,
-    "seen": 1792566740.698976,
-    "ast_hash": "e9db37b76c45cf8aba2e92e247140682",
+    "mtime": 1793250913.285767,
+    "seen": 1793442414.9024248,
+    "ast_hash": "9fd48964dfa114f3cd8019eeb8c64325",
     "semantic_hash": ""
   },
   "frontend/src/components/leads/LeadDetailPage.jsx": {
@@ -2228,37 +2222,37 @@
   "backend/migrations/000059_calendar_live_testing_and_escalation.down.sql": {
     "mtime": 1791443038.2719157,
     "seen": 1791786672.65354,
-    "ast_hash": "a4a0c664a97b69e93bb188de26fa0777",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000059_calendar_live_testing_and_escalation.up.sql": {
     "mtime": 1791443038.2808247,
     "seen": 1791786672.65354,
-    "ast_hash": "e8b96fe1229baca5e5147be971d91b58",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000060_org_roles_and_permission_matrix.down.sql": {
     "mtime": 1791538896.7394612,
     "seen": 1791786672.65354,
-    "ast_hash": "2bfc0f6fa0da2f7b66740ab6f6228d38",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000060_org_roles_and_permission_matrix.up.sql": {
     "mtime": 1791538896.7394612,
     "seen": 1791786672.65354,
-    "ast_hash": "faee967ee7169d2d9a8022545f6d7de3",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000061_post_bid_contacts.down.sql": {
     "mtime": 1791781163.214628,
     "seen": 1791786672.65354,
-    "ast_hash": "0d764e66e8718757a0e7311f11825e12",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000061_post_bid_contacts.up.sql": {
     "mtime": 1791781163.214628,
     "seen": 1791786672.65354,
-    "ast_hash": "f6ff4b86e726b322250edbd55b9a0047",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "frontend/src/components/tenders/ChecklistReview.jsx": {
@@ -2330,13 +2324,13 @@
   "backend/migrations/000062_doc_shortfall.down.sql": {
     "mtime": 1791785363.2171657,
     "seen": 1791788407.437096,
-    "ast_hash": "0c1b04a162253580d0aadbde8743578e",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000062_doc_shortfall.up.sql": {
     "mtime": 1791785363.191937,
     "seen": 1791788407.437096,
-    "ast_hash": "938dc92f8a3bd458d2facfe6eae8c8b0",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/internal/bid/domain/contacts.go": {
@@ -2396,19 +2390,19 @@
   "backend/migrations/000063_tender_contacts.down.sql": {
     "mtime": 1791867123.3046725,
     "seen": 1791871267.952038,
-    "ast_hash": "cdea95da09c373b6438e76f85895452b",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000063_tender_contacts.up.sql": {
     "mtime": 1791867888.8387601,
     "seen": 1791871267.952038,
-    "ast_hash": "6a738d6874669b3f6f81dbafb26174d0",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "frontend/src/lib/sheetColumns.js": {
-    "mtime": 1791970046.8070748,
-    "seen": 1792040408.9837728,
-    "ast_hash": "658c787d82d780fb052c0fecd3f31ee6",
+    "mtime": 1793353441.3415236,
+    "seen": 1793442414.940094,
+    "ast_hash": "464e5e51f351ba29ea15214a0545ac76",
     "semantic_hash": ""
   },
   "frontend/src/lib/sheetColumns.test.js": {
@@ -2504,13 +2498,13 @@
   "backend/migrations/000064_directory.down.sql": {
     "mtime": 1791975116.3912816,
     "seen": 1792052107.4856722,
-    "ast_hash": "2866ba3d00c080d4919f2905674c10f5",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000064_directory.up.sql": {
     "mtime": 1791975116.3377173,
     "seen": 1792052107.4856722,
-    "ast_hash": "0e873a16cc7ffac94e0191c9136e50fe",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "frontend/src/components/tenders/DocsTab.jsx": {
@@ -2630,73 +2624,73 @@
   "backend/migrations/000065_tender_documents.down.sql": {
     "mtime": 1792049638.1855853,
     "seen": 1792566740.698976,
-    "ast_hash": "312c79c3a50228d978ab6fb6c7c01e93",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000065_tender_documents.up.sql": {
     "mtime": 1792049638.1598988,
     "seen": 1792566740.698976,
-    "ast_hash": "2fccd91493631e8c4f2160c8ae44d535",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000066_lead_prebid.down.sql": {
     "mtime": 1792145786.37669,
     "seen": 1792566740.698976,
-    "ast_hash": "ee9e6807a09bde5899d0ada811522a6e",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000066_lead_prebid.up.sql": {
     "mtime": 1792145786.37669,
     "seen": 1792566740.698976,
-    "ast_hash": "a47e49ba37f736a8be2750a7e9b89987",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000067_user_preferences.down.sql": {
     "mtime": 1792145786.3781977,
     "seen": 1792566740.698976,
-    "ast_hash": "eb831147b09ed55f8b7fa78cd42c9413",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000067_user_preferences.up.sql": {
     "mtime": 1792145786.3787296,
     "seen": 1792566740.698976,
-    "ast_hash": "921090709a855735e88d8ce298e5d280",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000068_lead_event_target.down.sql": {
     "mtime": 1792145786.3787296,
     "seen": 1792566740.698976,
-    "ast_hash": "ecb5263cce820fc93fa0cc6b71f997ac",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000068_lead_event_target.up.sql": {
     "mtime": 1792145786.3802762,
     "seen": 1792566740.698976,
-    "ast_hash": "cd876d23dd76907681a8f038131dbb9b",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000069_credential_mails.down.sql": {
     "mtime": 1792213109.3505547,
     "seen": 1792566740.698976,
-    "ast_hash": "cae8a72de2a0fa375ce01e6468246d46",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000069_credential_mails.up.sql": {
     "mtime": 1792213108.2991502,
     "seen": 1792566740.698976,
-    "ast_hash": "047c9b9d4924a821fd3acfbeda054153",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000070_password_changed_at.down.sql": {
     "mtime": 1792214454.2932134,
     "seen": 1792566740.698976,
-    "ast_hash": "3b411fbd5008754b2c96dc4fb252e33b",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "backend/migrations/000070_password_changed_at.up.sql": {
     "mtime": 1792214454.2682538,
     "seen": 1792566740.698976,
-    "ast_hash": "7458ebcbfd6eb13107e7f8d074084bd4",
+    "ast_hash": "",
     "semantic_hash": ""
   },
   "frontend/src/components/admin/AccountSettings.jsx": {
@@ -2826,9 +2820,93 @@
     "semantic_hash": ""
   },
   "frontend/src/lib/sheetSort.js": {
-    "mtime": 1793082276.826108,
-    "seen": 1793082852.167254,
-    "ast_hash": "3f0231173c3208723cfdca02ac9cd4fb",
+    "mtime": 1793355858.400837,
+    "seen": 1793442414.941188,
+    "ast_hash": "a5ab3cbdadfba29fa913d79e17c194b5",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000071_add_tender_delete_reason.down.sql": {
+    "mtime": 1793006918.5621662,
+    "seen": 1793442414.8849103,
+    "ast_hash": "",
+    "semantic_hash": ""
+  },
+  "backend/migrations/000071_add_tender_delete_reason.up.sql": {
+    "mtime": 1793006911.2334263,
+    "seen": 1793442414.8849103,
+    "ast_hash": "",
+    "semantic_hash": ""
+  },
+  "frontend/src/components/tenders/DeadlineTasksLogoutDialog.jsx": {
+    "mtime": 1793250913.315577,
+    "seen": 1793442414.9081604,
+    "ast_hash": "cc85819455201a3d86a6a9901a824056",
+    "semantic_hash": ""
+  },
+  "frontend/src/components/tenders/SignOutConfirmDialog.jsx": {
+    "mtime": 1793250913.3786614,
+    "seen": 1793442414.9131799,
+    "ast_hash": "e4047d9ec0b3a1a605fdc6beffe9dcb8",
+    "semantic_hash": ""
+  },
+  "frontend/src/components/tenders/StageModificationWarningDialog.jsx": {
+    "mtime": 1793250913.385419,
+    "seen": 1793442414.9131799,
+    "ast_hash": "970c34005d89bd90b9d380fc6a7bdb29",
+    "semantic_hash": ""
+  },
+  "frontend/src/components/tenders/UnsavedChangesDialog.jsx": {
+    "mtime": 1793250913.4000435,
+    "seen": 1793442414.9141839,
+    "ast_hash": "683d267134d4df2c93bd63ed22a25a3d",
+    "semantic_hash": ""
+  },
+  "backend/internal/bid/domain/tech_eval.go": {
+    "mtime": 1793979079.7045684,
+    "seen": 1793980350.4138606,
+    "ast_hash": "92d73be6caf9276461625ccf95f91bae",
+    "semantic_hash": ""
+  },
+  "backend/internal/bid/handler/tech_eval_handler.go": {
+    "mtime": 1793979185.9496336,
+    "seen": 1793980350.4148598,
+    "ast_hash": "fad07482e308603b40932cdbebd8e8f5",
+    "semantic_hash": ""
+  },
+  "backend/internal/bid/service/tech_eval.go": {
+    "mtime": 1793979173.3164892,
+    "seen": 1793980350.4178596,
+    "ast_hash": "41131ec1771150bd7061be722bbd5519",
+    "semantic_hash": ""
+  },
+  "backend/internal/bid/service/tech_eval_test.go": {
+    "mtime": 1793979278.704247,
+    "seen": 1793980350.4178596,
+    "ast_hash": "5ccd16da0ed54989dd86d7cc7bfe15c1",
+    "semantic_hash": ""
+  },
+  "backend/internal/calendar/service/tech_eval_reminders.go": {
+    "mtime": 1793979361.5242329,
+    "seen": 1793980350.4198775,
+    "ast_hash": "0e409b7ccf731375fe77a11548996ce4",
+    "semantic_hash": ""
+  },
+  "frontend/src/components/tenders/TechEvalPanel.jsx": {
+    "mtime": 1793980289.095677,
+    "seen": 1793980350.44543,
+    "ast_hash": "183c0eb7c374b841a9d2e4e1743bb98d",
+    "semantic_hash": ""
+  },
+  "frontend/src/services/techEval.js": {
+    "mtime": 1793979453.380853,
+    "seen": 1793980350.4616024,
+    "ast_hash": "5e722f97397587cb1e3907a31c9f9738",
+    "semantic_hash": ""
+  },
+  "frontend/package-lock.json": {
+    "mtime": 1792049831.965082,
+    "seen": 1793980350.4686134,
+    "ast_hash": "5857a98123c35cc85f50969f7acabebe",
     "semantic_hash": ""
   }
 }

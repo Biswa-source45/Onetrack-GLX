@@ -1,0 +1,1 @@
+{"nodes": [{"id": "$graphify-root$_backend_internal_version_version_go", "label": "version.go", "file_type": "code", "source_file": "backend/internal/version/version.go", "source_location": "L1"}], "edges": [], "raw_calls": [], "go_imports": {}, "go_type_table": {"path": "$graphify-root$/backend/internal/version/version.go", "table": {}}}
