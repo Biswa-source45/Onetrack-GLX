@@ -90,3 +90,5 @@ numbers or claims — this was confirmed explicitly, not assumed.
 
 No product-specific accessibility requirement has been established; follow standard web
 accessibility practice (contrast, keyboard operability, motion-reduction respect) as a floor.
+
+## test for knowledge transfer for deployemnt
