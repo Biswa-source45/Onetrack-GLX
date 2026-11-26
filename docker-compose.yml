@@ -169,7 +169,12 @@ services:
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    # Only our own app containers. Without names Watchtower updates every
+    # container on the PC, including the database and unrelated projects.
+    command: onetrack-backend onetrack-frontend onetrack-ai-service
     environment:
+      # Watchtower defaults to Docker API 1.25, which newer Docker Engines refuse.
+      - DOCKER_API_VERSION=1.44
       - WATCHTOWER_POLL_INTERVAL=60
       - WATCHTOWER_CLEANUP=true
       - WATCHTOWER_INCLUDE_RESTARTING=true

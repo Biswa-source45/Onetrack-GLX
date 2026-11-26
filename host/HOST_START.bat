@@ -1,5 +1,5 @@
 @echo off
-TITLE OneTrack Enterprise System Launcher & Auto-Sync
+TITLE OneTrack Enterprise System Launcher ^& Auto-Sync
 COLOR 0A
 cd /d "%~dp0"
 
