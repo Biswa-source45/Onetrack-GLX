@@ -173,3 +173,12 @@
   body:has(.tender-print) > *:not(.tender-print) { display: none !important; }
   .tender-print { display: block; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+/* Aria, the document assistant (AiAgentDialog): she floats gently and blinks. */
+.agent-face { animation: agent-float 3.2s ease-in-out infinite; }
+.agent-eye { transform-box: fill-box; transform-origin: center; animation: agent-blink 3.6s infinite; }
+@keyframes agent-float { 50% { transform: translateY(-4px); } }
+@keyframes agent-blink { 0%, 90%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.08); } }
+@media (prefers-reduced-motion: reduce) {
+  .agent-face, .agent-eye { animation: none; }
+}

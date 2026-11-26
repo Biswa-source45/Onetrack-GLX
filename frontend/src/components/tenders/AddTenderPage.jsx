@@ -21,7 +21,6 @@ import {
   Shuffle,
   FileUp,
   Sparkles,
-  CheckCircle2,
 } from "lucide-react";
 import {
   ACCEPTED_TENDER_DOCS,
@@ -42,7 +41,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FieldMemoryInput } from "@/components/ui/field-memory-input";
-import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { AiAgentDialog } from "../AiAgentDialog";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -1847,36 +1846,18 @@ export function AddTenderPage() {
         onCancel={() => setShowDiscardDialog(false)}
       />
 
-      {/* Document Extraction Success Dialog */}
-      <Dialog open={showExtractionSuccessDialog} onOpenChange={setShowExtractionSuccessDialog}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <div className="flex items-center gap-3">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600">
-                <CheckCircle2 className="size-5" />
-              </div>
-              <DialogTitle className="text-base font-semibold text-foreground">
-                Document Extracted Successfully
-              </DialogTitle>
-            </div>
-            <DialogDescription className="pt-2 text-sm text-foreground/85 leading-relaxed">
-              Document processing completed successfully! Tender information has been automatically populated. You can now review and make any necessary changes.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="mt-4">
-            <DialogClose asChild>
-              <Button
-                id="confirm-tender-extraction-success-btn"
-                type="button"
-                onClick={() => setShowExtractionSuccessDialog(false)}
-                className="w-full sm:w-auto min-w-24"
-              >
-                OK
-              </Button>
-            </DialogClose>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AiAgentDialog
+        open={showExtractionSuccessDialog}
+        onOpenChange={setShowExtractionSuccessDialog}
+        subject="tender"
+        confirmId="confirm-tender-extraction-success-btn"
+        data={extractionResult?.data}
+        fileName={extractionResult?.meta?.filename}
+        notes={[
+          !(Number(extractionResult?.data?.estimated_value) > 0) && Number(extractionResult?.data?.emd_amount) > 0 && "Estimated value (taken as 50 × the EMD)",
+          "Team members in Section 2",
+        ].filter(Boolean)}
+      />
     </div>
   );
 }

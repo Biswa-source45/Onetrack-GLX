@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
@@ -11,7 +11,6 @@ import {
   Megaphone,
   EyeOff,
   Sparkles,
-  CheckCircle2,
   FileUp,
   X,
 } from "lucide-react";
@@ -22,7 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { FieldMemoryInput } from "@/components/ui/field-memory-input";
-import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { AiAgentDialog } from "../AiAgentDialog";
 import { Field } from "../tenders/tenderFormParts";
 import { TenderDetailsFields } from "./TenderDetailsFields";
 import {
@@ -110,6 +109,23 @@ function leadToForm(lead, blank) {
   return form;
 }
 
+// An empty lead form. Published and Unpublished each start from their own.
+const blankForm = (leadOwnerId = "") => ({
+  publish_status: "",
+  lead_type: "GOV",
+  account_name: "",
+  department_name: "",
+  location: "",
+  high_level_scope: "",
+  expected_date: "",
+  scope_type: "",
+  category: "",
+  estimated_value: "",
+  ...PUBLISHED_BLANK,
+  lead_owner_id: leadOwnerId,
+  reporting_manager_id: "",
+});
+
 export function AddLeadPage() {
   const navigate = useNavigate();
   const { leadId } = useParams();
@@ -120,21 +136,7 @@ export function AddLeadPage() {
   const { users, usersLoading, loadUsers, setUnsavedFormDirty } = useBidStore();
   const orgUsers = users.filter((u) => u.is_active !== false);
 
-  const [form, setForm] = useState({
-    publish_status: "",
-    lead_type: "GOV",
-    account_name: "",
-    department_name: "",
-    location: "",
-    high_level_scope: "",
-    expected_date: "",
-    scope_type: "",
-    category: "",
-    estimated_value: "",
-    ...PUBLISHED_BLANK,
-    lead_owner_id: currentUser?.id ?? "",
-    reporting_manager_id: "",
-  });
+  const [form, setForm] = useState(() => blankForm(currentUser?.id));
   const [products, setProducts] = useState(blankProducts());
   const [emdOnlineOn, setEmdOnlineOn] = useState(false);
   const [emdDdOn, setEmdDdOn] = useState(false);
@@ -146,6 +148,9 @@ export function AddLeadPage() {
   const [showDiscardDialog, setShowDiscardDialog] = useState(false);
   const [pendingDiscardTarget, setPendingDiscardTarget] = useState(null);
   const [showExtractionSuccessDialog, setShowExtractionSuccessDialog] = useState(false);
+  const [extraction, setExtraction] = useState(null); // what Aria reports: { data, fileName, notes }
+  // The form of the status that is not on screen — see chooseStatus.
+  const otherDraft = useRef(null);
 
   // AI extraction loading state
   const [extractingLead, setExtractingLead] = useState(false);
@@ -169,6 +174,13 @@ export function AddLeadPage() {
         return;
       }
       const data = res.data;
+
+      // Things filled in below that the document did not actually say.
+      const notes = [];
+      if (!(Number(data.estimated_value) > 0) && Number(data.emd_amount) > 0) notes.push("Estimated value (taken as 50 × the EMD)");
+      if (!data.start_date && data.end_date) notes.push("Start date (14 days before closing)");
+      if (data.bg_required && !(data.bg_rate && data.bg_duration_months)) notes.push("Bank guarantee terms (10% for 12 months where missing)");
+      if (!form.reporting_manager_id) notes.push("Reporting Manager");
 
       // Populate Lead Details & Published Tender Details from extraction
       setForm((prev) => {
@@ -330,6 +342,7 @@ export function AddLeadPage() {
         );
       }
 
+      setExtraction({ data, fileName: targetFile.name, notes });
       setShowExtractionSuccessDialog(true);
     } catch (err) {
       console.error("Extraction error:", err);
@@ -347,21 +360,7 @@ export function AddLeadPage() {
         if (!live) return;
         if (!res.ok || !res.data.can_edit) return setLoadState("error");
         const d = res.data.published_details || {};
-        const loadedForm = leadToForm(res.data, {
-          publish_status: "",
-          lead_type: "GOV",
-          account_name: "",
-          department_name: "",
-          location: "",
-          high_level_scope: "",
-          expected_date: "",
-          scope_type: "",
-          category: "",
-          estimated_value: "",
-          ...PUBLISHED_BLANK,
-          lead_owner_id: "",
-          reporting_manager_id: "",
-        });
+        const loadedForm = leadToForm(res.data, blankForm());
         setForm(loadedForm);
         const loadedProducts = d.requested_products?.length
           ? d.requested_products.map((p, i) => ({ id: i + 1, product: "", description: "", qty: "", oem: "", ...p }))
@@ -483,6 +482,21 @@ export function AddLeadPage() {
   function set(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
     setErrors((e) => ({ ...e, [field]: undefined }));
+  }
+
+  // Published and Unpublished are two separate forms: what is typed or extracted
+  // in one never shows up in the other, and switching back restores it.
+  function chooseStatus(next) {
+    const current = form.publish_status;
+    // The first choice keeps anything already typed.
+    if (!current || current === next) return set("publish_status", next);
+    const draft = otherDraft.current;
+    otherDraft.current = { form, products, emdOnlineOn, emdDdOn };
+    setForm(draft?.form ?? { ...blankForm(currentUser?.id), publish_status: next });
+    setProducts(draft?.products ?? blankProducts());
+    setEmdOnlineOn(draft?.emdOnlineOn ?? false);
+    setEmdDdOn(draft?.emdDdOn ?? false);
+    setErrors({});
   }
 
   function validate() {
@@ -637,8 +651,10 @@ export function AddLeadPage() {
                   type="button"
                   role="radio"
                   aria-checked={active}
-                  onClick={() => set("publish_status", o.value)}
-                  className={`flex items-start gap-3 rounded-xl border p-4 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.99]
+                  onClick={() => chooseStatus(o.value)}
+                  // An extraction in flight belongs to the form it was started on.
+                  disabled={extractingLead || !!saving}
+                  className={`flex items-start gap-3 rounded-xl border p-4 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.99] disabled:cursor-wait disabled:opacity-60
                     ${active ? "border-primary bg-primary/5 ring-1 ring-primary" : errors.publish_status ? "border-destructive bg-card" : "border-border bg-card hover:border-primary/40"}`}
                 >
                   <span className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
@@ -784,36 +800,13 @@ export function AddLeadPage() {
         onCancel={() => setShowDiscardDialog(false)}
       />
 
-      {/* Document Extraction Success Dialog */}
-      <Dialog open={showExtractionSuccessDialog} onOpenChange={setShowExtractionSuccessDialog}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <div className="flex items-center gap-3">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600">
-                <CheckCircle2 className="size-5" />
-              </div>
-              <DialogTitle className="text-base font-semibold text-foreground">
-                Document Extracted Successfully
-              </DialogTitle>
-            </div>
-            <DialogDescription className="pt-2 text-sm text-foreground/85 leading-relaxed">
-              Document processing completed successfully! Lead information has been automatically populated. You can now review and make any necessary changes.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="mt-4">
-            <DialogClose asChild>
-              <Button
-                id="confirm-extraction-success-btn"
-                type="button"
-                onClick={() => setShowExtractionSuccessDialog(false)}
-                className="w-full sm:w-auto min-w-24"
-              >
-                OK
-              </Button>
-            </DialogClose>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AiAgentDialog
+        open={showExtractionSuccessDialog}
+        onOpenChange={setShowExtractionSuccessDialog}
+        subject="lead"
+        confirmId="confirm-extraction-success-btn"
+        {...extraction}
+      />
     </form>
   );
 }
