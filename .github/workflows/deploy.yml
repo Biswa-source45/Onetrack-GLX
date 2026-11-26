@@ -46,3 +46,13 @@ jobs:
           tags: |
             ghcr.io/${{ env.OWNER_LOWER }}/onetrack-frontend:latest
             ghcr.io/${{ env.OWNER_LOWER }}/onetrack-frontend:${{ github.sha }}
+
+      - name: Build and Push AI Service Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./ai_service
+          file: ./ai_service/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ env.OWNER_LOWER }}/onetrack-ai-service:latest
+            ghcr.io/${{ env.OWNER_LOWER }}/onetrack-ai-service:${{ github.sha }}
