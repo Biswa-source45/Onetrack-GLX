@@ -1811,7 +1811,7 @@ Account and access audit trail (logins, user creation, role and permission chang
 ---
 
 ## 12. Appendix: enums and reference values
-
+## nothing
 ### 12.1 Tender workflow stages
 
 In order:
