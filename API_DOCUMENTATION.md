@@ -1944,3 +1944,6 @@ Terminal: `WON`, `LOST`, `CANCELLED`.
 | GET | `/system/config/:key` | Authenticated |
 | PUT | `/system/config/:key` | SUPER_ADMIN |
 | GET | `/system-logs` | SUPER_ADMIN |
+
+
+#3 doc change for test recording
